@@ -11,6 +11,7 @@ import channel from "./fixtures/hypersnap-channel.json";
 import trendingChannels from "./fixtures/hypersnap-channel-trending.json";
 import trending from "./fixtures/hypersnap-feed-trending.json";
 import userCasts from "./fixtures/hypersnap-user-casts.json";
+import userSearch from "./fixtures/hypersnap-user-search.json";
 import user from "./fixtures/hypersnap-user.json";
 
 const FARCASTER_URL = "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628";
@@ -194,6 +195,39 @@ describe("NeynarShapedSource", () => {
     expect(dwr?.followerCount).toBeGreaterThan(1_000_000);
     const casts = await source.userCasts(3, { limit: 10 });
     expect(casts.items.filter((c) => c.parentHash)).toHaveLength(2);
+  });
+
+  it("finds ENS-style usernames that by_username can't resolve", async () => {
+    // Live behaviour: by_username 404s for "balajis.eth"; search returns it
+    // first, plus a decoy whose *display name* is "balajis.eth".
+    const { fetch, calls } = stubFetch({ "user/search": userSearch });
+    const balajis = await hypersnapSource({ fetch }).userByUsername("balajis.eth");
+    expect(balajis).toMatchObject({ fid: 37, username: "balajis.eth", displayName: "balajis" });
+    expect(balajis?.followerCount).toBeGreaterThan(500_000);
+    expect(calls.map((url) => url.pathname.split("/farcaster/")[1])).toEqual(["user/by_username", "user/search"]);
+    expect(calls[1].searchParams.get("q")).toBe("balajis.eth");
+  });
+
+  it("only accepts an exact username match from search", async () => {
+    const { fetch } = stubFetch({ "user/search": userSearch });
+    const source = hypersnapSource({ fetch });
+    await expect(source.userByUsername("balajis")).resolves.toBeNull();
+    // matched on username, never on display name
+    await expect(source.userByUsername("balajis-eth")).resolves.toMatchObject({ fid: 1615452 });
+    await expect(source.userByUsername("BALAJIS.ETH")).resolves.toMatchObject({ fid: 37 });
+  });
+
+  it("reads Neynar's nested search results", async () => {
+    const { fetch } = stubFetch({ "user/search": { result: { users: userSearch.users } } });
+    await expect(neynarSource({ apiKey: "k", fetch }).userByUsername("balajis.eth")).resolves.toMatchObject({
+      fid: 37,
+    });
+  });
+
+  it("doesn't search when by_username finds the user", async () => {
+    const { fetch, calls } = stubFetch({ "user/by_username": user, "user/search": userSearch });
+    await expect(hypersnapSource({ fetch }).userByUsername("dwr")).resolves.toMatchObject({ fid: 3 });
+    expect(calls).toHaveLength(1);
   });
 
   it("sends the Neynar API key and throws on server errors", async () => {

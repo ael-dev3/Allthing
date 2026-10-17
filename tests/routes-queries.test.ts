@@ -72,9 +72,19 @@ describe("URL params", () => {
   it("normalizes usernames", () => {
     expect(usernameFromParam("@DWR")).toBe("dwr");
     expect(usernameFromParam("fid%3A3")).toBe("fid:3");
-    expect(usernameFromParam("balajis.eth")).toBe("balajis.eth");
     expect(usernameFromParam("no spaces")).toBeNull();
     expect(usernameFromParam("%E0%A4%A")).toBeNull();
+    expect(usernameFromParam("")).toBeNull();
+    expect(usernameFromParam(null)).toBeNull();
+  });
+
+  it("accepts ENS-style names with dots and non-ASCII labels", () => {
+    expect(usernameFromParam("balajis.eth")).toBe("balajis.eth");
+    expect(usernameFromParam("Jesse.Base.eth")).toBe("jesse.base.eth");
+    expect(usernameFromParam("base.base.eth")).toBe("base.base.eth");
+    expect(usernameFromParam(encodeURIComponent("🌈.eth"))).toBe("🌈.eth");
+    expect(usernameFromParam(".eth")).toBeNull();
+    expect(usernameFromParam("a/b.eth")).toBeNull();
   });
 });
 

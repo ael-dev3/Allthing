@@ -140,7 +140,7 @@ test("channel page works like a subreddit with hot/new/top", async ({ page, base
   expect(scores).toEqual([...scores].sort((a, b) => b - a));
 });
 
-test("post page shows a collapsible threaded reply tree", async ({ page }) => {
+test("post page shows a threaded reply tree", async ({ page }) => {
   // From the listing: the most-discussed trending cast opens with its replies.
   await page.goto(paths.home("sort=top"));
   const rows = listingRows(page);
@@ -154,22 +154,11 @@ test("post page shows a collapsible threaded reply tree", async ({ page }) => {
   await expect(page.locator(".commentarea details.comment").first()).toBeVisible();
   await expect(page.locator(".panestack-title")).toContainText("comment");
 
-  // A known thread with nested replies: collapse and expand a subtree.
+  // A known thread with nested replies; its author is flagged as the submitter.
   await page.goto(paths.post(NESTED_THREAD));
-  const parent = page.locator(".commentarea details.comment:has(> .child)").first();
-  const child = parent.locator(":scope > .child details.comment").first();
-  await expect(child).toBeVisible();
+  await expect(page.locator(".commentarea .comment .child details.comment").first()).toBeVisible();
   await expect(page.locator(".comment .userattrs .submitter").first()).toHaveText("S");
 
-  await parent.locator(":scope > summary .expand").click();
-  await expect(parent).not.toHaveAttribute("open", "");
-  await expect(child).toBeHidden();
-  await expect(parent.locator(":scope > summary .numchildren")).toBeVisible();
-  await parent.locator(":scope > summary .expand").click();
-  await expect(child).toBeVisible();
-
-  await page.keyboard.press("Escape");
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.locator(".commentarea").scrollIntoViewIfNeeded();
   await settle(page);
   await page.screenshot({ path: `${SHOTS}/post-page.png` });
@@ -178,11 +167,70 @@ test("post page shows a collapsible threaded reply tree", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/post-page-top.png` });
 });
 
-test("user profile lists their casts and replies", async ({ page, baseURL }) => {
+test("a reply with children collapses and expands, by click and with x", async ({ page }) => {
+  await page.goto(paths.post(NESTED_THREAD));
+  await waitForKeyboardNav(page);
+  // The reply with the most descendants, so the whole subtree is exercised.
+  const parents = page.locator(".commentarea details.comment:has(> .child details.comment)");
+  await expect(parents.first()).toBeVisible();
+  const sizes = await parents.evaluateAll((els) => els.map((el) => el.querySelectorAll("details.comment").length));
+  const parent = parents.nth(sizes.indexOf(Math.max(...sizes)));
+  const descendants = parent.locator(".child details.comment");
+  const total = Math.max(...sizes);
+  expect(total).toBeGreaterThan(0);
+  await expect(descendants).toHaveCount(total);
+  await expect(descendants.first()).toBeVisible();
+  const numChildren = parent.locator(":scope > summary .numchildren");
+  const marker = () =>
+    parent.locator(":scope > summary .expand").evaluate((el) => getComputedStyle(el, "::before").content);
+  await expect(numChildren).toBeHidden();
+  expect(await marker()).toBe('"[–]"');
+
+  // Click [–]: the reply folds, every descendant disappears, and the header
+  // reports how many replies are hidden.
+  await parent.locator(":scope > summary .expand").click();
+  await expect(parent).not.toHaveAttribute("open", "");
+  expect(await marker()).toBe('"[+]"');
+  for (let i = 0; i < total; i++) await expect(descendants.nth(i)).toBeHidden();
+  await expect(numChildren).toBeVisible();
+  await expect(numChildren).toHaveText(`(${total} ${total === 1 ? "child" : "children"})`);
+  await expect(parent.locator(":scope > .entry")).toBeHidden();
+  await page.screenshot({ path: `${SHOTS}/comment-collapsed.png` });
+
+  // Click [+]: everything comes back.
+  await parent.locator(":scope > summary .expand").click();
+  await expect(parent).toHaveAttribute("open", "");
+  for (let i = 0; i < total; i++) await expect(descendants.nth(i)).toBeVisible();
+  await expect(numChildren).toBeHidden();
+  expect(await marker()).toBe('"[–]"');
+
+  // Keyboard: select the reply (clicking blank space in its button row, since
+  // a click on the header itself would toggle it), then x folds and unfolds it.
+  const buttons = parent.locator(":scope > .entry > .buttons");
+  const box = (await buttons.boundingBox())!;
+  await buttons.click({ position: { x: box.width - 4, y: box.height / 2 } });
+  await expect(parent).toHaveClass(/kb-active/);
+  await expect(parent).toHaveAttribute("open", "");
+  await page.keyboard.press("x");
+  await expect(parent).not.toHaveAttribute("open", "");
+  await expect(descendants.first()).toBeHidden();
+  await page.keyboard.press("x");
+  await expect(parent).toHaveAttribute("open", "");
+  await expect(descendants.first()).toBeVisible();
+});
+
+test("user profile has a header and lists their casts and replies", async ({ page, baseURL }) => {
   await page.goto(paths.user("dwr"));
   const rows = listingRows(page);
   await expect(rows.first()).toBeVisible();
-  await expect(page.locator(".userbox .redditname")).toHaveText("Dan Romero");
+
+  const header = page.locator(".profile-header");
+  await expect(header.locator(".display-name")).toHaveText("Dan Romero");
+  await expect(header.locator(".handle")).toHaveText("@dwr · fid 3");
+  await expect(header.locator(".followers")).toHaveText(/^\d{1,3}(,\d{3})+ followers$/);
+  await expect(header.locator(".following")).toHaveText(/^\d[\d,]* following$/);
+  await expect(header.locator(".bio")).toHaveText(/\S/);
+  await expect(header.locator("img.pfp")).toBeVisible();
   for (const tagline of await rows.locator(".tagline").allTextContents()) {
     expect(tagline).toContain("by @dwr");
   }
@@ -191,7 +239,47 @@ test("user profile lists their casts and replies", async ({ page, baseURL }) => 
 
   await page.locator(".tabmenu a", { hasText: "replies" }).click();
   await expect(page).toHaveURL(absolute(paths.user("dwr", "tab=replies"), baseURL));
+  await expect(header.locator(".display-name")).toHaveText("Dan Romero");
   await expect(page.locator(".reply-entry").first()).toBeVisible();
+});
+
+test("a .eth profile loads by URL with its header", async ({ page }) => {
+  await page.goto(paths.user("balajis.eth"));
+  const header = page.locator(".profile-header");
+  await expect(header.locator(".handle")).toHaveText("@balajis.eth · fid 37");
+  await expect(header.locator(".display-name")).toHaveText(/\S/);
+  await expect(header.locator(".followers")).toHaveText(/^\d{1,3}(,\d{3})+ followers$/);
+  await expect(header.locator(".following")).toHaveText(/^\d[\d,]* following$/);
+  await expect(header.locator(".bio")).toHaveText(/\S/);
+  await expect(page.locator(".error-page")).toHaveCount(0);
+
+  const rows = listingRows(page);
+  await expect(rows.first()).toBeVisible();
+  for (const tagline of await rows.locator(".tagline").allTextContents()) {
+    expect(tagline).toContain("by @balajis.eth");
+  }
+  await settle(page);
+  await page.screenshot({ path: `${SHOTS}/ens-profile.png` });
+});
+
+test("author links with dotted usernames open the profile", async ({ page, baseURL }) => {
+  // Prefer a dotted author on the live front page (how the bug was found);
+  // fall back to a thread that is always authored by @balajis.eth.
+  await page.goto(paths.home());
+  await expect(listingRows(page).first()).toBeVisible();
+  let link = page.locator("#siteTable a.author", { hasText: "." }).first();
+  if ((await link.count()) === 0) {
+    await page.goto(paths.post(NESTED_THREAD));
+    await expect(listingRows(page).first()).toBeVisible();
+    link = page.locator("#siteTable a.author", { hasText: "." }).first();
+  }
+  const handle = (await link.textContent())!.trim();
+  expect(handle).toMatch(/^@\S+\.\S+$/);
+
+  await link.click();
+  await expect(page).toHaveURL(absolute(paths.user(handle.slice(1)), baseURL));
+  await expect(page.locator(".profile-header .handle")).toContainText(handle);
+  await expect(page.locator(".error-page")).toHaveCount(0);
 });
 
 test("j/k keyboard navigation moves between rows and o opens one", async ({ page }) => {

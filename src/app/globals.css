@@ -619,6 +619,58 @@ a.title:visited {
   font-weight: bold;
 }
 
+/* ---------- profile header ---------- */
+
+.profile-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: #f5f8fb;
+  border: 1px solid #dde6ef;
+  border-radius: 3px;
+}
+
+.profile-header .pfp {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  background: #e8eef4;
+  object-fit: cover;
+}
+
+.profile-info {
+  min-width: 0;
+}
+
+.profile-header .display-name {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  color: #222;
+  overflow-wrap: anywhere;
+}
+
+.profile-header .handle {
+  margin: 2px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-header .counts {
+  margin: 0 0 4px;
+}
+
+.profile-header .counts .number {
+  font-weight: bold;
+}
+
+.profile-header .bio p {
+  margin: 2px 0;
+}
+
 /* ---------- profile replies ---------- */
 
 .reply-entry {
@@ -710,19 +762,6 @@ a.title:visited {
 .titlebox .parent-url code {
   word-break: break-all;
   color: #555;
-}
-
-.userbox .pfp {
-  float: right;
-  margin: 0 0 6px 8px;
-  border-radius: 4px;
-  background: #f0f0f0;
-}
-
-.userbox::after {
-  content: "";
-  display: block;
-  clear: both;
 }
 
 .channel-list {

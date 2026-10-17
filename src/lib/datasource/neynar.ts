@@ -57,6 +57,12 @@ interface ChannelListResponse {
   channels?: (RawChannel | { channel: RawChannel })[];
 }
 
+interface UserSearchResponse {
+  users?: RawUser[];
+  // Neynar nests results as { result: { users } }.
+  result?: { users?: RawUser[] } | null;
+}
+
 function unwrapChannel(entry: RawChannel | { channel: RawChannel }): RawChannel {
   return "channel" in entry && typeof entry.channel === "object" ? entry.channel : (entry as RawChannel);
 }
@@ -176,8 +182,18 @@ export class NeynarShapedSource implements DataSource {
   }
 
   async userByUsername(username: string): Promise<User | null> {
-    const response = await this.get<{ user?: RawUser }>("user/by_username", { username });
-    return response?.user ? normalizeUser(response.user) : null;
+    const response = await this.get<{ user?: RawUser }>("user/by_username", { username }, { nullOn400: true });
+    if (response?.user) return normalizeUser(response.user);
+
+    // Hypersnap's by_username only resolves fnames, so ENS-style usernames
+    // (balajis.eth, jesse.base.eth) 404 there. Search finds them; accept an
+    // exact match only.
+    const search = await this.get<UserSearchResponse>("user/search", { q: username, limit: 10 }, { nullOn400: true });
+    const wanted = username.toLowerCase();
+    const match = (search?.users ?? search?.result?.users ?? []).find(
+      (user) => user.username?.toLowerCase() === wanted,
+    );
+    return match ? normalizeUser(match) : null;
   }
 
   async userByFid(fid: number): Promise<User | null> {

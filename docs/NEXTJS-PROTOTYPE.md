@@ -17,7 +17,8 @@ No login, no writes, no API key, no tracking.
 | --- | --- | --- |
 | ![Channel page](screenshots/channel-page.png) | ![Post page](screenshots/post-page-top.png) | ![User page](screenshots/user-page.png) |
 
-More: [comment tree](screenshots/post-page.png), [j/k keyboard selection](screenshots/keyboard-nav.png).
+More: [comment tree](screenshots/post-page.png), [a collapsed reply](screenshots/comment-collapsed.png),
+[an ENS-named profile](screenshots/ens-profile.png), [j/k keyboard selection](screenshots/keyboard-nav.png).
 The screenshots are regenerated from live data by `npm run test:e2e`.
 
 ## Pages
@@ -27,7 +28,7 @@ The screenshots are regenerated from live data by `npm run test:e2e`.
 | `/` | `/` | Front page: trending casts, sorted `hot` (default), `new` or `top` |
 | `/c/<channel>` | `/c/?id=<channel>` | A channel as a subreddit, with `hot` / `new` / `top` tabs and a sidebar (members, parent URL) |
 | `/p/<hash>` | `/p/?hash=<hash>` | A cast with its full reply tree; each reply collapses with `[–]`/`[+]`; comments sort `top` / `new` / `old` |
-| `/u/<username>` | `/u/?name=<username>` | A profile: posts (sortable) and replies tabs, with a bio/follower sidebar. `fid:<n>` works for accounts without a username |
+| `/u/<username>` | `/u/?name=<username>` | A profile: a header with picture, display name, bio and follower/following counts, then posts (sortable) and replies tabs. Works for fnames (`dwr`), ENS-style names (`balajis.eth`) and `fid:<n>` |
 | `/channels` | `/channels/` | Trending channels and channel search |
 
 A static host can only serve pages that exist at build time, so the static build moves the variable
@@ -90,8 +91,9 @@ E2E_STATIC=1 E2E_BASE_URL=https://ael-dev3.github.io/Allthing/ npm run test:e2e 
   sorting, the data source (against fixtures captured from the live Hypersnap API, with a stubbed
   `fetch`), and server-rendered `PostRow`/`CommentTree` markup.
 - **End-to-end tests** (`e2e/`, Playwright): every page type renders real, current data within 3
-  seconds, sort orders hold, replies collapse and expand, `j`/`k`/`o` work, nothing offers a sign-in,
-  and unknown users/channels/casts show "page not found". First run on a new machine:
+  seconds, sort orders hold, a reply with children collapses and expands (by click and with `x`),
+  profiles show their header, `.eth` profiles open by URL and from author links, `j`/`k`/`o` work,
+  nothing offers a sign-in, and unknown users/channels/casts show "page not found". First run on a new machine:
   `npx playwright install chromium`.
 
 CI (`.github/workflows/ci.yml`) runs the unit tests and both end-to-end variants on pushes to `main` and
@@ -160,6 +162,8 @@ front of it. The interface is shaped so that indexer can sit behind it.
 
 - Mentions arrive as zero-width ranges at **UTF-8 byte offsets** in text that omits them; they are
   spliced back in as `@username`. Neynar's already-inlined mentions are left alone.
+- `user/by_username` only resolves fnames, so ENS-style usernames (`balajis.eth`, `jesse.base.eth`)
+  404 there. The data source then searches and accepts only an exact username match.
 - Pre-2024 channels (`/farcaster`, `/base`, `/ethereum`, `/memes`, `/degen`, `/dev`, `/founders`, `/food`,
   `/nouns`, `/purple`) post under legacy `chain://` or custom parent URLs; `src/lib/channels.ts` maps
   them. Each mapping was checked against live feeds.

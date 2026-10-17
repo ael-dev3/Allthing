@@ -2,6 +2,7 @@ import Link from "next/link";
 import { NextPrev } from "@/components/NextPrev";
 import { PageBody } from "@/components/PageBody";
 import { PostList } from "@/components/PostRow";
+import { ProfileHeader } from "@/components/ProfileHeader";
 import { ReplyList } from "@/components/ReplyList";
 import { KeyboardHelpBox, UserBox } from "@/components/SideBoxes";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -56,6 +57,7 @@ export function UserView({
           </>
         }
       >
+        <ProfileHeader user={user} />
         {tab === "posts" ? (
           <>
             <div className="menuarea">

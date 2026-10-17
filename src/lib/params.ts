@@ -1,7 +1,9 @@
 import { normalizeHash } from "./datasource/normalize";
 
 const HASH_RE = /^(?:0x)?[0-9a-f]{40}$/i;
-const USERNAME_RE = /^(?:fid:\d+|[a-z0-9][a-z0-9._-]{0,63})$/;
+// fnames ("dwr"), ENS-style names ("balajis.eth", "jesse.base.eth", including
+// non-ASCII labels), or "fid:<n>" for accounts without a username.
+const USERNAME_RE = /^(?:fid:\d+|[^\s/?#@.][^\s/?#@]{0,252})$/u;
 
 function decode(value: string): string | null {
   if (!value.includes("%")) return value;
