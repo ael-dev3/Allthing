@@ -6,6 +6,10 @@ Allthing is being built entirely in Rust: **Leptos** for server-rendered pages a
 
 The first release is an **anonymous reader for public Snapchain and Hypersnap traffic**. Authentication, wallet connections, app signers, and publishing are outside its scope. Local reading preferences do not require an account.
 
+## Live Next.js prototype
+
+Alongside the Rust seed, this repository contains a working, read-only **Next.js (TypeScript) prototype that renders real Farcaster data** from the free Hypersnap API: a trending front page, `/c/<channel>` pages with hot/new/top sorting, posts with collapsible threaded replies, profiles, and j/k keyboard navigation. It needs Node.js 22.12+ (`npm install && npm run dev`); the Rust seed described below does not. Setup, design, tests, and screenshots are in [docs/NEXTJS-PROTOTYPE.md](docs/NEXTJS-PROTOTYPE.md).
+
 ## This is a seed
 
 The application runs today with **fictional sample content**. It demonstrates the architecture and interaction model; it is not connected to either live network.
