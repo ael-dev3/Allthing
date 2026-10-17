@@ -1,0 +1,79 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+# Deploying Allthing
+
+Allthing is a single Cloudflare Worker named `allthing`, on the Workers Free plan. **Workers Builds** deploys it from this repository's `main` branch. No API token, account secret or session lives in the repository, and none is needed: Workers Builds creates its own token when the repository is connected.
+
+## Connect the repository (once)
+
+In the Cloudflare dashboard for account `c647739b4535010b0b13e6fc296e2c4e`, go to **Workers & Pages → Create → Import a repository**, pick `ael-dev3/Allthing`, and enter:
+
+| Setting | Value |
+|---|---|
+| Project / Worker name | `allthing` (must match `name` in `wrangler.toml`) |
+| Production branch | `main` |
+| Build command | `bash scripts/build.sh` |
+| Deploy command | `npx wrangler deploy` |
+| Root directory | `/` (the repository root; leave the field empty if it is blank by default) |
+| API token | Create new token (the default) |
+| Build variables | none needed |
+
+Optional: turn off **builds for non-production branches** to save build minutes, since previews are not used.
+
+Pushing to `main` then builds and deploys. The first deploy also:
+
+- attaches the custom domains `allthing.social` and `www.allthing.social` from `routes` in `wrangler.toml`. Cloudflare creates their DNS records and certificates, which can take a few minutes; the zone's DNS should not already have CNAME records for them;
+- makes the `API_LIMITER` rate-limiting binding live (no setup; its counters are per Cloudflare location).
+
+### What the build does
+
+`scripts/build.sh` runs on the Workers Builds image (Ubuntu, 2 vCPUs and a 20-minute limit on the Free plan). The image has no Rust, so the script installs it:
+
+1. rustup and the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1 with the `wasm32-unknown-unknown` target);
+2. `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
+3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`;
+4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly, JS glue, CSS, fonts, `index.html`, `_headers`);
+5. the spam-label shards: `dist/data/labels/spam/`. If the live site already serves shards for the current upstream dataset, they are copied from it; otherwise the dataset (about 125 MB) is downloaded from [warpcast/labels](https://github.com/warpcast/labels), checked against its Git LFS hash, and compacted by `cargo xtask labels`. If that fails, the build still succeeds and profiles say the label data is unavailable. Set the build variable `SKIP_LABELS=1` to skip this step.
+
+A clean build on 2 CPUs takes about 7 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
+
+### Build timing
+
+Measured on a 2-CPU Linux machine with an empty cache, as on Workers Builds:
+
+| Step | Time |
+|---|---|
+| Install `worker-build` (`cargo install`) | 3 min |
+| Worker (`worker-build --release`) | 33 s |
+| Browser app (`cargo build`, `wasm-bindgen`, `wasm-opt`) | 75 s |
+| Label shards, when the dataset changed | under 1 min |
+
+Toolchain and crate downloads add about a minute.
+
+## After the first deploy
+
+1. Open <https://allthing.social>. `https://allthing.social/api/v1/status` should answer with JSON.
+2. Run the end-to-end suite against production: `E2E_BASE_URL=https://allthing.social npx playwright test`.
+3. **Recommended:** make `www` redirect with a real HTTP 301 at no Worker cost. Go to the zone's **Rules → Redirect Rules**, choose the template **Redirect from WWW to root**, and deploy it. Without it, `www.allthing.social` still redirects: API calls get a 301 from the Worker, and pages are sent to the apex by the first script that runs (`web/boot.js`).
+4. Optional protections that stop abusive traffic before it reaches the Worker, so it doesn't count against the 100,000 requests a day: a **WAF rate-limiting rule** on `/api/` and **Bot Fight Mode** (both under the zone's Security settings).
+
+## Rolling back
+
+In the dashboard, **Workers & Pages → allthing → Deployments** lists every version; pick one and choose **Rollback**. A rollback restores the Worker and its static assets together.
+
+## The old GitHub Pages site
+
+The earlier prototype at `https://ael-dev3.github.io/Allthing/` is served from the `gh-pages` branch, which nothing updates any more. Once `allthing.social` is live, that branch is replaced with a two-file redirect (`index.html` and `404.html`). The redirect keeps the path and query, so `…/Allthing/u/?name=dwr` lands on `https://allthing.social/u/?name=dwr`, a link the app still understands. After that, Pages can be switched off under **Settings → Pages**.
+
+## Local development
+
+```sh
+npm ci                                 # wrangler and Playwright
+SKIP_LABELS=1 bash scripts/build.sh    # or without SKIP_LABELS to build the label shards
+npx wrangler dev                       # http://127.0.0.1:8787, with a local Cache API
+```
+
+`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
+
+## Limits to keep in mind
+
+See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 1.1 MB (360 KB compressed, limit 3 MB), and `dist/` holds about 50 files (limit 20,000, each up to 25 MiB).

@@ -1,51 +1,35 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Roadmap
 
-This is a sequence of milestones, not a delivery schedule.
+Milestones, not dates. Allthing stays read-only throughout; participation would need its own scope decision.
 
-The first release is read-only: consume public Snapchain and Hypersnap traffic without authenticating readers or submitting messages.
+## Done
 
-## 0 — Runnable seed
+- **v0: seed.** Rust workspace and product direction.
+- **v1: Next.js prototype.** Live data from Hypersnap, threads, profiles and keyboard navigation, on GitHub Pages. It has since been replaced.
+- **v2: Allthing in Rust, on Cloudflare Workers** ([allthing.social](https://allthing.social)):
+  - [x] Leptos WebAssembly app and a workers-rs API Worker; static assets free on the Workers Free plan
+  - [x] Original light design with an "Allthing" wordmark, subtle motion and reduced-motion support
+  - [x] Honest engagement (likes, recasts, replies; no downvotes) and engagement-based hot, new and top ranking
+  - [x] Inline images, hover preview and an accessible media viewer
+  - [x] Inline HLS video (native on Safari, a Rust Media Source Extensions player elsewhere) and click-to-load YouTube, Vimeo, Loom and Streamable players
+  - [x] Profile pictures and Neynar scores beside names; profiles with registration date, counts and bio
+  - [x] Spam labels from the Farcaster app's public dataset, shown and never used to hide
+  - [x] Wallet activity by chain for verified EVM addresses
+  - [x] Provenance per cast (signing app and backend) and the protocol design in [PROVENANCE.md](PROVENANCE.md)
+  - [x] Edge caching with stale-while-revalidate, coalescing and upstream guards ([BUDGET.md](BUDGET.md))
+  - [x] AGPL-3.0-or-later, with a dependency license audit in CI
 
-- [x] Rust workspace: shared core, Leptos web crate, Axum server.
-- [x] Native server rendering and separate WASM hydration.
-- [x] Classic light-mode feed with fictional conversations.
-- [x] Source/channel filtering, search, new/top sorting, expandable threads, temporary saves.
-- [x] Keep per-source counts separate.
-- [x] Document the intended product and integration boundaries.
-- [x] Keep authentication and publishing outside the initial product scope.
+## Next
 
-## 1 — Trustworthy live reading
+- **A second backend.** Read the same casts from a Snapchain node (or a second Hypersnap operator). Show which backends returned a cast, and let readers pick the source. Reconcile by message hash, not by text.
+- **Smaller app.** The WebAssembly module is about 410 KB compressed, mostly the Leptos runtime and `serde_json`. Candidates: a leaner JSON decoder for payloads, splitting rarely used views, and trimming web-sys features.
+- **Solana activity.** Find a keyless source of Solana address history that allows browser or Worker requests, or document a key-based option that keeps the key out of the repository.
+- **Reading controls kept in the browser.** Local mutes and filters (clearly separate from network labels), saved posts, and remembered collapse state.
+- **Search** across casts and users, as far as public endpoints allow.
+- **Ingress provenance.** Prototype phase 2 of [PROVENANCE.md](PROVENANCE.md), signed ingress receipts, against a Hypersnap fork, and show receipts when nodes publish them.
+- **Pagination beyond the pool.** Cursor-based "more" for long channels and profiles, within the subrequest budget.
 
-- [ ] Verify current API/RPC capabilities and licensing for each provider.
-- [ ] Add one read adapter at a time, with public-data fixtures and bounded requests.
-- [ ] Normalize and validate real identities and timestamps.
-- [ ] Reconcile overlapping messages while preserving source provenance.
-- [ ] Add durable indexing, cursor pagination, freshness, and provider error states.
-- [ ] Reconstruct threads, including deleted or unavailable parents.
-- [ ] Make channel metadata dependencies explicit.
-- [ ] Keep the entire reading experience available without authentication.
-- [ ] Use read APIs/RPCs only; do not introduce network write capabilities.
+## Not planned
 
-Done when real feeds and threads work anonymously and remain understandable if either source is slow, absent, or disagrees.
-
-## 2 — Reading controls
-
-- [ ] Persist reading preferences and saved posts locally in the browser.
-- [ ] Add local mutes and content filters with clear controls.
-- [ ] Make source freshness and unavailable content easy to understand.
-- [ ] Preserve reading position and thread-collapse state where useful.
-
-Done when readers can customize their view without creating accounts or changing protocol state.
-
-## 3 — Read-only production readiness
-
-- [ ] Measure actual server, payload, hydration, and indexing performance.
-- [ ] Test accessibility, mobile behavior, and long/deep/adversarial content.
-- [ ] Add deployment hardening, operational visibility, backup/restore, and dependency/license checks.
-- [ ] Define public application rules and contribution/release practices.
-
-Hosted CI and deployment can be added when their requirements are defined. The seed currently provides a local check script and does not provision external services.
-
-## Deferred — Account features and participation
-
-QR authentication, independent login adapters, app signers, publishing, replies, likes, recasts, and account-bound preferences require a separate scope decision after the read-only client is established. They are not part of the initial implementation plan.
+Sign-in, posting, reactions, wallets that sign, and anything that hides content based on a third party's label.

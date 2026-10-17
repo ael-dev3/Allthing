@@ -1,9 +1,16 @@
 #!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Checks run locally and in CI: formatting, lints for the native and
+# WebAssembly targets, unit tests, and the dependency license audit.
 set -eu
+cd "$(dirname "$0")/.."
 
-# SSR and browser hydration are intentionally separate feature sets.
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cargo clippy -p allthing-web --target wasm32-unknown-unknown --no-default-features --features hydrate --locked -- -D warnings
-cargo leptos build --cargo-locked
+cargo clippy --locked -p allthing-core -p xtask --all-targets -- -D warnings
+cargo clippy --locked -p allthing-web -p allthing-worker --target wasm32-unknown-unknown -- -D warnings
+cargo test --locked -p allthing-core -p allthing-web -p allthing-worker -p xtask
+if command -v cargo-deny >/dev/null 2>&1; then
+  cargo deny --log-level error check licenses
+else
+  echo "cargo-deny is not installed; skipping the license audit (cargo install cargo-deny)" >&2
+fi

@@ -1,11 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "allthing-web"
-description = "Leptos server-rendered UI and WebAssembly hydration for Allthing"
+description = "Allthing's browser app: Leptos components compiled to WebAssembly"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lib]
@@ -13,15 +15,55 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 allthing-core.workspace = true
+console_error_panic_hook.workspace = true
+js-sys.workspace = true
 leptos.workspace = true
-leptos_meta.workspace = true
 leptos_router.workspace = true
-leptos_axum = { workspace = true, optional = true }
-http = { version = "1", optional = true }
-console_error_panic_hook = { version = "0.1", optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 
-[features]
-default = []
-hydrate = ["leptos/hydrate", "dep:wasm-bindgen", "dep:console_error_panic_hook"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "dep:leptos_axum", "dep:http"]
+[dependencies.web-sys]
+workspace = true
+features = [
+    "AbortController",
+    "AbortSignal",
+    "AddEventListenerOptions",
+    "Document",
+    "DomRect",
+    "DomTokenList",
+    "Element",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlImageElement",
+    "HtmlMediaElement",
+    "HtmlVideoElement",
+    "IntersectionObserver",
+    "IntersectionObserverEntry",
+    "IntersectionObserverInit",
+    "KeyboardEvent",
+    "Location",
+    "MediaQueryList",
+    "MediaSource",
+    "MediaSourceReadyState",
+    "MouseEvent",
+    "NodeList",
+    "Navigator",
+    "PointerEvent",
+    "Request",
+    "RequestInit",
+    "Response",
+    "ScrollBehavior",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
+    "SourceBuffer",
+    "SourceBufferAppendMode",
+    "Storage",
+    "TimeRanges",
+    "Touch",
+    "TouchEvent",
+    "TouchList",
+    "Url",
+    "Window",
+]

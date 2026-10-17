@@ -1,86 +1,94 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Allthing
 
-**A place for the conversation.** An independent, read-only Farcaster web client with a compact, light-mode interface inspired by classic Reddit.
+**A quiet, read-only window onto Farcaster.** Allthing shows trending casts, channels, threads and profiles from the open Farcaster network. Its engagement counts are honest, media plays inline, and each cast shows where it came from. Nobody signs in, nothing is posted, and nobody's content is hidden.
 
-Allthing is being built entirely in Rust: **Leptos** for server-rendered pages and browser **WebAssembly**, **Axum** for HTTP, and **Tokio** for the native runtime. The goal is a readable home for conversations available through **Snapchain** and **Hypersnap**, with visible source information and user-controlled feeds.
+**Live: <https://allthing.social>**
 
-The first release is an **anonymous reader for public Snapchain and Hypersnap traffic**. Authentication, wallet connections, app signers, and publishing are outside its scope. Local reading preferences do not require an account.
+The client and the API are written in Rust: a [Leptos](https://leptos.dev) app compiled to WebAssembly, and a Cloudflare Worker built with [workers-rs](https://github.com/cloudflare/workers-rs). Both run on the Workers Free plan. The name comes from the Allthing, the open forum of the Hegemony in Dan Simmons' *Hyperion Cantos*.
 
-## Live Next.js prototype
+| Front page | A post with its media viewer |
+|---|---|
+| ![Front page: trending casts with likes, recasts and replies, scores and the app each cast was posted from](docs/screenshots/home.png) | ![A two-image post open in the media viewer, with alt text and a 1 of 2 counter](docs/screenshots/post-lightbox.png) |
+| **A profile: score, registration, label, wallet activity** | **An inline video, with provenance** |
+| ![Profile of @0xael.eth: Neynar score, registration date, Farcaster app label and wallet activity by chain](docs/screenshots/profile.png) | ![A video cast playing inline with its poster, and a provenance box naming the signing app and the backend](docs/screenshots/video-post.png) |
 
-**Try it: https://ael-dev3.github.io/Allthing/** (no sign-in).
+## What it does
 
-Alongside the Rust seed, this repository contains a working, read-only **Next.js (TypeScript) prototype that renders real Farcaster data** from the free Hypersnap API: a trending front page, channel pages with hot/new/top sorting, posts with collapsible threaded replies, profiles, and j/k keyboard navigation. It is deployed to GitHub Pages on every push to `main`. It needs Node.js 22.12+ (`npm install && npm run dev`); the Rust seed described below does not. Setup, design, tests, and screenshots are in [docs/NEXTJS-PROTOTYPE.md](docs/NEXTJS-PROTOTYPE.md).
+- **Reads Farcaster without an account.** Trending front page, channels and a channel directory, posts with threaded replies that collapse and expand, and profiles. Keyboard: `j`/`k` to move, `o` to open, `x` to collapse, arrows in the media viewer.
+- **Shows engagement as it is.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts and nothing else. Ranking uses engagement (likes + 2 × recasts + replies) with time decay for **hot**, and also offers **new** and **top**. Re-sorting happens in the browser, with no extra request.
+- **Plays media in place.** Images show inline and enlarge on hover. Opening a post gives an accessible media viewer: keyboard and swipe navigation, alt text, and focus that returns where it was. Farcaster's HLS videos play inline: Safari plays HLS natively, and other browsers use a small HLS player written in Rust over Media Source Extensions. Videos show a poster, preview muted on hover, and play with sound and controls on click. YouTube, Vimeo, Loom and Streamable links become click-to-load players; YouTube uses `youtube-nocookie.com`. Video bytes come straight from their host.
+- **Says who people are.** Profile pictures and [Neynar scores](https://docs.neynar.com/docs/neynar-user-quality-score) appear beside names. Profiles show the bio, follower and following counts, and the registration date.
+  - **Spam labels**: if the Farcaster app's [public spam labels](https://github.com/warpcast/labels) flag an account, the profile shows the label, and every cast stays visible.
+  - **Wallet activity by chain**: the share of transactions sent from the account's verified EVM addresses on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad. The source is labeled. Solana is listed as not measured, with the reason.
+- **Shows provenance.** Each cast names the app that registered its signing key (for example *via Warpcast*), and the backend it was read from (Hypersnap). [docs/PROVENANCE.md](docs/PROVENANCE.md) studies Snapchain and Hypersnap and proposes how a chain could record client and ingress at the protocol level.
 
-## This is a seed
-
-The application runs today with **fictional sample content**. It demonstrates the architecture and interaction model; it is not connected to either live network.
-
-| Available now | Planned for the read-only release |
-| --- | --- |
-| Server-rendered feed and About page | Snapchain and Hypersnap read adapters |
-| Rust/WASM source, channel, search, and sort controls | Verified identity and overlap reconciliation |
-| Expandable discussions and nested, collapsible replies | Live thread reconstruction and cursor pagination |
-| Temporary in-memory saves | Browser-local reading preferences and filters |
-| Per-source sample metrics and a health endpoint | Source freshness, graceful failures, and deployment hardening |
-
-Every displayed handle, conversation, age, and count is made up. Saves are temporary component state: they reset on reload or when a post leaves the filtered view. No account access, wallet connection, signer registration, tracking service, or upstream API key is needed.
-
-## Run locally
-
-Install [Rust through rustup](https://rustup.rs/) and [cargo-leptos](https://github.com/leptos-rs/cargo-leptos):
-
-```sh
-cargo install cargo-leptos --version 0.3.11 --locked
-cargo leptos watch
-```
-
-Open **http://127.0.0.1:3000**. The checked-in toolchain file pins Rust and includes the WASM target, rustfmt, and Clippy. On first use, rustup installs those components. No Node.js, npm, JavaScript framework, database, or secret configuration is required.
-
-For a compiled build without the watcher:
-
-```sh
-cargo leptos build --cargo-locked
-LEPTOS_OUTPUT_NAME=allthing \
-LEPTOS_SITE_ROOT=target/site \
-LEPTOS_SITE_PKG_DIR=pkg \
-LEPTOS_SITE_ADDR=127.0.0.1:3000 \
-./target/debug/allthing-server
-```
-
-The server needs both its native binary and the generated `target/site` directory. For an optimized build, use `cargo leptos build --release --cargo-locked` and `target/release/allthing-server`. Bind beyond loopback only with an appropriate production configuration and security review.
-
-## Workspace
+## How it is built
 
 ```text
-crates/
-  allthing-core/     Shared models, deterministic feed queries, fictional fixtures
-  allthing-web/      Leptos components, server function, browser hydration entry
-  allthing-server/   Axum routes, static assets, native process and health endpoint
-style/              Plain CSS; light mode and responsive layouts
-public/             Original static assets
-docs/               Product direction, architecture, implementation roadmap
-scripts/check.sh    Local validation for both compilation targets
+crates/allthing-core     Shared Rust: models, Hypersnap normalization, ranking, text, embeds,
+                         HLS playlists, provenance, wallets, labels, cache policy. No I/O.
+crates/allthing-web      The browser app (Leptos, client-side rendered, WebAssembly)
+crates/allthing-worker   The /api/v1 Worker (workers-rs): aggregation, edge cache, upstream guards
+xtask                    Build tooling: fingerprinted static assets, spam-label shards
+web/  style/             index.html, boot script, headers, fonts; the stylesheet
+e2e/                     Playwright end-to-end tests against live data
+scripts/                 build.sh (used by Cloudflare), check.sh (used by CI)
 ```
 
-The browser and server compile separately. Do not use `--all-features`: the `ssr` and `hydrate` features are intentionally mutually exclusive. Leptos generates a small JavaScript loader to initialize WebAssembly; all authored application behavior is Rust.
+The browser loads static files, which are free on Workers, and then makes **one** API call per page. The Worker builds each payload from [Hypersnap](https://github.com/farcasterorg/hypersnap) and public RPCs, caches it at the edge with stale-while-revalidate, and merges concurrent requests, so the number of readers barely changes upstream load. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the details and [docs/BUDGET.md](docs/BUDGET.md) has the Free plan budget.
+
+The only JavaScript is generated glue (from wasm-bindgen and worker-build) and a short boot script. Compressed sizes: the app is 410 KB of WebAssembly, 10 KB of JS glue and 8 KB of CSS, and the Worker is 360 KB. Most of the app's size is the Leptos runtime and `serde_json`.
+
+## Run it locally
+
+You need [rustup](https://rustup.rs) and Node.js 22.12 or later. Node is used only for `wrangler` and Playwright.
 
 ```sh
-./scripts/check.sh
-curl http://127.0.0.1:3000/healthz
-# {"status":"ok","mode":"demo"}
+npm ci
+SKIP_LABELS=1 bash scripts/build.sh   # installs the pinned Rust toolchain, builds the Worker and the app
+npx wrangler dev                       # http://127.0.0.1:8787
 ```
 
-## Direction
+Drop `SKIP_LABELS=1` to also build the spam-label shards, which downloads a dataset of about 125 MB.
 
-- **Read without an account.** Public feeds, compact lists, and threads that are easy to follow.
-- **Show origins.** Snapchain and Hypersnap are overlapping sources, not automatically two disjoint social networks. Reconcile verified post identities and retain provenance.
-- **Keep meaning.** Likes and recasts retain their native meaning. Client-specific features must not pretend to be protocol-wide actions.
-- **Keep the first release read-only.** Read adapters and UI controls must not submit protocol messages or create account permissions.
-- **Let people choose.** Source selection and transparent user controls should be explicit.
+## Tests
 
-See the [product brief](docs/PRODUCT.md), [architecture](docs/ARCHITECTURE.md), and [roadmap](docs/ROADMAP.md). Allthing is independent and is not affiliated with or endorsed by Farcaster or its operators. The name nods to the *Hyperion Cantos*; no book text or artwork is included.
+```sh
+bash scripts/check.sh      # rustfmt, Clippy (native and wasm32), unit tests, license audit (cargo-deny)
+npx playwright test        # end to end against `wrangler dev` (started automatically) and live Farcaster data
+E2E_BASE_URL=https://allthing.social npx playwright test   # the same suite against production
+```
+
+The end-to-end suite covers ranking, a single API call per page, the media viewer (keyboard, swipe, alt text, focus trap), HLS playback through the Rust player, a known video cast by @0xael.eth, plain video files, click-to-load YouTube, profiles (score, registration, wallet shares, labels, a flagged account that still shows every cast), thread collapsing, keyboard navigation, provenance and read-only behaviour. It also takes the screenshots in [docs/screenshots](docs/screenshots). GitHub Actions runs only `check.sh`, to keep CI cheap.
+
+## Deploy
+
+Cloudflare Workers Builds deploys every push to `main`. Settings and the first-deploy checklist are in [docs/DEPLOY.md](docs/DEPLOY.md). The repository holds no secrets.
+
+## Documents
+
+- [Product](docs/PRODUCT.md): what Allthing is for, and its principles
+- [Architecture](docs/ARCHITECTURE.md): crates, API, data sources, caching, frontend
+- [Budget](docs/BUDGET.md): fitting the Workers Free plan; upstream load
+- [Deploy](docs/DEPLOY.md): Workers Builds settings, domains, rollback
+- [Provenance](docs/PROVENANCE.md): client and backend provenance, research and protocol design
+- [Roadmap](docs/ROADMAP.md)
+
+Allthing is independent. It is not affiliated with or endorsed by Farcaster, Neynar, the operators of Hypersnap, or Cloudflare. No text or artwork from the *Hyperion Cantos* is included.
 
 ## License
 
-Original Allthing code, documentation, and artwork are available under the [MIT license](LICENSE). Dependencies retain their own licenses. Future protocol schemas and third-party assets must be reviewed and retain the notices required by their licenses.
+Copyright © Allthing contributors.
+
+Allthing is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either **version 3** of the License, or (at your option) **any later version**. See [LICENSE](LICENSE). Source files carry `SPDX-License-Identifier: AGPL-3.0-or-later`.
+
+The AGPL is a strong copyleft license. A fork or modified version that you distribute, **or run as a network service for others**, must be offered to its users as source code under the same license (AGPL section 13). The site's footer links to this repository for that reason. Keep that link, or an equivalent, in your own deployment.
+
+**Dependencies.** Every Rust crate compiled into the app, the Worker or the build tooling uses a license compatible with AGPL-3.0-or-later: MIT, Apache-2.0, BSD-3-Clause, BSL-1.0, CC0-1.0, Unicode-3.0, Unlicense or Zlib. Many crates are dual-licensed. `cargo deny check licenses` enforces this with the allowlist in [deny.toml](deny.toml), and CI runs it. **No dependency was found to be incompatible.** Other third-party material:
+
+- **Instrument Serif** (the display face), © The Instrument Serif Project Authors, under the [SIL Open Font License 1.1](web/fonts/OFL-InstrumentSerif.txt). It is shipped as separate font files with its license, as the OFL allows.
+- **Generated JavaScript glue** from wasm-bindgen and worker-build, under MIT or Apache-2.0.
+- **Development tools** (wrangler, workerd, Playwright and their npm dependencies) are used to build and test but are never shipped to users. They are under MIT, Apache-2.0, ISC, 0BSD or CC0-1.0, apart from `sharp`'s libvips binary, which is LGPL-3.0-or-later and also compatible.
+- **Data**: the spam labels come from [warpcast/labels](https://github.com/warpcast/labels). That repository publishes no license, so the dataset is not covered by Allthing's license. Its shards are built at deploy time and not committed, and the site credits the source. Farcaster content belongs to its authors and is displayed as published.
+- **Snapchain and Hypersnap** (GPL-3.0) are referenced, not included; see the licensing note in [docs/PROVENANCE.md](docs/PROVENANCE.md).
