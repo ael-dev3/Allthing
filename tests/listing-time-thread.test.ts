@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compactNumber, plural } from "@/lib/format";
 import { firstParam, paginate, parsePage, queryString, repliesOnly, topLevelOnly } from "@/lib/listing";
-import { sortTabs } from "@/lib/links";
+import { channelRoute, sortTabs } from "@/lib/links";
 import { countDescendants, countNodes, parseCommentSort, sortThread } from "@/lib/thread";
 import { durationSince, formatDate, timeAgo } from "@/lib/time";
 import type { Cast, ThreadNode } from "@/lib/types";
@@ -77,7 +77,7 @@ describe("listing helpers", () => {
     expect(queryString({ sort: "new", page: 2, empty: "" })).toBe("?sort=new&page=2");
     expect(queryString({ sort: undefined })).toBe("");
     expect(firstParam(["a", "b"])).toBe("a");
-    expect(sortTabs("/c/gifart", "new")).toEqual([
+    expect(sortTabs(channelRoute("gifart"), "new")).toEqual([
       { label: "hot", href: "/c/gifart", selected: false },
       { label: "new", href: "/c/gifart?sort=new", selected: true },
       { label: "top", href: "/c/gifart?sort=top", selected: false },

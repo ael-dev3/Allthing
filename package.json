@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:static": "ALLTHING_STATIC_EXPORT=1 next build",
     "start": "next start",
+    "serve:static": "node scripts/serve-static.mjs out",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",

@@ -1,15 +1,21 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /*
- * End-to-end tests against a production build reading live Farcaster data.
+ * End-to-end tests reading live Farcaster data, against either build:
  *
- *   npm run build && npm run test:e2e
+ *   npm run build && npm run test:e2e                     # server build
+ *   ALLTHING_BASE_PATH=/Allthing npm run build:static \
+ *     && E2E_STATIC=1 npm run test:e2e                    # static export
+ *   E2E_STATIC=1 E2E_BASE_URL=https://ael-dev3.github.io/Allthing/ npm run test:e2e
  *
- * Set E2E_BASE_URL to test an already-running deployment instead.
+ * With E2E_BASE_URL set, no local server is started.
  */
 
-const PORT = Number(process.env.E2E_PORT ?? 3100);
-const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
+const staticMode = process.env.E2E_STATIC === "1";
+const PORT = Number(process.env.E2E_PORT ?? (staticMode ? 3200 : 3100));
+const basePath = staticMode ? (process.env.E2E_BASE_PATH ?? "/Allthing") : "";
+const localURL = `http://localhost:${PORT}${basePath}/`;
+const baseURL = process.env.E2E_BASE_URL ?? localURL;
 
 // Behind an HTTPS proxy (corporate networks, sandboxes) Chromium needs it
 // passed explicitly, and Node's fetch only honours it with NODE_USE_ENV_PROXY.
@@ -34,8 +40,10 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: `npm run start -- -p ${PORT}`,
-        url: baseURL,
+        command: staticMode
+          ? `node scripts/serve-static.mjs out ${basePath} ${PORT}`
+          : `npm run start -- -p ${PORT}`,
+        url: localURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: proxy ? { NODE_USE_ENV_PROXY: "1" } : {},

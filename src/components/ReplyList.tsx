@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { channelHref } from "@/lib/channels";
 import { plural } from "@/lib/format";
-import { postHref, userHref } from "@/lib/links";
+import { channelHref, postHref, userHref } from "@/lib/links";
 import { castScore } from "@/lib/ranking";
 import type { Cast } from "@/lib/types";
 import { CastText } from "./CastText";

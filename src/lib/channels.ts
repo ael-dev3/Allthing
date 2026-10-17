@@ -117,10 +117,6 @@ export function channelLabel(key: string): string {
   return isChannelId(key) ? key : (channelIdForUrl(key) ?? shortParentUrlLabel(key));
 }
 
-export function channelHref(ref: { id: string } | string): string {
-  return `/c/${encodeURIComponent(typeof ref === "string" ? ref : ref.id)}`;
-}
-
 /**
  * Turn the raw /c/[channel] route segment back into a channel key: a
  * lowercase channel id, or the parent URL for non-channel feeds.

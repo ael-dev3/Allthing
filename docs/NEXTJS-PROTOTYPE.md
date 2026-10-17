@@ -1,9 +1,13 @@
 # Allthing: Next.js live prototype
 
+**Live: https://ael-dev3.github.io/Allthing/**
+
 A read-only, old-reddit-style Farcaster client that renders **real Farcaster data** today. It is a
-server-rendered Next.js (App Router, TypeScript) app reading the free, no-auth
+Next.js (App Router, TypeScript) app reading the free, no-auth
 [Hypersnap](https://github.com/farcasterorg/hypersnap) Neynar-shaped API at
-`https://haatz.quilibrium.com/v2/farcaster`, behind a swappable `DataSource` interface.
+`https://haatz.quilibrium.com/v2/farcaster`, behind a swappable `DataSource` interface. The same code
+builds two ways: server-rendered for Node hosts, or as a static export that fetches from the browser,
+which is what GitHub Pages serves.
 
 No login, no writes, no API key, no tracking.
 
@@ -18,13 +22,19 @@ The screenshots are regenerated from live data by `npm run test:e2e`.
 
 ## Pages
 
-| Route | What it shows |
-| --- | --- |
-| `/` | Front page: trending casts, sorted `hot` (default), `new` or `top` |
-| `/c/<channel>` | A channel as a subreddit, with `hot` / `new` / `top` tabs and a sidebar (members, parent URL) |
-| `/p/<hash>` | A cast with its full reply tree; each reply collapses with `[–]`/`[+]`; comments sort `top` / `new` / `old` |
-| `/u/<username>` | A profile: posts (sortable) and replies tabs, with a bio/follower sidebar. `/u/fid:<n>` works for accounts without a username |
-| `/channels` | Trending channels and channel search |
+| Server build | Static build (GitHub Pages) | What it shows |
+| --- | --- | --- |
+| `/` | `/` | Front page: trending casts, sorted `hot` (default), `new` or `top` |
+| `/c/<channel>` | `/c/?id=<channel>` | A channel as a subreddit, with `hot` / `new` / `top` tabs and a sidebar (members, parent URL) |
+| `/p/<hash>` | `/p/?hash=<hash>` | A cast with its full reply tree; each reply collapses with `[–]`/`[+]`; comments sort `top` / `new` / `old` |
+| `/u/<username>` | `/u/?name=<username>` | A profile: posts (sortable) and replies tabs, with a bio/follower sidebar. `fid:<n>` works for accounts without a username |
+| `/channels` | `/channels/` | Trending channels and channel search |
+
+A static host can only serve pages that exist at build time, so the static build moves the variable
+part of the URL into the query string. Try
+[/c/?id=farcaster](https://ael-dev3.github.io/Allthing/c/?id=farcaster),
+[a thread](https://ael-dev3.github.io/Allthing/p/?hash=0xf454b8d3e5ee2c9252a0b7574ad4942e9ba502d2) or
+[/u/?name=dwr](https://ael-dev3.github.io/Allthing/u/?name=dwr).
 
 Listing rows follow old reddit: rank, score (likes + 2 × recasts), a 70px thumbnail of the first embed
 (or a self/link/video/quote placeholder), a title made of the first ~120 characters of the cast, and the
@@ -43,11 +53,13 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Production build:
+Production builds:
 
 ```sh
-npm run build
-npm run start        # http://localhost:3000
+npm run build && npm run start          # server-rendered, http://localhost:3000
+
+ALLTHING_BASE_PATH=/Allthing npm run build:static
+npm run serve:static -- /Allthing 3200  # static export, http://localhost:3200/Allthing/
 ```
 
 No environment variables are needed. To switch providers, copy `.env.example` to `.env.local`:
@@ -64,45 +76,62 @@ If your machine reaches the internet through an HTTPS proxy, start Node with `NO
 ## Tests
 
 ```sh
-npm run check        # ESLint, TypeScript, and Vitest unit tests (offline)
-npm run build && npm run test:e2e   # Playwright against the production build, live data
+npm run check                         # ESLint, TypeScript, and Vitest unit tests (offline)
+npm run build && npm run test:e2e     # Playwright against the server build, live data
+
+ALLTHING_BASE_PATH=/Allthing npm run build:static
+E2E_STATIC=1 npm run test:e2e         # the same tests against the static export
+
+E2E_STATIC=1 E2E_BASE_URL=https://ael-dev3.github.io/Allthing/ npm run test:e2e   # the live site
 ```
 
 - **Unit tests** (`tests/`, Vitest): the hot formula, sorting, pagination, title truncation, mention
   splicing, link/mention/channel tokenizing, embed classification, channel URL mapping, reply-tree
   sorting, the data source (against fixtures captured from the live Hypersnap API, with a stubbed
   `fetch`), and server-rendered `PostRow`/`CommentTree` markup.
-- **End-to-end tests** (`e2e/`, Playwright): every page type renders real data, sort orders hold,
-  replies collapse and expand, `j`/`k`/`o` work, and unknown users/channels/casts show "page not found".
-  First run on a new machine: `npx playwright install chromium`.
+- **End-to-end tests** (`e2e/`, Playwright): every page type renders real, current data within 3
+  seconds, sort orders hold, replies collapse and expand, `j`/`k`/`o` work, nothing offers a sign-in,
+  and unknown users/channels/casts show "page not found". First run on a new machine:
+  `npx playwright install chromium`.
 
-CI (`.github/workflows/ci.yml`) runs both on pushes to `main` and on pull requests.
+CI (`.github/workflows/ci.yml`) runs the unit tests and both end-to-end variants on pushes to `main` and
+on pull requests.
 
 ## Deploy
 
-**Vercel:** import the repository; Next.js is detected and no settings or environment variables are
-required. Any Node host works too: `npm run build && npm run start`.
+**GitHub Pages (live):** `.github/workflows/pages.yml` runs on every push to `main`. It builds the static
+export with `basePath` `/Allthing`, publishes it to the `gh-pages` branch that Pages serves, waits until
+the site serves the new commit (`/build.txt`), and then runs the end-to-end tests against the live URL.
+The Hypersnap API sends `Access-Control-Allow-Origin: *`, so the browser reads it directly; there is no
+server and no key.
 
-**GitHub Pages is not a fit.** Pages only serves static files, and this app renders live data on each
-request for routes (`/p/<hash>`, `/u/<name>`, `/c/<channel>`) that can't be enumerated at build time.
-A Pages version would have to become a browser-only SPA calling the API from the client.
-
-The build makes no API calls: every route is a partial prerender, a static shell (header and "loading…")
-with data streamed in at request time.
+**Server-rendered (Vercel or any Node host):** import the repository on Vercel (Next.js is detected; no
+settings or environment variables needed), or run `npm run build && npm run start`. The server build
+makes no API calls at build time: every route is a partial prerender, a static shell with data
+streamed in at request time and cached for a minute.
 
 ## How it works
 
 ```text
-src/app/*                 pages: read params/searchParams inside <Suspense>, render server components
-  |
-src/lib/data.ts           "use cache" + cacheLife: one fetch per feed per minute, shared across sorts/pages
-  |
-src/lib/datasource/
-  types.ts                DataSource interface (read-only, returns normalized types)
-  neynar.ts               NeynarShapedSource: Hypersnap or Neynar (same shape, different limits/key)
-  normalize.ts            raw API JSON -> Cast, User, Channel, ThreadNode
-  memory.ts               in-memory source for tests
+src/views/*               one presentational view per page, shared by both builds
+
+server build                               static build (ALLTHING_STATIC_EXPORT=1)
+src/app/**/page.tsx                        src/app/**/page.static.tsx
+  reads params inside <Suspense>             renders src/client/pages.tsx: reads the query
+  src/lib/data.ts: "use cache" wrappers      string, src/client/load.ts: per-key memo, fetch
+           \                                  /   from the browser
+            src/lib/queries.ts: page loaders (front page, channel, thread, profile)
+                         |
+            src/lib/datasource/
+              types.ts       DataSource interface (read-only, returns normalized types)
+              neynar.ts      NeynarShapedSource: Hypersnap or Neynar (same shape, different limits/key)
+              normalize.ts   raw API JSON -> Cast, User, Channel, ThreadNode
+              memory.ts      in-memory source for tests
 ```
+
+`next.config.ts` picks the build: with `ALLTHING_STATIC_EXPORT=1` it sets `output: "export"`, a
+`basePath`, and `pageExtensions: ["static.tsx"]`, so only the `*.static.tsx` route files are used.
+Links go through `src/lib/links.ts`, which knows both URL schemes.
 
 ### Ranking
 
@@ -116,9 +145,11 @@ src/lib/datasource/
 
 ### Swapping the data source
 
-Pages never call a provider directly; they use `src/lib/data.ts`, which calls `getDataSource()`. To add
-a provider (for example our own Snapchain node), implement `DataSource` in `src/lib/datasource/` and
-return it from `createDataSource()` in `src/lib/datasource/index.ts`. Each method returns normalized
+Pages never call a provider directly; they go through the loaders in `src/lib/queries.ts`, which take a
+`DataSource`. To add a provider (for example our own Snapchain node), implement `DataSource` in
+`src/lib/datasource/` and return it from `createDataSource()` in `src/lib/datasource/index.ts`. The
+static build always reads Hypersnap from the browser, since a provider that needs a key can't be called
+from a public page. Each method returns normalized
 types and resolves to `null` when an entity doesn't exist.
 
 A Snapchain node serves raw protocol messages (casts by fid or parent, user data, reactions) rather
@@ -144,5 +175,6 @@ front of it. The interface is shaped so that indexer can sit behind it.
 
 - Read-only by design: no accounts, voting, replying, or posting. The vote arrows are decoration.
 - Reply trees go as deep as the API returns them; a reply whose own replies were not returned shows "continue this thread".
-- Not-found pages render inside the streamed response, so they return HTTP 200 rather than 404.
+- Not-found pages render inside the streamed response (or, in the static build, in the browser), so they
+  return HTTP 200 rather than 404. Unknown paths on GitHub Pages do get the 404 page with a 404 status.
 - Reply and comment counts come from the API's snapshot and can differ slightly between endpoints.

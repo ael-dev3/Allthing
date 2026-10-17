@@ -1,16 +1,16 @@
 import Link from "next/link";
 import { Fragment } from "react";
-import { DEFAULT_CHANNELS, channelHref } from "@/lib/channels";
-import type { Tab } from "@/lib/links";
+import { DEFAULT_CHANNELS } from "@/lib/channels";
+import { channelHref, channelsRoute, hrefFor, homeRoute, type Tab } from "@/lib/links";
 import { Logo } from "./Logo";
 
 function ChannelStrip() {
   return (
     <div id="sr-header-area">
       <nav className="sr-list" aria-label="channels">
-        <Link href="/">front</Link>
+        <Link href={hrefFor(homeRoute)}>front</Link>
         <span className="separator">-</span>
-        <Link href="/channels">channels</Link>
+        <Link href={hrefFor(channelsRoute)}>channels</Link>
         <span className="separator">|</span>
         {DEFAULT_CHANNELS.map((id, i) => (
           <Fragment key={id}>
@@ -19,7 +19,7 @@ function ChannelStrip() {
           </Fragment>
         ))}
       </nav>
-      <Link className="sr-more" href="/channels">
+      <Link className="sr-more" href={hrefFor(channelsRoute)}>
         more »
       </Link>
     </div>
@@ -40,7 +40,7 @@ export function SiteHeader({
       <ChannelStrip />
       <div id="header-bottom">
         <div id="header-bottom-left">
-          <Link href="/" id="header-img" aria-label="allthing front page">
+          <Link href={hrefFor(homeRoute)} id="header-img" aria-label="allthing front page">
             <Logo />
             <span className="logo-text">allthing</span>
           </Link>

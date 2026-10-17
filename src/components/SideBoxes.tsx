@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { channelHref, channelLabel, isChannelId } from "@/lib/channels";
-import { getTrendingChannels } from "@/lib/data";
+import { channelLabel, isChannelId } from "@/lib/channels";
 import { resizedImageUrl } from "@/lib/embeds";
 import { fullNumber, plural } from "@/lib/format";
-import { farcasterCastUrl, userHref } from "@/lib/links";
+import { channelHref, channelsRoute, farcasterCastUrl, hrefFor, userHref } from "@/lib/links";
 import { castScore } from "@/lib/ranking";
 import { formatDate } from "@/lib/time";
 import type { Cast, Channel, User } from "@/lib/types";
@@ -61,13 +60,7 @@ export function KeyboardHelpBox() {
   );
 }
 
-export async function TrendingChannelsBox() {
-  let channels: Channel[] = [];
-  try {
-    channels = await getTrendingChannels();
-  } catch {
-    return null; // the sidebar is optional; the listing still renders
-  }
+export function TrendingChannelsBox({ channels }: { channels: Channel[] }) {
   if (channels.length === 0) return null;
   return (
     <SideBox title="trending channels">
@@ -82,7 +75,7 @@ export async function TrendingChannelsBox() {
         ))}
       </ol>
       <p className="more-link">
-        <Link href="/channels">all channels »</Link>
+        <Link href={hrefFor(channelsRoute)}>all channels »</Link>
       </p>
     </SideBox>
   );

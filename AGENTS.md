@@ -11,7 +11,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Allthing project notes
 
 - Read-only Farcaster client. Never add login, signing or write paths without being asked.
-- Pages (`src/app`) read data only through the cached helpers in `src/lib/data.ts`, which call the `DataSource` interface (`src/lib/datasource/types.ts`). Provider quirks belong in `src/lib/datasource/`, not in components.
+- Two builds from one codebase: server-rendered (`src/app/**/page.tsx`) and a static export for GitHub Pages (`ALLTHING_STATIC_EXPORT=1`, which only uses `src/app/**/*.static.tsx`). Both render the views in `src/views/`; keep page UI there, not in route files.
+- Data flows through the page loaders in `src/lib/queries.ts` and the `DataSource` interface (`src/lib/datasource/types.ts`); the server wraps loaders in `use cache` (`src/lib/data.ts`), the static build calls them from the browser (`src/client/`). Provider quirks belong in `src/lib/datasource/`, not in components.
+- Build links with `src/lib/links.ts`; the two builds use different URL schemes.
 - Cache Components is on: anything that reads `params`, `searchParams` or the clock goes inside `<Suspense>`; use `requestNow()` instead of `Date.now()` in server components.
-- Checks: `npm run check` (lint, typecheck, unit tests). End-to-end against live data: `npm run build && npm run test:e2e`.
+- Checks: `npm run check` (lint, typecheck, unit tests). End-to-end against live data: `npm run build && npm run test:e2e`, and for the static export `ALLTHING_BASE_PATH=/Allthing npm run build:static && E2E_STATIC=1 npm run test:e2e`.
 
