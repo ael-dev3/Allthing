@@ -2,6 +2,8 @@
 
 This is a sequence of milestones, not a delivery schedule.
 
+The first release is read-only: consume public Snapchain and Hypersnap traffic without authenticating readers or submitting messages.
+
 ## 0 — Runnable seed
 
 - [x] Rust workspace: shared core, Leptos web crate, Axum server.
@@ -10,6 +12,7 @@ This is a sequence of milestones, not a delivery schedule.
 - [x] Source/channel filtering, search, new/top sorting, expandable threads, temporary saves.
 - [x] Keep per-source counts separate.
 - [x] Document the intended product and integration boundaries.
+- [x] Keep authentication and publishing outside the initial product scope.
 
 ## 1 — Trustworthy live reading
 
@@ -20,28 +23,21 @@ This is a sequence of milestones, not a delivery schedule.
 - [ ] Add durable indexing, cursor pagination, freshness, and provider error states.
 - [ ] Reconstruct threads, including deleted or unavailable parents.
 - [ ] Make channel metadata dependencies explicit.
+- [ ] Keep the entire reading experience available without authentication.
+- [ ] Use read APIs/RPCs only; do not introduce network write capabilities.
 
-Done when real feeds and threads remain understandable if either source is slow, absent, or disagrees.
+Done when real feeds and threads work anonymously and remain understandable if either source is slow, absent, or disagrees.
 
-## 2 — Account connection
+## 2 — Reading controls
 
-- [ ] Farcaster QR login with server-side challenge verification.
-- [ ] Session lifecycle, nonce replay prevention, secure cookies, logout, and tests.
-- [ ] Compatible independent login adapter after its authority model is verified.
-- [ ] Account-bound saved posts and user settings.
+- [ ] Persist reading preferences and saved posts locally in the browser.
+- [ ] Add local mutes and content filters with clear controls.
+- [ ] Make source freshness and unavailable content easy to understand.
+- [ ] Preserve reading position and thread-collapse state where useful.
 
-Done when connecting and disconnecting an account works without requesting write permissions.
+Done when readers can customize their view without creating accounts or changing protocol state.
 
-## 3 — Deliberate participation
-
-- [ ] Explain and obtain revocable signer authorization separately from login.
-- [ ] Support publishing, replying, liking, and recasting where the chosen network accepts them.
-- [ ] Handle network-specific message support and failed writes honestly.
-- [ ] User-owned mutes and blocks; transparent client moderation controls.
-
-Done when permission, destination, result, and revocation are clear for every write action.
-
-## 4 — Production readiness
+## 3 — Read-only production readiness
 
 - [ ] Measure actual server, payload, hydration, and indexing performance.
 - [ ] Test accessibility, mobile behavior, and long/deep/adversarial content.
@@ -49,3 +45,7 @@ Done when permission, destination, result, and revocation are clear for every wr
 - [ ] Define public application rules and contribution/release practices.
 
 Hosted CI and deployment can be added when their requirements are defined. The seed currently provides a local check script and does not provision external services.
+
+## Deferred — Account features and participation
+
+QR authentication, independent login adapters, app signers, publishing, replies, likes, recasts, and account-bound preferences require a separate scope decision after the read-only client is established. They are not part of the initial implementation plan.

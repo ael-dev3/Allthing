@@ -4,6 +4,8 @@
 
 A lightweight, independent Farcaster web client for people who prefer reading conversations to navigating a busy dashboard. Bring the clarity of classic Reddit to a shared social protocol: light mode, compact rows, contextual metadata, channels, and nested discussions.
 
+The initial product reads public Snapchain and Hypersnap traffic anonymously. No login or wallet connection is part of this release.
+
 ## The reading experience
 
 1. Open a readable front page without signing in.
@@ -11,15 +13,15 @@ A lightweight, independent Farcaster web client for people who prefer reading co
 3. Browse chronologically or use a clearly described ranking option.
 4. Filter by channel, find a conversation, and expand its replies.
 5. Understand which source supplied a post and which snapshot supplies its counts.
-6. Connect an account only when account-specific features are useful.
+6. Keep reading preferences and filters local to the browser, without an account.
 
 Channels, membership, moderation, media, and ranking may depend on services beyond the raw message stream. The client must describe these dependencies instead of promising complete parity with another application.
 
-## Authentication and writing
+## Read-only scope
 
-The intended first login is familiar Farcaster QR authentication. A compatible independent flow should be possible through a replaceable authentication adapter when its authority checks and implementation are verified.
+The client displays public posts, replies, reactions, profiles, and source metadata. Reading a reply tree or showing a like count does not grant permission to reply or react. Source filters, sorting, collapsing threads, and local saves are reading controls.
 
-Signing in proves account control. Publishing needs a separate authorized app signer. Account connection must explain requested permissions, session lifetime, and revocation. A reader must never have to provide a seed phrase or private custody key to the client.
+Do not add authentication flows, account sessions, wallet connections, app-signer registration, or message submission to the initial release. Authentication and participation can be revisited as a separately scoped later phase; they are not dependencies of live reading.
 
 ## Design principles
 
@@ -33,8 +35,8 @@ Signing in proves account control. Publishing needs a separate authorized app si
 
 ## First live milestone
 
-A read-only client with verified adapters, stable cursor pagination, identity reconciliation, source-specific error handling, and tested thread reconstruction. Authentication and writing follow that foundation.
+A read-only client with verified adapters, stable cursor pagination, identity reconciliation, source-specific error handling, and tested thread reconstruction. Public feeds and threads must work without authenticating a reader.
 
-## Outside the seed
+## Outside the first release
 
-Production accounts, private messages, wallet transactions, payments, mini apps, recommendations, and a new consensus protocol are not implemented. A new frontend alone cannot guarantee access to content a provider does not serve or a network does not accept.
+Authentication, publishing, account-bound actions, private messages, wallet transactions, payments, mini apps, recommendations, and a new consensus protocol are outside the initial scope. A new frontend alone cannot guarantee access to content a provider does not serve or a network does not accept.

@@ -1,5 +1,7 @@
 # Architecture
 
+The initial application is an anonymous, read-only client for public Snapchain and Hypersnap traffic. All active integration work should support that reading path.
+
 ## Implemented foundation
 
 ```text
@@ -36,6 +38,8 @@ Hypersnap read adapter ----/
 
 Start with independent read adapters behind a shared interface. Return typed errors, provenance, upstream cursors, and freshness. Bound upstream requests, result sizes, retries, and timeouts. Avoid making the browser contact arbitrary reader-supplied endpoints through the server.
 
+Use public read APIs/RPCs without authenticating readers. Reading credentials required by a provider, if any, belong in server configuration and must not be confused with end-user authentication. Do not add message submission or signer operations to these adapters.
+
 ### Identity and overlap
 
 - Reconcile verified author FID and canonical message identity, not matching text.
@@ -53,28 +57,21 @@ Use supported Snapchain/Hypersnap APIs or RPC clients once their capabilities an
 
 Do not copy third-party protocol schemas into the MIT tree without a license review. A project's availability on GitHub does not imply MIT-compatible redistribution.
 
-## Planned authentication boundary
+## Read-only application boundary
 
-```text
-QR challenge or compatible account proof
-  -> validate domain, nonce, expiry, signature, and current FID authority
-  -> application session
-  -> separate, explicit signer authorization if the user wants to write
-```
+The first release has no authentication endpoints, account sessions, wallet connections, signer store, or publication path. Profiles and author identities are public feed data; displaying them does not connect the reader's account.
 
-Farcaster QR sign-in authenticates an identity; it does not by itself grant cast-writing authority. An arbitrary verified wallet must not be treated as custody or signer authority. Sessions require secure, HttpOnly, appropriately scoped cookies, CSRF defenses, revocation, and origin checks before production.
+Filters, temporary saves, and thread controls change local presentation only. Future persistence for those preferences should stay browser-local for this release. A transport request used to fetch a feed is still a read operation even if the framework encodes it as HTTP POST; protocol message submission remains out of scope.
 
-Hypersnap authentication and signer capabilities are evolving. Evaluate current unified signer APIs, including off-chain/gasless keys where supported. Do not rely exclusively on legacy on-chain-only lookups or assume placeholder login endpoints are usable. Keep independent authentication adapters capability-driven and fail closed.
-
-No authentication endpoint, signer store, key material, or publication path is included in the seed.
+Any later authentication or participation work needs its own permission model and scope decision. It must not become a prerequisite for consuming either source.
 
 ## Deployment and security work still needed
 
 - TLS termination, production response headers, and a tested CSP compatible with the actual loader.
 - Rate limits, request-size limits, bounded ingestion and rendering, and safe media proxying if added.
 - Configuration validation, graceful provider failures, structured logs with redaction, and metrics without personal data.
-- Persistent storage, migrations, backup/restore tests, and signer encryption only when those components exist.
-- Session and permission tests before enabling any write actions.
+- Persistent feed storage, migrations, and backup/restore tests when those components exist.
+- Verify that provider integrations expose only the required read capabilities.
 - Separate native/WASM dependency checks and upstream license review.
 
 The local server binds to loopback by default and has no privileged actions. Deployment configuration, hosted services, CI credentials, and personal development settings do not belong in source control.
@@ -84,7 +81,6 @@ The local server binds to loopback by default and has no privileged actions. Dep
 API details must be checked again when implementing adapters; these are research starting points rather than frozen contracts.
 
 - [Farcaster documentation](https://docs.farcaster.xyz/)
-- [Farcaster AuthKit source](https://github.com/farcasterxyz/auth-kit)
 - [Snapchain source](https://github.com/farcasterxyz/snapchain)
 - [Hypersnap source and RPC definitions](https://github.com/farcasterorg/hypersnap)
 - [Leptos](https://leptos.dev/)

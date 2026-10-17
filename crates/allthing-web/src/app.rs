@@ -65,9 +65,9 @@ fn Header() -> impl IntoView {
                     <A href="/" exact=true>"front page"</A>
                     <A href="/about">"about allthing"</A>
                 </nav>
-                <div class="account-area">
+                <div class="reading-mode">
                     <span class="light-label">"☀ light mode"</span>
-                    <button class="sign-in" disabled title="Sign-in will be added after authentication is integrated">"sign in · soon"</button>
+                    <span class="readonly-label">"read-only preview"</span>
                 </div>
             </div>
         </header>
@@ -82,7 +82,7 @@ fn Home() -> impl IntoView {
             <section class="feed-column" aria-label="Discussion feed">
                 <div class="preview-notice">
                     <span class="notice-tag">"SEED"</span>
-                    <p>"Fictional conversations, working interface. Live sources and sign-in are next."</p>
+                    <p>"Fictional conversations, working interface. Live Snapchain and Hypersnap feeds are next."</p>
                     <A href="/about">"what we're building →"</A>
                 </div>
                 <noscript class="noscript-note">"The sample feed is readable here. Enable JavaScript to load WebAssembly for filters and discussion controls."</noscript>
@@ -248,7 +248,6 @@ fn PostRow(post: Post) -> AnyView {
                 } else {
                     view! { <div class="comments">{comments.into_iter().map(|comment| view! { <CommentNode comment/> }).collect_view()}</div> }.into_any()
                 }}
-                <p class="reply-note">"Reading works in this seed. Writing and account connections are coming later."</p>
             </section>
         </li>
     }.into_any()
@@ -299,7 +298,7 @@ fn Sidebar() -> impl IntoView {
                     <li><span>"✓"</span>" Server-rendered pages"</li>
                     <li><span>"✓"</span>" Rust + WebAssembly interactions"</li>
                     <li><span>"✓"</span>" Filters & nested discussions"</li>
-                    <li class="planned"><span>"○"</span>" Live feeds & QR sign-in"</li>
+                    <li class="planned"><span>"○"</span>" Live Snapchain & Hypersnap feeds"</li>
                 </ul>
                 <a href="https://github.com/ael-dev3/Allthing" rel="noreferrer">"follow the source →"</a>
             </section>
@@ -316,10 +315,10 @@ fn About() -> impl IntoView {
             <h1>"A place for the conversation."</h1>
             <p class="about-lead">"Allthing is an independent Farcaster web client taking shape in Rust. It brings the compact lists and nested discussions of the early web to a modern, open social network."</p>
             <section><h2>"Read across sources"</h2><p>"The planned client will read from Snapchain and Hypersnap through separate adapters. A shared post should appear once, with its origins visible. One provider's moderation decision is not automatically another provider's view."</p></section>
-            <section><h2>"Connect deliberately"</h2><p>"Farcaster QR sign-in is planned, followed by a compatible independent authentication path. Login and permission to publish are separate steps. This seed does not request account access, create signers, or publish posts."</p></section>
+            <section><h2>"Read without an account"</h2><p>"The first release is an anonymous reader for public Snapchain and Hypersnap traffic. Source filters, sorting, and local reading controls work without signing in. Authentication, wallet connections, and publishing are outside this release's scope."</p></section>
             <section><h2>"Keep the interface simple"</h2><p>"Light mode, readable threads, chronological feeds, source filters, and clear user controls. Likes and recasts keep their protocol meaning; there are no pretend network downvotes."</p></section>
             <section><h2>"What works today"</h2><p>"A native Rust server renders the page and serves fictional feed data. The same Leptos components hydrate in your browser as WebAssembly. Try source and channel filters, search, sorting, opening threads, collapsing replies, and temporary saves."</p></section>
-            <section><h2>"Build in the open"</h2><p>"Allthing's original code is MIT licensed. Live adapters, authentication, posting, storage, and production hardening are future work. This project is independent and is not an official Farcaster client."</p></section>
+            <section><h2>"Build in the open"</h2><p>"Allthing's original code is MIT licensed. The next work is connecting live public feeds, reconstructing threads, and making reading reliable across both sources. This project is independent and is not an official Farcaster client."</p></section>
             <div class="about-links"><A href="/">"← explore the seed"</A><a href="https://github.com/ael-dev3/Allthing" rel="noreferrer">"source & roadmap →"</a></div>
         </main>
     }

@@ -66,9 +66,9 @@
   .main-nav { display: flex; gap: 5px; }
   .main-nav a { padding: 7px 14px 8px; font-weight: 650; color: #57728b; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; }
   .main-nav a[aria-current="page"] { background: #fff; color: var(--orange); border-color: #aac3d7; position: relative; bottom: -1px; }
-  .account-area { display: flex; align-items: center; gap: 16px; padding-bottom: 9px; font-size: 11px; }
+  .reading-mode { display: flex; align-items: center; gap: 16px; padding-bottom: 9px; font-size: 11px; }
   .light-label { color: #5e7282; }
-  .sign-in { color: #647789; background: #edf4fa; border: 1px solid #bfd0dd; padding: 5px 10px; font-size: 11px; }
+  .readonly-label { color: #506f85; background: #edf4fa; border: 1px solid #bfd0dd; border-radius: 3px; padding: 5px 10px; font-size: 11px; }
   .preview-notice { display: flex; align-items: center; gap: 10px; background: #faf9f5; border: 1px solid #e9e3d5; border-radius: 4px; padding: 10px 12px; font-size: 11px; color: #6e6654; }
   .preview-notice p { flex: 1; }
   .preview-notice a { white-space: nowrap; font-size: 10px; }
@@ -128,7 +128,6 @@
   .collapse-comment { padding: 0; border: 0; background: none; color: #72889a; font: 11px monospace; }
   .comment p { margin-top: 5px; font-size: 12px; line-height: 1.7; color: #475b6b; overflow-wrap: anywhere; }
   .comment-replies { padding-left: 7px; }
-  .reply-note { margin-top: 20px; color: #788894; font-size: 10px; }
   .no-comments { color: #7a8a98; font-size: 12px; }
   .feed-end { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 28px 10px; border-top: 1px solid var(--line); font-size: 10px; color: #8e9ba5; }
   .feed-end > span:last-child { color: #9db8cb; font-size: 19px; }
@@ -178,9 +177,9 @@
     .masthead { gap: 18px; }
     .header-bottom { margin-top: 16px; gap: 8px; }
     .main-nav a { padding: 7px 10px; font-size: 11px; }
-    .account-area { gap: 8px; }
+    .reading-mode { gap: 8px; }
     .light-label { display: none; }
-    .sign-in { font-size: 10px; padding: 4px 7px; }
+    .readonly-label { font-size: 10px; padding: 4px 7px; }
     .page-layout { display: block; margin-top: 16px; padding: 0 16px; }
     .sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 24px; }
     .sidebar-fineprint { grid-column: 1 / -1; }
