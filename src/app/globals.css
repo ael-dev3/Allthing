@@ -1,0 +1,799 @@
+/*
+ * Old reddit, more or less: verdana at small sizes, a #cee3f8 header,
+ * blue titles that turn purple once visited, and lots of rows per screen.
+ * Light mode only.
+ */
+
+:root {
+  color-scheme: light;
+  --header-bg: #cee3f8;
+  --header-border: #5f99cf;
+  --tab-bg: #eff7ff;
+  --link: #369;
+  --title: #0000ff;
+  --title-visited: #551a8b;
+  --muted: #888;
+  --faint: #c6c6c6;
+  --orangered: #ff4500;
+  --kb-active: #f0f3fc;
+}
+
+html {
+  background: #fff;
+}
+
+body {
+  margin: 0;
+  font: normal 12px/1.35 verdana, arial, helvetica, sans-serif;
+  color: #222;
+  background: #fff;
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+kbd {
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 3px;
+  border: 1px solid #ccc;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #f7f7f7;
+  text-align: center;
+  line-height: 1.4;
+}
+
+button {
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 8px;
+  border: 1px solid #c4dbf1;
+  border-radius: 3px;
+  background: #eff7ff;
+  color: var(--link);
+  cursor: pointer;
+}
+
+.gray {
+  color: var(--muted);
+}
+
+/* ---------- header ---------- */
+
+#header {
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+}
+
+#sr-header-area {
+  display: flex;
+  height: 18px;
+  padding: 0 5px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #808080;
+  font-size: 9px;
+  line-height: 18px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#sr-header-area .sr-list {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#sr-header-area a {
+  color: #000;
+}
+
+#sr-header-area .separator {
+  margin: 0 0.6ex;
+  color: #808080;
+}
+
+#sr-header-area .sr-more {
+  flex: none;
+  padding-left: 8px;
+  font-weight: bold;
+}
+
+#header-bottom {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 46px;
+}
+
+#header-bottom-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding-left: 4px;
+}
+
+#header-img {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 5px 8px 3px 0;
+  color: #000;
+}
+
+#header-img:hover {
+  text-decoration: none;
+}
+
+.logo-text {
+  font: bold 22px/1 verdana, arial, sans-serif;
+  letter-spacing: -1.5px;
+  color: #222;
+}
+
+.pagename {
+  margin: 0 1ex 3px 0;
+  font-size: 14px;
+  font-weight: bold;
+  font-variant: small-caps;
+}
+
+.pagename a {
+  color: #000;
+}
+
+.tabmenu {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tabmenu li {
+  margin: 0 1px;
+  font-weight: bold;
+}
+
+.tabmenu li a {
+  display: block;
+  padding: 2px 6px 0;
+  background: var(--tab-bg);
+  color: var(--link);
+  line-height: 16px;
+}
+
+.tabmenu li.selected a {
+  position: relative;
+  bottom: -1px;
+  background: #fff;
+  color: var(--orangered);
+  border: 1px solid var(--header-border);
+  border-bottom: 1px solid #fff;
+}
+
+#header-bottom-right {
+  padding: 4px 9px;
+  background: var(--tab-bg);
+  border-top-left-radius: 7px;
+  font-size: 10px;
+  line-height: 12px;
+  color: #555;
+  white-space: nowrap;
+}
+
+.readonly-badge {
+  font-weight: bold;
+  color: var(--orangered);
+}
+
+/* ---------- page layout ---------- */
+
+.page-body {
+  display: flex;
+  align-items: flex-start;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  margin: 7px 5px 0;
+}
+
+.side {
+  flex: none;
+  width: 300px;
+  margin: 7px 5px 0 10px;
+}
+
+.loading,
+.empty-listing {
+  margin: 20px 0 20px 4ex;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ---------- listings ---------- */
+
+.sitetable {
+  margin: 0;
+}
+
+.thing.link {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 8px;
+  padding: 2px 0 2px;
+  border-radius: 2px;
+}
+
+.link .rank {
+  flex: none;
+  width: 3.2ex;
+  margin-top: 15px;
+  text-align: right;
+  color: var(--faint);
+  font: 16px/1 arial, helvetica, sans-serif;
+}
+
+.midcol {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 6ex;
+  margin: 0 4px 0 6px;
+}
+
+.arrow {
+  display: block;
+  width: 0;
+  height: 0;
+  margin-top: 2px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+}
+
+.arrow.up {
+  border-bottom: 9px solid var(--faint);
+}
+
+.arrow.down {
+  margin-top: 3px;
+  border-top: 9px solid var(--faint);
+}
+
+.link .score {
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.thumbnail {
+  flex: none;
+  display: block;
+  width: 70px;
+  margin: 0 5px 0 0;
+  overflow: hidden;
+}
+
+.thumbnail img {
+  display: block;
+  width: 70px;
+  height: 70px;
+  object-fit: cover;
+  background: #f4f4f4;
+}
+
+.thumbnail.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  background: #eff1f3;
+  border: 1px solid #e3e6e9;
+  box-sizing: border-box;
+  color: #a7b0b9;
+}
+
+.thumbnail.placeholder:hover {
+  color: var(--link);
+}
+
+.entry {
+  flex: 1;
+  min-width: 0;
+}
+
+.link p.title {
+  margin: 0 0 1px;
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+a.title {
+  color: var(--title);
+}
+
+a.title:visited {
+  color: var(--title-visited);
+}
+
+.domain {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.tagline a.author,
+.tagline a.channel {
+  color: var(--link);
+}
+
+.tagline .sep {
+  color: #bbb;
+}
+
+.tagline a.comments {
+  color: var(--muted);
+  font-weight: bold;
+}
+
+.nav-buttons {
+  margin: 10px 0 5px 4ex;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.nextprev a {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #eee;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-weight: bold;
+}
+
+.nextprev .separator {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  margin: 0 6px;
+  vertical-align: middle;
+  background: #ccc;
+}
+
+.menuarea {
+  margin: 5px 0 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.menuarea a.selected {
+  color: var(--orangered);
+  font-weight: bold;
+}
+
+/* RES-style keyboard selection */
+.thing.link.kb-active,
+.thing.reply-entry.kb-active,
+.thing.channel-entry.kb-active,
+.comment.kb-active > summary,
+.comment.kb-active > .entry {
+  background: var(--kb-active);
+}
+
+.thing.link.kb-active,
+.thing.reply-entry.kb-active,
+.thing.channel-entry.kb-active {
+  outline: 1px dashed #a0a0a0;
+}
+
+.comment.kb-active > summary {
+  outline: 1px dashed #a0a0a0;
+}
+
+/* ---------- post page ---------- */
+
+.expando {
+  margin: 4px 0 6px calc(6ex + 10px + 75px);
+}
+
+.usertext-body.md {
+  max-width: 60em;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.expando .usertext-body.md {
+  padding: 5px 10px;
+  background: #fafafa;
+  border: 1px solid var(--link);
+  border-radius: 7px;
+}
+
+.md p {
+  margin: 5px 0;
+}
+
+.md a {
+  color: var(--title);
+}
+
+.md a:visited {
+  color: var(--title-visited);
+}
+
+.embeds {
+  margin: 6px 0;
+}
+
+.embed-image {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+}
+
+.embed-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid #e5e5e5;
+}
+
+.embeds.compact .embed-image img {
+  max-height: 220px;
+  max-width: 320px;
+}
+
+.embed-link {
+  margin: 3px 0;
+  font-size: 12px;
+}
+
+.embed-kind {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: #eff1f3;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.quoted-cast {
+  margin: 8px 0 4px;
+  padding: 2px 10px;
+  border-left: 3px solid #c4dbf1;
+  background: #fff;
+}
+
+.infobar {
+  margin: 5px 0 10px;
+  padding: 5px 10px;
+  background: #f6e69f;
+  border: 1px solid #ffa500;
+  font-size: 12px;
+}
+
+.commentarea {
+  margin-top: 10px;
+}
+
+.panestack-title {
+  margin: 10px 0 5px;
+  padding-bottom: 2px;
+  border-bottom: 1px dotted gray;
+}
+
+.panestack-title .title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #222;
+}
+
+.nestedlisting > .comment {
+  margin: 0 0 10px;
+}
+
+/* ---------- comments ---------- */
+
+.comment {
+  margin: 6px 0 0;
+}
+
+.comment > summary {
+  display: block;
+  cursor: pointer;
+  list-style: none;
+}
+
+.comment > summary::-webkit-details-marker {
+  display: none;
+}
+
+.comment .expand {
+  margin-right: 3px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--link);
+}
+
+.comment[open] > summary .expand::before {
+  content: "[–]";
+}
+
+.comment:not([open]) > summary .expand::before {
+  content: "[+]";
+}
+
+.comment:not([open]) > summary {
+  opacity: 0.75;
+}
+
+.comment .numchildren {
+  display: none;
+}
+
+.comment:not([open]) > summary .numchildren {
+  display: inline;
+}
+
+.comment .author {
+  font-weight: bold;
+  color: var(--link);
+}
+
+.comment .author.submitter,
+.userattrs .submitter {
+  color: #0055df;
+}
+
+.userattrs {
+  margin-left: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.comment > .entry {
+  margin-left: 22px;
+}
+
+.comment .usertext-body.md {
+  font-size: 12px;
+}
+
+.flat-list.buttons {
+  display: flex;
+  gap: 8px;
+  margin: 1px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.buttons a {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.buttons .gray {
+  font-size: 10px;
+}
+
+.comment > .child {
+  margin-left: 10px;
+  padding-left: 12px;
+  border-left: 1px dotted #ddf;
+}
+
+.morechildren {
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+.morechildren a {
+  font-weight: bold;
+}
+
+/* ---------- profile replies ---------- */
+
+.reply-entry {
+  margin: 0 0 12px;
+  padding: 2px 4px;
+}
+
+.reply-entry .parent-line {
+  margin: 0 0 3px;
+  padding: 2px 4px;
+  background: #f5f8fb;
+  font-size: 11px;
+}
+
+.reply-entry .reply-body {
+  margin-left: 12px;
+}
+
+/* ---------- channel directory ---------- */
+
+.search-form {
+  margin: 4px 0 10px;
+}
+
+.search-form input {
+  width: 260px;
+  padding: 2px 4px;
+  font: inherit;
+  border: 1px solid #ccc;
+}
+
+.listing-heading {
+  margin: 10px 0 8px;
+  font-size: 13px;
+}
+
+.channel-entry {
+  margin: 0 0 8px;
+  padding: 2px 4px;
+}
+
+.channel-entry p.title {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* ---------- sidebar ---------- */
+
+.spacer {
+  margin-bottom: 15px;
+}
+
+.sidebox-title {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #545454;
+}
+
+.sidebox-content {
+  padding: 6px 10px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.sidebox-content p {
+  margin: 4px 0;
+}
+
+.titlebox .redditname {
+  margin: 0 0 3px;
+  font-size: 16px;
+}
+
+.titlebox .redditname a {
+  color: #222;
+}
+
+.titlebox p {
+  margin: 4px 0;
+}
+
+.titlebox .number,
+.sidebox-content .number {
+  font-weight: bold;
+}
+
+.titlebox .parent-url code {
+  word-break: break-all;
+  color: #555;
+}
+
+.userbox .pfp {
+  float: right;
+  margin: 0 0 6px 8px;
+  border-radius: 4px;
+  background: #f0f0f0;
+}
+
+.userbox::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+
+.channel-list {
+  margin: 0;
+  padding: 0 0 0 1.4em;
+}
+
+.channel-list li {
+  margin: 2px 0;
+}
+
+.more-link {
+  text-align: right;
+  font-size: 10px;
+}
+
+.kbd-help {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.kbd-help td {
+  padding: 2px 6px 2px 0;
+  vertical-align: middle;
+}
+
+/* ---------- footer, errors ---------- */
+
+.footer {
+  clear: both;
+  margin: 30px 5px 10px;
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  background: #f8f8f8;
+  color: #555;
+  font-size: 10px;
+  text-align: center;
+}
+
+.footer p {
+  margin: 3px 0;
+}
+
+.error-page {
+  margin: 30px 0 30px 4ex;
+}
+
+.error-page h1 {
+  font-size: 18px;
+  font-weight: normal;
+  color: #555;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 760px) {
+  .page-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .side {
+    width: auto;
+    margin: 15px 5px 0;
+  }
+
+  #header-bottom-right {
+    display: none;
+  }
+
+  .expando {
+    margin-left: 0;
+  }
+}

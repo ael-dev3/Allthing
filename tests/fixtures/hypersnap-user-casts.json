@@ -1,0 +1,320 @@
+{
+  "casts": [
+    {
+      "object": "cast",
+      "hash": "0256ae66308d546514fa666cda44052abbfea066",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "",
+      "timestamp": "2026-10-17T02:30:02.000Z",
+      "embeds": [
+        {
+          "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/9f4bda20-a039-4770-5605-8eb24d259e00/original"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 213,
+        "recasts_count": 24,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 27
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "ec0c8a227d7f34ad3e2243ae098b46459b7d1847",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "Neat",
+      "timestamp": "2026-10-17T02:23:28.000Z",
+      "embeds": [
+        {
+          "cast_id": {
+            "fid": 37,
+            "hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2"
+          }
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 75,
+        "recasts_count": 6,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 6
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "35f104e944de03c93cc4eb513e8b84cef58d9b77",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "Snapchain node wishlist\n\n1. I want to sync only a subset of the network. \n\n2. I don’t want to keep more than 7 days worth of content.",
+      "timestamp": "2026-10-16T00:30:24.000Z",
+      "embeds": [],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 145,
+        "recasts_count": 8,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 18
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "40a0d26b7ea3c4ef79b1f574ff2261a535cb84c6",
+      "parent_hash": "01e2c6a1839d389c824ad1550f3b6c2c817abb99",
+      "parent_author": {
+        "fid": 10695
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "I just want it for me.",
+      "timestamp": "2026-10-16T00:31:40.000Z",
+      "embeds": [],
+      "type": "cast-reply",
+      "reactions": {
+        "likes_count": 8,
+        "recasts_count": 0,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 6
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "660b6bf526a5d977b2cabcfebbfb350f700ec21f",
+      "parent_hash": "597007de6219f87fdf71ad5769db542c8f2d1dde",
+      "parent_author": {
+        "fid": 3
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "5. Remove mini apps\n\n6. Remove DMs\n\n7. Have Claude make it super super fast",
+      "timestamp": "2026-10-16T00:24:18.000Z",
+      "embeds": [],
+      "type": "cast-reply",
+      "reactions": {
+        "likes_count": 25,
+        "recasts_count": 0,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 4
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    }
+  ],
+  "next": {
+    "cursor": "abc"
+  }
+}

@@ -1,0 +1,1332 @@
+{
+  "conversation": {
+    "cast": {
+      "object": "cast",
+      "hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 37,
+        "username": "balajis.eth",
+        "display_name": "balajis",
+        "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+        "pfp_url": "https://github.com/balajis.png",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+          }
+        },
+        "follower_count": 575918,
+        "following_count": 32,
+        "verifications": [
+          "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+          "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+          "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+          "0x167491c09adf80df6b2aee06d3be7f29954968db"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+            "0x167491c09adf80df6b2aee06d3be7f29954968db"
+          ],
+          "sol_addresses": [
+            "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          ],
+          "primary": {
+            "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "THE FARCASTER PRIZE\nWith 10,000+ votes counted, we're at 94.4% support for the new Network School Farcaster.\n\nDylan put together a great visualization of this first decentralized digital democratic election. In his post below, you can see the provable, onchain, cryptographically verifiable votes streaming in for the new social smart contract.\n\nAs a thank you, Dylan is the first recipient of a Farcaster Prize for positive-sum behavior on the platform. We've awarded $1024 to dylanb.eth via Base at the public address he listed[1,2].\n\nImportantly, we're going to make systematic use of prizes to fund public digital infrastructure on Farcaster. This will be how we bootstrap a true cryptoeconomy. Because once we can get useful digital work done here for the core platform, we can bring many digital employers to Farcaster. And we have plenty of capital allocated for the bootstrapping phase. \n\nSo: go read the developer docs (docs.farcaster.xyz/developers), and you can be the next Dylan. More to follow soon, and congratulations to dylanb.eth!\n\n[1,2]: See reply for proof-of-payment to dylanb.eth's public Base address.",
+      "timestamp": "2026-10-17T02:00:03.000Z",
+      "embeds": [
+        {
+          "cast_id": {
+            "fid": 5283,
+            "hash": "c55e0f3bc79fe65e54a02835dbc7896d8bd593ad"
+          }
+        },
+        {
+          "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/1a9f0888-bf59-4e20-9660-07a0f7098c00/original"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 313,
+        "recasts_count": 67,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 64
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": [],
+      "direct_replies": [
+        {
+          "object": "cast",
+          "hash": "e52a0c462a24b75ae2d6a6716ab6f7853a408786",
+          "parent_hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+          "parent_author": {
+            "fid": 37
+          },
+          "author": {
+            "object": "user",
+            "fid": 4167,
+            "username": "nounishprof",
+            "display_name": "Nounish Prof ⌐◧-◧🎩",
+            "custody_address": "0xbb54a63ad8241710eba3a98af224080b611ff8e9",
+            "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/df01c21c-97d9-4552-6532-5b224b72bf00/original",
+            "registered_at": "2023-11-07T20:11:21.000Z",
+            "profile": {
+              "bio": {
+                "text": "building /gmfarcaster network |\nblockchain ENT prof |  ⌐◧-◧"
+              }
+            },
+            "follower_count": 279018,
+            "following_count": 8114,
+            "verifications": [
+              "0xceed9585854f12f81a0103861b83b995a64ad915",
+              "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A",
+              "0x554aaa13361123c45dae97b4155dfce5827e39cf",
+              "0x9353cc2583356ce6ea8f92e239d7c9eb8412acaf",
+              "HxtJ8asbVDKi3aPZqzeY1vw3naWak1G9rKAXge4nipz8",
+              "0x72a980640a6f3b284d0ffdba4857865fc7e0ee79",
+              "0xd19b676d39170ea25a8bd73647561f5efcf1b7c7",
+              "0xdad9478b3889eebaea59e6727e6835f84e765a39"
+            ],
+            "auth_addresses": [],
+            "verified_addresses": {
+              "eth_addresses": [
+                "0xceed9585854f12f81a0103861b83b995a64ad915",
+                "0x554aaa13361123c45dae97b4155dfce5827e39cf",
+                "0x9353cc2583356ce6ea8f92e239d7c9eb8412acaf",
+                "0x72a980640a6f3b284d0ffdba4857865fc7e0ee79",
+                "0xd19b676d39170ea25a8bd73647561f5efcf1b7c7",
+                "0xdad9478b3889eebaea59e6727e6835f84e765a39"
+              ],
+              "sol_addresses": [
+                "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A",
+                "HxtJ8asbVDKi3aPZqzeY1vw3naWak1G9rKAXge4nipz8"
+              ],
+              "primary": {
+                "eth_address": "0xceed9585854f12f81a0103861b83b995a64ad915",
+                "sol_address": "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A"
+              }
+            },
+            "verified_accounts": []
+          },
+          "text": " curate news",
+          "timestamp": "2026-10-17T02:01:20.000Z",
+          "embeds": [],
+          "type": "cast-reply",
+          "reactions": {
+            "likes_count": 2,
+            "recasts_count": 0,
+            "likes": [],
+            "recasts": []
+          },
+          "replies": {
+            "count": 1
+          },
+          "mentioned_profiles": [
+            {
+              "object": "user",
+              "fid": 885236,
+              "username": "warpee.eth",
+              "display_name": "Warpee",
+              "custody_address": "0x6ef487f72bc81f09ffd6bfe8d382c20806812737",
+              "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/960679ce-4349-4e39-633a-402f50582700/original",
+              "registered_at": "2026-04-24T00:40:15.000Z",
+              "profile": {
+                "bio": {
+                  "text": "I answer questions about Farcaster with my knowledge of /gmfarcaster videos. I’m learning more each day so check back later if my answers aren’t good enough yet"
+                }
+              },
+              "follower_count": 1772,
+              "following_count": 6,
+              "verifications": [
+                "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp",
+                "0xe7e5d376d7938a47b6ff6fac09bbf100d8b5ebb5",
+                "5Jh3Vy5Vm3q7BxBMVxubYZjCBbiaqeWyQZzWnyhiv4D9"
+              ],
+              "auth_addresses": [],
+              "verified_addresses": {
+                "eth_addresses": [
+                  "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                  "0xe7e5d376d7938a47b6ff6fac09bbf100d8b5ebb5"
+                ],
+                "sol_addresses": [
+                  "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp",
+                  "5Jh3Vy5Vm3q7BxBMVxubYZjCBbiaqeWyQZzWnyhiv4D9"
+                ],
+                "primary": {
+                  "eth_address": "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                  "sol_address": "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp"
+                }
+              },
+              "verified_accounts": []
+            }
+          ],
+          "mentioned_profiles_ranges": [
+            {
+              "start": 0,
+              "end": 0
+            }
+          ],
+          "mentioned_channels": [],
+          "mentioned_channels_ranges": [],
+          "direct_replies": [
+            {
+              "object": "cast",
+              "hash": "026668dae31a6c9389ddc83299167f97f70b3ac3",
+              "parent_hash": "e52a0c462a24b75ae2d6a6716ab6f7853a408786",
+              "parent_author": {
+                "fid": 4167
+              },
+              "author": {
+                "object": "user",
+                "fid": 885236,
+                "username": "warpee.eth",
+                "display_name": "Warpee",
+                "custody_address": "0x6ef487f72bc81f09ffd6bfe8d382c20806812737",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/960679ce-4349-4e39-633a-402f50582700/original",
+                "registered_at": "2026-04-24T00:40:15.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "I answer questions about Farcaster with my knowledge of /gmfarcaster videos. I’m learning more each day so check back later if my answers aren’t good enough yet"
+                  }
+                },
+                "follower_count": 1772,
+                "following_count": 6,
+                "verifications": [
+                  "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                  "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp",
+                  "0xe7e5d376d7938a47b6ff6fac09bbf100d8b5ebb5",
+                  "5Jh3Vy5Vm3q7BxBMVxubYZjCBbiaqeWyQZzWnyhiv4D9"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                    "0xe7e5d376d7938a47b6ff6fac09bbf100d8b5ebb5"
+                  ],
+                  "sol_addresses": [
+                    "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp",
+                    "5Jh3Vy5Vm3q7BxBMVxubYZjCBbiaqeWyQZzWnyhiv4D9"
+                  ],
+                  "primary": {
+                    "eth_address": "0xbc6279fb0af28de7e097908e4f07fe68e25c5b51",
+                    "sol_address": "3YTTyYxgstxofZZzQaq33CEyweuqrYLB2YTifUrX1NFp"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "got it 👀 — captured for news",
+              "timestamp": "2026-10-17T02:01:28.000Z",
+              "embeds": [],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 0,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            }
+          ]
+        },
+        {
+          "object": "cast",
+          "hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+          "parent_hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+          "parent_author": {
+            "fid": 37
+          },
+          "author": {
+            "object": "user",
+            "fid": 37,
+            "username": "balajis.eth",
+            "display_name": "balajis",
+            "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+            "pfp_url": "https://github.com/balajis.png",
+            "registered_at": "2023-11-07T19:42:51.000Z",
+            "profile": {
+              "bio": {
+                "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+              }
+            },
+            "follower_count": 575918,
+            "following_count": 32,
+            "verifications": [
+              "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+              "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+              "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+              "0x167491c09adf80df6b2aee06d3be7f29954968db"
+            ],
+            "auth_addresses": [],
+            "verified_addresses": {
+              "eth_addresses": [
+                "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+                "0x167491c09adf80df6b2aee06d3be7f29954968db"
+              ],
+              "sol_addresses": [
+                "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+              ],
+              "primary": {
+                "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+              }
+            },
+            "verified_accounts": []
+          },
+          "text": "[1] Here is dylanb.eth's public ENS page: https://app.ens.domains/dylanb.eth\n\n[2]: Dylan lists a public address which is on both Etherscan and Basescan. Here is the link to the Basescan transaction, showing 1024 USDC sent:\nhttps://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bda02913?a=0xA7860E99e3ce0752D1ac53b974E309fFf80277C6#transactions\n\nPS: We do want a block explorer that shows all Ethereum-related transactions, for not just Ethereum L1 but Base and other L2s. If you know of one, let me know.",
+          "timestamp": "2026-10-17T02:05:41.000Z",
+          "embeds": [
+            {
+              "url": "https://app.ens.domains/dylanb.eth"
+            }
+          ],
+          "type": "cast-reply",
+          "reactions": {
+            "likes_count": 77,
+            "recasts_count": 5,
+            "likes": [],
+            "recasts": []
+          },
+          "replies": {
+            "count": 5
+          },
+          "mentioned_profiles": [],
+          "mentioned_profiles_ranges": [],
+          "mentioned_channels": [],
+          "mentioned_channels_ranges": [],
+          "direct_replies": [
+            {
+              "object": "cast",
+              "hash": "82978d1ba0df98bec5b8919c109a05299f580c13",
+              "parent_hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+              "parent_author": {
+                "fid": 37
+              },
+              "author": {
+                "object": "user",
+                "fid": 1111249,
+                "username": "chengsengchee",
+                "display_name": "sanchezcheng.base.eth",
+                "custody_address": "0x87ce0e709f6ff3458f8332b0b2b585e7ba8ba6f2",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e825475a-4889-476a-b777-4e50b606fd00/original",
+                "registered_at": "2025-06-27T15:50:25.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "https://farcaster.xyz/~/code/M0NGU5"
+                  }
+                },
+                "follower_count": 4404,
+                "following_count": 946,
+                "verifications": [
+                  "0x35c3a97e5c8327ae68455d76988171930b3ea3e0",
+                  "DpRmGafd4yPhVmy5UbpbeRxx5qibPmVvu1hY6tEK9D4h",
+                  "0x7e637f83ee4b692d49606b05a79a81bc024044ae",
+                  "8XNdn3vUFCR9EaLBxMtUCEHp9wffcqrvf3hJJXZafCe1",
+                  "0x890b8263c939f697d155c94836f4fc0e938cb371"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0x35c3a97e5c8327ae68455d76988171930b3ea3e0",
+                    "0x7e637f83ee4b692d49606b05a79a81bc024044ae",
+                    "0x890b8263c939f697d155c94836f4fc0e938cb371"
+                  ],
+                  "sol_addresses": [
+                    "DpRmGafd4yPhVmy5UbpbeRxx5qibPmVvu1hY6tEK9D4h",
+                    "8XNdn3vUFCR9EaLBxMtUCEHp9wffcqrvf3hJJXZafCe1"
+                  ],
+                  "primary": {
+                    "eth_address": "0x35c3a97e5c8327ae68455d76988171930b3ea3e0",
+                    "sol_address": "DpRmGafd4yPhVmy5UbpbeRxx5qibPmVvu1hY6tEK9D4h"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "congrats🎉",
+              "timestamp": "2026-10-17T02:14:56.000Z",
+              "embeds": [],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 4,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            },
+            {
+              "object": "cast",
+              "hash": "0c7373324d0a90fd27b66766de8f3ccdc7ddb42c",
+              "parent_hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+              "parent_author": {
+                "fid": 37
+              },
+              "author": {
+                "object": "user",
+                "fid": 273600,
+                "username": "damntrue",
+                "display_name": "Punch Cat 🐾",
+                "custody_address": "0xd493936888a71dfc5ea31fe351ecbcd226482e86",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/36597fae-4a28-4ed9-daaa-5215f7f63900/original",
+                "registered_at": "2024-02-04T06:54:35.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "Random cats 😺🐾 from my camera roll to your /farcaster.                                                 \nPunch Trading 📈 : https://farcaster.xyz/~/code/7D3Q8A"
+                  }
+                },
+                "follower_count": 1251,
+                "following_count": 38,
+                "verifications": [
+                  "0x769cf45943a1555ec44094ff469c3d62e23366ec",
+                  "3ysAzV7qXjkChVpX2GoJDSJ8kXGruUxQnxZUJ3ahvJgp",
+                  "0xeb7e807274ba811750b2bf0fb6facbb21ca331db"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0x769cf45943a1555ec44094ff469c3d62e23366ec",
+                    "0xeb7e807274ba811750b2bf0fb6facbb21ca331db"
+                  ],
+                  "sol_addresses": [
+                    "3ysAzV7qXjkChVpX2GoJDSJ8kXGruUxQnxZUJ3ahvJgp"
+                  ],
+                  "primary": {
+                    "eth_address": "0x769cf45943a1555ec44094ff469c3d62e23366ec",
+                    "sol_address": "3ysAzV7qXjkChVpX2GoJDSJ8kXGruUxQnxZUJ3ahvJgp"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "Good job 👏",
+              "timestamp": "2026-10-17T05:25:14.000Z",
+              "embeds": [],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 0,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            },
+            {
+              "object": "cast",
+              "hash": "2c425e0c3faf51acd600684f27916d2aba432969",
+              "parent_hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+              "parent_author": {
+                "fid": 37
+              },
+              "author": {
+                "object": "user",
+                "fid": 716,
+                "username": "ayushm.eth",
+                "display_name": "Ayush",
+                "custody_address": "0x6aa91938aee33693cee206d6591a2c3309945c3d",
+                "pfp_url": "https://i.imgur.com/J7duv4f.jpg",
+                "registered_at": "2023-11-07T19:52:19.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "hacking"
+                  }
+                },
+                "follower_count": 92858,
+                "following_count": 3218,
+                "verifications": [
+                  "0x0df5ba52e8c055950aaaf5fcfe829020e898ee60",
+                  "0x5b172915fbf880db099b9e14635630e29d134ecb",
+                  "0x13e51ef385e2599d503ccc24530e2bececaa9fe2",
+                  "DhjfSbbGrAUuKMbepBBrpK4irueLxGTfxwkRRbgHJtjo",
+                  "0xe505169015ef7b1b10a0f3c675685ee68d463941"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0x0df5ba52e8c055950aaaf5fcfe829020e898ee60",
+                    "0x5b172915fbf880db099b9e14635630e29d134ecb",
+                    "0x13e51ef385e2599d503ccc24530e2bececaa9fe2",
+                    "0xe505169015ef7b1b10a0f3c675685ee68d463941"
+                  ],
+                  "sol_addresses": [
+                    "DhjfSbbGrAUuKMbepBBrpK4irueLxGTfxwkRRbgHJtjo"
+                  ],
+                  "primary": {
+                    "eth_address": "0x0df5ba52e8c055950aaaf5fcfe829020e898ee60",
+                    "sol_address": "DhjfSbbGrAUuKMbepBBrpK4irueLxGTfxwkRRbgHJtjo"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "blockscan.com indexes multiple Ethereum chains. Random address in the screenshot",
+              "timestamp": "2026-10-17T08:16:46.000Z",
+              "embeds": [
+                {
+                  "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/37e285cc-7009-4129-2592-e4989de75d00/original"
+                }
+              ],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 0,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            },
+            {
+              "object": "cast",
+              "hash": "215e160903a63087d4d5b11c58f90beb93d00c07",
+              "parent_hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+              "parent_author": {
+                "fid": 37
+              },
+              "author": {
+                "object": "user",
+                "fid": 37,
+                "username": "balajis.eth",
+                "display_name": "balajis",
+                "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+                "pfp_url": "https://github.com/balajis.png",
+                "registered_at": "2023-11-07T19:42:51.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+                  }
+                },
+                "follower_count": 575918,
+                "following_count": 32,
+                "verifications": [
+                  "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                  "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+                  "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+                  "0x167491c09adf80df6b2aee06d3be7f29954968db"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                    "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+                    "0x167491c09adf80df6b2aee06d3be7f29954968db"
+                  ],
+                  "sol_addresses": [
+                    "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+                  ],
+                  "primary": {
+                    "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                    "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "The next prize is here:\nhttps://farcaster.xyz/balajis.eth/0x50184b62",
+              "timestamp": "2026-10-17T14:49:07.000Z",
+              "embeds": [
+                {
+                  "cast_id": {
+                    "fid": 37,
+                    "hash": "50184b62b4c52fd76628713562e1eda3dccaf63d"
+                  }
+                }
+              ],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 2,
+                "recasts_count": 1,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            },
+            {
+              "object": "cast",
+              "hash": "cede5f48107b628a22ffcb1c846fe3cfd1c1234b",
+              "parent_hash": "6eb5151b16036bd3cf432d5dcb4bceb6b3723a66",
+              "parent_author": {
+                "fid": 37
+              },
+              "author": {
+                "object": "user",
+                "fid": 273708,
+                "username": "siadude",
+                "display_name": "SIADUDE",
+                "custody_address": "0x557f181db7d14d175c86e7ca877fc10645ec3472",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/6346e2cc-6eaa-480f-ce8e-9750870a9d00/original",
+                "registered_at": "2026-08-07T14:18:11.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "You'll find me in /lp /nerd /cryptoart /gen-art /music /burrfrens /hellfire /poker /betr /hunt /megapot /thenest /glanker /hambit 🏛"
+                  }
+                },
+                "follower_count": 20444,
+                "following_count": 3925,
+                "verifications": [
+                  "7oGpmDMba47LzewNVwS6KkaC3McpRnLFtjGibnT5Kjzs",
+                  "0x3c515f7776f41ffc9df45a4bbd515c85e21aba62",
+                  "0xbe8a4925a08b144fd45e459d0e0a295e632d7c3c",
+                  "DsfmRvZFwYteeLEeN8KKrDQJMMkqoW6ud2NSgn9Tw3XR",
+                  "0x7e2dab6404b71e979829b25715e32e8a3daac422",
+                  "0xa3b711d0f4d753b9b4b60d0ab6e8931537c0a2c5",
+                  "0x4e395d9e49f61bcdd902f174af1f05d72f2e572e"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0x3c515f7776f41ffc9df45a4bbd515c85e21aba62",
+                    "0xbe8a4925a08b144fd45e459d0e0a295e632d7c3c",
+                    "0x7e2dab6404b71e979829b25715e32e8a3daac422",
+                    "0xa3b711d0f4d753b9b4b60d0ab6e8931537c0a2c5",
+                    "0x4e395d9e49f61bcdd902f174af1f05d72f2e572e"
+                  ],
+                  "sol_addresses": [
+                    "7oGpmDMba47LzewNVwS6KkaC3McpRnLFtjGibnT5Kjzs",
+                    "DsfmRvZFwYteeLEeN8KKrDQJMMkqoW6ud2NSgn9Tw3XR"
+                  ],
+                  "primary": {
+                    "eth_address": "0x3c515f7776f41ffc9df45a4bbd515c85e21aba62",
+                    "sol_address": "7oGpmDMba47LzewNVwS6KkaC3McpRnLFtjGibnT5Kjzs"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "bitquery can do 40 chains but it's not free to use.\n\nblockscoutDOTcom can do those 11 for free:",
+              "timestamp": "2026-10-17T16:09:49.000Z",
+              "embeds": [
+                {
+                  "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/1aea6eb3-d5d4-4be1-6431-21ba1692f500/original"
+                }
+              ],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 0,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            }
+          ]
+        },
+        {
+          "object": "cast",
+          "hash": "0160c0ea62b747a739c35fa68a66f3e4ae73831e",
+          "parent_hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+          "parent_author": {
+            "fid": 37
+          },
+          "author": {
+            "object": "user",
+            "fid": 12,
+            "username": "linda",
+            "display_name": "Linda Xie",
+            "custody_address": "0xb43575d58c49d2be880e0f821ddf51d15c13c376",
+            "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/6aa18817-6238-4b25-086f-1edd0c438f00/original",
+            "registered_at": "2023-11-07T19:42:51.000Z",
+            "profile": {
+              "bio": {
+                "text": "taking a break to self study physics. previously: dev eco @farcaster, cofounder \n@bountycaster and scalar capital, early @coinbase, coproducer @ethereumfilm"
+              }
+            },
+            "follower_count": 903203,
+            "following_count": 2584,
+            "verifications": [
+              "0x5e349eca2dc61abcd9dd99ce94d04136151a09ee",
+              "AAobwFcj4HtJBaCBq5btL55rMPUZMQSwRbFJ9vTYDpcT",
+              "0x54d06a08ffdf44258a9f9bd2f4b4cdd6692a900f",
+              "0xc940cb58e505f2f9e409197ffb436a12bf1cce1e",
+              "AadKLCLCANFbuLBmvUkqejyDcnADA6z1qZimWsGj4uCP"
+            ],
+            "auth_addresses": [],
+            "verified_addresses": {
+              "eth_addresses": [
+                "0x5e349eca2dc61abcd9dd99ce94d04136151a09ee",
+                "0x54d06a08ffdf44258a9f9bd2f4b4cdd6692a900f",
+                "0xc940cb58e505f2f9e409197ffb436a12bf1cce1e"
+              ],
+              "sol_addresses": [
+                "AAobwFcj4HtJBaCBq5btL55rMPUZMQSwRbFJ9vTYDpcT",
+                "AadKLCLCANFbuLBmvUkqejyDcnADA6z1qZimWsGj4uCP"
+              ],
+              "primary": {
+                "eth_address": "0x5e349eca2dc61abcd9dd99ce94d04136151a09ee",
+                "sol_address": "AAobwFcj4HtJBaCBq5btL55rMPUZMQSwRbFJ9vTYDpcT"
+              }
+            },
+            "verified_accounts": []
+          },
+          "text": "I love that, congrats !",
+          "timestamp": "2026-10-17T02:15:05.000Z",
+          "embeds": [],
+          "type": "cast-reply",
+          "reactions": {
+            "likes_count": 34,
+            "recasts_count": 0,
+            "likes": [],
+            "recasts": []
+          },
+          "replies": {
+            "count": 1
+          },
+          "mentioned_profiles": [
+            {
+              "object": "user",
+              "fid": 5283,
+              "username": "dylanb.eth",
+              "display_name": "Dylan Brodeur",
+              "custody_address": "0xb13507fdc2554e4eb4ebe43def0b3672828257dd",
+              "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e8386a52-391c-476b-bc4b-9505d20e9c00/original",
+              "registered_at": "2023-11-07T22:14:15.000Z",
+              "profile": {
+                "bio": {
+                  "text": "Writing"
+                }
+              },
+              "follower_count": 100193,
+              "following_count": 143,
+              "verifications": [
+                "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee",
+                "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+              ],
+              "auth_addresses": [],
+              "verified_addresses": {
+                "eth_addresses": [
+                  "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                  "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                  "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+                ],
+                "sol_addresses": [
+                  "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                  "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee"
+                ],
+                "primary": {
+                  "eth_address": "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                  "sol_address": "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq"
+                }
+              },
+              "verified_accounts": []
+            }
+          ],
+          "mentioned_profiles_ranges": [
+            {
+              "start": 22,
+              "end": 22
+            }
+          ],
+          "mentioned_channels": [],
+          "mentioned_channels_ranges": [],
+          "direct_replies": [
+            {
+              "object": "cast",
+              "hash": "aeff78a45fdd389b972bb48ecc9581ce72520421",
+              "parent_hash": "0160c0ea62b747a739c35fa68a66f3e4ae73831e",
+              "parent_author": {
+                "fid": 12
+              },
+              "author": {
+                "object": "user",
+                "fid": 3854,
+                "username": "darrylyeo",
+                "display_name": "Darryl Yeo 🛠️",
+                "custody_address": "0xd15353c2d7ab43a52b103bc0d6c97c97429ef0f6",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/9c8cbb31-2884-4716-2405-55ab785caf00/original",
+                "registered_at": "2023-11-07T20:11:17.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "/frontend (HTML/CSS) dev・decentralized data wrangler /blockhead /walletbeat・hackathon bounty hunter・techno-optimist・music maker・dropout・26"
+                  }
+                },
+                "follower_count": 77094,
+                "following_count": 10709,
+                "verifications": [
+                  "0xda22919e01e249ba4c96dba46bee29e4981835fc",
+                  "0xf2057e5da66fbf75798d307620f432605ba78ffc",
+                  "0x4b67f56d6551be091ad3b2fd9b84cd8d67694872",
+                  "0x22de90bdf41211403d5fa72f886ef51c2f995b2a",
+                  "0xc7efa766ba2b70a156d001e4e43513db5b3096e2",
+                  "6AjD2e91vjDTV89VC3CRWXbj99UZ5FuEZukjypMKn54"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0xda22919e01e249ba4c96dba46bee29e4981835fc",
+                    "0xf2057e5da66fbf75798d307620f432605ba78ffc",
+                    "0x4b67f56d6551be091ad3b2fd9b84cd8d67694872",
+                    "0x22de90bdf41211403d5fa72f886ef51c2f995b2a",
+                    "0xc7efa766ba2b70a156d001e4e43513db5b3096e2"
+                  ],
+                  "sol_addresses": [
+                    "6AjD2e91vjDTV89VC3CRWXbj99UZ5FuEZukjypMKn54"
+                  ],
+                  "primary": {
+                    "eth_address": "0xda22919e01e249ba4c96dba46bee29e4981835fc",
+                    "sol_address": "6AjD2e91vjDTV89VC3CRWXbj99UZ5FuEZukjypMKn54"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "Bounties on Farcaster back-er than ever!",
+              "timestamp": "2026-10-17T02:20:41.000Z",
+              "embeds": [],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 13,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 0
+              },
+              "mentioned_profiles": [],
+              "mentioned_profiles_ranges": [],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": []
+            }
+          ]
+        },
+        {
+          "object": "cast",
+          "hash": "e409887710012fe970fc822463d431758e22fbe5",
+          "parent_hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+          "parent_author": {
+            "fid": 37
+          },
+          "author": {
+            "object": "user",
+            "fid": 5283,
+            "username": "dylanb.eth",
+            "display_name": "Dylan Brodeur",
+            "custody_address": "0xb13507fdc2554e4eb4ebe43def0b3672828257dd",
+            "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e8386a52-391c-476b-bc4b-9505d20e9c00/original",
+            "registered_at": "2023-11-07T22:14:15.000Z",
+            "profile": {
+              "bio": {
+                "text": "Writing"
+              }
+            },
+            "follower_count": 100193,
+            "following_count": 143,
+            "verifications": [
+              "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+              "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+              "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+              "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee",
+              "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+            ],
+            "auth_addresses": [],
+            "verified_addresses": {
+              "eth_addresses": [
+                "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+              ],
+              "sol_addresses": [
+                "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee"
+              ],
+              "primary": {
+                "eth_address": "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                "sol_address": "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq"
+              }
+            },
+            "verified_accounts": []
+          },
+          "text": "Awesome! More to come",
+          "timestamp": "2026-10-17T02:45:25.000Z",
+          "embeds": [],
+          "type": "cast-reply",
+          "reactions": {
+            "likes_count": 8,
+            "recasts_count": 0,
+            "likes": [],
+            "recasts": []
+          },
+          "replies": {
+            "count": 1
+          },
+          "mentioned_profiles": [],
+          "mentioned_profiles_ranges": [],
+          "mentioned_channels": [],
+          "mentioned_channels_ranges": [],
+          "direct_replies": [
+            {
+              "object": "cast",
+              "hash": "da91366f25fdce44d87a85cf37a4f021296ee562",
+              "parent_hash": "e409887710012fe970fc822463d431758e22fbe5",
+              "parent_author": {
+                "fid": 5283
+              },
+              "author": {
+                "object": "user",
+                "fid": 8636,
+                "username": "specktacular",
+                "display_name": "Specktacular Cast ⛏️🐸🔵",
+                "custody_address": "0xece820e4237f15c9ee3bba225fb6fe93e74d7ca2",
+                "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/77d990da-7b36-46a3-6b9d-76dfa12b0800/original",
+                "registered_at": "2023-11-07T20:12:53.000Z",
+                "profile": {
+                  "bio": {
+                    "text": "Wandering a Wonderful Web3 🚀\nHusband in ❤️. Lifelong Learner. Italian, at 💙!\nSpecktacularly ready to cast far & wide! \nMaintaining hope in Humanity 🌍"
+                  }
+                },
+                "follower_count": 2263,
+                "following_count": 1653,
+                "verifications": [
+                  "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                  "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU",
+                  "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                ],
+                "auth_addresses": [],
+                "verified_addresses": {
+                  "eth_addresses": [
+                    "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                    "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                  ],
+                  "sol_addresses": [
+                    "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                  ],
+                  "primary": {
+                    "eth_address": "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                    "sol_address": "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                  }
+                },
+                "verified_accounts": []
+              },
+              "text": "Congratulations 🎉 \n\nAnd an additional 🌴 $UCI of encouragement!\n\nI love seeing positivity incentives being added! May the flywheel keep on spinning!\n\nWell done,  and Team! \nHere for and with you 💜",
+              "timestamp": "2026-10-17T10:19:52.000Z",
+              "embeds": [
+                {
+                  "url": "https://farcaster.xyz/~/c/base:0xea909c8da4251cd70e3cb9d4eb25d5ffe58b1ab5"
+                }
+              ],
+              "type": "cast-reply",
+              "reactions": {
+                "likes_count": 0,
+                "recasts_count": 0,
+                "likes": [],
+                "recasts": []
+              },
+              "replies": {
+                "count": 1
+              },
+              "mentioned_profiles": [
+                {
+                  "object": "user",
+                  "fid": 37,
+                  "username": "balajis.eth",
+                  "display_name": "balajis",
+                  "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+                  "pfp_url": "https://github.com/balajis.png",
+                  "registered_at": "2023-11-07T19:42:51.000Z",
+                  "profile": {
+                    "bio": {
+                      "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+                    }
+                  },
+                  "follower_count": 575918,
+                  "following_count": 32,
+                  "verifications": [
+                    "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                    "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+                    "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+                    "0x167491c09adf80df6b2aee06d3be7f29954968db"
+                  ],
+                  "auth_addresses": [],
+                  "verified_addresses": {
+                    "eth_addresses": [
+                      "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                      "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+                      "0x167491c09adf80df6b2aee06d3be7f29954968db"
+                    ],
+                    "sol_addresses": [
+                      "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+                    ],
+                    "primary": {
+                      "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+                      "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+                    }
+                  },
+                  "verified_accounts": []
+                }
+              ],
+              "mentioned_profiles_ranges": [
+                {
+                  "start": 166,
+                  "end": 166
+                }
+              ],
+              "mentioned_channels": [],
+              "mentioned_channels_ranges": [],
+              "direct_replies": [
+                {
+                  "object": "cast",
+                  "hash": "9740125215dfca5db6bab2835d38b0b087b60425",
+                  "parent_hash": "da91366f25fdce44d87a85cf37a4f021296ee562",
+                  "parent_author": {
+                    "fid": 8636
+                  },
+                  "author": {
+                    "object": "user",
+                    "fid": 3318053,
+                    "username": "ucibot",
+                    "display_name": "ucibot",
+                    "custody_address": "0xfee7be3da53cde396eff8d8019388b045bbaa9c9",
+                    "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/d7bf075d-1feb-4acb-788d-822959005b00/original",
+                    "registered_at": "2026-04-15T12:15:13.000Z",
+                    "profile": {
+                      "bio": {
+                        "text": "Universal Caster Income Bot"
+                      }
+                    },
+                    "follower_count": 964,
+                    "following_count": 3,
+                    "verifications": [
+                      "0x63e978d2108fbff1d4bff7025c478b0d7ba4ff8c",
+                      "HJnE9Q4NMcyL4K77iTP88ox5kSLD1judnzWfB3TbwtvE"
+                    ],
+                    "auth_addresses": [],
+                    "verified_addresses": {
+                      "eth_addresses": [
+                        "0x63e978d2108fbff1d4bff7025c478b0d7ba4ff8c"
+                      ],
+                      "sol_addresses": [
+                        "HJnE9Q4NMcyL4K77iTP88ox5kSLD1judnzWfB3TbwtvE"
+                      ],
+                      "primary": {
+                        "eth_address": "0x63e978d2108fbff1d4bff7025c478b0d7ba4ff8c",
+                        "sol_address": "HJnE9Q4NMcyL4K77iTP88ox5kSLD1judnzWfB3TbwtvE"
+                      }
+                    },
+                    "verified_accounts": []
+                  },
+                  "text": "Nothing held back! 🌴\n\n tipped  576 UCI. Tip confirmed ✅\n\n remaining allowance today: 0 UCI\n tips received today: 576 UCI\n\nGet your UCI allowance :",
+                  "timestamp": "2026-10-17T10:20:00.000Z",
+                  "embeds": [
+                    {
+                      "url": "https://universal-caster-income.vercel.app/snap?hash=0xda91366f25fdce44d87a85cf37a4f021296ee562"
+                    }
+                  ],
+                  "type": "cast-reply",
+                  "reactions": {
+                    "likes_count": 0,
+                    "recasts_count": 0,
+                    "likes": [],
+                    "recasts": []
+                  },
+                  "replies": {
+                    "count": 0
+                  },
+                  "mentioned_profiles": [
+                    {
+                      "object": "user",
+                      "fid": 8636,
+                      "username": "specktacular",
+                      "display_name": "Specktacular Cast ⛏️🐸🔵",
+                      "custody_address": "0xece820e4237f15c9ee3bba225fb6fe93e74d7ca2",
+                      "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/77d990da-7b36-46a3-6b9d-76dfa12b0800/original",
+                      "registered_at": "2023-11-07T20:12:53.000Z",
+                      "profile": {
+                        "bio": {
+                          "text": "Wandering a Wonderful Web3 🚀\nHusband in ❤️. Lifelong Learner. Italian, at 💙!\nSpecktacularly ready to cast far & wide! \nMaintaining hope in Humanity 🌍"
+                        }
+                      },
+                      "follower_count": 2263,
+                      "following_count": 1653,
+                      "verifications": [
+                        "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                        "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU",
+                        "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                      ],
+                      "auth_addresses": [],
+                      "verified_addresses": {
+                        "eth_addresses": [
+                          "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                          "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                        ],
+                        "sol_addresses": [
+                          "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                        ],
+                        "primary": {
+                          "eth_address": "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                          "sol_address": "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                        }
+                      },
+                      "verified_accounts": []
+                    },
+                    {
+                      "object": "user",
+                      "fid": 5283,
+                      "username": "dylanb.eth",
+                      "display_name": "Dylan Brodeur",
+                      "custody_address": "0xb13507fdc2554e4eb4ebe43def0b3672828257dd",
+                      "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e8386a52-391c-476b-bc4b-9505d20e9c00/original",
+                      "registered_at": "2023-11-07T22:14:15.000Z",
+                      "profile": {
+                        "bio": {
+                          "text": "Writing"
+                        }
+                      },
+                      "follower_count": 100193,
+                      "following_count": 143,
+                      "verifications": [
+                        "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                        "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                        "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                        "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee",
+                        "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+                      ],
+                      "auth_addresses": [],
+                      "verified_addresses": {
+                        "eth_addresses": [
+                          "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                          "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                          "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+                        ],
+                        "sol_addresses": [
+                          "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                          "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee"
+                        ],
+                        "primary": {
+                          "eth_address": "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                          "sol_address": "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq"
+                        }
+                      },
+                      "verified_accounts": []
+                    },
+                    {
+                      "object": "user",
+                      "fid": 8636,
+                      "username": "specktacular",
+                      "display_name": "Specktacular Cast ⛏️🐸🔵",
+                      "custody_address": "0xece820e4237f15c9ee3bba225fb6fe93e74d7ca2",
+                      "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/77d990da-7b36-46a3-6b9d-76dfa12b0800/original",
+                      "registered_at": "2023-11-07T20:12:53.000Z",
+                      "profile": {
+                        "bio": {
+                          "text": "Wandering a Wonderful Web3 🚀\nHusband in ❤️. Lifelong Learner. Italian, at 💙!\nSpecktacularly ready to cast far & wide! \nMaintaining hope in Humanity 🌍"
+                        }
+                      },
+                      "follower_count": 2263,
+                      "following_count": 1653,
+                      "verifications": [
+                        "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                        "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU",
+                        "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                      ],
+                      "auth_addresses": [],
+                      "verified_addresses": {
+                        "eth_addresses": [
+                          "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                          "0xbbfd3fc1402963f61191190401e76957c6e02e83"
+                        ],
+                        "sol_addresses": [
+                          "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                        ],
+                        "primary": {
+                          "eth_address": "0xd7a086c28f62e221f34474b3d9bf3facb07e938c",
+                          "sol_address": "7D7uexjmGigYiwYyZVvSFQdNVarA1DA8vKSShcrnihEU"
+                        }
+                      },
+                      "verified_accounts": []
+                    },
+                    {
+                      "object": "user",
+                      "fid": 5283,
+                      "username": "dylanb.eth",
+                      "display_name": "Dylan Brodeur",
+                      "custody_address": "0xb13507fdc2554e4eb4ebe43def0b3672828257dd",
+                      "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e8386a52-391c-476b-bc4b-9505d20e9c00/original",
+                      "registered_at": "2023-11-07T22:14:15.000Z",
+                      "profile": {
+                        "bio": {
+                          "text": "Writing"
+                        }
+                      },
+                      "follower_count": 100193,
+                      "following_count": 143,
+                      "verifications": [
+                        "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                        "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                        "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                        "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee",
+                        "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+                      ],
+                      "auth_addresses": [],
+                      "verified_addresses": {
+                        "eth_addresses": [
+                          "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                          "0xd37abf24c89bb36db9363da3a304a254488e1e02",
+                          "0xd5a8e4108c3dc87702314a365ff581febc79d995"
+                        ],
+                        "sol_addresses": [
+                          "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq",
+                          "EYfmqpLRbZgGCyc9SxWd46uNacsG6jeXGQ9gH32Qqxee"
+                        ],
+                        "primary": {
+                          "eth_address": "0xa7860e99e3ce0752d1ac53b974e309fff80277c6",
+                          "sol_address": "ADUGKwgjZSZbH7rLAQibjtci2ETaisayMH2Voq1VaKXq"
+                        }
+                      },
+                      "verified_accounts": []
+                    }
+                  ],
+                  "mentioned_profiles_ranges": [
+                    {
+                      "start": 25,
+                      "end": 25
+                    },
+                    {
+                      "start": 33,
+                      "end": 33
+                    },
+                    {
+                      "start": 62,
+                      "end": 62
+                    },
+                    {
+                      "start": 96,
+                      "end": 96
+                    }
+                  ],
+                  "mentioned_channels": [],
+                  "mentioned_channels_ranges": [],
+                  "direct_replies": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "object": "cast",
+          "hash": "edf4eaca31c2f6d9ec357d863d80c91d024b8027",
+          "parent_hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+          "parent_author": {
+            "fid": 37
+          },
+          "author": {
+            "object": "user",
+            "fid": 428341,
+            "username": "onbloaded",
+            "display_name": "SODIQ OLAWALE 🎩",
+            "custody_address": "0xd2309b337a562412ee1ea6eb14767563b34d7b95",
+            "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/94312295-ba0c-48b8-4b48-b1255f357a00/original",
+            "registered_at": "2024-03-31T13:23:19.000Z",
+            "profile": {
+              "bio": {
+                "text": "💜 LET LOVE LEAD 💜\n💜MEME LOVER💜\n💜 NEW TO WEB3💜\n💜 NOUNS  ⌐◨-◨ LOVER💜\n💜SHITCASTER💜\n💜QUOTE-CASTER💜"
+              }
+            },
+            "follower_count": 9575,
+            "following_count": 2046,
+            "verifications": [
+              "0x60ba240114b825f676d11cc178409cc9c385171c",
+              "HLYNvL6rDt3F4gzq8Mmy5vChXfeRdRwkFyyor3KSTWJd",
+              "0xc8d2f911b6cb613e77beb1f9aaac291d4d378804",
+              "0xf00b45a931c81662fe4b7a7df071cb5ac5e3ebd1",
+              "HDw2tqfNgpywz2DNobfTRHt7S47hZzj3gDXQ6JxwcFCK",
+              "0xb6754e53ce15df43269f59f21c9c235f1f673d67"
+            ],
+            "auth_addresses": [],
+            "verified_addresses": {
+              "eth_addresses": [
+                "0x60ba240114b825f676d11cc178409cc9c385171c",
+                "0xc8d2f911b6cb613e77beb1f9aaac291d4d378804",
+                "0xf00b45a931c81662fe4b7a7df071cb5ac5e3ebd1",
+                "0xb6754e53ce15df43269f59f21c9c235f1f673d67"
+              ],
+              "sol_addresses": [
+                "HLYNvL6rDt3F4gzq8Mmy5vChXfeRdRwkFyyor3KSTWJd",
+                "HDw2tqfNgpywz2DNobfTRHt7S47hZzj3gDXQ6JxwcFCK"
+              ],
+              "primary": {
+                "eth_address": "0x60ba240114b825f676d11cc178409cc9c385171c",
+                "sol_address": "HLYNvL6rDt3F4gzq8Mmy5vChXfeRdRwkFyyor3KSTWJd"
+              }
+            },
+            "verified_accounts": []
+          },
+          "text": "Interesting",
+          "timestamp": "2026-10-17T02:01:19.000Z",
+          "embeds": [],
+          "type": "cast-reply",
+          "reactions": {
+            "likes_count": 6,
+            "recasts_count": 0,
+            "likes": [],
+            "recasts": []
+          },
+          "replies": {
+            "count": 0
+          },
+          "mentioned_profiles": [],
+          "mentioned_profiles_ranges": [],
+          "mentioned_channels": [],
+          "mentioned_channels_ranges": [],
+          "direct_replies": []
+        }
+      ]
+    }
+  }
+}

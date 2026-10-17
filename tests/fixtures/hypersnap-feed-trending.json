@@ -1,0 +1,866 @@
+{
+  "casts": [
+    {
+      "object": "cast",
+      "hash": "09eb33c944884cf1bbe2713ddcc87056fdd627b2",
+      "parent_url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+      "root_parent_url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 3353201,
+        "username": "swarmhood",
+        "display_name": "SwarmHood",
+        "custody_address": "0x2e78af6aef8d85c79920a6ac2b81d9db60323d94",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/d84ccf73-31c8-491a-b9ab-22eff8e4c500/original",
+        "registered_at": "2026-09-30T09:02:01.000Z",
+        "profile": {
+          "bio": {
+            "text": "The swarm that wears the hood"
+          }
+        },
+        "follower_count": 449,
+        "following_count": 0,
+        "verifications": [
+          "6uvcp3996dH7X1etduDoPie4p9sBRaUVDCbfCPfmSGuH",
+          "0x5ef55b76772f7f14027748510b431325ad8af4a6"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x5ef55b76772f7f14027748510b431325ad8af4a6"
+          ],
+          "sol_addresses": [
+            "6uvcp3996dH7X1etduDoPie4p9sBRaUVDCbfCPfmSGuH"
+          ],
+          "primary": {
+            "eth_address": "0x5ef55b76772f7f14027748510b431325ad8af4a6",
+            "sol_address": "6uvcp3996dH7X1etduDoPie4p9sBRaUVDCbfCPfmSGuH"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "I'm earning SWARM tokens on Robinhood Chain — join with my link and start collecting yours",
+      "timestamp": "2026-10-17T11:14:41.000Z",
+      "embeds": [
+        {
+          "url": "https://farcaster.xyz/miniapps/Z6gEN6rYltaz/swarmhood?ref=3353201"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 184,
+        "recasts_count": 184,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 185
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "f454b8d3e5ee2c9252a0b7574ad4942e9ba502d2",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 37,
+        "username": "balajis.eth",
+        "display_name": "balajis",
+        "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+        "pfp_url": "https://github.com/balajis.png",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+          }
+        },
+        "follower_count": 575918,
+        "following_count": 32,
+        "verifications": [
+          "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+          "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+          "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+          "0x167491c09adf80df6b2aee06d3be7f29954968db"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+            "0x167491c09adf80df6b2aee06d3be7f29954968db"
+          ],
+          "sol_addresses": [
+            "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          ],
+          "primary": {
+            "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "THE FARCASTER PRIZE\nWith 10,000+ votes counted, we're at 94.4% support for the new Network School Farcaster.\n\nDylan put together a great visualization of this first decentralized digital democratic election. In his post below, you can see the provable, onchain, cryptographically verifiable votes streaming in for the new social smart contract.\n\nAs a thank you, Dylan is the first recipient of a Farcaster Prize for positive-sum behavior on the platform. We've awarded $1024 to dylanb.eth via Base at the public address he listed[1,2].\n\nImportantly, we're going to make systematic use of prizes to fund public digital infrastructure on Farcaster. This will be how we bootstrap a true cryptoeconomy. Because once we can get useful digital work done here for the core platform, we can bring many digital employers to Farcaster. And we have plenty of capital allocated for the bootstrapping phase. \n\nSo: go read the developer docs (docs.farcaster.xyz/developers), and you can be the next Dylan. More to follow soon, and congratulations to dylanb.eth!\n\n[1,2]: See reply for proof-of-payment to dylanb.eth's public Base address.",
+      "timestamp": "2026-10-17T02:00:03.000Z",
+      "embeds": [
+        {
+          "cast_id": {
+            "fid": 5283,
+            "hash": "c55e0f3bc79fe65e54a02835dbc7896d8bd593ad"
+          }
+        },
+        {
+          "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/1a9f0888-bf59-4e20-9660-07a0f7098c00/original"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 313,
+        "recasts_count": 67,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 95
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "0256ae66308d546514fa666cda44052abbfea066",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 3,
+        "username": "dwr",
+        "display_name": "Dan Romero",
+        "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Interested in technology and other stuff."
+          }
+        },
+        "follower_count": 1221547,
+        "following_count": 77,
+        "verifications": [
+          "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+          "0x187c7b0393ebe86378128f2653d0930e33218899",
+          "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "sol_addresses": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          ],
+          "primary": {
+            "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "",
+      "timestamp": "2026-10-17T02:30:02.000Z",
+      "embeds": [
+        {
+          "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/9f4bda20-a039-4770-5605-8eb24d259e00/original"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 213,
+        "recasts_count": 24,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 27
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "50184b62b4c52fd76628713562e1eda3dccaf63d",
+      "parent_url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+      "root_parent_url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 37,
+        "username": "balajis.eth",
+        "display_name": "balajis",
+        "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+        "pfp_url": "https://github.com/balajis.png",
+        "registered_at": "2023-11-07T19:42:51.000Z",
+        "profile": {
+          "bio": {
+            "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+          }
+        },
+        "follower_count": 575918,
+        "following_count": 32,
+        "verifications": [
+          "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+          "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+          "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+          "0x167491c09adf80df6b2aee06d3be7f29954968db"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+            "0x167491c09adf80df6b2aee06d3be7f29954968db"
+          ],
+          "sol_addresses": [
+            "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          ],
+          "primary": {
+            "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "$2048 FOR FARCASTER CLIENTS\n\nAnyone can build a Farcaster client and run a read node to get data from the protocol. There are developer tutorials on the web[1,2,3,4], but your mission in this prize, should you choose to accept it, is to improve them by collecting all relevant info and making it incredibly easy. \n\nSpecifically, we want you to get it down to three commands, as described in your quickstart and then detailed in your tutorial:\n\n(0) Provision necessary compute via script (1) Set up a Snapchain read node (2) Create a client that reads from that node\n\nThe read node should run on its own, with no API keys from anyone. You just furnish the compute. Note that a read node syncs the network but does not accept writes, so your client should read from your own node and submit casts to a validator endpoint; the tutorial should explain how that works.\n\nThe client should be able to import an existing seed phrase for an account that already has storage, use that seed phrase to issue the client its own app key (one small Optimism transaction), and then post with that key: read the feed, post casts, follow and react, and include/exclude casts from any other client.\n\nIn addition to the quickstart at the top of the page, the tutorial should be mobile- and desktop-friendly, and should explain key protocol concepts as it goes (e.g. FIDs, custody addresses, app keys, Snapchain messages, read nodes vs validators, storage rent). Anything that someone running a client and read node would need to know.\n\nYou can use AI, but your output must *not* be AI slop, as ultimately determined in our sole discretion. To qualify for a prize, you need to have at least one other human user successfully go through your tutorial and create a read node and client. They then need to post on Farcaster publicly vouching for the quality of your work.\n\nYou can go the extra mile of course, like adding Chinese translation, adding a 59s vertical video, and so on. But getting more humans to vouch for your tutorial will be the most powerful signal.\n\nTo enter, submit a reply to this post with three URLs: (1) your microsite with the quickstart + tutorial, (2) the associated GitHub repository with all MIT-licensed open source code, and (3) the link to your voucher's public endorsement on Farcaster.\n\nPrize: $2,048 first place, $512 second place, $128 each for honorable mentions, subject to whether there are enough good submissions. Paid in USDC to your public Farcaster wallet address by default.\n\nDeadline: your reply with three URLs must be submitted within seven days exactly from this post's timestamp.\n\nThat’s it! Go learn the Farcaster protocol yourself, help others learn how to boot up their own clients, earn crypto for doing it, and increase practical freedom of association.",
+      "timestamp": "2026-10-17T14:47:30.000Z",
+      "embeds": [],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 78,
+        "recasts_count": 24,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 20
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "1499e579982d76c07481231ff8677bc9435147c4",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 1725,
+        "username": "sayangel",
+        "display_name": "Angel // Daemons",
+        "custody_address": "0xe90026c9fc8b5fee2401c371acd14e3a24aedb3c",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f06ba86d-eef0-45b2-36d9-13cfddfb0f00/original",
+        "registered_at": "2025-05-14T23:32:41.000Z",
+        "profile": {
+          "bio": {
+            "text": "@warpletsai guy | Construction Tech YC founder by day. I just want us to have fun."
+          }
+        },
+        "follower_count": 145667,
+        "following_count": 2471,
+        "verifications": [
+          "0x88d0e89e7f502aa49a564b683e19089c771776c3",
+          "0xf35ff7426e2dbe06305e71eaee7e038e6dbac620",
+          "GmhcDAPDMM6MYDn4C3ygrK4wnwZUXbSJoJxqqiPCVAy7",
+          "G13zBbLLr6GnELZV9P1BoWG4j5LfjcT4b96b5JJh3Hi3",
+          "0x4977ad8ddea125a1dbf9b8bc3582ed3454f6b06d"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0x88d0e89e7f502aa49a564b683e19089c771776c3",
+            "0xf35ff7426e2dbe06305e71eaee7e038e6dbac620",
+            "0x4977ad8ddea125a1dbf9b8bc3582ed3454f6b06d"
+          ],
+          "sol_addresses": [
+            "GmhcDAPDMM6MYDn4C3ygrK4wnwZUXbSJoJxqqiPCVAy7",
+            "G13zBbLLr6GnELZV9P1BoWG4j5LfjcT4b96b5JJh3Hi3"
+          ],
+          "primary": {
+            "eth_address": "0x88d0e89e7f502aa49a564b683e19089c771776c3",
+            "sol_address": "GmhcDAPDMM6MYDn4C3ygrK4wnwZUXbSJoJxqqiPCVAy7"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "2025: get banned from X, engagement farm it on Farcaster\n2026: get banned from Farcaster client, engagement farm it on X",
+      "timestamp": "2026-10-16T18:56:59.000Z",
+      "embeds": [],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 190,
+        "recasts_count": 14,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 25
+      },
+      "mentioned_profiles": [],
+      "mentioned_profiles_ranges": [],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    },
+    {
+      "object": "cast",
+      "hash": "5f1c70eeeb91f5d1c911bce35ceed83d3d7b550e",
+      "parent_url": "https://warpcast.com/~/channel/gmfarcaster",
+      "root_parent_url": "https://warpcast.com/~/channel/gmfarcaster",
+      "parent_author": {
+        "fid": null
+      },
+      "author": {
+        "object": "user",
+        "fid": 4167,
+        "username": "nounishprof",
+        "display_name": "Nounish Prof ⌐◧-◧🎩",
+        "custody_address": "0xbb54a63ad8241710eba3a98af224080b611ff8e9",
+        "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/df01c21c-97d9-4552-6532-5b224b72bf00/original",
+        "registered_at": "2023-11-07T20:11:21.000Z",
+        "profile": {
+          "bio": {
+            "text": "building /gmfarcaster network |\nblockchain ENT prof |  ⌐◧-◧"
+          }
+        },
+        "follower_count": 279018,
+        "following_count": 8114,
+        "verifications": [
+          "0xceed9585854f12f81a0103861b83b995a64ad915",
+          "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A",
+          "0x554aaa13361123c45dae97b4155dfce5827e39cf",
+          "0x9353cc2583356ce6ea8f92e239d7c9eb8412acaf",
+          "HxtJ8asbVDKi3aPZqzeY1vw3naWak1G9rKAXge4nipz8",
+          "0x72a980640a6f3b284d0ffdba4857865fc7e0ee79",
+          "0xd19b676d39170ea25a8bd73647561f5efcf1b7c7",
+          "0xdad9478b3889eebaea59e6727e6835f84e765a39"
+        ],
+        "auth_addresses": [],
+        "verified_addresses": {
+          "eth_addresses": [
+            "0xceed9585854f12f81a0103861b83b995a64ad915",
+            "0x554aaa13361123c45dae97b4155dfce5827e39cf",
+            "0x9353cc2583356ce6ea8f92e239d7c9eb8412acaf",
+            "0x72a980640a6f3b284d0ffdba4857865fc7e0ee79",
+            "0xd19b676d39170ea25a8bd73647561f5efcf1b7c7",
+            "0xdad9478b3889eebaea59e6727e6835f84e765a39"
+          ],
+          "sol_addresses": [
+            "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A",
+            "HxtJ8asbVDKi3aPZqzeY1vw3naWak1G9rKAXge4nipz8"
+          ],
+          "primary": {
+            "eth_address": "0xceed9585854f12f81a0103861b83b995a64ad915",
+            "sol_address": "G7LU4fomCvLnDeZgnJX3XL3ZGzWFkqT77tApbkrw3n5A"
+          }
+        },
+        "verified_accounts": []
+      },
+      "text": "Balaji, Bans & Bats—Farcaster's New World Order: GM Farcaster ep396 Friday October 16, 2026 \n\ns/o today:       intern     (continued in next reply)\n\nTLDR: ☕ GM 🟣 Balaji's Farcaster vision 📜 Social smart contracts ⚖️ Moderation and appeals 🏛️ Decentralized democracy 👀 Community reactions 🔥 Horsefacts ouliposts 🦇 Team Bat and Farcaster's future 🧑‍⚖️ GM Farcaster trademark talk 🤖 Warpee personality assessments 💸 Splits and AI agents 🐦 Bird liquidity migration\n\nFrom our ChatGPT Intern:  Farcaster has entered its network-state era, and Balaji's new vision for the app has everyone talking about moderation, decentralization, digital democracy, and whether a benevolent dictator is exactly what social media needs. Adrienne and NounishProf unpack the community's reactions, wrestle with what this new chapter means for Farcaster's future, and somehow find time for trademark law, AI personality assessments, autonomous agents, and birds taking their liquidity elsewhere.\n\nWatch this episode on YouTube, Spotify or in the GMFC miniapp; or listen on Apple or wherever you get your podcasts. \nhttps://youtu.be/bmcz0lMMB20  \nhttps://open.spotify.com/episode/4gCFdaM9ad8QOoOA7IHEcu?si=OQxz9UgfRj2xJTR_WVo36g \nhttps://farcaster.xyz/miniapps/RWk7UVoMf6vW/gm-farcaster",
+      "timestamp": "2026-10-16T21:34:24.000Z",
+      "embeds": [
+        {
+          "url": "https://youtu.be/bmcz0lMMB20"
+        },
+        {
+          "url": "https://open.spotify.com/episode/4gCFdaM9ad8QOoOA7IHEcu?si=OQxz9UgfRj2xJTR_WVo36g"
+        },
+        {
+          "url": "https://farcaster.xyz/miniapps/RWk7UVoMf6vW/gm-farcaster"
+        },
+        {
+          "url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/04d28767-2707-4074-e5a2-455543615b00/original"
+        }
+      ],
+      "type": "cast",
+      "reactions": {
+        "likes_count": 112,
+        "recasts_count": 28,
+        "likes": [],
+        "recasts": []
+      },
+      "replies": {
+        "count": 8
+      },
+      "mentioned_profiles": [
+        {
+          "object": "user",
+          "fid": 194,
+          "username": "rish",
+          "display_name": "rish",
+          "custody_address": "0xb95dc10483be18f7c69ddf78d4baafecc01c5530",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/465b734a-da85-44ce-3456-11fedac46100/original",
+          "registered_at": "2023-11-16T22:02:55.000Z",
+          "profile": {
+            "bio": {
+              "text": "i no longer do customer support around here"
+            }
+          },
+          "follower_count": 617953,
+          "following_count": 2398,
+          "verifications": [
+            "0x5a927ac639636e534b678e81768ca19e2c6280b7",
+            "0xe9e261852ea62150eee685807df8fe3f211310a0",
+            "7EeGPnP1dqjXhPwqLmTR1h89txKwLuuciJH6yFPHThCE",
+            "0xa84bc380aeb35836500216c243ab16ef24f9f2f0",
+            "9HVQS8Q4cR2yTdTcwDJKG4GBkp9wKVMwmHkzXfER62ik",
+            "0x11d5d3f2feccb882947bf8ff6599beb823986e75",
+            "0x8cb13a5967d4a9f84bab350ae8328db195b1e173"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x5a927ac639636e534b678e81768ca19e2c6280b7",
+              "0xe9e261852ea62150eee685807df8fe3f211310a0",
+              "0xa84bc380aeb35836500216c243ab16ef24f9f2f0",
+              "0x11d5d3f2feccb882947bf8ff6599beb823986e75",
+              "0x8cb13a5967d4a9f84bab350ae8328db195b1e173"
+            ],
+            "sol_addresses": [
+              "7EeGPnP1dqjXhPwqLmTR1h89txKwLuuciJH6yFPHThCE",
+              "9HVQS8Q4cR2yTdTcwDJKG4GBkp9wKVMwmHkzXfER62ik"
+            ],
+            "primary": {
+              "eth_address": "0x5a927ac639636e534b678e81768ca19e2c6280b7",
+              "sol_address": "7EeGPnP1dqjXhPwqLmTR1h89txKwLuuciJH6yFPHThCE"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 37,
+          "username": "balajis.eth",
+          "display_name": "balajis",
+          "custody_address": "0x3d3a86c5d73b6feb905f1a78f749b90b905c46f6",
+          "pfp_url": "https://github.com/balajis.png",
+          "registered_at": "2023-11-07T19:42:51.000Z",
+          "profile": {
+            "bio": {
+              "text": "Author of the Network State.\nFounder of the Network School.\nWork with us at jobs.ns.com."
+            }
+          },
+          "follower_count": 575918,
+          "following_count": 32,
+          "verifications": [
+            "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+            "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+            "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt",
+            "0x167491c09adf80df6b2aee06d3be7f29954968db"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+              "0x1a21c1f29fabebce8cc160bd48f9802a30d9608e",
+              "0x167491c09adf80df6b2aee06d3be7f29954968db"
+            ],
+            "sol_addresses": [
+              "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+            ],
+            "primary": {
+              "eth_address": "0x0916c04994849c676ab2667ce5bbdf7ccc94310a",
+              "sol_address": "BxBMsDqmfj34tze3XSzna8if7KKWJsudWpD2yR4Yz5yt"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 3,
+          "username": "dwr",
+          "display_name": "Dan Romero",
+          "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+          "registered_at": "2023-11-07T19:42:51.000Z",
+          "profile": {
+            "bio": {
+              "text": "Interested in technology and other stuff."
+            }
+          },
+          "follower_count": 1221547,
+          "following_count": 77,
+          "verifications": [
+            "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+            "0x187c7b0393ebe86378128f2653d0930e33218899",
+            "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x187c7b0393ebe86378128f2653d0930e33218899",
+              "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+            ],
+            "sol_addresses": [
+              "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+            ],
+            "primary": {
+              "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+              "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 20603,
+          "username": "topocount.eth",
+          "display_name": "Topocount",
+          "custody_address": "0xabf14cde5363681ed0e59a3edb113de189dcf65b",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f3eaab4e-2f80-487a-1d72-08bb9430b200/original",
+          "registered_at": "2023-11-07T20:17:01.000Z",
+          "profile": {
+            "bio": {
+              "text": "eng @neynar; protocol subagent, longtime evm dork | runner, Mets fan"
+            }
+          },
+          "follower_count": 10201,
+          "following_count": 1013,
+          "verifications": [
+            "0xbfc7cae0fad9b346270ae8fde24827d2d779ef07",
+            "0x4c1463a2b2ff67b6cddc0448cd374f91aeb25f37",
+            "DbJ8MAt1QFC5SJbkirKxugqXk9fVzguooQYLWgan2k63",
+            "0xf4642b6168019145e418e49f8b96cecdd63803fa"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0xbfc7cae0fad9b346270ae8fde24827d2d779ef07",
+              "0x4c1463a2b2ff67b6cddc0448cd374f91aeb25f37",
+              "0xf4642b6168019145e418e49f8b96cecdd63803fa"
+            ],
+            "sol_addresses": [
+              "DbJ8MAt1QFC5SJbkirKxugqXk9fVzguooQYLWgan2k63"
+            ],
+            "primary": {
+              "eth_address": "0xbfc7cae0fad9b346270ae8fde24827d2d779ef07",
+              "sol_address": "DbJ8MAt1QFC5SJbkirKxugqXk9fVzguooQYLWgan2k63"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 14206,
+          "username": "quazia",
+          "display_name": "quazia",
+          "custody_address": "0x548e6aa27089320bc530e8e5ade11d87f38335c2",
+          "pfp_url": "https://i.imgur.com/WSmXOgw.jpg",
+          "registered_at": "2023-11-07T20:14:51.000Z",
+          "profile": {
+            "bio": {
+              "text": "token jockey & wallet plumber @farcaster\n                                                \nalways growing"
+            }
+          },
+          "follower_count": 6956,
+          "following_count": 1289,
+          "verifications": [
+            "0xb2f784dcc11a696d8f54dc1692feb2b660959a6a",
+            "0x31fc1b87112167f1ca5b855f26ca467b44d84e06",
+            "0xca1269d161647bd461546a7e7c19a16df5179446",
+            "0x3b1f5a8b542de444a22453ca8c6ac851360296ce",
+            "AJBH6pAdu1GHgM8E8FsWrr8fewC3J3bZbcJAB6iZR4Pu",
+            "0x23c7d8e92bb290147e7e683d6f0a74c737cfddd5",
+            "0x861b0b6f2fe409b555c4c48fa17946b92e35d6fa",
+            "0xc0c218589dfc18614bcee0f4577fd8e5fbf676a3",
+            "0xd98d02fdcde0a08117c75e2bb031333e59a3eccf",
+            "0xd00cc82a132f421ba6414d196bc830db95e2e7dd"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0xb2f784dcc11a696d8f54dc1692feb2b660959a6a",
+              "0x31fc1b87112167f1ca5b855f26ca467b44d84e06",
+              "0xca1269d161647bd461546a7e7c19a16df5179446",
+              "0x3b1f5a8b542de444a22453ca8c6ac851360296ce",
+              "0x23c7d8e92bb290147e7e683d6f0a74c737cfddd5",
+              "0x861b0b6f2fe409b555c4c48fa17946b92e35d6fa",
+              "0xc0c218589dfc18614bcee0f4577fd8e5fbf676a3",
+              "0xd98d02fdcde0a08117c75e2bb031333e59a3eccf",
+              "0xd00cc82a132f421ba6414d196bc830db95e2e7dd"
+            ],
+            "sol_addresses": [
+              "AJBH6pAdu1GHgM8E8FsWrr8fewC3J3bZbcJAB6iZR4Pu"
+            ],
+            "primary": {
+              "eth_address": "0xb2f784dcc11a696d8f54dc1692feb2b660959a6a",
+              "sol_address": "AJBH6pAdu1GHgM8E8FsWrr8fewC3J3bZbcJAB6iZR4Pu"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 1,
+          "username": "farcaster",
+          "display_name": "Farcaster",
+          "custody_address": "0x7071cfba18280fd0bc1142d98f8e67fb094d9544",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/7228361d-7a7f-47b4-ee83-cb171f09b200/original",
+          "registered_at": "2026-01-30T17:19:13.000Z",
+          "profile": {
+            "bio": {
+              "text": "tinkerers of open webs"
+            }
+          },
+          "follower_count": 193623,
+          "following_count": 9,
+          "verifications": [
+            "0x86924c37a93734e8611eb081238928a9d18a63c0",
+            "0xdb83ae472f108049828db5f429595c4b5932b62c",
+            "4sqyRTn46QosW1QrzDsxC7Qrg5WXNmd11ezSSeo4N5yA"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x86924c37a93734e8611eb081238928a9d18a63c0",
+              "0xdb83ae472f108049828db5f429595c4b5932b62c"
+            ],
+            "sol_addresses": [
+              "4sqyRTn46QosW1QrzDsxC7Qrg5WXNmd11ezSSeo4N5yA"
+            ],
+            "primary": {
+              "eth_address": "0x86924c37a93734e8611eb081238928a9d18a63c0",
+              "sol_address": "4sqyRTn46QosW1QrzDsxC7Qrg5WXNmd11ezSSeo4N5yA"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 5774,
+          "username": "tldr",
+          "display_name": "tldr (tim reilly)",
+          "custody_address": "0x714f20cbda5d58114f2fa9913a8fe64836384809",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/8160bc96-eae4-4efa-7913-2565687ba200/original",
+          "registered_at": "2023-11-07T20:11:53.000Z",
+          "profile": {
+            "bio": {
+              "text": "we are so back."
+            }
+          },
+          "follower_count": 608060,
+          "following_count": 4738,
+          "verifications": [
+            "0x7ad252facf5f1115b22ea0a4d63e8770573d78a2",
+            "0xb0bc46291e186c537e0cf61263a2a697294bf532",
+            "C2x4xFraKZdV2eEHRfkH6SySdST4jYybQx8TjgJs3SL9",
+            "0x8d0d9db7de57de6e001def2368c591c638825656",
+            "0x56f6b5c392774b7b62d6f62522a74b6af759e421",
+            "H41mNquCEWVMo5zaa7bXxCfQPRmS6qxqCSiasYWWoqRu"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x7ad252facf5f1115b22ea0a4d63e8770573d78a2",
+              "0xb0bc46291e186c537e0cf61263a2a697294bf532",
+              "0x8d0d9db7de57de6e001def2368c591c638825656",
+              "0x56f6b5c392774b7b62d6f62522a74b6af759e421"
+            ],
+            "sol_addresses": [
+              "C2x4xFraKZdV2eEHRfkH6SySdST4jYybQx8TjgJs3SL9",
+              "H41mNquCEWVMo5zaa7bXxCfQPRmS6qxqCSiasYWWoqRu"
+            ],
+            "primary": {
+              "eth_address": "0x7ad252facf5f1115b22ea0a4d63e8770573d78a2",
+              "sol_address": "C2x4xFraKZdV2eEHRfkH6SySdST4jYybQx8TjgJs3SL9"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 1214,
+          "username": "df",
+          "display_name": "David Furlong",
+          "custody_address": "0xcd1bae2391651198850b076c2b600d534df53ade",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/e738382d-7e8c-41f1-9d6d-dedf55df2f00/original",
+          "registered_at": "2023-11-07T19:52:33.000Z",
+          "profile": {
+            "bio": {
+              "text": "Building"
+            }
+          },
+          "follower_count": 285290,
+          "following_count": 1698,
+          "verifications": [
+            "FWC7MGpEwoKZ2gTx6QZB9kWSXq6WvjcJJAJH7qWAGS2k",
+            "0xdaa83039aca9a33b2e54bb2acc9f9c3a99357618",
+            "0x9fec9815fd45cd64225040b8723d165e82cfe43f",
+            "0xbfa56615fd2b3dc7c7f1f4c8d511e5fcead84295",
+            "Ey1LeMLHoVmaH4seBDgTAuPp9vYsQ4yrzdyJB2VCpS6W",
+            "0x6c2640459665291b19374bed498e065436f8e144",
+            "0xdf8ee3e1948c62f6362816f45bde84f501a45f5b"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0xdaa83039aca9a33b2e54bb2acc9f9c3a99357618",
+              "0x9fec9815fd45cd64225040b8723d165e82cfe43f",
+              "0xbfa56615fd2b3dc7c7f1f4c8d511e5fcead84295",
+              "0x6c2640459665291b19374bed498e065436f8e144",
+              "0xdf8ee3e1948c62f6362816f45bde84f501a45f5b"
+            ],
+            "sol_addresses": [
+              "FWC7MGpEwoKZ2gTx6QZB9kWSXq6WvjcJJAJH7qWAGS2k",
+              "Ey1LeMLHoVmaH4seBDgTAuPp9vYsQ4yrzdyJB2VCpS6W"
+            ],
+            "primary": {
+              "eth_address": "0xdaa83039aca9a33b2e54bb2acc9f9c3a99357618",
+              "sol_address": "FWC7MGpEwoKZ2gTx6QZB9kWSXq6WvjcJJAJH7qWAGS2k"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 2210,
+          "username": "kenny",
+          "display_name": "kenny",
+          "custody_address": "0x92d181b029db404780998882a234613c0724030d",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/0d23c0b3-a56e-45e0-f97c-80b6c251c900/original",
+          "registered_at": "2023-11-07T19:52:49.000Z",
+          "profile": {
+            "bio": {
+              "text": "the coordination protocol - /poidh - @poidhbot"
+            }
+          },
+          "follower_count": 238660,
+          "following_count": 12129,
+          "verifications": [
+            "0x0e467a0288a439ba2678eb7d3b0b64b01e2bbbfc",
+            "5zukJ95SiEgf8woiLM2fqhFXPur4YLMULSgEvxqQMXdq",
+            "0x10fc964ef70c8467cd8c53e9ed9347422adf96a8",
+            "7kDJUwNyY2SM46rLqmbdj4MJiq1tPHNLbJHXoTJ5N6he",
+            "0x85ce3e0f2bf7246aa3582e1f695acc328f11cfe2"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0x0e467a0288a439ba2678eb7d3b0b64b01e2bbbfc",
+              "0x10fc964ef70c8467cd8c53e9ed9347422adf96a8",
+              "0x85ce3e0f2bf7246aa3582e1f695acc328f11cfe2"
+            ],
+            "sol_addresses": [
+              "5zukJ95SiEgf8woiLM2fqhFXPur4YLMULSgEvxqQMXdq",
+              "7kDJUwNyY2SM46rLqmbdj4MJiq1tPHNLbJHXoTJ5N6he"
+            ],
+            "primary": {
+              "eth_address": "0x0e467a0288a439ba2678eb7d3b0b64b01e2bbbfc",
+              "sol_address": "5zukJ95SiEgf8woiLM2fqhFXPur4YLMULSgEvxqQMXdq"
+            }
+          },
+          "verified_accounts": []
+        },
+        {
+          "object": "user",
+          "fid": 311933,
+          "username": "burr.eth",
+          "display_name": "Melissa Burr",
+          "custody_address": "0x25624688b3bfae07f36036bfbd72266e3d37b6db",
+          "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/c38a25a6-f3e3-471c-1d79-af3b60651500/original",
+          "registered_at": "2024-02-06T22:30:43.000Z",
+          "profile": {
+            "bio": {
+              "text": "In a jam packed parking lot, I'm the girl who finds the front row spot."
+            }
+          },
+          "follower_count": 48992,
+          "following_count": 252,
+          "verifications": [
+            "5wjGAEeQKBWf4VNDCDAKds7nZnonpVLE8dg69t6QMuJi",
+            "5jY7cAeNDmXvmKLgBhrNaX7ecAcXLEArqSs9PrnK9fxD",
+            "0xd9ff7342aeb11ba4548670ff2f5255b90126958d"
+          ],
+          "auth_addresses": [],
+          "verified_addresses": {
+            "eth_addresses": [
+              "0xd9ff7342aeb11ba4548670ff2f5255b90126958d"
+            ],
+            "sol_addresses": [
+              "5wjGAEeQKBWf4VNDCDAKds7nZnonpVLE8dg69t6QMuJi",
+              "5jY7cAeNDmXvmKLgBhrNaX7ecAcXLEArqSs9PrnK9fxD"
+            ],
+            "primary": {
+              "eth_address": "0xd9ff7342aeb11ba4548670ff2f5255b90126958d",
+              "sol_address": "5wjGAEeQKBWf4VNDCDAKds7nZnonpVLE8dg69t6QMuJi"
+            }
+          },
+          "verified_accounts": []
+        }
+      ],
+      "mentioned_profiles_ranges": [
+        {
+          "start": 107,
+          "end": 107
+        },
+        {
+          "start": 108,
+          "end": 108
+        },
+        {
+          "start": 109,
+          "end": 109
+        },
+        {
+          "start": 110,
+          "end": 110
+        },
+        {
+          "start": 111,
+          "end": 111
+        },
+        {
+          "start": 112,
+          "end": 112
+        },
+        {
+          "start": 120,
+          "end": 120
+        },
+        {
+          "start": 121,
+          "end": 121
+        },
+        {
+          "start": 122,
+          "end": 122
+        },
+        {
+          "start": 123,
+          "end": 123
+        }
+      ],
+      "mentioned_channels": [],
+      "mentioned_channels_ranges": []
+    }
+  ],
+  "next": {
+    "cursor": "6"
+  }
+}

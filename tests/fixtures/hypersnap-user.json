@@ -1,0 +1,38 @@
+{
+  "user": {
+    "object": "user",
+    "fid": 3,
+    "username": "dwr",
+    "display_name": "Dan Romero",
+    "custody_address": "0x6b0bda3f2ffed5efc83fa8c024acff1dd45793f1",
+    "pfp_url": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/bc698287-5adc-4cc5-a503-de16963ed900/original",
+    "registered_at": "2023-11-07T19:42:51.000Z",
+    "profile": {
+      "bio": {
+        "text": "Interested in technology and other stuff."
+      }
+    },
+    "follower_count": 1221547,
+    "following_count": 77,
+    "verifications": [
+      "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx",
+      "0x187c7b0393ebe86378128f2653d0930e33218899",
+      "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+    ],
+    "auth_addresses": [],
+    "verified_addresses": {
+      "eth_addresses": [
+        "0x187c7b0393ebe86378128f2653d0930e33218899",
+        "0x6ce09ed5526de4afe4a981ad86d17b2f5c92fea5"
+      ],
+      "sol_addresses": [
+        "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+      ],
+      "primary": {
+        "eth_address": "0x187c7b0393ebe86378128f2653d0930e33218899",
+        "sol_address": "ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"
+      }
+    },
+    "verified_accounts": []
+  }
+}
