@@ -91,10 +91,9 @@ export class NeynarShapedSource implements DataSource {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
     }
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      "user-agent": "allthing/0.1 (+https://github.com/ael-dev3/allthing)",
-    };
+    const headers: Record<string, string> = { accept: "application/json" };
+    // Browsers forbid (or preflight) a custom User-Agent; only servers send one.
+    if (typeof window === "undefined") headers["user-agent"] = "allthing/0.1 (+https://github.com/ael-dev3/allthing)";
     if (this.config.apiKey) headers["x-api-key"] = this.config.apiKey;
 
     const doFetch = this.config.fetch ?? fetch;

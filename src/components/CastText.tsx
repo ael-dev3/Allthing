@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
-import { channelHref } from "@/lib/channels";
-import { userHref } from "@/lib/links";
+import { channelHref, userHref } from "@/lib/links";
 import { paragraphs, tokenize } from "@/lib/text";
 import type { Mention } from "@/lib/types";
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalParentUrl,
-  channelHref,
   channelIdForUrl,
   channelKeyFromParam,
   channelRefFromUrl,
@@ -10,6 +9,7 @@ import {
   shortParentUrlLabel,
 } from "@/lib/channels";
 import { classifyUrl, embedDomain, resizedImageUrl, thumbnailUrl, visibleEmbeds } from "@/lib/embeds";
+import { channelHref } from "@/lib/links";
 
 const FARCASTER_URL = "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628";
 

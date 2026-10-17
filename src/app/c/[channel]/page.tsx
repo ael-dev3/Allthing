@@ -1,24 +1,22 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { NextPrev } from "@/components/NextPrev";
-import { PageBody } from "@/components/PageBody";
 import { PageFallback } from "@/components/PageFallback";
-import { PostList } from "@/components/PostRow";
-import { ChannelBox, KeyboardHelpBox } from "@/components/SideBoxes";
-import { SiteHeader } from "@/components/SiteHeader";
-import { channelHref, channelKeyFromParam, channelLabel } from "@/lib/channels";
-import { getChannel, getChannelPool, requestNow } from "@/lib/data";
-import { sortTabs } from "@/lib/links";
-import { firstParam, paginate, parsePage, topLevelOnly } from "@/lib/listing";
-import { parseSort, sortCasts } from "@/lib/ranking";
+import { channelKeyFromParam } from "@/lib/channels";
+import { getChannelPage, requestNow } from "@/lib/data";
+import { firstParam, parsePage } from "@/lib/listing";
+import { parseSort } from "@/lib/ranking";
+import type { RouteProps } from "@/lib/route-props";
+import { ChannelView, channelTitle } from "@/views/ChannelView";
 
-export async function generateMetadata({ params }: PageProps<"/c/[channel]">): Promise<Metadata> {
+type Props = RouteProps<{ channel: string }>;
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const key = channelKeyFromParam((await params).channel);
-  return { title: key ? `/c/${channelLabel(key)}` : "channel not found" };
+  return { title: key ? channelTitle(key) : "channel not found" };
 }
 
-export default function ChannelPage({ params, searchParams }: PageProps<"/c/[channel]">) {
+export default function ChannelPage({ params, searchParams }: Props) {
   return (
     <Suspense fallback={<PageFallback />}>
       <ChannelListing params={params} searchParams={searchParams} />
@@ -26,33 +24,18 @@ export default function ChannelPage({ params, searchParams }: PageProps<"/c/[cha
   );
 }
 
-async function ChannelListing({ params, searchParams }: PageProps<"/c/[channel]">) {
+async function ChannelListing({ params, searchParams }: Props) {
   const [{ channel: param }, query] = await Promise.all([params, searchParams]);
   const key = channelKeyFromParam(param);
   if (!key) notFound();
-  const channel = await getChannel(key);
-  if (!channel) notFound();
-
-  const sort = parseSort(firstParam(query.sort));
-  const page = parsePage(firstParam(query.page));
-  const [pool, now] = await Promise.all([getChannelPool(channel.parentUrl), requestNow()]);
-  const slice = paginate(sortCasts(topLevelOnly(pool), sort), page);
-  const path = channelHref(channel);
-
+  const [data, now] = await Promise.all([getChannelPage(key), requestNow()]);
+  if (!data) notFound();
   return (
-    <>
-      <SiteHeader pageName={channelLabel(channel.id)} pageHref={path} tabs={sortTabs(path, sort)} />
-      <PageBody
-        side={
-          <>
-            <ChannelBox channel={channel} />
-            <KeyboardHelpBox />
-          </>
-        }
-      >
-        <PostList casts={slice.items} offset={slice.offset} now={now} />
-        <NextPrev path={path} params={{ sort: sort === "hot" ? undefined : sort }} slice={slice} />
-      </PageBody>
-    </>
+    <ChannelView
+      data={data}
+      sort={parseSort(firstParam(query.sort))}
+      page={parsePage(firstParam(query.page))}
+      now={now}
+    />
   );
 }

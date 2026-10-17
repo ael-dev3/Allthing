@@ -22,7 +22,7 @@ jobs:
       - run: npm run build
 
   e2e:
-    name: end-to-end (live Farcaster data)
+    name: end-to-end, server build (live Farcaster data)
     needs: check
     runs-on: ubuntu-latest
     steps:
@@ -38,8 +38,36 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-server
           path: |
             playwright-report/
             docs/screenshots/
+          retention-days: 14
+
+  static:
+    name: end-to-end, static export (live Farcaster data)
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:static
+        env:
+          ALLTHING_BASE_PATH: /Allthing
+      - run: npm run test:e2e
+        env:
+          E2E_STATIC: "1"
+          E2E_SCREENSHOT_DIR: test-results/screenshots
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: playwright-report-static
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 14

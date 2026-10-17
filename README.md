@@ -8,7 +8,9 @@ The first release is an **anonymous reader for public Snapchain and Hypersnap tr
 
 ## Live Next.js prototype
 
-Alongside the Rust seed, this repository contains a working, read-only **Next.js (TypeScript) prototype that renders real Farcaster data** from the free Hypersnap API: a trending front page, `/c/<channel>` pages with hot/new/top sorting, posts with collapsible threaded replies, profiles, and j/k keyboard navigation. It needs Node.js 22.12+ (`npm install && npm run dev`); the Rust seed described below does not. Setup, design, tests, and screenshots are in [docs/NEXTJS-PROTOTYPE.md](docs/NEXTJS-PROTOTYPE.md).
+**Try it: https://ael-dev3.github.io/Allthing/** (no sign-in).
+
+Alongside the Rust seed, this repository contains a working, read-only **Next.js (TypeScript) prototype that renders real Farcaster data** from the free Hypersnap API: a trending front page, channel pages with hot/new/top sorting, posts with collapsible threaded replies, profiles, and j/k keyboard navigation. It is deployed to GitHub Pages on every push to `main`. It needs Node.js 22.12+ (`npm install && npm run dev`); the Rust seed described below does not. Setup, design, tests, and screenshots are in [docs/NEXTJS-PROTOTYPE.md](docs/NEXTJS-PROTOTYPE.md).
 
 ## This is a seed
 

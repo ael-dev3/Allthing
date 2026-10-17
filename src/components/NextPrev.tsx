@@ -1,18 +1,11 @@
 import Link from "next/link";
-import { queryString, type PageSlice } from "@/lib/listing";
+import { hrefFor, type Query, type Route } from "@/lib/links";
+import type { PageSlice } from "@/lib/listing";
 
 /** "view more: ‹ prev | next ›" under a listing. */
-export function NextPrev({
-  path,
-  params,
-  slice,
-}: {
-  path: string;
-  params: Record<string, string | undefined>;
-  slice: PageSlice<unknown>;
-}) {
+export function NextPrev({ route, params, slice }: { route: Route; params: Query; slice: PageSlice<unknown> }) {
   if (!slice.hasPrev && !slice.hasNext) return null;
-  const href = (page: number) => path + queryString({ ...params, page: page > 1 ? page : undefined });
+  const href = (page: number) => hrefFor(route, { ...params, page: page > 1 ? page : undefined });
   return (
     <div className="nav-buttons">
       <span className="nextprev">
