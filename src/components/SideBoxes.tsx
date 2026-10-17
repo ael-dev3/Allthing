@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { channelLabel, isChannelId } from "@/lib/channels";
-import { resizedImageUrl } from "@/lib/embeds";
 import { fullNumber, plural } from "@/lib/format";
-import { channelHref, channelsRoute, farcasterCastUrl, hrefFor, userHref } from "@/lib/links";
+import { channelHref, channelsRoute, farcasterCastUrl, hrefFor } from "@/lib/links";
 import { castScore } from "@/lib/ranking";
 import { formatDate } from "@/lib/time";
 import type { Cast, Channel, User } from "@/lib/types";
@@ -110,35 +109,13 @@ export function ChannelBox({ channel }: { channel: Channel }) {
   );
 }
 
+/** Sidebar details for a profile; the names, counts and bio are in ProfileHeader. */
 export function UserBox({ user }: { user: User }) {
   return (
-    <section className="spacer titlebox userbox">
-      {user.pfpUrl && (
-        // eslint-disable-next-line @next/next/no-img-element -- remote, arbitrary hosts
-        <img
-          className="pfp"
-          src={resizedImageUrl(user.pfpUrl, "thumb")}
-          alt=""
-          width={64}
-          height={64}
-          referrerPolicy="no-referrer"
-        />
-      )}
-      <h1 className="redditname">
-        <Link href={userHref(user.username)}>{user.displayName || user.username}</Link>
-      </h1>
-      <p className="gray">
-        @{user.username} · fid {user.fid}
+    <SideBox title={`about @${user.username}`}>
+      <p className="userbox">
+        fid <span className="number">{user.fid}</span>
       </p>
-      <p className="karma">
-        <span className="number">{fullNumber(user.followerCount)}</span> followers ·{" "}
-        <span className="number">{fullNumber(user.followingCount)}</span> following
-      </p>
-      {user.bio && (
-        <div className="md bio">
-          <CastText text={user.bio} />
-        </div>
-      )}
       {user.verifiedAddresses.length > 0 && (
         <p className="gray">{plural(user.verifiedAddresses.length, "verified address", "verified addresses")}</p>
       )}
@@ -147,7 +124,7 @@ export function UserBox({ user }: { user: User }) {
           <a href={`https://farcaster.xyz/${encodeURIComponent(user.username)}`}>view on farcaster.xyz »</a>
         </p>
       )}
-    </section>
+    </SideBox>
   );
 }
 

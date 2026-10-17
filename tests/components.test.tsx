@@ -2,10 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CommentTree } from "@/components/CommentTree";
 import { PostList, PostRow } from "@/components/PostRow";
-import { normalizeCast, normalizeThread, type RawCast } from "@/lib/datasource/normalize";
+import { ProfileHeader } from "@/components/ProfileHeader";
+import { normalizeCast, normalizeThread, normalizeUser, type RawCast } from "@/lib/datasource/normalize";
 import type { Cast } from "@/lib/types";
 import conversation from "./fixtures/hypersnap-conversation.json";
 import trending from "./fixtures/hypersnap-feed-trending.json";
+import userSearch from "./fixtures/hypersnap-user-search.json";
 
 const casts: Cast[] = trending.casts.map((raw) => normalizeCast(raw as RawCast));
 const textOf = (html: string) =>
@@ -70,5 +72,24 @@ describe("CommentTree", () => {
 
   it("links spliced mentions to profiles", () => {
     expect(html).toContain('<a href="/u/dylanb.eth">@dylanb.eth</a>');
+  });
+});
+
+describe("ProfileHeader", () => {
+  const balajis = normalizeUser(userSearch.users[0]);
+  const html = renderToStaticMarkup(<ProfileHeader user={balajis} />);
+
+  it("shows the display name, handle and follower counts", () => {
+    expect(html).toContain('<h1 class="display-name">balajis</h1>');
+    expect(textOf(html)).toContain("@balajis.eth · fid 37");
+    expect(textOf(html)).toMatch(/[\d,]+ followers · [\d,]+ following/);
+    expect(html).toMatch(/<span class="followers"><span class="number">575,\d{3}<\/span> followers/);
+  });
+
+  it("renders the bio, or says there is none", () => {
+    expect(textOf(html)).toContain("Author of the Network State.");
+    const noBio = renderToStaticMarkup(<ProfileHeader user={{ ...balajis, bio: " ", displayName: "" }} />);
+    expect(noBio).toContain('<p class="bio gray">no bio</p>');
+    expect(noBio).toContain('<h1 class="display-name">balajis.eth</h1>');
   });
 });
