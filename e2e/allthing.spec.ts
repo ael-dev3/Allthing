@@ -66,7 +66,8 @@ test.describe("front page", () => {
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     const elapsed = Date.now() - started;
-    expect(elapsed, `first casts after ${elapsed} ms`).toBeLessThan(LIVE ? 3000 : 5000);
+    // The static copy builds the page in the browser (several upstream round trips, no edge cache).
+    expect(elapsed, `first casts after ${elapsed} ms`).toBeLessThan(PAGES ? 6000 : LIVE ? 3000 : 5000);
 
     // Branding: the wordmark only, no logo mark.
     await expect(page.locator("header .wordmark")).toHaveText("Allthing");
