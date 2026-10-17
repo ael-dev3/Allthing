@@ -1,1 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#daeaf7"/><text x="17" y="46" fill="#254e75" font-family="Georgia,serif" font-weight="bold" font-size="52">a</text><circle cx="49" cy="48" r="5" fill="#bd4b26"/></svg>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>Allthing</title><rect width="64" height="64" rx="14" fill="#f6f4ee"/><text x="32" y="47" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="46" fill="#1b2233">A</text></svg>

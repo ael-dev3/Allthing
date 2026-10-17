@@ -1,0 +1,13 @@
+{
+  "source": "https://github.com/warpcast/labels (spam.jsonl), published by the Farcaster app",
+  "version": "git:7dfba18",
+  "newest_label": 1752090161,
+  "built_at": 1792277125,
+  "shard_size": 32768,
+  "shards": 35,
+  "counts": {
+    "likely_spam": 380542,
+    "not_spam": 216941,
+    "nerfed": 0
+  }
+}
