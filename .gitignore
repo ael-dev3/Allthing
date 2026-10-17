@@ -11,3 +11,13 @@
 /playwright-report/
 /.idea/
 /.vscode/
+
+# Next.js prototype
+/node_modules/
+/.next/
+/out/
+/build/
+/blob-report/
+*.tsbuildinfo
+next-env.d.ts
+.vercel

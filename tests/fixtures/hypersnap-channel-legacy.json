@@ -1,0 +1,11 @@
+{
+  "channel": {
+    "object": "channel",
+    "id": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+    "url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+    "name": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+    "parent_url": "chain://eip155:7777777/erc721:0x4f86113fc3e9783cf3ec9a552cbb566716a57628",
+    "created_at": "2026-10-17T18:25:14.000Z",
+    "member_count": 94568
+  }
+}
