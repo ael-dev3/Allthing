@@ -34,20 +34,19 @@ Pushing to `main` then builds and deploys. The first deploy also:
 4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly, JS glue, CSS, fonts, `index.html`, `_headers`);
 5. the spam-label shards: `dist/data/labels/spam/`. If the live site already serves shards for the current upstream dataset, they are copied from it; otherwise the dataset (about 125 MB) is downloaded from [warpcast/labels](https://github.com/warpcast/labels), checked against its Git LFS hash, and compacted by `cargo xtask labels`. If that fails, the build still succeeds and profiles say the label data is unavailable. Set the build variable `SKIP_LABELS=1` to skip this step.
 
-A clean build on 2 CPUs takes about 7 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
+A clean build on 2 CPUs takes about 5 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
 
 ### Build timing
 
-Measured on a 2-CPU Linux machine with an empty cache, as on Workers Builds:
+A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty caches (as on Workers Builds), took **4 min 51 s**:
 
 | Step | Time |
 |---|---|
-| Install `worker-build` (`cargo install`) | 3 min |
-| Worker (`worker-build --release`) | 33 s |
-| Browser app (`cargo build`, `wasm-bindgen`, `wasm-opt`) | 75 s |
-| Label shards, when the dataset changed | under 1 min |
-
-Toolchain and crate downloads add about a minute.
+| rustup, the toolchain, and the `wasm-bindgen` download | under 30 s |
+| Install `worker-build` (`cargo install`) | 2 min 34 s |
+| Worker (`worker-build --release`) | 31 s |
+| Browser app (`cargo build`, `wasm-bindgen`, `wasm-opt`) | 1 min 10 s |
+| Label shards, only when the upstream dataset changed | about 1 min more |
 
 ## After the first deploy
 
