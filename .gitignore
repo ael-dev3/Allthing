@@ -1,6 +1,7 @@
 # Rust and build output
 /target/
 /dist/
+/dist-pages/
 /crates/allthing-worker/build/
 
 # Node tooling (wrangler, Playwright)

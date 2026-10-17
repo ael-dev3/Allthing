@@ -4,6 +4,8 @@
 
 mod api;
 mod components;
+#[cfg(feature = "static-host")]
+mod host;
 mod keys;
 mod labels;
 mod pages;
@@ -46,7 +48,7 @@ pub fn start() {
 fn App() -> impl IntoView {
     provide_context(Viewer::new());
     view! {
-        <Router>
+        <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>
             <SiteHeader/>
             <main id="main" class="page">

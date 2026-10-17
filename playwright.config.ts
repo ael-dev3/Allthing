@@ -4,13 +4,16 @@ import { defineConfig, devices } from "@playwright/test";
 /*
  * End-to-end tests against live Farcaster data.
  *
- *   npm run build && npm run test:e2e          # local: wrangler dev serves dist/ + the Worker
- *   E2E_BASE_URL=https://allthing.social npm run test:e2e
+ *   npx playwright test                                       # wrangler dev: dist/ + the Worker
+ *   E2E_BASE_URL=https://allthing.social npx playwright test  # production
+ *   E2E_PAGES=1 npx playwright test                           # the static copy in dist-pages/
+ *   E2E_PAGES=1 E2E_BASE_URL=https://ael-dev3.github.io npx playwright test
  *
  * With E2E_BASE_URL set, no local server is started.
  */
 
-const PORT = Number(process.env.E2E_PORT ?? 8787);
+const PAGES = Boolean(process.env.E2E_PAGES);
+const PORT = Number(process.env.E2E_PORT ?? (PAGES ? 4173 : 8787));
 const localURL = `http://127.0.0.1:${PORT}`;
 const baseURL = process.env.E2E_BASE_URL ?? localURL;
 
@@ -36,10 +39,12 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 900 } } }],
   webServer: process.env.E2E_BASE_URL
     ? undefined
-    : {
-        command: `npx wrangler dev --port ${PORT} --ip 127.0.0.1`,
-        url: `${localURL}/api/v1/status`,
-        reuseExistingServer: true,
-        timeout: 120_000,
-      },
+    : PAGES
+      ? { command: `node e2e/pages-server.mjs ${PORT}`, url: `${localURL}/Allthing/`, reuseExistingServer: true }
+      : {
+          command: `npx wrangler dev --port ${PORT} --ip 127.0.0.1`,
+          url: `${localURL}/api/v1/status`,
+          reuseExistingServer: true,
+          timeout: 120_000,
+        },
 });

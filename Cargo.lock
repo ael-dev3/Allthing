@@ -20,11 +20,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "allthing-data"
+version = "0.2.0"
+dependencies = [
+ "allthing-core",
+ "futures",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "allthing-web"
 version = "0.2.0"
 dependencies = [
  "allthing-core",
+ "allthing-data",
  "console_error_panic_hook",
+ "futures",
  "js-sys",
  "leptos",
  "leptos_router",
@@ -40,6 +52,7 @@ name = "allthing-worker"
 version = "0.2.0"
 dependencies = [
  "allthing-core",
+ "allthing-data",
  "futures",
  "serde",
  "serde_json",

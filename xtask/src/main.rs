@@ -4,6 +4,9 @@
 //! - `dist`: compile the browser app to WebAssembly, run wasm-bindgen (and
 //!   wasm-opt when available), fingerprint the assets and write the static
 //!   site into `dist/`, which Workers Static Assets serves.
+//! - `pages [base]`: the same site for static hosting under `base` (default
+//!   `/Allthing`, for GitHub Pages) in `dist-pages/`, built with the
+//!   `static-host` feature so the browser builds payloads itself.
 //! - `labels <spam.jsonl> [version]`: compact the Farcaster app's spam-label
 //!   dataset into the per-fid shards under `dist/data/labels/spam/`.
 
@@ -21,12 +24,15 @@ type Result<T> = std::result::Result<T, String>;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        Some("dist") => dist(),
+        Some("dist") => site(&Site::workers()),
+        Some("pages") => site(&Site::pages(args.get(1).map_or("/Allthing", String::as_str))),
         Some("labels") => match args.get(1) {
             Some(input) => labels(Path::new(input), args.get(2).cloned()),
             None => Err("usage: cargo xtask labels <spam.jsonl> [version]".into()),
         },
-        _ => Err("usage: cargo xtask dist | cargo xtask labels <spam.jsonl> [version]".into()),
+        _ => {
+            Err("usage: cargo xtask dist | cargo xtask pages [base] | cargo xtask labels <spam.jsonl> [version]".into())
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -102,13 +108,35 @@ fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn dist() -> Result<()> {
+/// Which static site to build.
+struct Site {
+    /// Output directory, relative to the workspace root.
+    out: &'static str,
+    /// Path prefix the site is served under ("" at a domain's root).
+    base: String,
+    /// Build payloads in the browser (no Worker behind the site).
+    static_host: bool,
+}
+
+impl Site {
+    fn workers() -> Site {
+        Site { out: "dist", base: String::new(), static_host: false }
+    }
+
+    fn pages(base: &str) -> Site {
+        Site { out: "dist-pages", base: base.trim_end_matches('/').to_owned(), static_host: true }
+    }
+}
+
+fn site(site: &Site) -> Result<()> {
     let root = root();
-    let dist = root.join("dist");
+    let dist = root.join(site.out);
     let assets = dist.join("assets");
     let bindgen_out = root.join("target/web-bindgen");
+    let base = site.base.as_str();
 
-    run(Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())).current_dir(&root).args([
+    let mut cargo = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    cargo.current_dir(&root).env("ALLTHING_BASE_PATH", base).args([
         "build",
         "--release",
         "--locked",
@@ -116,7 +144,11 @@ fn dist() -> Result<()> {
         "allthing-web",
         "--target",
         "wasm32-unknown-unknown",
-    ]))?;
+    ]);
+    if site.static_host {
+        cargo.args(["--features", "static-host"]);
+    }
+    run(&mut cargo)?;
     let _ = fs::remove_dir_all(&bindgen_out);
     run(Command::new(tool("WASM_BINDGEN_BIN", "wasm-bindgen")).current_dir(&root).args([
         "--target",
@@ -141,10 +173,26 @@ fn dist() -> Result<()> {
         eprintln!("xtask: wasm-opt not found; shipping the unoptimized module");
     }
 
-    // Start from a clean assets directory; label shards under dist/data stay.
-    let _ = fs::remove_dir_all(&assets);
-    for stale in ["index.html", "_headers", "favicon.svg", "robots.txt"] {
-        let _ = fs::remove_file(dist.join(stale));
+    if site.static_host {
+        // Everything is rebuilt; label shards come from the Workers build's dist/.
+        let _ = fs::remove_dir_all(&dist);
+        let shards = root.join("dist/data/labels/spam");
+        if shards.is_dir() {
+            for shard in fs::read_dir(&shards).map_err(|e| e.to_string())? {
+                let shard = shard.map_err(|e| e.to_string())?.path();
+                if let Some(name) = shard.file_name() {
+                    write(&dist.join("data/labels/spam").join(name), read(&shard)?)?;
+                }
+            }
+        } else {
+            eprintln!("xtask: no label shards in dist/data; profiles will say labels are unavailable");
+        }
+    } else {
+        // Start from a clean assets directory; label shards under dist/data stay.
+        let _ = fs::remove_dir_all(&assets);
+        for stale in ["index.html", "_headers", "favicon.svg", "robots.txt"] {
+            let _ = fs::remove_file(dist.join(stale));
+        }
     }
 
     let wasm = read(&wasm_path)?;
@@ -159,7 +207,7 @@ fn dist() -> Result<()> {
     write(&assets.join(&css_name), &css)?;
 
     let boot_template = String::from_utf8(read(&root.join("web/boot.js"))?).map_err(|e| e.to_string())?;
-    let boot = boot_template.replace("{{JS}}", &js_name).replace("{{WASM}}", &wasm_name);
+    let boot = boot_template.replace("{{JS}}", &js_name).replace("{{WASM}}", &wasm_name).replace("{{BASE}}", base);
     let boot_name = format!("boot-{}.js", fingerprint(boot.as_bytes()));
     write(&assets.join(&boot_name), &boot)?;
 
@@ -169,21 +217,30 @@ fn dist() -> Result<()> {
             write(&assets.join("fonts").join(name), read(&font)?)?;
         }
     }
-    for file in ["favicon.svg", "robots.txt", "_headers"] {
+    let files: &[&str] =
+        if site.static_host { &["favicon.svg", "robots.txt"] } else { &["favicon.svg", "robots.txt", "_headers"] };
+    for file in files {
         write(&dist.join(file), read(&root.join("web").join(file))?)?;
     }
 
     let html = String::from_utf8(read(&root.join("web/index.html"))?).map_err(|e| e.to_string())?;
     let html = html
-        .replace("{{CSS}}", &format!("/assets/{css_name}"))
-        .replace("{{JS}}", &format!("/assets/{js_name}"))
-        .replace("{{WASM}}", &format!("/assets/{wasm_name}"))
-        .replace("{{BOOT}}", &format!("/assets/{boot_name}"));
-    write(&dist.join("index.html"), html)?;
+        .replace("{{CSS}}", &format!("{base}/assets/{css_name}"))
+        .replace("{{JS}}", &format!("{base}/assets/{js_name}"))
+        .replace("{{WASM}}", &format!("{base}/assets/{wasm_name}"))
+        .replace("{{BOOT}}", &format!("{base}/assets/{boot_name}"))
+        .replace("{{BASE}}", base);
+    write(&dist.join("index.html"), &html)?;
+    if site.static_host {
+        // Static hosts answer unknown paths with 404.html: let the app route them.
+        write(&dist.join("404.html"), &html)?;
+        write(&dist.join(".nojekyll"), "")?;
+    }
 
     let kb = |n: usize| n.div_ceil(1024);
     eprintln!(
-        "xtask: dist ready: {wasm_name} {} KB, {js_name} {} KB, {css_name} {} KB",
+        "xtask: {} ready: {wasm_name} {} KB, {js_name} {} KB, {css_name} {} KB",
+        site.out,
         kb(wasm.len()),
         kb(js.len()),
         kb(css.len())

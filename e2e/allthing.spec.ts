@@ -4,13 +4,18 @@ import path from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /*
- * Allthing end to end, against live Farcaster data (Hypersnap) through the
- * Worker. Screenshots land in docs/screenshots (override with
- * E2E_SCREENSHOT_DIR).
+ * Allthing end to end, against live Farcaster data (Hypersnap), either through
+ * the Worker or, with E2E_PAGES=1, as the static GitHub Pages copy that reads
+ * Hypersnap from the browser. Screenshots land in docs/screenshots (override
+ * with E2E_SCREENSHOT_DIR).
  */
 
 const SHOTS = process.env.E2E_SCREENSHOT_DIR ?? "docs/screenshots";
 const LIVE = Boolean(process.env.E2E_BASE_URL);
+const PAGES = Boolean(process.env.E2E_PAGES);
+// The static copy is served under a sub-path, like https://ael-dev3.github.io/Allthing/.
+const BASE_PATH = process.env.E2E_BASE_PATH ?? (PAGES ? "/Allthing" : "");
+const at = (path: string) => BASE_PATH + path;
 
 // Known casts. Casts are immutable, so these stay valid unless deleted.
 const VIDEO_CAST = "0x3b6c0db881a351984ab7844cd56265d492431d79"; // @0xael.eth, Hyperion prologue (HLS video)
@@ -20,10 +25,12 @@ const NESTED_THREAD = "0xf454b8d3e5ee2c9252a0b7574ad4942e9ba502d2"; // @balajis.
 
 const firstCard = (page: Page) => page.locator(".cast-card:not(.skeleton)").first();
 
+/** Data requests made during `action`: Worker API calls, or Hypersnap reads in the static copy. */
 async function apiRequests(page: Page, action: () => Promise<void>): Promise<string[]> {
   const seen: string[] = [];
   const listener = (request: { url(): string; method(): string }) => {
-    if (new URL(request.url()).pathname.startsWith("/api/")) seen.push(`${request.method()} ${request.url()}`);
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/") || url.hostname === "haatz.quilibrium.com") seen.push(`${request.method()} ${request.url()}`);
   };
   page.on("request", listener);
   await action();
@@ -56,7 +63,7 @@ async function useFixtureStream(page: Page) {
 test.describe("front page", () => {
   test("loads trending casts fast, with the wordmark and honest engagement", async ({ page }) => {
     const started = Date.now();
-    await page.goto("/");
+    await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     const elapsed = Date.now() - started;
     expect(elapsed, `first casts after ${elapsed} ms`).toBeLessThan(LIVE ? 3000 : 5000);
@@ -89,7 +96,7 @@ test.describe("front page", () => {
   });
 
   test("new and top re-rank the same pool without another API call", async ({ page }) => {
-    await page.goto("/");
+    await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     const calls = await apiRequests(page, async () => {
       await page.locator(".sort-tabs a", { hasText: "new" }).click();
@@ -107,8 +114,9 @@ test.describe("front page", () => {
   });
 
   test("each page view costs one API call", async ({ page }) => {
+    test.skip(PAGES, "the static copy has no API: the browser reads Hypersnap itself");
     const calls = await apiRequests(page, async () => {
-      await page.goto("/c/farcaster");
+      await page.goto(at("/c/farcaster"));
       await expect(firstCard(page)).toBeVisible();
     });
     expect(calls.filter((c) => c.includes("/api/v1/channel"))).toHaveLength(1);
@@ -118,7 +126,7 @@ test.describe("front page", () => {
 
 test.describe("media", () => {
   test("images enlarge on hover and open an accessible lightbox", async ({ page }) => {
-    await page.goto(`/p/${GALLERY_CAST}`);
+    await page.goto(at(`/p/${GALLERY_CAST}`));
     const tiles = page.locator(".post .tile-image");
     await expect(tiles).toHaveCount(2);
 
@@ -165,7 +173,7 @@ test.describe("media", () => {
   });
 
   test("a Farcaster video by @0xael.eth plays inline, not as a link", async ({ page }) => {
-    await page.goto(`/p/${VIDEO_CAST}`);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
     const video = page.locator(".post .video video");
     await expect(video).toBeVisible();
     // The poster comes from the stream host itself, never through our Worker.
@@ -188,7 +196,7 @@ test.describe("media", () => {
 
   test("the Rust HLS player streams segments: hover previews muted, click plays with controls", async ({ page }) => {
     await useFixtureStream(page);
-    await page.goto(`/p/${VIDEO_CAST}`);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
     const player = page.locator(".post .video").first();
     const video = player.locator("video");
     await expect(player).toBeVisible();
@@ -201,8 +209,8 @@ test.describe("media", () => {
 
     await player.getByRole("button", { name: /^Play video:/ }).click();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.muted)).toBe(true);
-    const at = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
-    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(at + 0.5);
+    const playedTo = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(playedTo + 0.5);
     expect(await video.getAttribute("data-error")).toBeNull();
 
     // Seeking past the buffer fetches the right segment.
@@ -212,7 +220,7 @@ test.describe("media", () => {
 
   test("a video opens in the lightbox with the full player", async ({ page }) => {
     await useFixtureStream(page);
-    await page.goto(`/p/${VIDEO_CAST}`);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
     await page.locator(".post .video").first().hover();
     await page.locator(".post").getByRole("button", { name: "Open in the media viewer" }).first().click();
     const dialog = page.getByRole("dialog", { name: "Media viewer" });
@@ -229,12 +237,13 @@ test.describe("media", () => {
     const dir = path.join(__dirname, "fixtures/hls");
     const body = Buffer.concat(["init_0.mp4", "seg_0_0.m4s", "seg_0_1.m4s", "seg_0_2.m4s"].map((f) => readFileSync(path.join(dir, f))));
     await page.route(clip, (route) => route.fulfill({ body, contentType: "video/mp4" }));
-    await page.route(new RegExp(`/api/v1/cast\\?hash=${VIDEO_CAST}$`), async (route) => {
+    // The Worker's payload, or (static copy) Hypersnap's conversation answer.
+    await page.route(new RegExp(`/api/v1/cast\\?hash=${VIDEO_CAST}$|haatz\\.quilibrium\\.com/v2/farcaster/cast/conversation\\?`), async (route) => {
       const response = await route.fetch();
       const text = (await response.text()).replace(/https:\/\/stream\.farcaster\.xyz\/[^"]+/g, clip);
       await route.fulfill({ response, body: text });
     });
-    await page.goto(`/p/${VIDEO_CAST}`);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
     const player = page.locator(".post .video").first();
     const video = player.locator("video");
     await expect(video).toHaveAttribute("src", `${clip}#t=0.1`);
@@ -248,7 +257,7 @@ test.describe("media", () => {
   test("YouTube links get a privacy-friendly, click-to-load player", async ({ page }) => {
     // Keep the test hermetic: nothing from YouTube itself needs to load.
     await page.route(/youtube-nocookie\.com|ytimg\.com/, (route) => route.fulfill({ status: 204, body: "" }));
-    await page.goto(`/p/${YOUTUBE_CAST}`);
+    await page.goto(at(`/p/${YOUTUBE_CAST}`));
     const facade = page.locator(".post .facade[data-provider=youtube]");
     await expect(facade).toBeVisible();
     await expect(facade.locator("iframe")).toHaveCount(0);
@@ -260,7 +269,7 @@ test.describe("media", () => {
 
 test.describe("profiles", () => {
   test("show score, registration, counts, wallet activity by chain and the app label", async ({ page }) => {
-    await page.goto("/u/0xael.eth");
+    await page.goto(at("/u/0xael.eth"));
     const profile = page.locator(".profile");
     await expect(profile.locator(".profile-name")).toHaveText(/\S/);
     await expect(profile.locator(".handle")).toContainText("@0xael.eth");
@@ -292,7 +301,7 @@ test.describe("profiles", () => {
     await page.route("**/data/labels/spam/0016.txt", (route) =>
       route.fulfill({ body: "-".repeat(539854 % 32768) + "3" + "-".repeat(32768 - (539854 % 32768) - 1), contentType: "text/plain" }),
     );
-    await page.goto("/u/0xael.eth");
+    await page.goto(at("/u/0xael.eth"));
     await expect(page.locator(".spam-label")).toHaveText("Nerfed for malicious activity");
     await expect(page.locator(".label-note")).toContainText("never hides anyone's casts");
     await expect(firstCard(page)).toBeVisible();
@@ -301,9 +310,9 @@ test.describe("profiles", () => {
   });
 
   test("dotted ENS-style names and the old static-site links resolve", async ({ page }) => {
-    await page.goto("/u/?name=balajis.eth");
+    await page.goto(at("/u/?name=balajis.eth"));
     await expect(page.locator(".profile .handle")).toContainText("@balajis.eth · fid 37");
-    await page.goto("/u/balajis.eth");
+    await page.goto(at("/u/balajis.eth"));
     await expect(page.locator(".profile .handle")).toContainText("@balajis.eth");
     await expect(firstCard(page).locator(".author")).toHaveText("@balajis.eth");
   });
@@ -311,7 +320,7 @@ test.describe("profiles", () => {
 
 test.describe("threads and navigation", () => {
   test("replies collapse and expand with animation, by click and with x", async ({ page }) => {
-    await page.goto(`/p/${NESTED_THREAD}`);
+    await page.goto(at(`/p/${NESTED_THREAD}`));
     const parent = page.locator(".comments > .comment").filter({ has: page.locator(":scope > .comment-body .children .comment") }).first();
     await expect(parent).toBeVisible();
     const toggle = parent.locator(":scope > .comment-head .toggle");
@@ -340,7 +349,7 @@ test.describe("threads and navigation", () => {
   });
 
   test("j/k move between casts and o opens one", async ({ page }) => {
-    await page.goto("/");
+    await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     await page.keyboard.press("j");
     await expect(page.locator(".cast-card").nth(0)).toHaveClass(/selected/);
@@ -355,7 +364,7 @@ test.describe("threads and navigation", () => {
   });
 
   test("provenance names the signing app and the backend", async ({ page }) => {
-    await page.goto(`/p/${VIDEO_CAST}`);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
     const box = page.locator(".side-box", { hasText: "Provenance" });
     await expect(box.locator("dd").first()).toContainText(/Warpcast|Farcaster|app fid/);
     await expect(box).toContainText(/0x[0-9a-f]{4}…[0-9a-f]{4}/);
@@ -364,7 +373,7 @@ test.describe("threads and navigation", () => {
   });
 
   test("channels and the directory render", async ({ page }) => {
-    await page.goto("/channels");
+    await page.goto(at("/channels"));
     await expect(page.locator(".channel-card").first()).toBeVisible();
     await page.locator(".channel-card a", { hasText: "/farcaster" }).click();
     await expect(page).toHaveURL(/\/c\/farcaster/);
@@ -377,26 +386,28 @@ test.describe("threads and navigation", () => {
     page.on("request", (r) => {
       if (r.method() !== "GET" && r.method() !== "HEAD" && new URL(r.url()).origin === new URL(page.url() || "http://x").origin) writes.push(r.url());
     });
-    await page.goto("/");
+    await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     await expect(page.locator("header, .side, footer").getByText(/sign in|log in|connect wallet/i)).toHaveCount(0);
     expect(writes).toHaveLength(0);
-    const response = await page.request.post("/api/v1/home", { data: {} });
-    expect(response.status()).toBe(405);
+    if (!PAGES) {
+      const response = await page.request.post("/api/v1/home", { data: {} });
+      expect(response.status()).toBe(405);
+    }
   });
 
   test("unknown things say so", async ({ page }) => {
-    await page.goto("/u/no-such-user-zz9-plural-z-alpha");
+    await page.goto(at("/u/no-such-user-zz9-plural-z-alpha"));
     await expect(page.locator(".error-panel")).toContainText("Nothing here");
-    await page.goto("/p/0x0000000000000000000000000000000000000000");
+    await page.goto(at("/p/0x0000000000000000000000000000000000000000"));
     await expect(page.locator(".error-panel")).toContainText("Nothing here");
-    await page.goto("/definitely/not/a/page");
+    await page.goto(at("/definitely/not/a/page"));
     await expect(page.locator(".error-panel")).toContainText("Page not found");
   });
 });
 
 test.describe("hosting", () => {
-  test.skip(!LIVE, "only against the deployed site");
+  test.skip(!LIVE || PAGES, "only against the Cloudflare deployment");
 
   test("www redirects to the apex domain", async ({ page }) => {
     const base = new URL(process.env.E2E_BASE_URL!);

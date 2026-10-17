@@ -5,6 +5,7 @@
 use allthing_core::labels::{self, LabelsMeta, SpamLabel};
 
 use crate::api::get_text;
+use crate::util::href;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LabelState {
@@ -17,15 +18,16 @@ pub enum LabelState {
 }
 
 pub async fn spam_label(fid: u64) -> LabelState {
-    let Some(meta) =
-        get_text("/data/labels/spam/meta.json").await.and_then(|text| serde_json::from_str::<LabelsMeta>(&text).ok())
+    let Some(meta) = get_text(&href("/data/labels/spam/meta.json"))
+        .await
+        .and_then(|text| serde_json::from_str::<LabelsMeta>(&text).ok())
     else {
         return LabelState::Unavailable;
     };
     if labels::shard_of(fid) >= meta.shards {
         return LabelState::Unlabeled(meta);
     }
-    match get_text(&labels::shard_path(fid)).await {
+    match get_text(&href(&labels::shard_path(fid))).await {
         Some(shard) => match labels::lookup(&shard, fid) {
             Some(label) => LabelState::Labeled(label, meta),
             None => LabelState::Unlabeled(meta),

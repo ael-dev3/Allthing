@@ -24,9 +24,10 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 | Crate | Target | Role |
 |---|---|---|
 | `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, spam-label shards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
-| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, Hypersnap and RPC clients behind guards, and the page builders that assemble each payload. |
-| `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, keyboard navigation. |
-| `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask labels` turns the spam-label dataset into shards. |
+| `allthing-data` | native + wasm32 | The page builders that assemble each payload, and the Hypersnap and RPC clients behind guards. The runtime is abstracted as a `Host` (clock, HTTP with a timeout, background work), so the same code runs in the Worker and in the browser. |
+| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController` and `waitUntil`. |
+| `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, keyboard navigation. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
+| `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`; `cargo xtask labels` turns the spam-label dataset into shards. |
 
 `scripts/build.sh` runs `worker-build` for the Worker and `cargo xtask dist` for the app. The xtask runs `cargo build`, `wasm-bindgen --target web` and `wasm-opt -Oz`, then writes fingerprinted files (`allthing-<hash>.wasm/.js/.css`, `boot-<hash>.js`) and fills them into `web/index.html`. Both WebAssembly builds use `opt-level = "z"`, LTO, one codegen unit and `panic = "abort"`.
 
@@ -94,6 +95,16 @@ Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel fee
 - **Video.** `player.rs` and `video.rs`: an IntersectionObserver loads the master playlist 600 px before a video scrolls into view. Safari plays the playlist natively. Elsewhere the Rust player parses master and media playlists (`allthing_core::hls`), picks a rendition by height (480p for hover previews, 720p inline, 1080p in the viewer), and feeds fMP4 segments into separate video and audio `SourceBuffer`s. It keeps 24 s buffered ahead, follows seeks, steps over gaps and ends the stream. Plain `.mp4` and `.webm` files play natively. YouTube, Vimeo, Loom and Streamable links render as facades that load the provider's iframe only on click; YouTube uses `youtube-nocookie.com`.
 - **Threads.** `CommentTree` renders replies recursively. Collapsing animates the row height and marks the hidden subtree `inert`. `keys.rs` adds `j`/`k`/`o`/`x` over any element marked `data-nav`.
 - **Design.** `style/allthing.css` is a light theme: warm paper, an indigo accent, cyan and gold for the "portal" details, and Instrument Serif for display type. It adds a faint lattice and glows behind the page and a slowly drifting line under the header. Cards rise in and lift on hover, threads expand, and skeletons shimmer. `prefers-reduced-motion` turns the motion off.
+
+## The static copy (GitHub Pages)
+
+A static host can't run the Worker, so `cargo xtask pages` builds a second variant of the app:
+
+- compiled with the `static-host` feature, `api.rs` answers `/api/v1/...` paths in-process: `allthing_data::Endpoint::from_path` and `build` run with a browser `Host` (`window.fetch`, `AbortController`, `setTimeout`) and a budget of 30 upstream calls per page;
+- compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset, label shard and the router live under that prefix;
+- `404.html` is a copy of `index.html`, which is how GitHub Pages serves deep links to a single-page app.
+
+Annotations memoized in the page (scores, origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
 
 ## Security and privacy
 

@@ -2,6 +2,7 @@
 [workspace]
 members = [
     "crates/allthing-core",
+    "crates/allthing-data",
     "crates/allthing-web",
     "crates/allthing-worker",
     "xtask",
@@ -19,6 +20,7 @@ authors = ["Allthing contributors"]
 
 [workspace.dependencies]
 allthing-core = { path = "crates/allthing-core" }
+allthing-data = { path = "crates/allthing-data" }
 console_error_panic_hook = "0.1"
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 js-sys = "0.3"

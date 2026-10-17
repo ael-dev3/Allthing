@@ -5,5 +5,5 @@ if (location.hostname === "www.allthing.social") {
   location.replace("https://allthing.social" + location.pathname + location.search + location.hash);
 } else {
   const { default: init } = await import("./{{JS}}");
-  await init({ module_or_path: "/assets/{{WASM}}" });
+  await init({ module_or_path: "{{BASE}}/assets/{{WASM}}" });
 }

@@ -7,8 +7,8 @@ Thanks for helping. Small, focused pull requests are easiest to review. For larg
 
 - **Read-only.** Don't add sign-in, signing, wallet connections or anything that writes to Farcaster unless that scope has been agreed in an issue first.
 - **Never hide content** on the basis of a third-party label. Show labels where they belong, with their source.
-- **Stay within the Free plan.** One API call per page; new upstream calls go through `upstream.rs` (guards, timeouts, budget) and the edge cache. Update [docs/BUDGET.md](docs/BUDGET.md) if the numbers change.
-- **Keep provider quirks in `allthing-worker/src/hypersnap.rs` and `allthing-core/src/normalize.rs`**, and keep pure logic in `allthing-core`, with tests.
+- **Stay within the Free plan.** One API call per page; new upstream calls go through `allthing-data/src/upstream.rs` (guards, timeouts, budget) and the edge cache. Update [docs/BUDGET.md](docs/BUDGET.md) if the numbers change.
+- **Keep provider quirks in `allthing-data/src/hypersnap.rs` and `allthing-core/src/normalize.rs`**, and keep pure logic in `allthing-core`, with tests. The builders in `allthing-data` also run in the browser for the static build, so they reach the network only through the `Host` trait.
 
 ## Workflow
 

@@ -7,8 +7,9 @@ cd "$(dirname "$0")/.."
 
 cargo fmt --all -- --check
 cargo clippy --locked -p allthing-core -p xtask --all-targets -- -D warnings
-cargo clippy --locked -p allthing-web -p allthing-worker --target wasm32-unknown-unknown -- -D warnings
-cargo test --locked -p allthing-core -p allthing-web -p allthing-worker -p xtask
+cargo clippy --locked -p allthing-data -p allthing-web -p allthing-worker --target wasm32-unknown-unknown -- -D warnings
+cargo clippy --locked -p allthing-web --features static-host --target wasm32-unknown-unknown -- -D warnings
+cargo test --locked -p allthing-core -p allthing-data -p allthing-web -p allthing-worker -p xtask
 if command -v cargo-deny >/dev/null 2>&1; then
   cargo deny --log-level error check licenses
 else

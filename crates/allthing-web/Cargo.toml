@@ -13,9 +13,16 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Build each page's payload in the browser instead of calling the Worker's
+# /api/v1, for static hosting such as GitHub Pages (see scripts/build-pages.sh).
+static-host = ["dep:allthing-data", "dep:futures"]
+
 [dependencies]
 allthing-core.workspace = true
+allthing-data = { workspace = true, optional = true }
 console_error_panic_hook.workspace = true
+futures = { workspace = true, optional = true }
 js-sys.workspace = true
 leptos.workspace = true
 leptos_router.workspace = true
@@ -35,6 +42,7 @@ features = [
     "DomTokenList",
     "Element",
     "EventTarget",
+    "Headers",
     "HtmlElement",
     "HtmlImageElement",
     "HtmlMediaElement",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Same-origin calls to the Worker's `/api/v1`, with a short in-memory cache
-//! so going back and forth between pages costs no requests.
+//! so going back and forth between pages costs no requests. In the static
+//! build (`static-host`), the same payloads are built in the browser.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -73,6 +74,11 @@ thread_local! {
 }
 
 async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
+    #[cfg(feature = "static-host")]
+    if path.starts_with(allthing_core::api::API_PREFIX) {
+        let (status, body, retry_after) = crate::host::build(path).await;
+        return Ok(Raw { at: js_sys::Date::now(), status, body: body.into(), age: 0, stale: false, retry_after });
+    }
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
     let response = JsFuture::from(window.fetch_with_str(path))
         .await
