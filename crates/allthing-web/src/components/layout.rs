@@ -8,11 +8,11 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
 use crate::api::Failure;
-use crate::util::{SOURCE_URL, with_query};
+use crate::util::{BASE, SOURCE_URL, href, with_query};
 
 #[component]
 pub fn Wordmark() -> impl IntoView {
-    view! { <a class="wordmark" href="/" aria-label="Allthing, front page">"Allthing"</a> }
+    view! { <a class="wordmark" href=href("/") aria-label="Allthing, front page">"Allthing"</a> }
 }
 
 #[component]
@@ -20,16 +20,17 @@ pub fn SiteHeader() -> impl IntoView {
     let location = use_location();
     let current = move |prefix: &'static str| {
         let path = location.pathname.get();
-        if prefix == "/" { path == "/" } else { path.starts_with(prefix) }
+        let path = path.strip_prefix(BASE).unwrap_or(&path);
+        if prefix == "/" { path == "/" || path.is_empty() } else { path.starts_with(prefix) }
     };
     view! {
         <header class="site-header">
             <div class="header-inner">
                 <Wordmark/>
                 <nav class="main-nav" aria-label="Main">
-                    <a href="/" aria-current=move || current("/").then_some("page")>"Front page"</a>
-                    <a href="/channels" aria-current=move || current("/channels").then_some("page")>"Channels"</a>
-                    <a href="/about" aria-current=move || current("/about").then_some("page")>"About"</a>
+                    <a href=href("/") aria-current=move || current("/").then_some("page")>"Front page"</a>
+                    <a href=href("/channels") aria-current=move || current("/channels").then_some("page")>"Channels"</a>
+                    <a href=href("/about") aria-current=move || current("/about").then_some("page")>"About"</a>
                 </nav>
                 <span class="readonly-pill" title="Allthing only reads public Farcaster data. There is no sign-in and nothing is ever posted.">"read-only"</span>
             </div>
@@ -143,7 +144,7 @@ pub fn ErrorPanel(failure: Failure) -> impl IntoView {
             <h1>{title}</h1>
             <p>{failure.message()}</p>
             {retry.then(|| view! { <button type="button" class="button" on:click=move |_| { let _ = window().location().reload(); }>"Try again"</button> })}
-            <p><a href="/">"Back to the front page"</a></p>
+            <p><a href=href("/")>"Back to the front page"</a></p>
         </section>
     }
 }
@@ -155,7 +156,7 @@ pub fn NotFound() -> impl IntoView {
         <section class="error-panel not-found">
             <h1>"Page not found"</h1>
             <p>"This corner of the Allthing is empty."</p>
-            <p><a href="/">"Back to the front page"</a></p>
+            <p><a href=href("/")>"Back to the front page"</a></p>
         </section>
     }
 }

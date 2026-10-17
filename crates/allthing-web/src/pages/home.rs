@@ -13,7 +13,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::layout::{Columns, ErrorPanel, Freshness, Pager, SortTabs};
 use crate::pages::side::{AboutBox, ChannelsBox, KeyboardBox, RankingBox, SourcesBox};
-use crate::util::set_title;
+use crate::util::{href, set_title};
 
 #[component]
 pub fn Home() -> impl IntoView {
@@ -54,7 +54,7 @@ pub fn Home() -> impl IntoView {
                         <Heading sort=sort.get()/>
                         <Freshness age stale/>
                         <CastList casts notes/>
-                        <Pager path="/".to_owned() slice sort=sort.get()/>
+                        <Pager path=href("/") slice sort=sort.get()/>
                     </Columns>
                 }
                 .into_any()
@@ -68,7 +68,7 @@ fn Heading(sort: Sort) -> impl IntoView {
     view! {
         <div class="listing-head">
             <h1 class="page-title">"Front page" <span class="subtitle">"trending across Farcaster"</span></h1>
-            <SortTabs path="/".to_owned() current=sort/>
+            <SortTabs path=href("/") current=sort/>
         </div>
     }
 }

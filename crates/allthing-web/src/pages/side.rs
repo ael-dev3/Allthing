@@ -6,14 +6,14 @@ use allthing_core::model::Channel;
 use leptos::prelude::*;
 
 use crate::components::layout::SideBox;
-use crate::util::{PROVENANCE_DOC_URL, SOURCE_URL, channel_href};
+use crate::util::{PROVENANCE_DOC_URL, SOURCE_URL, channel_href, href};
 
 #[component]
 pub fn AboutBox() -> impl IntoView {
     view! {
         <SideBox title="The Allthing">
             <p>"A quiet, read-only window onto Farcaster's open conversation. No sign-in, no posting, nobody hidden."</p>
-            <p><a href="/about">"How it works →"</a></p>
+            <p><a href=href("/about")>"How it works →"</a></p>
         </SideBox>
     }
 }
@@ -39,7 +39,7 @@ pub fn ChannelsBox(channels: Vec<Channel>) -> impl IntoView {
                     })
                     .collect_view()}
             </ul>
-            <p><a href="/channels">"All channels →"</a></p>
+            <p><a href=href("/channels")>"All channels →"</a></p>
         </SideBox>
     }
 }

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "allthing-data"
+description = "Allthing's page payloads, built from Hypersnap and public chain RPCs; runs in the Worker and in the browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+allthing-core.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true

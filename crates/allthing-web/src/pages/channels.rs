@@ -9,7 +9,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::api;
 use crate::components::layout::ErrorPanel;
-use crate::util::{channel_href, set_title};
+use crate::util::{channel_href, href, set_title};
 
 #[component]
 pub fn ChannelsPage() -> impl IntoView {
@@ -26,7 +26,7 @@ pub fn ChannelsPage() -> impl IntoView {
         <section class="directory">
             <div class="listing-head">
                 <h1 class="page-title">"Channels"</h1>
-                <form class="search" method="get" action="/channels" role="search">
+                <form class="search" method="get" action=href("/channels") role="search">
                     <label class="sr-only" for="channel-search">"Search channels"</label>
                     <input id="channel-search" type="search" name="q" placeholder="search channels" maxlength="64" prop:value=move || q.get().unwrap_or_default()/>
                     <button type="submit" class="button">"Search"</button>

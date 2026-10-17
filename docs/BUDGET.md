@@ -83,7 +83,7 @@ WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild st
 Allthing's goal is that the number of viewers barely changes upstream volume.
 
 - **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins and scores are memoized.
-- **Per isolate token buckets** (`crates/allthing-worker/src/upstream.rs`) cap bursts:
+- **Per isolate token buckets** (`crates/allthing-data/src/upstream.rs`) cap bursts:
 
   | Upstream | Burst | Sustained |
   |---|---|---|
@@ -106,7 +106,11 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`) get 429 until 00:00 UTC. Static assets keep being served free, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
 - **Optional, set up in the dashboard**: a WAF rate-limiting rule on `/api/` and Bot Fight Mode stop abusive traffic *before* it reaches the Worker, so it doesn't count against the daily allowance.
 
-## 7. Watching it
+## 7. The static copy
+
+The GitHub Pages copy (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)) uses no Worker and no Cloudflare quota. Each visitor's browser runs the builders with the same guards and a budget of 30 upstream calls per page. Without a shared cache, its load on Hypersnap grows with its readers, which is one reason `allthing.social` is the primary site.
+
+## 8. Watching it
 
 - `GET /api/v1/status` reports, for the isolate that answers, its request count and each upstream's requests, failures and breaker state. It makes no upstream calls and touches no cache.
 - Workers Logs are enabled with 5% head sampling (`wrangler.toml`), to stay within the free log allowance.

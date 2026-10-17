@@ -3,7 +3,7 @@
 
 **A quiet, read-only window onto Farcaster.** Allthing shows trending casts, channels, threads and profiles from the open Farcaster network. Its engagement counts are honest, media plays inline, and each cast shows where it came from. Nobody signs in, nothing is posted, and nobody's content is hidden.
 
-**Live: <https://allthing.social>**
+**Live: <https://allthing.social>**, and a static copy on GitHub Pages: <https://ael-dev3.github.io/Allthing/>
 
 The client and the API are written in Rust: a [Leptos](https://leptos.dev) app compiled to WebAssembly, and a Cloudflare Worker built with [workers-rs](https://github.com/cloudflare/workers-rs). Both run on the Workers Free plan. The name comes from the Allthing, the open forum of the Hegemony in Dan Simmons' *Hyperion Cantos*.
 
@@ -28,8 +28,10 @@ The client and the API are written in Rust: a [Leptos](https://leptos.dev) app c
 ```text
 crates/allthing-core     Shared Rust: models, Hypersnap normalization, ranking, text, embeds,
                          HLS playlists, provenance, wallets, labels, cache policy. No I/O.
+crates/allthing-data     The page payload builders and guarded upstream clients, over a small
+                         Host trait, so they run in the Worker and in the browser
 crates/allthing-web      The browser app (Leptos, client-side rendered, WebAssembly)
-crates/allthing-worker   The /api/v1 Worker (workers-rs): aggregation, edge cache, upstream guards
+crates/allthing-worker   The /api/v1 Worker (workers-rs): routing, edge cache, rate limit
 xtask                    Build tooling: fingerprinted static assets, spam-label shards
 web/  style/             index.html, boot script, headers, fonts; the stylesheet
 e2e/                     Playwright end-to-end tests against live data
@@ -37,6 +39,8 @@ scripts/                 build.sh (used by Cloudflare), check.sh (used by CI)
 ```
 
 The browser loads static files, which are free on Workers, and then makes **one** API call per page. The Worker builds each payload from [Hypersnap](https://github.com/farcasterorg/hypersnap) and public RPCs, caches it at the edge with stale-while-revalidate, and merges concurrent requests, so the number of readers barely changes upstream load. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the details and [docs/BUDGET.md](docs/BUDGET.md) has the Free plan budget.
+
+The same app also runs on a plain static host. Built with the `static-host` feature (`bash scripts/build-pages.sh`), it runs the Worker's payload builders in the browser and reads Hypersnap and the public RPCs directly; all of them allow cross-origin reads. That copy is served from GitHub Pages under `/Allthing/`. It has no edge cache, so every reader's browser does its own reads.
 
 The only JavaScript is generated glue (from wasm-bindgen and worker-build) and a short boot script. Compressed sizes: the app is 410 KB of WebAssembly, 10 KB of JS glue and 8 KB of CSS, and the Worker is 360 KB. Most of the app's size is the Leptos runtime and `serde_json`.
 
@@ -58,6 +62,8 @@ Drop `SKIP_LABELS=1` to also build the spam-label shards, which downloads a data
 bash scripts/check.sh      # rustfmt, Clippy (native and wasm32), unit tests, license audit (cargo-deny)
 npx playwright test        # end to end against `wrangler dev` (started automatically) and live Farcaster data
 E2E_BASE_URL=https://allthing.social npx playwright test   # the same suite against production
+E2E_PAGES=1 npx playwright test                            # the static copy in dist-pages/, served like GitHub Pages
+E2E_PAGES=1 E2E_BASE_URL=https://ael-dev3.github.io npx playwright test   # the live GitHub Pages copy
 ```
 
 The end-to-end suite covers ranking, a single API call per page, the media viewer (keyboard, swipe, alt text, focus trap), HLS playback through the Rust player, a known video cast by @0xael.eth, plain video files, click-to-load YouTube, profiles (score, registration, wallet shares, labels, a flagged account that still shows every cast), thread collapsing, keyboard navigation, provenance and read-only behaviour. It also takes the screenshots in [docs/screenshots](docs/screenshots). GitHub Actions runs only `check.sh`, to keep CI cheap.

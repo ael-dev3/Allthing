@@ -59,9 +59,18 @@ A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty 
 
 In the dashboard, **Workers & Pages → allthing → Deployments** lists every version; pick one and choose **Rollback**. A rollback restores the Worker and its static assets together.
 
-## The old GitHub Pages site
+## The GitHub Pages copy
 
-The earlier prototype at `https://ael-dev3.github.io/Allthing/` is served from the `gh-pages` branch, which nothing updates any more. Once `allthing.social` is live, that branch is replaced with a two-file redirect (`index.html` and `404.html`). The redirect keeps the path and query, so `…/Allthing/u/?name=dwr` lands on `https://allthing.social/u/?name=dwr`, a link the app still understands. After that, Pages can be switched off under **Settings → Pages**.
+`https://ael-dev3.github.io/Allthing/` serves the static build of the same app from the `gh-pages` branch, without GitHub Actions. That build runs the payload builders in the browser (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)). To update it:
+
+```sh
+bash scripts/build.sh             # toolchain, label shards (dist/data), Cloudflare build
+bash scripts/build-pages.sh       # dist-pages/, served under /Allthing
+E2E_PAGES=1 npx playwright test   # check it locally
+# then commit the contents of dist-pages/ to the gh-pages branch and push it
+```
+
+Once `allthing.social` is live, the `gh-pages` branch can instead hold a two-file redirect (`index.html` and `404.html`). The redirect keeps the path and query, so `…/Allthing/u/dwr` lands on `https://allthing.social/u/dwr`. Pages can then be switched off under **Settings → Pages**.
 
 ## Local development
 

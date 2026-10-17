@@ -31,20 +31,32 @@ pub fn can_hover() -> bool {
         .is_some_and(|m| m.matches())
 }
 
+/// Where the site is served from: "" on allthing.social, "/Allthing" for the
+/// GitHub Pages build (set by `ALLTHING_BASE_PATH` at compile time).
+pub const BASE: &str = match option_env!("ALLTHING_BASE_PATH") {
+    Some(base) => base,
+    None => "",
+};
+
+/// A site path, such as `/channels`, under [`BASE`].
+pub fn href(path: &str) -> String {
+    format!("{BASE}{path}")
+}
+
 pub fn element_by_id<T: JsCast>(id: &str) -> Option<T> {
     document().get_element_by_id(id)?.dyn_into::<T>().ok()
 }
 
 pub fn channel_href(key: &str) -> String {
-    if is_channel_id(key) { format!("/c/{key}") } else { format!("/c?id={}", percent_encode(key)) }
+    if is_channel_id(key) { href(&format!("/c/{key}")) } else { href(&format!("/c?id={}", percent_encode(key))) }
 }
 
 pub fn cast_href(hash: &str) -> String {
-    format!("/p/{hash}")
+    href(&format!("/p/{hash}"))
 }
 
 pub fn user_href(username: &str) -> String {
-    format!("/u/{}", percent_encode(username))
+    href(&format!("/u/{}", percent_encode(username)))
 }
 
 /// Append `?key=value&…`, leaving out empty values.

@@ -23,63 +23,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use allthing_core::api::{ApiError, CachePolicy};
+use allthing_core::api::CachePolicy;
 use allthing_core::guard::{Freshness, freshness};
+use allthing_data::{Built, Failure, Invocation};
 use futures::future::{FutureExt, LocalBoxFuture, Shared};
 use worker::{Cache, Delay, Headers, Response};
-
-use crate::Invocation;
-use crate::upstream::UpstreamError;
-
-/// A payload ready to cache: JSON body, logical HTTP status and policy.
-pub struct Built {
-    pub body: Vec<u8>,
-    pub status: u16,
-    pub policy: CachePolicy,
-}
-
-impl Built {
-    pub fn json<T: serde::Serialize>(value: &T, policy: CachePolicy) -> Result<Built, Failure> {
-        serde_json::to_vec(value)
-            .map(|body| Built { body, status: 200, policy })
-            .map_err(|e| Failure::internal(&e.to_string()))
-    }
-
-    /// A cached "no such thing" answer, so bad links don't reach upstream.
-    pub fn not_found(message: &str) -> Built {
-        let body = serde_json::to_vec(&ApiError { error: message.to_owned(), retry_after: None }).unwrap_or_default();
-        Built { body, status: 404, policy: allthing_core::api::MISS_CACHE }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Failure {
-    pub status: u16,
-    pub message: String,
-    pub retry_after: Option<u32>,
-}
-
-impl Failure {
-    pub fn upstream(error: UpstreamError) -> Failure {
-        match error {
-            UpstreamError::Busy(ms) => Failure {
-                status: 503,
-                message: "Farcaster data source is busy; backing off".into(),
-                retry_after: Some((ms / 1000.0).ceil().max(1.0) as u32),
-            },
-            UpstreamError::Budget => Failure { status: 503, message: error.to_string(), retry_after: Some(5) },
-            other => Failure { status: 502, message: other.to_string(), retry_after: Some(10) },
-        }
-    }
-
-    pub fn internal(message: &str) -> Failure {
-        Failure { status: 500, message: message.to_owned(), retry_after: None }
-    }
-
-    fn still_building() -> Failure {
-        Failure { status: 503, message: "Still gathering this page; try again shortly".into(), retry_after: Some(5) }
-    }
-}
 
 pub struct Entry {
     pub body: Rc<Vec<u8>>,
@@ -206,6 +154,10 @@ fn start_build(inv: &Rc<Invocation>, key: &str, build: &Builder, previous: Optio
     future
 }
 
+fn still_building() -> Failure {
+    Failure { status: 503, message: "Still gathering this page; try again shortly".into(), retry_after: Some(5) }
+}
+
 /// Wait for a build another request started, polling its slot with
 /// growing pauses (10 ms up to 200 ms) on this request's own timers.
 async fn join_build(slot: Slot) -> Outcome {
@@ -215,7 +167,7 @@ async fn join_build(slot: Slot) -> Outcome {
             return outcome.clone();
         }
         if waited >= JOIN_TIMEOUT_MS {
-            return Err(Failure::still_building());
+            return Err(still_building());
         }
         Delay::from(Duration::from_millis(pause)).await;
         waited += pause;

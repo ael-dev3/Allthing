@@ -6,14 +6,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::time::Duration;
 
 use allthing_core::guard::{Breaker, TokenBucket, parse_retry_after};
-use futures::future::{Either, select};
 use serde::de::DeserializeOwned;
-use worker::{AbortController, Delay, Fetch, Headers, Method, Request, RequestInit};
 
-use crate::Invocation;
+use crate::{FetchError, HttpMethod, HttpRequest, Invocation};
 
 /// Upstreams Allthing reads from, each with its own bucket and breaker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,10 +41,10 @@ impl Upstream {
         }
     }
 
-    fn timeout(self) -> Duration {
+    fn timeout_ms(self) -> u32 {
         match self {
-            Upstream::Hypersnap => Duration::from_millis(8000),
-            _ => Duration::from_millis(5000),
+            Upstream::Hypersnap => 8000,
+            _ => 5000,
         }
     }
 }
@@ -170,54 +167,25 @@ fn record(
 pub async fn send(
     inv: &Invocation,
     upstream: Upstream,
-    method: Method,
+    method: HttpMethod,
     url: &str,
     body: Option<&str>,
     missing_on_400: bool,
 ) -> Result<Option<Vec<u8>>, UpstreamError> {
     admit(inv, upstream)?;
-
-    let headers = Headers::new();
-    let _ = headers.set("accept", "application/json");
-    let _ = headers.set("user-agent", "allthing/0.2 (+https://allthing.social)");
-    let mut init = RequestInit::new();
-    init.with_method(method).with_headers(headers);
-    if let Some(body) = body {
-        let _ = init.headers.set("content-type", "application/json");
-        init.with_body(Some(body.into()));
-    }
-    let request = Request::new_with_init(url, &init).map_err(|e| UpstreamError::Network(e.to_string()))?;
-
-    let controller = AbortController::default();
-    let signal = controller.signal();
-    let exchange = async {
-        let fetch = Fetch::Request(request);
-        let mut response = fetch.send_with_signal(&signal).await.map_err(|e| UpstreamError::Network(e.to_string()))?;
-        let status = response.status_code();
-        let retry_after = response.headers().get("retry-after").ok().flatten().and_then(|v| parse_retry_after(&v));
-        let bytes = if (200..300).contains(&status) {
-            Some(response.bytes().await.map_err(|e| UpstreamError::Network(e.to_string()))?)
-        } else {
-            None
-        };
-        Ok::<_, UpstreamError>((status, retry_after, bytes))
-    };
-    let timeout = Delay::from(upstream.timeout());
-    futures::pin_mut!(exchange);
-    let result = match select(exchange, timeout).await {
-        Either::Left((result, _)) => result,
-        Either::Right(_) => {
-            controller.abort();
-            Err(UpstreamError::Timeout)
-        }
-    };
-
-    let (outcome, retry_after) = match result {
-        Ok((_, _, Some(bytes))) => (Ok(Some(bytes)), None),
-        Ok((404, _, None)) => (Ok(None), None),
-        Ok((400, _, None)) if missing_on_400 => (Ok(None), None),
-        Ok((status, retry_after, None)) => (Err(UpstreamError::Status(status)), retry_after),
-        Err(e) => (Err(e), None),
+    let request =
+        HttpRequest { method, url: url.to_owned(), body: body.map(str::to_owned), timeout_ms: upstream.timeout_ms() };
+    let (outcome, retry_after) = match inv.fetch(request).await {
+        Ok(response) => match (response.status, response.body) {
+            (_, Some(bytes)) => (Ok(Some(bytes)), None),
+            (404, None) => (Ok(None), None),
+            (400, None) if missing_on_400 => (Ok(None), None),
+            (status, None) => {
+                (Err(UpstreamError::Status(status)), response.retry_after.as_deref().and_then(parse_retry_after))
+            }
+        },
+        Err(FetchError::Timeout) => (Err(UpstreamError::Timeout), None),
+        Err(FetchError::Network(e)) => (Err(UpstreamError::Network(e)), None),
     };
     record(inv, upstream, &outcome, retry_after);
     outcome
@@ -234,7 +202,7 @@ pub async fn get_json<T: DeserializeOwned>(
     url: &str,
     missing_on_400: bool,
 ) -> Result<Option<T>, UpstreamError> {
-    match send(inv, upstream, Method::Get, url, None, missing_on_400).await? {
+    match send(inv, upstream, HttpMethod::Get, url, None, missing_on_400).await? {
         Some(bytes) => parse(&bytes).map(Some),
         None => Ok(None),
     }
@@ -247,7 +215,7 @@ pub async fn rpc<T: DeserializeOwned>(
     url: &str,
     body: &str,
 ) -> Result<T, UpstreamError> {
-    match send(inv, upstream, Method::Post, url, Some(body), false).await? {
+    match send(inv, upstream, HttpMethod::Post, url, Some(body), false).await? {
         Some(bytes) => parse(&bytes),
         None => Err(UpstreamError::Status(404)),
     }

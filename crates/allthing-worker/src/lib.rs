@@ -8,62 +8,23 @@
 //! stale-while-revalidate, and every upstream call goes through a per-isolate
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
 
-mod annotate;
 mod cache;
-mod chain;
-mod hypersnap;
-mod pages;
-mod upstream;
+mod host;
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError};
-use allthing_core::params::{channel_key_from_param, hash_from_param, username_from_param};
+use allthing_data::{Endpoint, Failure, Invocation, upstream};
 use futures::future::FutureExt;
-use worker::{Context, Date, Env, Headers, Method, Request, Response, Result, Url, event};
+use worker::{Context, Env, Headers, Method, Request, Response, Result, Url, event};
 
-use crate::cache::{Builder, Failure, Served};
+use crate::cache::Served;
+use crate::host::WorkerHost;
 
 /// Cloudflare allows 50 subrequests (fetches and Cache API calls) per
 /// invocation on the Free plan; keep a margin for the response path.
 const SUBREQUEST_BUDGET: u32 = 45;
-
-/// Per-request state shared by everything one invocation does, including its
-/// background refreshes.
-pub struct Invocation {
-    ctx: Context,
-    budget: Cell<u32>,
-}
-
-impl Invocation {
-    fn new(ctx: Context) -> Invocation {
-        Invocation { ctx, budget: Cell::new(SUBREQUEST_BUDGET) }
-    }
-
-    /// Unix milliseconds.
-    pub fn now(&self) -> f64 {
-        Date::now().as_millis() as f64
-    }
-
-    pub fn take_subrequests(&self, n: u32) -> bool {
-        let left = self.budget.get();
-        if left >= n {
-            self.budget.set(left - n);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn remaining_subrequests(&self) -> u32 {
-        self.budget.get()
-    }
-
-    pub fn wait_until(&self, future: impl std::future::Future<Output = ()> + 'static) {
-        self.ctx.wait_until(future);
-    }
-}
 
 thread_local! {
     static STARTED: Cell<f64> = const { Cell::new(0.0) };
@@ -90,7 +51,7 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return Ok(limited);
     }
 
-    let inv = Rc::new(Invocation::new(ctx));
+    let inv = Rc::new(Invocation::new(Rc::new(WorkerHost::new(ctx)), SUBREQUEST_BUDGET));
     STARTED.with(|s| {
         if s.get() == 0.0 {
             s.set(inv.now());
@@ -114,63 +75,25 @@ fn query(url: &Url, key: &str) -> Option<String> {
 }
 
 async fn route(inv: &Rc<Invocation>, url: &Url) -> Result<Response> {
-    let Some(endpoint) = url.path().strip_prefix(API_PREFIX) else {
+    let Some(name) = url.path().strip_prefix(API_PREFIX) else {
         return error(404, "Unknown API version", None);
     };
-    let origin = url.origin().ascii_serialization();
-    let key = |name: &str| format!("{origin}/__cache{API_PREFIX}/{name}");
-
-    match endpoint {
-        "/home" => serve(inv, key("home"), Rc::new(|inv, prev| pages::home(inv, prev).boxed_local())).await,
-        "/channel" => {
-            let Some(id) = query(url, "id").and_then(|v| channel_key_from_param(&v)) else {
-                return error(400, "Expected ?id=<channel id or parent URL>", None);
-            };
-            let cache_key = key(&format!("channel?id={}", allthing_core::params::percent_encode(&id)));
-            serve(inv, cache_key, Rc::new(move |inv, prev| pages::channel(inv, id.clone(), prev).boxed_local())).await
-        }
-        "/cast" => {
-            let Some(hash) = query(url, "hash").and_then(|v| hash_from_param(&v)) else {
-                return error(400, "Expected ?hash=<40 hex characters>", None);
-            };
-            let cache_key = key(&format!("cast?hash={hash}"));
-            serve(inv, cache_key, Rc::new(move |inv, prev| pages::cast(inv, hash.clone(), prev).boxed_local())).await
-        }
-        "/user" => {
-            let Some(name) = query(url, "name").and_then(|v| username_from_param(&v)) else {
-                return error(400, "Expected ?name=<username>", None);
-            };
-            let cache_key = key(&format!("user?name={}", allthing_core::params::percent_encode(&name)));
-            serve(inv, cache_key, Rc::new(move |inv, prev| pages::user(inv, name.clone(), prev).boxed_local())).await
-        }
-        "/wallets" => {
-            let Some(fid) = query(url, "fid").and_then(|v| v.parse::<u64>().ok()).filter(|f| *f > 0) else {
-                return error(400, "Expected ?fid=<number>", None);
-            };
-            serve(
-                inv,
-                key(&format!("wallets?fid={fid}")),
-                Rc::new(move |inv, _| pages::wallets(inv, fid).boxed_local()),
-            )
-            .await
-        }
-        "/channels" => {
-            let q = query(url, "q").map(|q| q.trim().to_lowercase()).filter(|q| !q.is_empty());
-            if q.as_ref().is_some_and(|q| q.chars().count() > 64) {
-                return error(400, "Search query too long", None);
-            }
-            let cache_key = match &q {
-                Some(q) => key(&format!("channels?q={}", allthing_core::params::percent_encode(q))),
-                None => key("channels"),
-            };
-            serve(inv, cache_key, Rc::new(move |inv, _| pages::channels(inv, q.clone()).boxed_local())).await
-        }
-        "/status" => status(inv),
-        _ => error(404, "Unknown endpoint", None),
+    if name == "/status" {
+        return status(inv);
     }
+    let endpoint = match Endpoint::parse(name, |key| query(url, key)) {
+        Ok(endpoint) => Rc::new(endpoint),
+        Err(bad) => return error(bad.status, bad.message, None),
+    };
+    let key = format!("{}/__cache{API_PREFIX}/{}", url.origin().ascii_serialization(), endpoint.cache_name());
+    serve(inv, key, endpoint).await
 }
 
-async fn serve(inv: &Rc<Invocation>, key: String, build: Builder) -> Result<Response> {
+async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Result<Response> {
+    let build: cache::Builder = Rc::new(move |inv, previous| {
+        let endpoint = endpoint.clone();
+        async move { endpoint.build(inv, previous).await }.boxed_local()
+    });
     match cache::serve(inv, &key, build).await {
         Ok((entry, served)) => {
             let headers = Headers::new();
