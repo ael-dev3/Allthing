@@ -1,0 +1,25 @@
+[package]
+name = "allthing-server"
+description = "Axum HTTP server for Allthing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+allthing-web = { workspace = true, features = ["ssr"] }
+axum.workspace = true
+leptos.workspace = true
+leptos_axum.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[features]
+default = ["ssr"]
+ssr = []
