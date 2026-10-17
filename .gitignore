@@ -1,23 +1,23 @@
+# Rust and build output
 /target/
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-.DS_Store
-*.log
-/coverage/
+/dist/
+/crates/allthing-worker/build/
+
+# Node tooling (wrangler, Playwright)
+/node_modules/
+/.wrangler/
 /test-results/
 /playwright-report/
+/blob-report/
+
+# Never commit secrets or local settings
+.env
+.env.*
+.dev.vars*
+*.pem
+*.key
+
+.DS_Store
+*.log
 /.idea/
 /.vscode/
-
-# Next.js prototype
-/node_modules/
-/.next/
-/out/
-/build/
-/blob-report/
-*.tsbuildinfo
-next-env.d.ts
-.vercel

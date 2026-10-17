@@ -1,30 +1,27 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { defineConfig, devices } from "@playwright/test";
 
 /*
- * End-to-end tests reading live Farcaster data, against either build:
+ * End-to-end tests against live Farcaster data.
  *
- *   npm run build && npm run test:e2e                     # server build
- *   ALLTHING_BASE_PATH=/Allthing npm run build:static \
- *     && E2E_STATIC=1 npm run test:e2e                    # static export
- *   E2E_STATIC=1 E2E_BASE_URL=https://ael-dev3.github.io/Allthing/ npm run test:e2e
+ *   npm run build && npm run test:e2e          # local: wrangler dev serves dist/ + the Worker
+ *   E2E_BASE_URL=https://allthing.social npm run test:e2e
  *
  * With E2E_BASE_URL set, no local server is started.
  */
 
-const staticMode = process.env.E2E_STATIC === "1";
-const PORT = Number(process.env.E2E_PORT ?? (staticMode ? 3200 : 3100));
-const basePath = staticMode ? (process.env.E2E_BASE_PATH ?? "/Allthing") : "";
-const localURL = `http://localhost:${PORT}${basePath}/`;
+const PORT = Number(process.env.E2E_PORT ?? 8787);
+const localURL = `http://127.0.0.1:${PORT}`;
 const baseURL = process.env.E2E_BASE_URL ?? localURL;
 
 // Behind an HTTPS proxy (corporate networks, sandboxes) Chromium needs it
-// passed explicitly, and Node's fetch only honours it with NODE_USE_ENV_PROXY.
+// passed explicitly.
 const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
 
 export default defineConfig({
   testDir: "e2e",
-  timeout: 60_000,
-  expect: { timeout: 20_000 },
+  timeout: 90_000,
+  expect: { timeout: 25_000 },
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -40,12 +37,9 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: staticMode
-          ? `node scripts/serve-static.mjs out ${basePath} ${PORT}`
-          : `npm run start -- -p ${PORT}`,
-        url: localURL,
-        reuseExistingServer: !process.env.CI,
+        command: `npx wrangler dev --port ${PORT} --ip 127.0.0.1`,
+        url: `${localURL}/api/v1/status`,
+        reuseExistingServer: true,
         timeout: 120_000,
-        env: proxy ? { NODE_USE_ENV_PROXY: "1" } : {},
       },
 });

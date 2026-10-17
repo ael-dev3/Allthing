@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Allthing on Cloudflare Workers (Free plan). Deployed by Workers Builds from
+# this repository; no API token lives here. See docs/DEPLOY.md and
+# docs/BUDGET.md.
+
+name = "allthing"
+account_id = "c647739b4535010b0b13e6fc296e2c4e"
+main = "crates/allthing-worker/build/index.js"
+compatibility_date = "2026-09-01"
+
+# allthing.social serves the app; www.allthing.social redirects to it.
+routes = [
+  { pattern = "allthing.social", custom_domain = true },
+  { pattern = "www.allthing.social", custom_domain = true },
+]
+
+# The browser app, styles and spam-label shards, built by scripts/build.sh.
+# Requests for assets are free and never invoke the Worker; unknown paths
+# get index.html (client-side routing). Only /api/* runs the Worker.
+[assets]
+directory = "dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# Per-client backstop so one client cannot drain the 100k requests/day
+# allowance: 120 API calls a minute per IP, per Cloudflare location.
+[[ratelimits]]
+name = "API_LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+[observability]
+enabled = true
+head_sampling_rate = 0.05

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "allthing-worker"
+description = "Allthing's Cloudflare Worker: a cached, rate-guarded read API over Hypersnap and public chain RPCs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+allthing-core.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+worker.workspace = true

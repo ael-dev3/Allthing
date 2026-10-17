@@ -1,12 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "allthing-core"
-description = "Shared feed models and deterministic queries for Allthing"
+description = "Allthing's shared Farcaster models, normalization, ranking and edge-budget logic"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
+# Compiled into the browser app and the Worker, so it stays dependency-light:
+# no regex, url or date crates.
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true

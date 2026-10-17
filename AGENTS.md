@@ -1,19 +1,25 @@
-<!-- BEGIN:nextjs-agent-rules -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+# Notes for coding agents
 
-## This is NOT the Next.js you know
+Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly app plus a workers-rs API Worker, deployed to Cloudflare Workers (Free plan) at https://allthing.social. Read `docs/ARCHITECTURE.md` first.
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
-
-## Allthing project notes
-
-- Read-only Farcaster client. Never add login, signing or write paths without being asked.
-- Two builds from one codebase: server-rendered (`src/app/**/page.tsx`) and a static export for GitHub Pages (`ALLTHING_STATIC_EXPORT=1`, which only uses `src/app/**/*.static.tsx`). Both render the views in `src/views/`; keep page UI there, not in route files.
-- Data flows through the page loaders in `src/lib/queries.ts` and the `DataSource` interface (`src/lib/datasource/types.ts`); the server wraps loaders in `use cache` (`src/lib/data.ts`), the static build calls them from the browser (`src/client/`). Provider quirks belong in `src/lib/datasource/`, not in components.
-- Build links with `src/lib/links.ts`; the two builds use different URL schemes.
-- Cache Components is on: anything that reads `params`, `searchParams` or the clock goes inside `<Suspense>`; use `requestNow()` instead of `Date.now()` in server components.
-- Checks: `npm run check` (lint, typecheck, unit tests). End-to-end against live data: `npm run build && npm run test:e2e`, and for the static export `ALLTHING_BASE_PATH=/Allthing npm run build:static && E2E_STATIC=1 npm run test:e2e`.
-
+- **Read-only.** Never add login, signing, wallet connections or write paths unless asked to.
+- **Never hide content** based on labels. Show labels where they belong, with their source.
+- **Where code goes.**
+  - Pure logic and data types, with unit tests, go in `crates/allthing-core`.
+  - Provider quirks go in `crates/allthing-worker/src/hypersnap.rs` and `crates/allthing-core/src/normalize.rs`.
+  - Page payload assembly goes in `crates/allthing-worker/src/pages.rs`.
+  - UI goes in `crates/allthing-web` (pages in `src/pages`, components in `src/components`).
+- **Budget.** Each page view makes exactly one API call. The Worker has a 10 ms CPU limit and at most 45 subrequests per invocation, cache calls included.
+  - Upstream calls go through `upstream.rs` (token buckets, breaker, timeouts).
+  - Payloads go through `cache::serve`.
+  - Never await another request's I/O; see the coalescing notes in `cache.rs`.
+  - Update `docs/BUDGET.md` when costs change.
+- **Links.** The app's routes are `/`, `/c/<id>`, `/p/<hash>`, `/u/<name>`, `/channels` and `/about`. Build them with the helpers in `crates/allthing-web/src/util.rs`.
+- **Licensing.** Licensing is AGPL-3.0-or-later. Start new files with an SPDX header. New dependencies must pass `cargo deny check licenses`.
+- **Secrets.** Never commit secrets, tokens, `.dev.vars` or `.env` files, or session URLs.
+- **Checks.**
+  - Run `bash scripts/check.sh` (fmt, Clippy native and wasm32, tests, license audit).
+  - End to end: `SKIP_LABELS=1 bash scripts/build.sh && npx playwright test`. Playwright starts `wrangler dev` on port 8787.
+  - Against production: `E2E_BASE_URL=https://allthing.social npx playwright test`.
+- **Deploying.** Cloudflare Workers Builds deploys `main` with `bash scripts/build.sh` and `npx wrangler deploy`; see `docs/DEPLOY.md`.
