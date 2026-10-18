@@ -594,7 +594,10 @@ test.describe("threads and navigation", () => {
     const anchor = () =>
       page.evaluate(() => {
         const list = document.querySelector(".cast-list")!.getBoundingClientRect();
-        const card = document.elementFromPoint(list.left + 24, 120)?.closest(".cast-card");
+        // The lines the app itself probes: one may fall in the gap between cards.
+        const card = [120, 150, 180]
+          .map((y) => document.elementFromPoint(list.left + 24, y)?.closest(".cast-card"))
+          .find(Boolean);
         return { hash: card?.getAttribute("data-hash") ?? "", top: Math.round(card?.getBoundingClientRect().top ?? 0) };
       });
     const before = await anchor();
