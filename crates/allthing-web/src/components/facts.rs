@@ -126,10 +126,15 @@ pub fn WalletShares(fid: u64) -> impl IntoView {
 /// wallets sent: a bar and its legend.
 #[component]
 fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
-    let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.count > 0).cloned().collect();
+    // Chains under 1% are left out, so every row has a whole percent. The
+    // shares sum to 100, so one chain at 100% is the only row.
+    let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.percent >= 1).cloned().collect();
     if measured.is_empty() {
         return view! { <p class="muted small">"No onchain activity from verified wallets."</p> }.into_any();
     }
+    // An EVM chain that couldn't be read just now is left out of the shares:
+    // say so, rather than let the shares look complete.
+    let missed = activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Evm);
     let bar_label = measured.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
     view! {
         <div class="share-bar" role="img" aria-label=bar_label>
@@ -142,10 +147,11 @@ fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
                 <li title=chain_count_note(c)>
                     <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
                     <span class="chain-name">{c.name.clone()}</span>
-                    <strong class="pct">{if c.percent == 0 { "<1%".to_owned() } else { format!("{}%", c.percent) }}</strong>
+                    <strong class="pct">{format!("{}%", c.percent)}</strong>
                 </li>
             }).collect_view()}
         </ul>
+        {missed.then(|| view! { <p class="muted small">"Some chains weren't read just now, so the shares cover the rest."</p> })}
     }
     .into_any()
 }
