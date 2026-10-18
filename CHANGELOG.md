@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Clicking or tapping a video’s sound button keeps the page in place and the button focused, so the video continues playing in view.
+
 - Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
 - The static copy reads linked-page metadata only up to its byte limit and cancels the remaining body. A large or stalled tail no longer delays a usable head or requires buffering the full response. CI also checks the static payload builder.
 - If the app module or WebAssembly fails to load, the loading glow gives way to an accessible error message and Reload button. Reload preserves the requested page and query.

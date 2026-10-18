@@ -13,7 +13,10 @@ use leptos::ev;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{HtmlVideoElement, IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
+use web_sys::{
+    FocusOptions, HtmlElement, HtmlVideoElement, IntersectionObserver, IntersectionObserverEntry,
+    IntersectionObserverInit,
+};
 
 use crate::components::media::size_style;
 use crate::util::prefers_reduced_motion;
@@ -282,6 +285,22 @@ fn play_with_sound(video: &HtmlVideoElement) {
     video.set_controls(true);
     claim(video, true);
     play(video);
+}
+
+/// Pointer focus on an already visible control must not scroll its video
+/// out of view, which would immediately pause autoplay.
+fn focus_without_scroll(event: ev::MouseEvent) {
+    let button = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest("button").ok().flatten())
+        .and_then(|target| target.dyn_into::<HtmlElement>().ok());
+    if let Some(button) = button {
+        event.prevent_default();
+        let options = FocusOptions::new();
+        options.set_prevent_scroll(true);
+        let _ = button.focus_with_options(&options);
+    }
 }
 
 /// An embedded video: poster first, autoplay in view (muted until the reader
@@ -618,7 +637,7 @@ pub fn HlsVideo(
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
                 </button>
-                <button class="video-sound" type="button" on:click=toggle_sound>
+                <button class="video-sound" type="button" on:mousedown=focus_without_scroll on:click=toggle_sound>
                     {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
                 </button>
             </Show>
