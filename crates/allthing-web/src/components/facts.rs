@@ -30,6 +30,9 @@ pub fn JoinedFact(joined: Joined) -> impl IntoView {
     }
 }
 
+/// What the NS vote is, for the tooltip.
+const NS_VOTE_TIP: &str = "NS vote: how this account answered farcaster.xyz's vote after Network School took over Farcaster. Stayed (yes), left (no), or didn't vote.";
+
 /// How the account voted when farcaster.xyz asked everyone to stay (yes) or
 /// leave (no), loaded when shown. Left out when the sources can't settle it.
 #[component]
@@ -38,8 +41,9 @@ pub fn VoteFact(fid: u64) -> impl IntoView {
     let row = |answer: AnyView| {
         view! {
             <div class="fact vote-fact">
-                <dt>
-                    "Farcaster vote "
+                <dt title=NS_VOTE_TIP>
+                    <img class="ns-icon" src=crate::util::href("/ns-icon.png") width="14" height="14" alt=""/>
+                    "NS vote "
                     <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
                 </dt>
                 <dd>{answer}</dd>
