@@ -23,6 +23,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - On touch screens, tapping a likes, recasts or replies count opens its popover. Before, the tap's focus opened it and the tap itself closed it again. On narrow screens, popovers are nudged to stay on screen.
 - On phones, a cast with a wide image no longer makes its list wider than the screen.
 - On phones, profiles show the wallet activity panel and its Wallets button right after the profile header, instead of below every cast. The Wallets popover opens toward the side with more room, like the others.
+- A profile no longer shows its Neynar score as "unavailable" when the onchain score read fails once. The score already known from Hypersnap or from the page's previous copy was thrown away whenever that read failed, and the page was then cached that way for up to 35 minutes; it is now kept.
 
 ## [0.3.0] - 2026-10-18
 
