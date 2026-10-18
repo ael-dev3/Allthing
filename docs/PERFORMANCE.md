@@ -78,6 +78,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
   - **Images keep their size**: a single image's natural size is remembered once it has loaded, and the image is drawn at that size when the list is rendered again. Back therefore doesn't make the page grow while images arrive, including after the hold ends.
   - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
+- **Drawing a screenful at a time.** A list rendered anew (a sort tab, another page) draws 6 cards, about a screenful, in the task that asked for it, and 6 more in a task after each paint until it has drawn what it shows (`CastList`, `DRAW_STEP`). A re-sort that changes the top of the list starts again from there. The tap's frame paints at once: building all 25 cards in the click took 13–39 ms of WebAssembly on a fast desktop CPU, which put the slowest interaction over 100 ms on CI runners. Back and forward draw the whole list at once while they restore the reader's place (`nav::restoring`).
 
 ### Animations that never stop
 
@@ -95,7 +96,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 
 ### 5. Infinite scroll
 
-- Lists render 25 cards at a time.
+- Lists show 25 more cards at a time, drawn a screenful per task as above, so scrolling never waits on a long task that builds 25 cards.
 - A sentinel 1,200 px below the last card shows the next 25 before the reader reaches it.
 - On the front page, once the loaded pool runs out, the next trending page (`/api/v1/home?offset=100`, … up to 900) is fetched at the same point, so the next cards are usually ready before they are needed.
 - The end is checked again after cards or a server page arrive. Short and empty filtered pages keep filling without requiring the sentinel to leave and re-enter the viewport; failures still wait for retry backoff, and loading stops at offset 900.

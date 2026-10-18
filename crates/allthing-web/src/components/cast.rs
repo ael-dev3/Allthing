@@ -114,6 +114,11 @@ pub fn CastCard(
 /// How many cards infinite scroll adds at a time.
 const STEP: usize = 25;
 const LOAD_AHEAD_PX: f64 = 1200.0;
+/// Cards drawn per task, about a screenful. A list rendered anew (a sort
+/// tab, another page) draws this many in the task that asked for it and the
+/// rest a screenful at a time after each paint, so a tap shows at once;
+/// scrolling adds cards the same way, instead of 25 in one long task.
+const DRAW_STEP: usize = 6;
 
 /// A listing that grows as the reader scrolls. `on_end` asks for more casts
 /// (the next server page) a little before the reader reaches the end.
@@ -143,8 +148,50 @@ pub fn CastList(
         casts.with(|c| api::remember_casts(c, &notes));
         api::remember_cards(&notes.users);
     });
-    let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
+    // How many of the cards shown are drawn, and the top of the order they
+    // were drawn in. Back and forward draw them all at once, so the place
+    // being restored is there.
+    let drawn = StoredValue::new((DRAW_STEP, Vec::<String>::new()));
+    let drew_more = RwSignal::new(0_u32);
+    let scheduled = StoredValue::new(false);
+    let visible = move || {
+        drew_more.track();
+        let shown = shown.get();
+        casts.with(|c| {
+            let top: Vec<String> = c.iter().take(DRAW_STEP).map(|c| c.hash.clone()).collect();
+            let restoring = crate::nav::restoring();
+            let count = drawn.with_value(|(count, before)| {
+                if restoring {
+                    usize::MAX
+                } else if !before.is_empty() && *before != top {
+                    // Another order (a sort tab) is a list drawn anew, from its top.
+                    (*count).min(DRAW_STEP)
+                } else {
+                    *count
+                }
+            });
+            let target = shown.min(c.len());
+            let count = target.min(count.max(DRAW_STEP));
+            drawn.set_value((count, top));
+            if count < target && !scheduled.get_value() {
+                // The rest a screenful at a time, each after the last is painted.
+                scheduled.set_value(true);
+                after_paint(move || {
+                    if scheduled.try_set_value(false).is_some() {
+                        return; // The list is gone.
+                    }
+                    drawn.update_value(|(count, _)| *count = count.saturating_add(DRAW_STEP));
+                    drew_more.update(|n| *n = n.wrapping_add(1));
+                });
+            }
+            c.iter().take(count).cloned().enumerate().collect::<Vec<_>>()
+        })
+    };
     let grow = move || {
+        // Still drawing what is shown: its end isn't the list's end yet.
+        if drawn.with_value(|(count, _)| *count) < shown.get_untracked().min(casts.with_untracked(Vec::len)) {
+            return;
+        }
         let len = casts.with_untracked(Vec::len);
         if shown.get_untracked() < len {
             shown.update(|s| *s += STEP);
@@ -162,7 +209,7 @@ pub fn CastList(
     // A short or filtered page can leave the sentinel inside the observer's
     // margin, so there is no new intersection event to continue the feed.
     Effect::new(move |_| {
-        let _ = (casts.with(Vec::len), shown.get(), page_cursor.get());
+        let _ = (casts.with(Vec::len), shown.get(), drew_more.get(), page_cursor.get());
         request_animation_frame(move || {
             let Some(element) = sentinel.try_get_untracked().flatten() else { return };
             if !element.is_connected() {
@@ -272,6 +319,11 @@ fn take_viewport_token() -> bool {
             false
         }
     })
+}
+
+/// Run `f` in a task of its own once the next frame has been painted.
+fn after_paint(f: impl FnOnce() + 'static) {
+    request_animation_frame(move || set_timeout(f, std::time::Duration::ZERO));
 }
 
 /// Run `f` when the browser is idle (or soon, where that isn't supported).
