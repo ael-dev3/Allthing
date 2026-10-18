@@ -3,7 +3,11 @@ import { expect, test } from "@playwright/test";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
-type TrackedWindow = Window & { activeClickListeners: Set<EventListenerOrEventListenerObject> };
+type TrackedWindow = Window & {
+  activeClickListeners: Set<EventListenerOrEventListenerObject>;
+  initialClickListeners: Set<EventListenerOrEventListenerObject>;
+  popoverClickListeners: EventListenerOrEventListenerObject[];
+};
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
@@ -53,17 +57,28 @@ test("navigating from an open popover removes its window click listener", async 
   await page.goto("/");
   const trigger = page.getByRole("button", { name: "10 likes: show who", exact: true });
   await expect(trigger).toBeVisible();
-  const before = await page.evaluate(() => (window as TrackedWindow).activeClickListeners.size);
+  const before = await page.evaluate(() => {
+    const tracked = window as TrackedWindow;
+    tracked.initialClickListeners = new Set(tracked.activeClickListeners);
+    return tracked.activeClickListeners.size;
+  });
   await trigger.hover();
   const panel = page.getByRole("dialog", { name: "Liked by", exact: true });
   await expect(panel.getByRole("link")).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as TrackedWindow).activeClickListeners.size)).toBe(before + 1);
+  await page.evaluate(() => {
+    const tracked = window as TrackedWindow;
+    tracked.popoverClickListeners = [...tracked.activeClickListeners].filter((listener) => !tracked.initialClickListeners.has(listener));
+  });
   const document = await page.locator("html").elementHandle();
   await panel.getByRole("link").click();
   await expect(page).toHaveURL(/\/u\/reader$/);
   expect(await document!.evaluate((root) => root.isConnected).catch(() => false)).toBe(true);
   await expect(trigger).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => (window as TrackedWindow).activeClickListeners.size), { timeout: 1500 }).toBe(before);
+  await expect.poll(() => page.evaluate(() => {
+    const tracked = window as TrackedWindow;
+    return tracked.popoverClickListeners.filter((listener) => tracked.activeClickListeners.has(listener)).length;
+  }), { timeout: 1500 }).toBe(0);
   await page.locator("body").click({ position: { x: 5, y: 5 } });
   expect(errors).toEqual([]);
 });
