@@ -156,6 +156,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     let author = cast.author.clone();
     view! {
         <article class="post">
+            <h1 class="visually-hidden">{format!("Cast by {}", author.name())}</h1>
             <header class="post-author">
                 <a href=user_href(&author.username) tabindex="-1" aria-hidden="true"><Avatar url=author.pfp_url.clone() size=44 large=true/></a>
                 <div class="post-author-text">

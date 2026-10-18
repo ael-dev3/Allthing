@@ -811,7 +811,7 @@ test.describe("threads and navigation", () => {
         const card = [120, 150, 180]
           .map((y) => document.elementFromPoint(list.left + 24, y)?.closest(".cast-card"))
           .find(Boolean);
-        return { hash: card?.getAttribute("data-hash") ?? "", top: Math.round(card?.getBoundingClientRect().top ?? 0) };
+        return { hash: card?.getAttribute("data-hash") ?? "", top: Math.round(card?.getBoundingClientRect().top ?? 0), y: Math.round(scrollY) };
       });
     const before = await anchor();
     expect(before.hash).not.toBe("");
@@ -831,13 +831,30 @@ test.describe("threads and navigation", () => {
     await page.waitForTimeout(500);
     await page.goBack();
     await expect(page).toHaveURL(new RegExp(`${at("/")}$`));
+    // Where things are, for a failure's message: the anchor card's top and
+    // place in the list, the scroll offset and how much of the page exists.
+    const where = () =>
+      page.evaluate((h) => {
+        const cards = [...document.querySelectorAll(".cast-card")];
+        const card = document.querySelector(`.cast-card[data-hash="${h}"]`);
+        return JSON.stringify({
+          top: card ? Math.round(card.getBoundingClientRect().top) : null,
+          index: card ? cards.indexOf(card) : -1,
+          cards: cards.length,
+          scrollY: Math.round(scrollY),
+          height: document.documentElement.scrollHeight,
+        });
+      }, before.hash);
     for (const at of [500, 2000, 4000, 7000]) {
       await page.waitForTimeout(at === 500 ? 500 : at === 2000 ? 1500 : at === 4000 ? 2000 : 3000);
       // Polled briefly: an image loading above can shift it for a frame
       // before the hold puts it back.
       await expect
         .poll(async () => Math.abs((await topOf(before.hash)) - before.top), { message: `card back in place at ${at} ms`, timeout: 400, intervals: [50] })
-        .toBeLessThanOrEqual(4);
+        .toBeLessThanOrEqual(4)
+        .catch(async (error: Error) => {
+          throw new Error(`${error.message}\nexpected top ${before.top} (card ${card}, scrollY ${before.y}); now ${await where()}`);
+        });
     }
     expect(await page.locator(".cast-card").count()).toBeGreaterThanOrEqual(loaded);
 

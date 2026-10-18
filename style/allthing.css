@@ -30,7 +30,8 @@
   --card: #ffffff;
   --ink: #1b2233;
   --ink-2: #485067;
-  --ink-3: #767e95;
+  /* Muted text: at least 4.5:1 on the card, the paper and paper-2. */
+  --ink-3: #646b82;
   --line: rgba(27, 34, 51, 0.09);
   --line-2: rgba(27, 34, 51, 0.16);
   --accent: #4f43d4;
@@ -1884,6 +1885,13 @@ code {
 .provenance dd {
   margin: 3px 0 0;
   color: var(--ink);
+}
+
+/* A link inside a line of text is underlined, not told apart by color alone. */
+.provenance dd a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 /* ---------- Channels ---------- */
