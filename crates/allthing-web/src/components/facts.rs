@@ -135,7 +135,7 @@ fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
         </div>
         <ul class="share-list">
             {measured.iter().map(|c| view! {
-                <li title=format!("{} transactions sent", full_number(c.count))>
+                <li title=chain_count_note(c)>
                     <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
                     <span class="chain-name">{c.name.clone()}</span>
                     <strong class="pct">{if c.percent == 0 { "<1%".to_owned() } else { format!("{}%", c.percent) }}</strong>
@@ -144,4 +144,14 @@ fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
         </ul>
     }
     .into_any()
+}
+
+/// What a chain's count is: transactions sent (EVM nonces), or transactions
+/// involving the address (Solana signatures, "1,000+" at the cap).
+fn chain_count_note(c: &allthing_core::wallet::ChainActivity) -> String {
+    let plus = if c.capped { "+" } else { "" };
+    match c.kind {
+        allthing_core::wallet::ChainKind::Evm => format!("{}{plus} transactions sent", full_number(c.count)),
+        allthing_core::wallet::ChainKind::Solana => format!("{}{plus} transactions", full_number(c.count)),
+    }
 }

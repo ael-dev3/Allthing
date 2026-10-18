@@ -24,6 +24,7 @@ use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
 use futures::future::{join, join_all, join3};
 
 use crate::annotate::{self, Target, annotate, carried};
+use crate::upstream::UpstreamError;
 use crate::{Built, Failure, Invocation};
 use crate::{chain, hypersnap, miniapps};
 
@@ -628,18 +629,23 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
                 ChainKind::Solana => !solana.is_empty(),
             })
             .map(|chain| {
-                let (inv, evm) = (&inv, &evm);
+                let (inv, evm, solana) = (&inv, &evm, &solana);
                 async move {
                     let result = match chain.kind {
-                        ChainKind::Evm => chain::evm_sent_count(inv, chain, evm).await.map_err(|e| e.to_string()),
-                        ChainKind::Solana => Err(wallet::SOLANA_UNMEASURED.to_owned()),
-                    };
+                        ChainKind::Evm => chain::evm_sent_count(inv, chain, evm).await.map(|n| (n, false)),
+                        // Its public RPC may refuse Cloudflare's addresses: say so.
+                        ChainKind::Solana => chain::solana_tx_count(inv, chain, solana)
+                            .await
+                            .map_err(|e| UpstreamError::Network(format!("not measured ({e})"))),
+                    }
+                    .map_err(|e| e.to_string());
+                    let (count, capped) = *result.as_ref().unwrap_or(&(0, false));
                     ChainActivity {
                         chain: chain.slug.to_owned(),
                         name: chain.name.to_owned(),
                         kind: chain.kind,
-                        count: *result.as_ref().unwrap_or(&0),
-                        capped: false,
+                        count,
+                        capped,
                         percent: 0,
                         error: result.err(),
                     }
@@ -658,7 +664,11 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
         );
     }
     if !solana.is_empty() {
-        sources.push(format!("Solana: {}", wallet::SOLANA_UNMEASURED));
+        sources.push(format!(
+            "Solana: transactions involving each verified address (its signatures, up to {} each), read from \
+             Solana's public RPC (api.mainnet-beta.solana.com).",
+            chain::SOLANA_PAGE
+        ));
     }
     let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
     Built::json(&activity, api::WALLET_CACHE)

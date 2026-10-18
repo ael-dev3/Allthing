@@ -121,7 +121,7 @@ A feed build also parses its quoted casts: one bulk read, usually a handful of c
 
 Profile cards (`notes.users`) come from objects a build has already parsed. For a live trending feed of 100 casts by 78 accounts (222 KB), collecting the cards, cutting each bio to 160 characters and serializing them took **0.10 to 0.13 ms**, measured natively at `opt-level = "z"` on a busier machine than the numbers above, where the whole build took 1.6 to 2.0 ms: about 6% of the build. The payload grew from 67.4 KB to 80.1 KB of JSON, about half of it the bios (73 characters on average), and from 23.6 KB to 29.0 KB gzipped.
 
-WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. Solana-style large responses are avoided entirely (see below).
+WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. A Solana history read (up to 1,000 signatures per address, about 200 KB) is parsed without keeping its entries.
 
 ## 5. Load on upstreams
 
@@ -144,7 +144,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
 - **Static, built at deploy time**: the Farcaster app's 125 MB spam-label dataset becomes 35 shards of 32 KB, one character per fid (about 1.1 MB in all). Profiles read one shard as a free static asset, with zero Worker or upstream requests. Deploys reuse the live shards unless the upstream dataset changed (`scripts/build.sh`).
 - **Profile cards read votes and wallets more often** than profile views alone would: the first card opened for an account in a data center builds its `/vote` (fresh for an hour) and `/wallets` (fresh for 6 hours). The chain buckets above still cap the wallet reads. A chain refused while its bucket is empty is left out of that copy of the account's shares, as it would be on a profile.
-- **Solana activity is not measured**. Its public RPC refuses requests from Cloudflare Workers and from browsers (HTTP 403), and the keyless alternatives don't serve address history. Allthing leaves it out of the activity chart instead of retrying.
+- **Solana activity** is one `getSignaturesForAddress` call per verified address (at most 2, up to 1,000 signatures each) to Solana's public RPC, under its own bucket (burst 4, two calls every 5 s). The RPC refuses browsers (any `Origin`), so the static copy reports Solana as not measured.
 
 ## 6. Abuse and the daily request limit
 

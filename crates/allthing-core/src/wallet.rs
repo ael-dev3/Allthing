@@ -3,10 +3,10 @@
 //! addresses.
 //!
 //! EVM chains report how many transactions each address has *sent* (its
-//! account nonce): exact, one batched call per chain. Solana has no nonce and
-//! its only keyless history source, the public RPC, refuses requests from
-//! Cloudflare Workers and from browsers, so Solana addresses are listed but
-//! their activity is reported as not measured.
+//! account nonce): exact, one batched call per chain. Solana has no nonce:
+//! it counts the transactions involving each address (its signatures), up to
+//! a cap, from the public RPC. That RPC refuses browsers, so the static copy
+//! reports Solana as not measured.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +26,6 @@ pub struct ChainInfo {
     /// Keyless public JSON-RPC endpoints, tried in order.
     pub rpcs: &'static [&'static str],
 }
-
-/// Why Solana activity is missing from the breakdown.
-pub const SOLANA_UNMEASURED: &str = "Not measured: Solana's public RPC refuses requests from Cloudflare Workers and \
-     browsers, and no keyless alternative serves address history.";
 
 /// Chains measured, roughly in order of Farcaster wallet usage.
 pub const CHAINS: &[ChainInfo] = &[
@@ -77,8 +73,14 @@ pub const CHAINS: &[ChainInfo] = &[
         rpcs: &["https://mainnet.unichain.org", "https://unichain-rpc.publicnode.com"],
     },
     ChainInfo { slug: "monad", name: "Monad", kind: ChainKind::Evm, rpcs: &["https://rpc.monad.xyz"] },
-    // No usable keyless endpoint; see SOLANA_UNMEASURED.
-    ChainInfo { slug: "solana", name: "Solana", kind: ChainKind::Solana, rpcs: &[] },
+    // Solana's public RPC: it answers server-side requests, and refuses
+    // browsers (it rejects any `Origin`), so the static copy can't measure it.
+    ChainInfo {
+        slug: "solana",
+        name: "Solana",
+        kind: ChainKind::Solana,
+        rpcs: &["https://api.mainnet-beta.solana.com"],
+    },
 ];
 
 pub fn chain(slug: &str) -> Option<&'static ChainInfo> {
