@@ -18,6 +18,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Post pages drop the "Posted via" box. The posting app is a quiet line in the post's meta ("via Farcaster"), and its signing key and app fid show on hover.
 - Profiles say when the account joined. Accounts registered before the ID registry moved to OP Mainnet in November 2023 showed "before Nov 2023", the earliest date onchain data has for them; they now show when they got their first username (dwr: 17 Jun 2021), read from the fname server's public transfer log, which the old sign-up registered along with the account. If that read fails, the profile keeps the date its previous copy had and is rebuilt within a minute. Newer accounts show their onchain registration, as before.
 - The front page has a Reddit-style time filter next to hot and top: All time, Past year, Past month, Past week, Today (the default) and Past hour, kept in the URL as `t`. It picks the window Hypersnap ranks trending casts over: 1 hour, 24 hours or 7 days. Hypersnap goes back 7 days at most, so Past month, Past year and All time show the past week's casts and say so. A link with a time range still costs one API request, started by the inline script.
 - Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
