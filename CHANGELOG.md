@@ -6,8 +6,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 - A rate limit or unreadable upstream page no longer marks an indexed backfill feed as finished. The indexer keeps its cursor and retries it on a later turn; genuinely missing feeds still finish.
-
-- Clicking or tapping a video’s sound button keeps the page in place and the button focused, so the video continues playing in view.
+- Video sound controls use native focus behavior. Browser tests activate already visible controls without automatically scrolling them first, preserving the viewport while checking sound, focus and keyboard activation.
 
 - Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
 - The static copy reads linked-page metadata only up to its byte limit and cancels the remaining body. A large or stalled tail no longer delays a usable head or requires buffering the full response. CI also checks the static payload builder.
