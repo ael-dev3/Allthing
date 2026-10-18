@@ -3315,3 +3315,11 @@ code {
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
+
+/* The Network School icon beside "NS vote". */
+.ns-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: 4px;
+}

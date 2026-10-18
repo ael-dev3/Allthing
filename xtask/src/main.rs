@@ -190,7 +190,7 @@ fn site(site: &Site) -> Result<()> {
     } else {
         // Start from a clean assets directory; label shards under dist/data stay.
         let _ = fs::remove_dir_all(&assets);
-        for stale in ["index.html", "_headers", "favicon.svg", "robots.txt"] {
+        for stale in ["index.html", "_headers", "favicon.svg", "robots.txt", "ns-icon.png"] {
             let _ = fs::remove_file(dist.join(stale));
         }
     }
@@ -217,8 +217,11 @@ fn site(site: &Site) -> Result<()> {
             write(&assets.join("fonts").join(name), read(&font)?)?;
         }
     }
-    let files: &[&str] =
-        if site.static_host { &["favicon.svg", "robots.txt"] } else { &["favicon.svg", "robots.txt", "_headers"] };
+    let files: &[&str] = if site.static_host {
+        &["favicon.svg", "robots.txt", "ns-icon.png"]
+    } else {
+        &["favicon.svg", "robots.txt", "ns-icon.png", "_headers"]
+    };
     for file in files {
         write(&dist.join(file), read(&root.join("web").join(file))?)?;
     }
