@@ -15,6 +15,12 @@ use crate::util::can_hover;
 const OPEN_DELAY: Duration = Duration::from_millis(280);
 const CLOSE_DELAY: Duration = Duration::from_millis(180);
 const CLOSE_ANIMATION: Duration = Duration::from_millis(120);
+/// The sticky header covers this much of the top of the viewport.
+const HEADER_PX: f64 = 72.0;
+/// Panels are at most this tall, and shrink to the room they have.
+const MAX_PANEL_PX: f64 = 360.0;
+/// Gap between the trigger and the panel, plus a margin from the edge.
+const GAP_PX: f64 = 16.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -45,6 +51,20 @@ pub fn Popover(
     let timer = StoredValue::new(None::<TimeoutHandle>);
     let root = NodeRef::<leptos::html::Span>::new();
     let button = NodeRef::<leptos::html::Button>::new();
+    // Where the panel opens: above the trigger (default) or below it, and
+    // how tall it may be, measured each time it opens.
+    let below = RwSignal::new(false);
+    let max_height = RwSignal::new(MAX_PANEL_PX);
+    let place = move || {
+        let Some(button) = button.get_untracked() else { return };
+        let rect = button.get_bounding_client_rect();
+        let viewport = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or(800.0);
+        let above_room = rect.top() - HEADER_PX - GAP_PX;
+        let below_room = viewport - rect.bottom() - GAP_PX;
+        let open_below = above_room < MAX_PANEL_PX && below_room > above_room;
+        below.set(open_below);
+        max_height.set(if open_below { below_room } else { above_room }.clamp(120.0, MAX_PANEL_PX));
+    };
 
     let cancel = move || {
         if let Some(handle) = timer.get_value() {
@@ -58,6 +78,7 @@ pub fn Popover(
     };
     let open = move || {
         cancel();
+        place();
         state.set(State::Open);
     };
     let close = move || {
@@ -74,7 +95,7 @@ pub fn Popover(
             if state.get_untracked() == State::Open {
                 cancel();
             } else {
-                schedule(OPEN_DELAY, Box::new(move || state.set(State::Open)));
+                schedule(OPEN_DELAY, Box::new(open));
             }
         }
     };
@@ -170,6 +191,8 @@ pub fn Popover(
                 <div
                     class="popover-panel"
                     class:closing=move || state.get() == State::Closing
+                    class:below=move || below.get()
+                    style=move || format!("max-height: {}px", max_height.get().round())
                     id=id.clone()
                     role="dialog"
                     aria-label=label.clone()

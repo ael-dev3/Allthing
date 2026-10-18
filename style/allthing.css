@@ -2092,6 +2092,12 @@ code {
   cursor: pointer;
 }
 
+/* A card's animation makes it a stacking context: lift the card whose
+   popover is open above its neighbours. */
+.cast-card:has(.popover-panel) {
+  z-index: 30;
+}
+
 .cast-card .cast-title,
 .cast-card p {
   cursor: text;
@@ -2163,6 +2169,11 @@ code {
 
 .popover-panel.closing {
   animation: pop-out 0.12s ease-in both;
+}
+
+.popover-panel.below {
+  bottom: auto;
+  top: calc(100% + 8px);
 }
 
 .wallets .popover-panel {

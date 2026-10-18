@@ -1,7 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+
+/** Waits until the images on screen have loaded, so nothing shifts under the pointer. */
+async function settleImages(page: Page) {
+  await page.evaluate(async () => {
+    const pending = [...document.images].filter((img) => !img.complete);
+    await Promise.race([
+      Promise.all(
+        pending.map(
+          (img) =>
+            new Promise((done) => {
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            }),
+        ),
+      ),
+      new Promise((done) => setTimeout(done, 4000)),
+    ]);
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  });
+}
+
+/** A popover panel lies wholly inside the viewport, below the sticky header. */
+async function expectClearOfHeader(page: Page, panel: Locator) {
+  const header = await page.locator(".site-header").boundingBox();
+  const box = await panel.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && header && viewport).toBeTruthy();
+  expect(box!.y).toBeGreaterThanOrEqual(header!.y + header!.height - 1);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 1);
+  // Nothing else is painted over it: the topmost element across its
+  // middle and near its bottom belongs to the panel.
+  const covered = await panel.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return [0.5, 0.9].some((f) => {
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height * f);
+      return !hit || !el.contains(hit);
+    });
+  });
+  expect(covered).toBe(false);
+}
 
 /*
  * Allthing end to end, against live Farcaster data (Hypersnap), either through
@@ -326,6 +366,8 @@ test.describe("profiles", () => {
     expect(await list.locator("li").count()).toBeGreaterThanOrEqual(2);
     await list.locator("li").first().getByRole("button", { name: /^Copy/ }).click();
     await expect(list.locator("li").first().locator(".copy")).toHaveText("Copied");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectClearOfHeader(page, list);
     await shoot(page, "profile-wallets");
     await page.keyboard.press("Escape");
     await expect(list).toHaveCount(0);
@@ -455,11 +497,14 @@ test.describe("threads and navigation", () => {
   test("hovering likes, recasts and replies previews them; clicking opens the full list", async ({ page }) => {
     await page.goto(at(`/p/${NESTED_THREAD}`));
     const foot = page.locator(".post .engagement");
+    await expect(foot).toBeVisible();
+    await settleImages(page);
     await foot.locator(".stat-likes").hover();
     const likes = page.getByRole("dialog", { name: "Liked by" });
     await expect(likes).toBeVisible();
     await expect(likes.locator(".who-list li").first()).toBeVisible();
     expect(await likes.locator(".who-list li").count()).toBeLessThanOrEqual(10);
+    await expectClearOfHeader(page, likes);
     await shoot(page, "likes-popover");
     // Moving into the popover keeps it open.
     await likes.locator(".who-list li").first().hover();
@@ -484,11 +529,15 @@ test.describe("threads and navigation", () => {
     // Replies preview from a card on the front page.
     await page.goto(at("/"));
     const withReplies = page.locator(".cast-card").filter({ has: page.locator("button.stat-replies") }).first();
+    await expect(withReplies).toBeVisible();
+    await settleImages(page);
     await withReplies.locator(".stat-replies").hover();
     const replies = page.getByRole("dialog", { name: "Replies" });
     await expect(replies).toBeVisible();
     await expect(replies.locator(".reply-item").first()).toBeVisible();
     await expect(replies.getByRole("link", { name: "View full thread →" })).toBeVisible();
+    // Near the top of the page it opens downward, clear of the sticky header.
+    await expectClearOfHeader(page, replies);
     await shoot(page, "replies-popover");
   });
 
