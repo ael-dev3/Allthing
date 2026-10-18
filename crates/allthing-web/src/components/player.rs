@@ -234,10 +234,14 @@ fn ensure_source(
         return Err("This browser cannot play streaming video.".into());
     }
     let mut state = playback.borrow_mut();
-    if state.player.as_ref().is_some_and(|p| p.height >= height) {
+    let stream = state.stream.clone().ok_or("video is still loading")?;
+    // A stream may top out below the requested height. Compare against the
+    // rendition it can actually supply, so playing doesn't rebuild the same
+    // low-resolution source and discard frames it already buffered.
+    let available = allthing_core::hls::choose_variant(&stream.master, height).ok_or("no renditions")?.height;
+    if state.player.as_ref().is_some_and(|p| p.height >= available) {
         return Ok(());
     }
-    let stream = state.stream.clone().ok_or("video is still loading")?;
     let position = video.current_time();
     state.player = None;
     state.player = Some(attach(video, stream, height)?);

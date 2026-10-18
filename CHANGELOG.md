@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Playing an autoplaying HLS video reuses its buffered source when it is already the best rendition the stream can supply. Low-resolution videos no longer restart the same rendition to satisfy an unavailable higher resolution; genuine upgrades still work.
+
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
