@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 
 use allthing_core::channels::{
-    canonical_parent_url, channel_id_for_url, legacy_url, parent_url_variants, short_parent_url_label,
+    canonical_parent_url, channel_id_for_url, channel_url_for_id, legacy_url, parent_url_variants,
+    short_parent_url_label,
 };
+use allthing_core::index::Source;
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
     self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawTransfers, RawUser, RawUserList,
@@ -169,6 +171,38 @@ pub async fn channel_casts(inv: &Invocation, parent_url: &str, limit: u32) -> Re
     )
     .await?;
     Ok(feed.map(|f| f.casts).unwrap_or_default())
+}
+
+/// A page of about `limit` of a feed's casts, newest first, starting at
+/// `cursor` (the newest without one), and the cursor of the next, older
+/// page. A channel is read by its main parent URL only; channel feeds come
+/// back at twice the requested limit, so it asks for half. An author's casts
+/// include replies (Hypersnap ignores `include_replies`).
+pub async fn feed_page(
+    inv: &Invocation,
+    source: &Source,
+    cursor: Option<&str>,
+    limit: u32,
+) -> Result<(Vec<RawCast>, Option<String>), UpstreamError> {
+    let limit = match source {
+        Source::Channel(_) => (limit / 2).max(1),
+        Source::Author(_) => limit,
+    }
+    .to_string();
+    let (path, key, value) = match source {
+        Source::Channel(id) => ("feed/parent_urls", "parent_urls", channel_url_for_id(id)),
+        Source::Author(fid) => ("feed/user/casts", "fid", fid.to_string()),
+    };
+    let mut query = vec![(key, value.as_str()), ("limit", limit.as_str())];
+    query.push(match source {
+        Source::Channel(_) => ("with_recasts", "false"),
+        Source::Author(_) => ("include_replies", "false"),
+    });
+    if let Some(cursor) = cursor {
+        query.push(("cursor", cursor));
+    }
+    let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2(path, &query), true).await?;
+    Ok(feed.map(|f| (f.casts, f.next.and_then(|n| n.cursor).filter(|c| !c.is_empty()))).unwrap_or_default())
 }
 
 #[derive(Deserialize)]

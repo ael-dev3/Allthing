@@ -16,11 +16,14 @@ const apps = {
   "1234": { fid: 1234, username: "otherclient", display_name: "Other client" },
 };
 
-async function serve(page: Page, known: number) {
+async function serve(page: Page, known: number, { indexed = false } = {}) {
   const origins = Object.fromEntries(pool.slice(0, known).map((c, i) => [c.hash, { signer: "0x01", app_fid: appOf(i) }]));
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
-  await page.route("**/api/v1/home**", (route) =>
-    route.fulfill({ json: { pool: new URL(route.request().url()).searchParams.get("offset") ? [] : pool, notes: { origins, apps }, meta } }));
+  await page.route("**/api/v1/home**", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const index = indexed && params.get("window") === "30d" ? { index: { casts: 500, ranked_at: Date.now() } } : {};
+    return route.fulfill({ json: { pool: params.get("offset") ? [] : pool, notes: { origins, apps }, meta, ...index } });
+  });
 }
 
 test("the front page shows which apps today's trending casts were posted from", async ({ page }) => {
@@ -40,8 +43,15 @@ test("the bar names the time range it covers", async ({ page }) => {
   await serve(page, 25);
   await page.goto("/?t=hour");
   await expect(page.getByRole("region", { name: "Apps posting the past hour's trending casts" })).toBeVisible();
+  // Before the index can rank the past month, the list is the past week's.
   await page.goto("/?sort=top&t=month");
   await expect(page.getByRole("region", { name: "Apps posting the past week's trending casts" })).toBeVisible();
+});
+
+test("the bar names a range ranked from the index", async ({ page }) => {
+  await serve(page, 25, { indexed: true });
+  await page.goto("/?sort=top&t=month");
+  await expect(page.getByRole("region", { name: "Apps posting the past month's trending casts" })).toBeVisible();
 });
 
 test("no share bar until enough casts have a known app", async ({ page }) => {

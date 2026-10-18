@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use allthing_core::api::{
-    self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, LatestPayload, Meta, QuotedCast,
-    ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
+    self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, IndexCoverage, LatestPayload, Meta,
+    QuotedCast, ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
+use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
 use allthing_core::normalize::{self, RawAppChannel};
@@ -173,20 +174,57 @@ async fn trending_channels(inv: &Invocation) -> Vec<Channel> {
 }
 
 /// Trending casts. `offset` 0 is the front page; later offsets are the
-/// next pages that infinite scroll loads.
+/// next pages that infinite scroll loads. Past month, Past year and All
+/// time are ranked from Allthing's index; until it can rank them (or where
+/// there is none, as on the static host), they show the past week's
+/// trending casts, and say so by leaving out `index`.
 pub async fn home(
     inv: Rc<Invocation>,
     offset: u32,
     window: TrendingWindow,
     previous: Option<Rc<Vec<u8>>>,
 ) -> Result<Built, Failure> {
-    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
-    let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
+    if let Some(span) = Span::of(window)
+        && let Some(ranking) = ranking(&inv, span).await
+    {
+        let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
+        let casts = ranked_casts(&inv, &hashes).await?;
+        let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
+        annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+        let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
+        let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index) };
+        return Built::json(&payload, api::INDEXED_HOME_CACHE);
+    }
+    let window = if window.is_indexed() { TrendingWindow::Week } else { window };
+    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
+    let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
     annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
-    Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
+    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None }, api::HOME_CACHE)
+}
+
+/// A span's ranking from the index, if there is an index, it answers, and
+/// the ranking has casts. Reading it takes one of the build's subrequests.
+async fn ranking(inv: &Invocation, span: Span) -> Option<Ranking> {
+    let index = inv.index()?;
+    if !inv.take_subrequests(1) {
+        return None;
+    }
+    index.ranking(span).await.ok().flatten().filter(|r| !r.entries.is_empty())
+}
+
+/// Ranked casts, freshly read in one bulk call, in rank order. Casts deleted
+/// since they were indexed are left out.
+async fn ranked_casts(inv: &Invocation, hashes: &[String]) -> Result<Vec<Cast>, Failure> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let found = hypersnap::casts_bulk(inv, hashes).await.map_err(Failure::upstream)?;
+    let mut by_hash: std::collections::HashMap<String, Cast> =
+        found.iter().map(normalize::cast).map(|c| (c.hash.clone(), c)).collect();
+    Ok(hashes.iter().filter_map(|hash| by_hash.remove(hash)).collect())
 }
 
 /// Events read per shard in one build: about 14 minutes of Farcaster, most
@@ -996,5 +1034,119 @@ mod quote_tests {
         let quotes = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
         assert_eq!(host.asked()[0], hashes[..hypersnap::MAX_BULK_CASTS]);
         assert_eq!(quotes.len(), hypersnap::MAX_BULK_CASTS);
+    }
+}
+
+#[cfg(test)]
+mod indexed_home_tests {
+    use std::cell::RefCell;
+
+    use allthing_core::index::Entry;
+    use futures::future::{FutureExt, LocalBoxFuture};
+    use serde_json::json;
+
+    use super::*;
+    use crate::indexer::Index;
+    use crate::indexer::tests::Memory;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    const NOW_MS: f64 = 1_792_000_000_000.0;
+
+    /// Hypersnap's trending feed and bulk cast reads, and an index if any.
+    struct Indexed {
+        index: Option<Rc<Memory>>,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for Indexed {
+        fn now(&self) -> f64 {
+            NOW_MS
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let url = request.url.clone();
+            self.requests.borrow_mut().push(url.clone());
+            let cast = |hash: &str| {
+                json!({
+                    "hash": hash,
+                    "author": { "fid": 2, "username": "two" },
+                    "text": if hash == "0xc3" { "Just unlocked my DEGEN rewards" } else { "words" },
+                    "timestamp": "2026-10-01T00:00:00Z",
+                })
+            };
+            let body = if url.contains("/v2/farcaster/casts?") {
+                let list = url.split_once("casts=").map_or("", |(_, l)| l).replace("%2C", ",");
+                // 0xc9 was deleted after it was indexed.
+                json!({ "casts": list.split(',').filter(|h| *h != "0xc9").map(cast).collect::<Vec<_>>() })
+            } else if url.contains("/feed/trending?") {
+                json!({ "casts": [cast("0xd1")] })
+            } else {
+                json!({})
+            };
+            let response =
+                HttpResponse { status: 200, retry_after: None, body: Some(serde_json::to_vec(&body).unwrap()) };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn index(&self) -> Option<Rc<dyn Index>> {
+            self.index.clone().map(|index| index as Rc<dyn Index>)
+        }
+    }
+
+    fn build(host: &Rc<Indexed>, offset: u32, window: TrendingWindow) -> HomePayload {
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let built = home(inv, offset, window, None).now_or_never().unwrap().unwrap();
+        serde_json::from_slice(&built.body).unwrap()
+    }
+
+    fn filled() -> Rc<Memory> {
+        let index = Memory::default();
+        let now = (NOW_MS / 1000.0) as i64;
+        let day = 86_400;
+        let entries = [("0xc1", now - day, 900), ("0xc2", now - 3 * day, 400), ("0xc3", now - day, 300)];
+        let mut casts = vec![Entry("0xc9".into(), now - day, 950)];
+        casts.extend(entries.iter().map(|(h, ts, p)| Entry((*h).into(), *ts, *p)));
+        casts.push(Entry("0xc4".into(), now - 400 * day, 5000));
+        index.save(casts, None, String::new(), NOW_MS).now_or_never().unwrap().unwrap();
+        for span in Span::ALL {
+            index.rerank(span, NOW_MS);
+        }
+        Rc::new(index)
+    }
+
+    fn hashes(payload: &HomePayload) -> Vec<&str> {
+        payload.pool.iter().map(|c| c.hash.as_str()).collect()
+    }
+
+    #[test]
+    fn month_year_and_all_time_come_from_the_index_in_rank_order() {
+        let host = Rc::new(Indexed { index: Some(filled()), requests: RefCell::new(Vec::new()) });
+        let month = build(&host, 0, TrendingWindow::Month);
+        // Deleted (0xc9) and spam (0xc3) casts are left out; the rest keep their rank.
+        assert_eq!(hashes(&month), ["0xc1", "0xc2"]);
+        let coverage = month.index.unwrap();
+        assert_eq!((coverage.casts, coverage.ranked_at), (4, NOW_MS as i64));
+        assert_eq!(hashes(&build(&host, 0, TrendingWindow::All)), ["0xc4", "0xc1", "0xc2"]);
+        assert_eq!(hashes(&build(&host, 0, TrendingWindow::Year)), ["0xc1", "0xc2"]);
+        // Past the end of a ranking: an empty page, which ends the list.
+        assert!(build(&host, 100, TrendingWindow::All).pool.is_empty());
+        assert!(host.requests.borrow().iter().all(|url| !url.contains("/feed/trending")));
+    }
+
+    #[test]
+    fn without_a_ranking_the_long_ranges_show_the_past_week_and_say_so() {
+        for index in [None, Some(Rc::new(Memory::default())), Some(Rc::new(Memory { fail: true, ..Memory::default() }))]
+        {
+            let host = Rc::new(Indexed { index, requests: RefCell::new(Vec::new()) });
+            let payload = build(&host, 0, TrendingWindow::Year);
+            assert_eq!(hashes(&payload), ["0xd1"]);
+            assert_eq!(payload.index, None);
+            assert!(host.requests.borrow()[0].contains("time_window=7d"), "{:?}", host.requests.borrow());
+        }
+        // The week itself never asks the index.
+        let host = Rc::new(Indexed { index: Some(filled()), requests: RefCell::new(Vec::new()) });
+        assert_eq!(build(&host, 0, TrendingWindow::Week).index, None);
     }
 }

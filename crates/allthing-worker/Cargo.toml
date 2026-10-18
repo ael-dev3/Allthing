@@ -19,4 +19,4 @@ allthing-data.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-worker.workspace = true
+worker = { workspace = true, features = ["d1"] }

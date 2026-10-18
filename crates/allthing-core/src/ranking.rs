@@ -87,42 +87,62 @@ impl TimeRange {
         }
     }
 
-    /// The trending window this range is ranked over. Hypersnap's widest is
-    /// 7 days, so the longer ranges show the past week's casts.
+    /// The window this range is ranked over: Hypersnap's trending windows up
+    /// to a week, Allthing's own index beyond.
     pub fn window(self) -> TrendingWindow {
         match self {
             TimeRange::Hour => TrendingWindow::Hour,
             TimeRange::Day => TrendingWindow::Day,
-            TimeRange::Week | TimeRange::Month | TimeRange::Year | TimeRange::All => TrendingWindow::Week,
+            TimeRange::Week => TrendingWindow::Week,
+            TimeRange::Month => TrendingWindow::Month,
+            TimeRange::Year => TrendingWindow::Year,
+            TimeRange::All => TrendingWindow::All,
         }
-    }
-
-    /// Whether its trending window reaches back over the whole range.
-    pub fn covered(self) -> bool {
-        matches!(self, TimeRange::Hour | TimeRange::Day | TimeRange::Week)
     }
 }
 
-/// The windows Hypersnap ranks trending casts over (`time_window`).
+/// The windows the front page ranks casts over: Hypersnap's trending
+/// windows (`time_window`, at most 7 days), and the longer ones ranked from
+/// Allthing's own index of past casts (see [`crate::index`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TrendingWindow {
     Hour,
     #[default]
     Day,
     Week,
+    Month,
+    Year,
+    All,
 }
 
 impl TrendingWindow {
+    pub const ALL: [TrendingWindow; 6] = [
+        TrendingWindow::Hour,
+        TrendingWindow::Day,
+        TrendingWindow::Week,
+        TrendingWindow::Month,
+        TrendingWindow::Year,
+        TrendingWindow::All,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             TrendingWindow::Hour => "1h",
             TrendingWindow::Day => "24h",
             TrendingWindow::Week => "7d",
+            TrendingWindow::Month => "30d",
+            TrendingWindow::Year => "365d",
+            TrendingWindow::All => "all",
         }
     }
 
     pub fn parse(value: &str) -> Option<TrendingWindow> {
-        [TrendingWindow::Hour, TrendingWindow::Day, TrendingWindow::Week].into_iter().find(|w| w.as_str() == value)
+        TrendingWindow::ALL.into_iter().find(|w| w.as_str() == value)
+    }
+
+    /// Ranked from Allthing's index rather than Hypersnap's trending feed.
+    pub fn is_indexed(self) -> bool {
+        matches!(self, TrendingWindow::Month | TrendingWindow::Year | TrendingWindow::All)
     }
 }
 
@@ -226,13 +246,19 @@ mod tests {
         }
         assert_eq!(TimeRange::Hour.window().as_str(), "1h");
         assert_eq!(TimeRange::Day.window().as_str(), "24h");
-        // Hypersnap ranks over at most 7 days: longer ranges use that, and say so.
-        for range in [TimeRange::Week, TimeRange::Month, TimeRange::Year, TimeRange::All] {
-            assert_eq!(range.window(), TrendingWindow::Week);
+        // Every range has its own window: up to a week from Hypersnap, the
+        // longer ones from Allthing's index.
+        let windows: Vec<TrendingWindow> = TimeRange::ALL.into_iter().map(TimeRange::window).collect();
+        for (i, window) in windows.iter().enumerate() {
+            assert!(!windows[..i].contains(window), "{window:?} is shared");
+            assert_eq!(TrendingWindow::parse(window.as_str()), Some(*window));
         }
-        assert!(TimeRange::Week.covered() && !TimeRange::Month.covered() && !TimeRange::All.covered());
-        assert_eq!(TrendingWindow::parse("7d"), Some(TrendingWindow::Week));
-        assert_eq!(TrendingWindow::parse("30d"), None);
+        for range in [TimeRange::Month, TimeRange::Year, TimeRange::All] {
+            assert!(range.window().is_indexed());
+        }
+        assert!(!TimeRange::Week.window().is_indexed());
+        assert_eq!(TrendingWindow::parse("30d"), Some(TrendingWindow::Month));
+        assert_eq!(TrendingWindow::parse("90d"), None);
     }
     use crate::model::UserSummary;
     use crate::time::parse_rfc3339;

@@ -30,7 +30,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
-| Changing the time range | 1 per trending window not loaded yet (`/api/v1/home?window=1h` or `7d`); the past month, year and all time share the week's payload | none |
+| Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `7d`, `30d`, `365d` or `all`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
@@ -54,6 +54,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | Endpoint | Fresh | Stale-while-revalidate until | Kept for stale-if-error | Browser `max-age` |
 |---|---|---|---|---|
 | home | 60 s | 10 min | 24 h | 30 s |
+| home, Past month, Past year and All time (ranked from the index) | 5 min | 30 min | 24 h | 2 min |
 | latest ("new") | 30 s | 60 s | 24 h | 15 s |
 | channel | 2 min | 15 min | 24 h | 60 s |
 | cast | 2 min | 30 min | 24 h | 60 s |
@@ -81,6 +82,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 |---|---|
 | Any cache hit | 1 (cache read) |
 | home | cache read 1 + trending casts 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
+| home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
+| the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1 |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
 | channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤1 + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
@@ -152,6 +155,22 @@ Linked HTML uses the same 128 KB body limit in the browser: chunks are copied on
 
 ## 8. Watching it
 
-- `GET /api/v1/status` reports, for the isolate that answers, its request count and each upstream's requests, failures and breaker state. It makes no upstream calls and touches no cache.
+- `GET /api/v1/status` reports, for the isolate that answers, its request count and each upstream's requests, failures and breaker state, how fresh the cached "new" and trending lists are, and the index's rankings (when each was computed, how many casts, its floor) and the indexer's progress and D1 use today. It makes no upstream calls.
 - Workers Logs are enabled with 5% head sampling (`wrangler.toml`), to stay within the free log allowance.
 - Every API response carries `x-allthing-cache` (`fresh`, `revalidating`, `miss` or `stale-if-error`) and `x-allthing-age`.
+
+## 9. The index: cron and D1
+
+Past month, Past year and All time are ranked from Allthing's own index in D1 ([ARCHITECTURE.md](ARCHITECTURE.md#allthings-index-past-month-past-year-all-time)). Its costs, against the Free plan:
+
+| Limit | Free plan | The index |
+|---|---|---|
+| Worker requests | 100,000/day | The cron runs every minute: 1,440 invocations a day, 1.4% of the allowance |
+| Cron triggers | 5 per account | 1 |
+| CPU time | 10 ms per invocation | A run parses one page of 100 casts (under 1 ms natively; a channel page of 100 casts, about 1 ms) and normalizes only the casts that could rank. Rankings are computed inside D1 by one SQL statement, so their rows never reach the Worker |
+| Subrequests | 50 per invocation | A run makes one Hypersnap call and three D1 calls; an indexed front-page build adds one D1 read |
+| D1 rows written | 100,000/day | The indexer stops at an estimated 50,000 a day. A new cast writes 2 rows (the row and its time index), a changed score 1, an unchanged one 0; the state and a ranking 1 or 2 each per run. Early on, when most casts it reads are kept, it may reach that cap and rest until 00:00 UTC; once the rankings are full, only casts that beat their floors are written |
+| D1 rows read | 5,000,000/day | The indexer stops at an estimated 2,000,000 a day. Recomputing a ranking reads its span's casts two or three times, and waits longer the bigger the index is (a minute per 50 casts, 5 minutes to 6 hours), which keeps recomputes near 650,000 rows a day at any size. Each indexed front-page build reads 1 row |
+| D1 storage | 5 GB | About 100 bytes per indexed cast, plus three ranking rows of about 70 KB: megabytes |
+
+**Load on Hypersnap**: 1,440 page reads a day (one a minute), through the same token bucket and breaker as page builds. A failed read is not retried: the run moves on, and that feed tries the same page again on its next turn.

@@ -24,6 +24,9 @@ pub fn ClientShareBar(casts: Vec<Cast>, notes: Notes, window: TrendingWindow) ->
         TrendingWindow::Hour => "the past hour's",
         TrendingWindow::Day => "today's",
         TrendingWindow::Week => "the past week's",
+        TrendingWindow::Month => "the past month's",
+        TrendingWindow::Year => "the past year's",
+        TrendingWindow::All => "all-time",
     };
     let note = format!(
         "Apps that posted {known} of {period} trending casts, from the app that registered each cast's signing key."

@@ -30,6 +30,19 @@ name = "API_LIMITER"
 namespace_id = "1001"
 simple = { limit = 120, period = 60 }
 
+# Allthing's index of notable casts, which ranks Past month, Past year and
+# All time. The cron job below fills it; migrations/ holds its schema, which
+# the Worker also creates itself. See docs/ARCHITECTURE.md and docs/BUDGET.md.
+[[d1_databases]]
+binding = "INDEX"
+database_name = "allthing-index"
+database_id = "184a345b-13ba-4db9-b1a6-4ea3a9c60f8c"
+migrations_dir = "migrations"
+
+# The indexer: one page of casts a minute, within the Free plan's limits.
+[triggers]
+crons = ["* * * * *"]
+
 [observability]
 enabled = true
 head_sampling_rate = 0.05

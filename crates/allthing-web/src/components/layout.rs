@@ -105,6 +105,12 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
     }
 }
 
+/// Whether the menu offers `range`. The static copy has no index, so it
+/// leaves out the ranges ranked from one.
+fn offered(range: TimeRange) -> bool {
+    !(cfg!(feature = "static-host") && range.window().is_indexed())
+}
+
 /// Reddit's time filter: how far back the front page reaches, kept in the
 /// URL as `t` next to the sort.
 #[component]
@@ -127,6 +133,7 @@ pub fn TimeFilter(path: String, sort: Sort, current: TimeRange) -> impl IntoView
             <select on:change=change>
                 {TimeRange::ALL
                     .into_iter()
+                    .filter(|range| offered(*range) || *range == current)
                     .map(|range| view! { <option value=range.as_str() selected=range == current>{range.label()}</option> })
                     .collect_view()}
             </select>

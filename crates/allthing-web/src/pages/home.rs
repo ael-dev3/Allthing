@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{Annotations, HomePayload, LatestPayload, home_page_path, latest_path};
+use allthing_core::api::{Annotations, HomePayload, IndexCoverage, LatestPayload, home_page_path, latest_path};
+use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
 use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted};
+use allthing_core::time::format_date;
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
@@ -213,6 +215,11 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
             Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Ok(Fetched { data, stale, .. })) => {
                 let payload: Arc<HomePayload> = data;
+                // A range the index can't rank yet shows the past week.
+                let shown = match window.get() {
+                    asked if asked.is_indexed() && payload.index.is_none() => TrendingWindow::Week,
+                    asked => asked,
+                };
                 let first_notes = payload.notes.clone();
                 let notes = Memo::new(move |_| {
                     let mut notes = first_notes.clone();
@@ -241,7 +248,8 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 view! {
                     <Columns>
                         <Heading sort range/>
-                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=window.get()/>
+                        <IndexNote window=window.get() index=payload.index.clone()/>
+                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown/>
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
@@ -270,8 +278,24 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 }
             }}
         </div>
-        {move || (ranged() && !range.get().covered()).then(|| view! {
-            <p class="range-note">"Farcaster's trending data reaches back 7 days, so this shows the past week's casts."</p>
-        })}
     }
+}
+
+/// For Past month, Past year and All time: what Allthing's index ranked
+/// them from, or that it can't rank them yet and the list is the past
+/// week's trending casts.
+#[component]
+fn IndexNote(window: TrendingWindow, index: Option<IndexCoverage>) -> impl IntoView {
+    window.is_indexed().then(|| {
+        let text = match index {
+            Some(index) => {
+                let since = index.since.map(|ts| format!(" back to {}", format_date(ts))).unwrap_or_default();
+                format!("Ranked from {} casts Allthing has indexed{since}.", full_number(index.casts))
+            }
+            None => {
+                "Allthing's index can't rank this range yet, so this shows the past week's trending casts.".to_owned()
+            }
+        };
+        view! { <p class="range-note">{text}</p> }
+    })
 }

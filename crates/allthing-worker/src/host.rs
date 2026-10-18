@@ -1,21 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Workers runtime as the data builders' host: `fetch` with an abort
-//! timeout, the clock, and `waitUntil` for background work.
+//! timeout, the clock, `waitUntil` for background work, and the index.
 
+use std::rc::Rc;
 use std::time::Duration;
 
+use allthing_data::indexer::Index;
 use allthing_data::{FetchError, Host, HttpMethod, HttpRequest, HttpResponse};
 use futures::StreamExt;
 use futures::future::{Either, FutureExt, LocalBoxFuture, select};
-use worker::{AbortController, Context, Date, Delay, Fetch, Headers, Method, Request, RequestInit};
+use worker::{AbortController, Context, Date, Delay, Fetch, Headers, Method, Request, RequestInit, ScheduleContext};
+
+use crate::index::D1Index;
+
+/// What keeps background work alive: a request's or a cron run's context.
+pub enum Lifetime {
+    Request(Context),
+    Schedule(ScheduleContext),
+}
 
 pub struct WorkerHost {
-    ctx: Context,
+    lifetime: Lifetime,
+    index: Option<Rc<D1Index>>,
 }
 
 impl WorkerHost {
-    pub fn new(ctx: Context) -> WorkerHost {
-        WorkerHost { ctx }
+    pub fn new(lifetime: Lifetime, index: Option<Rc<D1Index>>) -> WorkerHost {
+        WorkerHost { lifetime, index }
     }
 }
 
@@ -85,6 +96,13 @@ impl Host for WorkerHost {
     }
 
     fn spawn(&self, future: LocalBoxFuture<'static, ()>) {
-        self.ctx.wait_until(future);
+        match &self.lifetime {
+            Lifetime::Request(ctx) => ctx.wait_until(future),
+            Lifetime::Schedule(ctx) => ctx.wait_until(future),
+        }
+    }
+
+    fn index(&self) -> Option<Rc<dyn Index>> {
+        self.index.clone().map(|index| index as Rc<dyn Index>)
     }
 }
