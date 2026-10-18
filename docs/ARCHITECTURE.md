@@ -127,7 +127,7 @@ Annotations memoized in the page (scores, origins, apps) carry over between page
 
 - **Read-only**: there are no accounts, cookies, keys, signers or write paths. The Worker accepts only `GET` and `HEAD`.
 - **No secrets**: every upstream is public and keyless. The Workers Builds token lives in Cloudflare, never in the repository.
-- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted. There is no `unsafe-eval`, no inline scripts and no framing of the site.
+- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. The one exception is `static.cloudflareinsights.com`, for Cloudflare Web Analytics, which Cloudflare injects when it is switched on for the zone. It is cookieless, and turning it off in the dashboard removes the script. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted. There is no `unsafe-eval`, no inline scripts and no framing of the site.
 - **Links** in casts get `rel="noopener noreferrer nofollow ugc"`. Cast text is tokenized and rendered as text nodes, never as HTML.
 - **Abuse**: a per-IP rate limit (`API_LIMITER`, 120 a minute), the caching above, and guards that refuse to send rather than queue. See [BUDGET.md](BUDGET.md).
 
