@@ -143,7 +143,9 @@ test.describe("front page", () => {
     await expect(page.getByText("Front page")).toHaveCount(0);
     // No "Updated N min ago" anywhere.
     await expect(page.getByText(/Updated (just now|\d+ (min|h) ago)/)).toHaveCount(0);
-    await expect(page.getByText(/How ranking works|A quiet, read-only window|Keyboard/)).toHaveCount(0);
+    // The page's own chrome, not casts (whose authors may well write "Keyboard").
+    const chrome = page.locator(".site-header, .listing-head, .site-footer, .side, .intro");
+    await expect(chrome.getByText(/How ranking works|A quiet, read-only window|Keyboard/)).toHaveCount(0);
     await expect(page.locator(".site-footer")).toContainText(/AGPL-3\.0\s*·\s*Source\s*·\s*v\d+\.\d+\.\d+ \(\w+\)/);
     // Mini apps and frames are filtered out.
     await expect(page.locator(".cast-card a[href*='/miniapps/'], .cast-card a[href*='neynar.app']")).toHaveCount(0);
@@ -1026,6 +1028,9 @@ test.describe("threads and navigation", () => {
     expect(age, `newest cast is ${Math.round(age)} s old`).toBeLessThan(600);
     // /status reports the real lag of both lists.
     test.skip(PAGES, "the static copy has no Worker");
+    // The edge cache is per data center: make sure the one this client
+    // reaches holds the list, then read its freshness there.
+    await request.get(at("/api/v1/latest"));
     const status = await (await request.get(at("/api/v1/status"))).json();
     expect(status.freshness.new.newest_cast_age_s).toBeLessThan(600);
     expect(status.freshness.new.built_age_s).toBeGreaterThanOrEqual(0);
