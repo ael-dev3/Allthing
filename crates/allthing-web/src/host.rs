@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Static hosting (the GitHub Pages build): there is no Worker, so the browser
 //! builds each page's payload itself with the Worker's own builders, reading
-//! Hypersnap and the public RPCs directly. All of them allow cross-origin
-//! reads; nothing is proxied and nothing is cached beyond this visit.
+//! Hypersnap and the public RPCs directly, which allow cross-origin reads.
+//! The Farcaster app's API doesn't (no CORS headers), so channel records and
+//! app-recorded votes are left out here. Nothing is proxied and nothing is
+//! cached beyond this visit.
 
 use std::rc::Rc;
 

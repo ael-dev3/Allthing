@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use allthing_core::api::{CastPayload, cast_path};
 use allthing_core::clients::client_name;
-use allthing_core::format::{full_number, plural, short_address};
+use allthing_core::format::{full_number, short_address};
 use allthing_core::model::Cast;
 use allthing_core::params::hash_from_param;
 use allthing_core::ranking::{CommentSort, sort_thread};
@@ -102,7 +102,7 @@ pub fn PostPage() -> impl IntoView {
                     {payload.channel.clone().map(|channel| view! {
                         <SideBox title=format!("/{}", channel.name)>
                             {channel.description.clone().map(|d| view! { <p>{d}</p> })}
-                            {channel.member_count.map(|m| view! { <p class="muted">{plural(m, "member", "members")}</p> })}
+                            {channel.counts().first().map(|count| view! { <p class="muted" title=count.describe()>{count.label()}</p> })}
                         </SideBox>
                     })}
                 }

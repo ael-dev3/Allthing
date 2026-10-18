@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Raw shapes of the Neynar v2 Farcaster API, as served by Hypersnap (fewer
-//! fields) and Neynar, and their normalization into [`crate::model`].
+//! fields) and Neynar, and of the Farcaster app's public channel API, and
+//! their normalization into [`crate::model`].
 //!
 //! Only the fields Allthing reads are declared; serde skips the rest, which
 //! keeps parsing cheap inside the Worker's CPU budget.
@@ -12,8 +13,8 @@ use crate::channels::{
     canonical_parent_url, channel_id_for_url, channel_ref_from_url, channel_url_for_id, short_parent_url_label,
 };
 use crate::embeds::{MediaKind, classify_url};
-use crate::model::{Cast, Channel, ChannelRef, Embed, Mention, ThreadNode, User, UserSummary};
-use crate::params::normalize_hash;
+use crate::model::{Cast, Channel, ChannelRef, Embed, ExternalLink, Mention, ThreadNode, User, UserSummary};
+use crate::params::{hash_from_param, normalize_hash};
 use crate::text::splice_mentions;
 use crate::time::parse_rfc3339;
 
@@ -154,10 +155,89 @@ pub struct RawChannel {
     pub parent_url: Option<String>,
     pub description: Option<String>,
     pub image_url: Option<String>,
+    /// Hypersnap: how many distinct accounts have cast in the feed, not its
+    /// members (it said /dev had 15,664; the Farcaster app counts 475).
+    /// Neynar: members.
     pub member_count: Option<u64>,
+    /// Neynar only.
     pub follower_count: Option<u64>,
     /// Unix seconds from Neynar, an ISO string from Hypersnap.
     pub created_at: Option<Value>,
+}
+
+/// `api.farcaster.xyz/v1/channel?channelId=<id>`, the Farcaster app's public
+/// channel API, answers `{ "result": { "channel": … } }` (HTTP 400 for an
+/// unknown channel).
+#[derive(Debug, Default, Deserialize)]
+pub struct RawAppChannelResponse {
+    pub result: Option<RawAppChannelResult>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawAppChannelResult {
+    pub channel: Option<RawAppChannel>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawExternalLink {
+    pub title: Option<String>,
+    pub url: Option<String>,
+}
+
+/// The Farcaster app's record of a channel: what its hosts set (name,
+/// description, pictures, link, pinned cast) and who they are, with true
+/// member and follower counts. Hypersnap knows none of it.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawAppChannel {
+    pub id: String,
+    /// A display name ("Farcaster").
+    pub name: Option<String>,
+    /// Like cast text, the description leaves mentions out:
+    /// `descriptionMentions` are their fids and
+    /// `descriptionMentionsPositions` the UTF-8 byte offsets where they belong.
+    pub description: Option<String>,
+    pub description_mentions: Option<Vec<u64>>,
+    pub description_mentions_positions: Option<Vec<u32>>,
+    /// The picture.
+    pub image_url: Option<String>,
+    /// The banner, which many channels don't have.
+    pub header_image_url: Option<String>,
+    /// Unix seconds.
+    pub created_at: Option<Value>,
+    pub follower_count: Option<u64>,
+    pub member_count: Option<u64>,
+    pub lead_fid: Option<u64>,
+    /// Usually includes the lead.
+    pub moderator_fids: Option<Vec<u64>>,
+    /// Absent on most channels.
+    pub pinned_cast_hash: Option<String>,
+    /// `{ "title": "", "url": "" }` when unset.
+    pub external_link: Option<RawExternalLink>,
+}
+
+/// At most this many accounts are looked up for a channel record, the most a
+/// `user/bulk` call takes.
+const APP_CHANNEL_FIDS: usize = 100;
+
+impl RawAppChannel {
+    /// The accounts the record names, to read in one `user/bulk` call: the
+    /// lead, the moderators, then anyone the description mentions.
+    pub fn fids(&self) -> Vec<u64> {
+        let mut out: Vec<u64> = Vec::new();
+        let named = self.lead_fid.into_iter().chain(self.moderator_fids.iter().flatten().copied());
+        for fid in named.chain(self.description_mentions.iter().flatten().copied()) {
+            if fid > 0 && !out.contains(&fid) && out.len() < APP_CHANNEL_FIDS {
+                out.push(fid);
+            }
+        }
+        out
+    }
+
+    /// The pinned cast's hash, normalized, when it is a well-formed one.
+    pub fn pinned_hash(&self) -> Option<String> {
+        self.pinned_cast_hash.as_deref().and_then(hash_from_param)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -367,20 +447,90 @@ pub fn channel(raw: &RawChannel) -> Channel {
     let named_id = if id_is_url { channel_id_for_url(&parent_url) } else { Some(raw.id.to_ascii_lowercase()) };
     // Neynar's `name` is a display name ("Farcaster"); Hypersnap echoes the id.
     let display_name = if id_is_url { None } else { non_empty(raw.name.as_deref()) };
+    // Hypersnap's `member_count` counts casters. Only Neynar reports
+    // followers, and its `member_count` counts members.
+    let neynar = raw.follower_count.is_some();
     Channel {
         id: named_id.clone().unwrap_or_else(|| canonical_parent_url(&parent_url)),
         name: display_name.or(named_id).unwrap_or_else(|| short_parent_url_label(&parent_url)),
         description: non_empty(raw.description.as_deref()),
         image_url: non_empty(raw.image_url.as_deref()),
-        member_count: raw.member_count.or(raw.follower_count),
+        member_count: raw.member_count.filter(|_| neynar),
+        follower_count: raw.follower_count,
+        casters: raw.member_count.filter(|_| !neynar),
         created_at: unix_seconds(raw.created_at.as_ref()),
         parent_url,
+        ..Channel::default()
     }
+}
+
+/// The URL, trimmed, if it has one of `schemes`. Links take http(s); images
+/// only https, the one scheme the Content Security Policy allows for them.
+fn url_with_scheme(value: Option<&str>, schemes: &[&str]) -> Option<String> {
+    let url = non_empty(value)?;
+    let (scheme, _) = url.split_once("://")?;
+    schemes.iter().any(|s| s.eq_ignore_ascii_case(scheme)).then_some(url)
+}
+
+/// Fill `channel` in from the Farcaster app's record of it. `users` are the
+/// accounts the record names ([`RawAppChannel::fids`]), as far as they could
+/// be read: a lead or moderator who couldn't be read is left out, and a
+/// mention is spliced in as "@fid:N". A record for another channel changes
+/// nothing.
+pub fn enrich_channel(channel: &mut Channel, app: &RawAppChannel, users: &[RawUser]) {
+    if !app.id.eq_ignore_ascii_case(&channel.id) {
+        return;
+    }
+    let user = |fid: u64| users.iter().find(|u| u.fid == fid);
+    if let Some(name) = non_empty(app.name.as_deref()) {
+        channel.name = name;
+    }
+    let mentioned = app.description_mentions.as_deref().unwrap_or_default();
+    let positions = app.description_mentions_positions.as_deref().unwrap_or_default();
+    let mentions: Vec<Mention> = if mentioned.len() == positions.len() {
+        mentioned
+            .iter()
+            .map(|&fid| Mention { username: user(fid).map_or_else(|| format!("fid:{fid}"), username_for), fid })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let ranges: Vec<(u32, u32)> = positions.iter().map(|&at| (at, at)).collect();
+    // Splice before trimming: the positions count from the very start.
+    let description = splice_mentions(app.description.as_deref().unwrap_or_default(), &mentions, &ranges);
+    if let Some(description) = non_empty(Some(description.as_str())) {
+        channel.description = Some(description);
+        channel.description_mentions = mentions;
+    }
+    if let Some(url) = url_with_scheme(app.image_url.as_deref(), &["https"]) {
+        channel.image_url = Some(url);
+    }
+    channel.header_image_url = url_with_scheme(app.header_image_url.as_deref(), &["https"]);
+    channel.follower_count = app.follower_count;
+    channel.member_count = app.member_count;
+    if let Some(created) = unix_seconds(app.created_at.as_ref()) {
+        channel.created_at = Some(created);
+    }
+    channel.lead = app.lead_fid.and_then(user).map(user_summary);
+    let mut moderators: Vec<UserSummary> = Vec::new();
+    for fid in app.moderator_fids.iter().flatten().filter(|fid| Some(**fid) != app.lead_fid) {
+        if let Some(moderator) = user(*fid).filter(|_| moderators.iter().all(|m| m.fid != *fid)) {
+            moderators.push(user_summary(moderator));
+        }
+    }
+    channel.moderators = moderators;
+    channel.external_link = app.external_link.as_ref().and_then(|link| {
+        Some(ExternalLink {
+            url: url_with_scheme(link.url.as_deref(), &["https", "http"])?,
+            title: link.title.as_deref().map(str::trim).unwrap_or_default().to_owned(),
+        })
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ChannelCount;
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
@@ -506,20 +656,144 @@ mod tests {
         let ch = channel(&serde_json::from_value::<RawChannel>(raw["channel"].clone()).unwrap());
         assert!(!ch.id.is_empty());
         assert!(!ch.parent_url.is_empty());
+        // Hypersnap's `member_count` counts casters, so it is never a member count.
+        assert_eq!((ch.member_count, ch.follower_count, ch.casters), (None, None, Some(2023)));
+        assert_eq!(ch.counts(), [ChannelCount::Casters(2023)]);
         let legacy: Value = serde_json::from_str(&fixture("hypersnap-channel-legacy.json")).unwrap();
         let ch = channel(&serde_json::from_value::<RawChannel>(legacy["channel"].clone()).unwrap());
-        assert_eq!(ch.id, "farcaster");
+        assert_eq!((ch.id.as_str(), ch.casters, ch.member_count), ("farcaster", Some(94_568), None));
         let neynar: RawChannel = serde_json::from_str(
             r#"{"id":"Dev","name":"Developers","url":"https://warpcast.com/~/channel/dev","created_at":1700000000,"follower_count":12}"#,
         )
         .unwrap();
         let ch = channel(&neynar);
         assert_eq!(
-            (ch.id.as_str(), ch.name.as_str(), ch.member_count, ch.created_at),
-            ("dev", "Developers", Some(12), Some(1_700_000_000))
+            (ch.id.as_str(), ch.name.as_str(), ch.follower_count, ch.member_count, ch.casters, ch.created_at),
+            ("dev", "Developers", Some(12), None, None, Some(1_700_000_000))
         );
+        // Neynar's member count, which comes with followers, counts members.
+        let neynar: RawChannel = serde_json::from_str(r#"{"id":"dev","follower_count":12,"member_count":3}"#).unwrap();
+        assert_eq!(channel(&neynar).counts(), [ChannelCount::Followers(12), ChannelCount::Members(3)]);
         let list: RawChannelList = serde_json::from_str(&fixture("hypersnap-channel-trending.json")).unwrap();
         assert!(!list.channels.is_empty());
+    }
+
+    fn app_channel(id: &str) -> RawAppChannel {
+        let raw: RawAppChannelResponse =
+            serde_json::from_str(&fixture(&format!("farcaster-channel-{id}.json"))).unwrap();
+        raw.result.and_then(|r| r.channel).unwrap()
+    }
+
+    fn users(json: &str) -> Vec<RawUser> {
+        serde_json::from_str::<RawUserList>(json).unwrap().users
+    }
+
+    #[test]
+    fn reads_the_farcaster_apps_channel_records() {
+        let dev = app_channel("dev");
+        assert_eq!(dev.fids(), [191, 2172, 834, 725, 6841, 7657, 864_314]);
+        assert_eq!(dev.pinned_hash(), None);
+        let farcaster = app_channel("farcaster");
+        assert_eq!(farcaster.fids(), [1]);
+        assert_eq!(farcaster.pinned_hash().as_deref(), Some("0x50184b62b4c52fd76628713562e1eda3dccaf63d"));
+        // The lead first, each account once, and no malformed hashes.
+        let odd: RawAppChannel = serde_json::from_str(
+            r#"{"id":"x","leadFid":2,"moderatorFids":[1,2,2,0],"descriptionMentions":[3,1],"pinnedCastHash":"0x12"}"#,
+        )
+        .unwrap();
+        assert_eq!((odd.fids(), odd.pinned_hash()), (vec![2, 1, 3], None));
+    }
+
+    #[test]
+    fn fills_a_hypersnap_channel_in_from_the_app() {
+        // Hypersnap's /dev: its legacy feed, and 15,664 distinct casters.
+        let raw: RawChannel = serde_json::from_str(
+            r#"{"id":"chain://eip155:1/erc721:0x7dd4e31f1530ac682c8ea4d8016e95773e08d8b0",
+                "parent_url":"chain://eip155:1/erc721:0x7dd4e31f1530ac682c8ea4d8016e95773e08d8b0",
+                "created_at":"2026-10-15T12:07:42.000Z","member_count":15664}"#,
+        )
+        .unwrap();
+        let mut dev = channel(&raw);
+        assert_eq!((dev.id.as_str(), dev.member_count, dev.casters), ("dev", None, Some(15_664)));
+        // Three of the seven accounts could be read.
+        let read = users(
+            r#"{"users":[{"fid":834,"username":"gabrielayuso.eth","display_name":"Gabriel Ayuso"},
+                {"fid":191,"username":"manan","display_name":"Manan","pfp_url":"https://example.com/m.png"},
+                {"fid":2172,"username":"quest"}]}"#,
+        );
+        enrich_channel(&mut dev, &app_channel("dev"), &read);
+        assert_eq!(dev.name, "dev");
+        assert!(!dev.has_display_name());
+        assert_eq!(dev.description.as_deref(), Some("Cultivating curiosity for software developers"));
+        assert_eq!((dev.member_count, dev.follower_count, dev.casters), (Some(475), Some(183_421), Some(15_664)));
+        assert_eq!(dev.counts(), [ChannelCount::Followers(183_421), ChannelCount::Members(475)]);
+        assert_eq!(
+            dev.lead.as_ref().map(|u| (u.name(), u.pfp_url.as_deref())),
+            Some(("Manan", Some("https://example.com/m.png")))
+        );
+        // In the channel's order, without the lead, and without those not read.
+        assert_eq!(
+            dev.moderators.iter().map(|m| m.username.as_str()).collect::<Vec<_>>(),
+            ["quest", "gabrielayuso.eth"]
+        );
+        assert!(dev.image_url.as_deref().is_some_and(|u| u.starts_with("https://ipfs.")));
+        // No banner, and an empty link is no link.
+        assert_eq!((dev.header_image_url.as_deref(), dev.external_link.as_ref()), (None, None));
+        assert_eq!(dev.created_at, Some(1_689_121_073));
+        assert_eq!(dev.parent_url, "chain://eip155:1/erc721:0x7dd4e31f1530ac682c8ea4d8016e95773e08d8b0");
+    }
+
+    #[test]
+    fn keeps_the_banner_and_names_without_the_accounts() {
+        let mut farcaster = Channel { id: "farcaster".into(), name: "farcaster".into(), ..Channel::default() };
+        // `user/bulk` failed: the lead is left out rather than guessed.
+        enrich_channel(&mut farcaster, &app_channel("farcaster"), &[]);
+        assert_eq!(farcaster.name, "Farcaster");
+        assert!(farcaster.has_display_name());
+        assert!(farcaster.header_image_url.as_deref().is_some_and(|u| u.starts_with("https://imagedelivery.net/")));
+        assert_eq!(farcaster.counts(), [ChannelCount::Followers(445_632), ChannelCount::Members(1)]);
+        assert_eq!((farcaster.lead.as_ref(), farcaster.moderators.len()), (None, 0));
+    }
+
+    #[test]
+    fn splices_mentions_into_descriptions() {
+        let app = app_channel("books");
+        let mut books = Channel { id: "books".into(), ..Channel::default() };
+        enrich_channel(&mut books, &app, &users(r#"{"users":[{"fid":129,"username":"phil"}]}"#));
+        assert!(books.description.as_deref().unwrap().contains(" grow. DM @phil for an invite "));
+        assert_eq!(books.description_mentions, [Mention { username: "phil".into(), fid: 129 }]);
+        assert_eq!(books.lead.as_ref().map(|u| u.username.as_str()), Some("phil"));
+        // Unread, a mention still reads as one, and the text stays whole.
+        let mut unread = Channel { id: "books".into(), ..Channel::default() };
+        enrich_channel(&mut unread, &app, &[]);
+        assert!(unread.description.as_deref().unwrap().contains(" DM @fid:129 for an invite "));
+    }
+
+    #[test]
+    fn keeps_only_web_links_and_https_images() {
+        let mut ch = Channel { id: "x".into(), name: "x".into(), ..Channel::default() };
+        let unsafe_urls: RawAppChannel = serde_json::from_str(
+            r#"{"id":"x","imageUrl":"http://example.com/p.png","headerImageUrl":"javascript:alert(1)",
+                "externalLink":{"title":"Join","url":"javascript:alert(1)"}}"#,
+        )
+        .unwrap();
+        enrich_channel(&mut ch, &unsafe_urls, &[]);
+        assert_eq!(
+            (ch.image_url.as_ref(), ch.header_image_url.as_ref(), ch.external_link.as_ref()),
+            (None, None, None)
+        );
+        let link: RawAppChannel =
+            serde_json::from_str(r#"{"id":"x","externalLink":{"title":" Join ","url":" http://example.com/join "}}"#)
+                .unwrap();
+        enrich_channel(&mut ch, &link, &[]);
+        assert_eq!(
+            ch.external_link,
+            Some(ExternalLink { url: "http://example.com/join".into(), title: "Join".into() })
+        );
+        // Another channel's record changes nothing.
+        let other: RawAppChannel = serde_json::from_str(r#"{"id":"y","name":"Y","memberCount":5}"#).unwrap();
+        enrich_channel(&mut ch, &other, &[]);
+        assert_eq!((ch.name.as_str(), ch.member_count), ("x", None));
     }
 
     #[test]

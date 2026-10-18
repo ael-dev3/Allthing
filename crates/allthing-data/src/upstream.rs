@@ -20,7 +20,7 @@ pub enum Upstream {
     BaseRpc,
     /// A chain's public JSON-RPC, for wallet activity.
     Chain(&'static str),
-    /// The farcaster.xyz app's public read API (vote status).
+    /// The farcaster.xyz app's public read API (vote status, channel details).
     FarcasterApp,
     /// Pages that casts link to, read for mini app meta tags. Many sites,
     /// so no breaker: one broken site says nothing about the others.
