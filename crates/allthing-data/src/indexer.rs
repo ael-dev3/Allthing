@@ -114,18 +114,15 @@ pub async fn run(inv: &Invocation, index: &dyn Index) -> Result<Report, IndexErr
     Ok(report)
 }
 
-/// A feed's next page, and the cursor after it. A feed the upstream says
-/// is missing, or answers with something unreadable, has nothing more.
+/// A feed's next page, and the cursor after it. The provider adapter maps
+/// missing feeds to empty pages; failures must keep the cursor retryable.
 async fn feed_page(inv: &Invocation, feed: &Feed) -> Result<(Vec<RawCast>, Option<String>), UpstreamError> {
-    match hypersnap::feed_page(inv, &feed.source, feed.cursor.as_deref(), PAGE).await {
-        Err(UpstreamError::Parse(_)) | Err(UpstreamError::Status(400..=499)) => Ok((Vec::new(), None)),
-        other => other,
-    }
+    hypersnap::feed_page(inv, &feed.source, feed.cursor.as_deref(), PAGE).await
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::BTreeMap;
     use std::rc::Rc;
 
@@ -334,5 +331,102 @@ pub(crate) mod tests {
         let index = Memory::default();
         let reranked: Vec<Option<&str>> = (0..4).map(|_| run_once(&host, &index).reranked).collect();
         assert_eq!(reranked, [Some("month"), Some("year"), Some("all"), None]);
+    }
+    struct RetriedFeed {
+        now: Cell<f64>,
+        first: RefCell<Option<HttpResponse>>,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for RetriedFeed {
+        fn now(&self) -> f64 {
+            self.now.get()
+        }
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            self.requests.borrow_mut().push(request.url);
+            let response = self.first.borrow_mut().take().unwrap_or_else(|| HttpResponse {
+                status: 200,
+                retry_after: None,
+                body: Some(
+                    serde_json::to_vec(&json!({
+                        "casts": [cast_json("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 7, now() - DAY, 300)],
+                        "next": {"cursor":"page-2"}
+                    }))
+                    .unwrap(),
+                ),
+            });
+            async move { Ok(response) }.boxed_local()
+        }
+    }
+
+    fn parked_feed() -> Memory {
+        let state = IndexerState {
+            runs: 1,
+            feeds: vec![Feed { source: allthing_core::index::Source::Author(7), cursor: Some("page-1".into()) }],
+            ..IndexerState::default()
+        };
+        Memory { state: RefCell::new(Some(serde_json::to_string(&state).unwrap())), ..Memory::default() }
+    }
+
+    fn assert_retry(first: HttpResponse) {
+        let host = Rc::new(RetriedFeed {
+            now: Cell::new(NOW_MS),
+            first: RefCell::new(Some(first)),
+            requests: RefCell::new(vec![]),
+        });
+        let index = parked_feed();
+        let inv = Invocation::new(host.clone(), 45);
+        let report = run(&inv, &index).now_or_never().unwrap().unwrap();
+        assert!(report.upstream_error.is_some(), "an unreadable page must be reported as a failure");
+        let saved = IndexerState::load(index.state.borrow().as_deref());
+        assert_eq!(saved.feeds.len(), 1, "a failed feed must remain queued");
+        assert_eq!(saved.feeds[0].cursor.as_deref(), Some("page-1"));
+        assert!(!saved.finished.iter().any(|key| key == "a:7"));
+
+        host.now.set(NOW_MS + 10_000.0);
+        let inv = Invocation::new(host.clone(), 45);
+        let recovered = run(&inv, &index).now_or_never().unwrap().unwrap();
+        assert!(recovered.upstream_error.is_none());
+        assert_eq!(recovered.kept, 1);
+        let saved = IndexerState::load(index.state.borrow().as_deref());
+        assert_eq!(saved.feeds[0].cursor.as_deref(), Some("page-2"));
+        assert_eq!(host.requests.borrow().len(), 2);
+        assert!(host.requests.borrow().iter().all(|url| url.contains("cursor=page-1")));
+    }
+
+    #[test]
+    fn a_rate_limited_backfill_retries_its_cursor() {
+        assert_retry(HttpResponse { status: 429, retry_after: Some("1".into()), body: None });
+    }
+
+    #[test]
+    fn a_malformed_backfill_retries_its_cursor() {
+        assert_retry(HttpResponse { status: 200, retry_after: None, body: Some(b"not json".to_vec()) });
+    }
+
+    #[test]
+    fn a_backfill_error_object_does_not_finish_the_feed() {
+        assert_retry(HttpResponse {
+            status: 200,
+            retry_after: None,
+            body: Some(br#"{"error":"temporarily unavailable"}"#.to_vec()),
+        });
+    }
+
+    #[test]
+    fn a_missing_backfill_is_still_finished() {
+        let host = Rc::new(RetriedFeed {
+            now: Cell::new(NOW_MS),
+            first: RefCell::new(Some(HttpResponse { status: 404, retry_after: None, body: None })),
+            requests: RefCell::new(vec![]),
+        });
+        let index = parked_feed();
+        let inv = Invocation::new(host, 45);
+        let report = run(&inv, &index).now_or_never().unwrap().unwrap();
+        assert!(report.upstream_error.is_none());
+        let saved = IndexerState::load(index.state.borrow().as_deref());
+        assert!(saved.feeds.is_empty());
+        assert!(saved.finished.iter().any(|key| key == "a:7"));
     }
 }

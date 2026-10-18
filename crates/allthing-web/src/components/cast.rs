@@ -45,7 +45,10 @@ pub fn CastCard(
     let quotes: Vec<AnyView> = cast
         .quoted()
         .map(|hash| match notes.quotes.get(hash) {
-            Some(quoted) => view! { <QuoteCard cast=quoted.clone()/> }.into_any(),
+            Some(quoted) => {
+                let author_card = notes.users.get(&quoted.author.fid).cloned();
+                view! { <QuoteCard cast=quoted.clone() author_card/> }.into_any()
+            }
             None => quote_chip(hash),
         })
         .collect();
@@ -78,7 +81,7 @@ pub fn CastCard(
             on:touchstart=move |_| warm_touch()
         >
             <header class="cast-meta">
-                <UserChip user=cast.author.clone() show_name=true/>
+                <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
                 <span class="sep" aria-hidden="true">"·"</span>
                 // The post's own link: for keyboards and screen readers (the
                 // card's text is plain so it can be selected; a click on it
@@ -130,6 +133,7 @@ pub fn CastList(
     Effect::new(move |_| {
         let notes = notes.get();
         casts.with(|c| api::remember_casts(c, &notes));
+        api::remember_cards(&notes.users);
     });
     let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
     let grow = move || {

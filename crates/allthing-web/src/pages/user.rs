@@ -4,16 +4,13 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{UserPayload, user_path, vote_path, wallets_path};
-use allthing_core::format::{full_number, short_address};
-use allthing_core::labels::SpamLabel;
+use allthing_core::api::{UserPayload, user_path};
+use allthing_core::format::short_address;
 use allthing_core::listing::{replies_only, top_level};
-use allthing_core::model::{Joined, User};
+use allthing_core::model::User;
 use allthing_core::params::username_from_param;
+use allthing_core::profile::UserCard;
 use allthing_core::ranking::{Sort, sorted};
-use allthing_core::time::{duration_since, format_date};
-use allthing_core::vote::VotePayload;
-use allthing_core::wallet::WalletActivity;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 
@@ -21,11 +18,12 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
+use crate::components::facts::{JoinedFact, LabelFact, VoteFact, WalletShares};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
 use crate::labels::{LabelState, spam_label};
-use crate::util::{now, set_title, user_href, with_query};
+use crate::util::{set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
 
 #[component]
@@ -66,8 +64,12 @@ pub fn UserPage() -> impl IntoView {
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<UserPayload> = data;
-                let notes: Notes = Arc::new(payload.notes.clone());
                 let user = payload.user.clone();
+                // The casts here are the account's own: their profile card
+                // is the profile itself.
+                let mut notes = payload.notes.clone();
+                notes.users.insert(user.fid, UserCard::of(&user));
+                let notes: Notes = Arc::new(notes);
                 let path = user_href(&user.username);
                 let pool = payload.pool.clone();
                 // Switching sort or tab reorders the list, not the page.
@@ -103,19 +105,6 @@ fn ProfileHeader(user: User) -> impl IntoView {
         let fid = user.fid;
         move || spam_label(fid)
     });
-    const MIGRATION: &str =
-        "the ID registry moved to OP Mainnet on 7 Nov 2023, which is the earliest date onchain data has for it";
-    let joined = user.joined().map(|joined| match joined {
-        Joined::Registered(ts) => (format_date(ts), format!("Registered onchain {} ago.", duration_since(ts, now()))),
-        Joined::FirstUsername(ts) => (
-            format_date(ts),
-            format!(
-                "Got its first username {} ago. The account was registered before {MIGRATION}.",
-                duration_since(ts, now())
-            ),
-        ),
-        Joined::BeforeMigration => ("before Nov 2023".to_owned(), format!("Registered before {MIGRATION}.")),
-    });
     view! {
         <section class="profile" aria-label="Profile">
             <div class="profile-top">
@@ -136,20 +125,9 @@ fn ProfileHeader(user: User) -> impl IntoView {
                 view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> }.into_any()
             }}
             <dl class="facts">
-                {joined.map(|(date, note)| view! {
-                    <div class="fact" title=note>
-                        <dt>"Joined"</dt>
-                        <dd>{date}</dd>
-                    </div>
-                })}
+                {user.joined().map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid=user.fid/>
-                <div class="fact">
-                    <dt>"Farcaster app label"</dt>
-                    <dd>{move || match label.get() {
-                        None => view! { <span class="muted">"checking…"</span> }.into_any(),
-                        Some(state) => view! { <LabelBadge state/> }.into_any(),
-                    }}</dd>
-                </div>
+                <LabelFact label/>
             </dl>
             {move || match label.get() {
                 Some(LabelState::Labeled(l, _)) if l.is_flag() => Some(view! {
@@ -163,39 +141,11 @@ fn ProfileHeader(user: User) -> impl IntoView {
     }
 }
 
-#[component]
-fn LabelBadge(state: LabelState) -> impl IntoView {
-    match state {
-        LabelState::Labeled(label, meta) => {
-            let class = match label {
-                SpamLabel::LikelySpam => "spam-label spam-label-spam",
-                SpamLabel::Nerfed => "spam-label spam-label-nerfed",
-                SpamLabel::NotSpam => "spam-label spam-label-ok",
-            };
-            let title = format!(
-                "{} From the Farcaster app's public spam dataset (github.com/warpcast/labels), newest label {}.",
-                label.description(),
-                meta.newest_label.map(format_date).unwrap_or_else(|| "of unknown date".into())
-            );
-            view! { <span class=class title=title>{label.title()}</span> }.into_any()
-        }
-        LabelState::Unlabeled(meta) => {
-            let title = format!(
-                "The Farcaster app's public spam dataset (newest label {}) has no label for this account.",
-                meta.newest_label.map(format_date).unwrap_or_else(|| "of unknown date".into())
-            );
-            view! { <span class="spam-label spam-label-none" title=title>"no label"</span> }.into_any()
-        }
-        LabelState::Unavailable => view! { <span class="muted" title="The label dataset is not available on this deployment.">"unavailable"</span> }.into_any(),
-    }
-}
-
 /// Wallet activity by chain, loaded separately because it queries many RPCs,
 /// with the account's verified addresses one click away.
 #[component]
 fn WalletPanel(user: User) -> impl IntoView {
     let fid = user.fid;
-    let data = LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await });
     let addresses: Vec<(&'static str, String)> = user
         .eth_addresses
         .iter()
@@ -208,39 +158,9 @@ fn WalletPanel(user: User) -> impl IntoView {
                 <h2>"Wallet activity"</h2>
                 {(!addresses.is_empty()).then(|| view! { <WalletsButton addresses=addresses.clone()/> })}
             </div>
-            {move || match data.get() {
-                None => view! { <div class="share-bar loading" aria-label="Loading wallet activity"></div> }.into_any(),
-                Some(Err(_)) => view! { <p class="muted small">"Wallet activity is unavailable right now."</p> }.into_any(),
-                Some(Ok(fetched)) => view! { <WalletBreakdown activity=fetched.data.as_ref().clone()/> }.into_any(),
-            }}
+            <WalletShares fid/>
         </section>
     }
-}
-
-#[component]
-fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
-    let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.count > 0).cloned().collect();
-    if measured.is_empty() {
-        return view! { <p class="muted small">"No onchain activity from verified wallets."</p> }.into_any();
-    }
-    let bar_label = measured.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
-    view! {
-        <div class="share-bar" role="img" aria-label=bar_label>
-            {measured.iter().filter(|c| c.percent > 0).map(|c| view! {
-                <span class=format!("seg chain-{}", c.chain) style=format!("flex-grow: {}", c.percent) title=format!("{}: {}%", c.name, c.percent)></span>
-            }).collect_view()}
-        </div>
-        <ul class="share-list">
-            {measured.iter().map(|c| view! {
-                <li title=format!("{} transactions sent", full_number(c.count))>
-                    <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
-                    <span class="chain-name">{c.name.clone()}</span>
-                    <strong class="pct">{if c.percent == 0 { "<1%".to_owned() } else { format!("{}%", c.percent) }}</strong>
-                </li>
-            }).collect_view()}
-        </ul>
-    }
-    .into_any()
 }
 
 /// "Wallets": every verified address, each copyable in one click.
@@ -334,34 +254,4 @@ async fn copy_text(text: &str) -> Result<(), wasm_bindgen::JsValue> {
     let promise = write.call1(&clipboard, &JsValue::from_str(text))?.dyn_into::<js_sys::Promise>()?;
     wasm_bindgen_futures::JsFuture::from(promise).await?;
     Ok(())
-}
-
-/// How the account voted when farcaster.xyz asked everyone to stay (yes) or
-/// leave (no). Left out when the sources can't settle it.
-#[component]
-fn VoteFact(fid: u64) -> impl IntoView {
-    let data = LocalResource::new(move || async move { api::get::<VotePayload>(&vote_path(fid)).await });
-    let row = |answer: AnyView| {
-        view! {
-            <div class="fact vote-fact">
-                <dt>
-                    "Farcaster vote "
-                    <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
-                </dt>
-                <dd>{answer}</dd>
-            </div>
-        }
-        .into_any()
-    };
-    move || match data.get() {
-        None => {
-            Some(row(view! { <span class="vote vote-loading" aria-busy="true" aria-label="Loading the vote"></span> }
-                .into_any()))
-        }
-        Some(Ok(fetched)) => fetched.data.summary().map(|(result, detail)| {
-            row(view! { <span class=format!("vote {}", result.class()) title=detail>{result.label()}</span> }
-                .into_any())
-        }),
-        Some(Err(_)) => None,
-    }
 }

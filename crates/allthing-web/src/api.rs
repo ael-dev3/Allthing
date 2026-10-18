@@ -4,11 +4,12 @@
 //! build (`static-host`), the same payloads are built in the browser.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use allthing_core::api::ApiError;
+use allthing_core::profile::UserCard;
 use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -81,6 +82,31 @@ thread_local! {
     static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
     /// Casts already shown in a feed, so their post page can render at once.
     static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
+    /// Profile cards of the accounts pages have shown (fid -> card), for
+    /// cards of the same accounts where a payload has none: who liked a
+    /// cast, or a post opened from a feed before its thread arrives.
+    static SEEN_CARDS: RefCell<HashMap<u64, UserCard>> = RefCell::new(HashMap::new());
+}
+
+/// Remember the profile cards a page's payload carried. A card keeps what
+/// an earlier one of the same account knew and it doesn't (the date of its
+/// first username, from its profile).
+pub fn remember_cards(cards: &BTreeMap<u64, UserCard>) {
+    SEEN_CARDS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.len() > 2000 {
+            seen.clear();
+        }
+        for (fid, card) in cards {
+            let card = card.clone().filled_from(seen.get(fid));
+            seen.insert(*fid, card);
+        }
+    });
+}
+
+/// The profile card of an account a page showed during this visit.
+pub fn seen_card(fid: u64) -> Option<UserCard> {
+    SEEN_CARDS.with(|seen| seen.borrow().get(&fid).cloned())
 }
 
 /// Remember the casts a listing shows and the casts they quote.
@@ -316,6 +342,24 @@ mod tests {
             assert!(cached::<allthing_core::api::SearchPayload>("/test/wrong-shape", 2000.0).is_none());
             assert!(CACHE.with(|c| !c.borrow().contains_key("/test/wrong-shape")));
         }
+    }
+
+    #[test]
+    fn remembered_profile_cards_keep_what_a_profile_told() {
+        // From the profile: dwr got his first username on 17 Jun 2021.
+        let profile = UserCard {
+            followers: 10,
+            registered_at: Some(1_699_386_171),
+            first_username_at: Some(1_623_888_000),
+            ..Default::default()
+        };
+        remember_cards(&BTreeMap::from([(3, profile)]));
+        // A later feed knows newer counts, but not that date.
+        let feed = UserCard { followers: 12, registered_at: Some(1_699_386_171), ..Default::default() };
+        remember_cards(&BTreeMap::from([(3, feed)]));
+        let seen = seen_card(3).unwrap();
+        assert_eq!((seen.followers, seen.first_username_at), (12, Some(1_623_888_000)));
+        assert_eq!(seen_card(4), None);
     }
 
     #[test]

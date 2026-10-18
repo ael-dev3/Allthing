@@ -16,6 +16,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::chips::{Avatar, TimeAgo};
+use crate::components::profile_card::ProfileHover;
 use crate::util::{cast_href, user_href};
 
 /// The open full who-list, if any: (cast hash, which reactions).
@@ -62,18 +63,29 @@ fn heading(kind: ReactionKind) -> &'static str {
     }
 }
 
+/// People who reacted, each linking to their profile. In the full list
+/// (`cards`), each also shows the person's profile card. The short list is a
+/// hover preview itself: a card there would cover the names being pointed at.
 #[component]
-fn People(payload: std::sync::Arc<ReactionsPayload>) -> impl IntoView {
+fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bool) -> impl IntoView {
     view! {
         <ul class="who-list">
-            {payload.users.iter().map(|u| view! {
-                <li>
-                    <a href=user_href(&u.username)>
-                        <Avatar url=u.pfp_url.clone() size=28/>
-                        <span class="who-name">{u.name().to_owned()}</span>
-                        <span class="muted">"@"{u.username.clone()}</span>
+            {payload.users.iter().map(|u| {
+                let href = user_href(&u.username);
+                let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
+                let row = move || view! {
+                    <a class="who-link" href=href.clone()>
+                        <Avatar url=pfp.clone() size=28/>
+                        <span class="who-name">{name.clone()}</span>
+                        <span class="muted">"@"{username.clone()}</span>
                     </a>
-                </li>
+                };
+                if cards {
+                    view! { <li><ProfileHover user=u.clone() in_dialog=true class="who-links">{row()}</ProfileHover></li> }
+                        .into_any()
+                } else {
+                    view! { <li>{row()}</li> }.into_any()
+                }
             }).collect_view()}
         </ul>
     }
@@ -200,7 +212,7 @@ pub fn WhoDialog() -> impl IntoView {
                                 Some(Ok(fetched)) => {
                                     let capped = fetched.data.users.len() >= 100;
                                     view! {
-                                        <People payload=fetched.data.clone()/>
+                                        <People payload=fetched.data.clone() cards=true/>
                                         {capped.then(|| view! { <p class="muted small">"Showing the 100 newest; Farcaster's read API lists no more."</p> })}
                                     }
                                     .into_any()
