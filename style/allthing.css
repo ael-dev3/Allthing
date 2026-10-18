@@ -64,7 +64,8 @@ html {
   scroll-padding-top: 84px;
 }
 
-html.lightbox-open {
+html.lightbox-open,
+html.who-open {
   overflow: hidden;
 }
 
