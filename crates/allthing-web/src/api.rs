@@ -19,7 +19,7 @@ use wasm_bindgen_futures::JsFuture;
 /// Long enough that going back to a feed or post is instant.
 const CLIENT_TTL_MS: f64 = 300_000.0;
 const LATEST_TTL_MS: f64 = 30_000.0;
-/// Payloads and static text share this session-cache capacity.
+/// How many answers the session cache keeps.
 const CLIENT_CAPACITY: usize = 200;
 /// At most this many prefetches in flight.
 const MAX_PREFETCHES: usize = 2;
@@ -485,19 +485,6 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
         remember(path, raw, now);
     }
     result
-}
-
-/// GET a static text asset (label shards), cached for the session.
-pub async fn get_text(path: &str) -> Option<Rc<str>> {
-    if let Some(body) = CACHE.with(|c| c.borrow().get(path).filter(|r| r.status == 200).map(|r| r.body.clone())) {
-        return Some(body);
-    }
-    let raw = fetch_raw(path).await.ok()?;
-    let body = (raw.status == 200).then(|| raw.body.clone());
-    if body.is_some() {
-        keep(path, raw, js_sys::Date::now());
-    }
-    body
 }
 
 #[cfg(test)]

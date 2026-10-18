@@ -14,7 +14,6 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
   - [x] Inline images, hover preview and an accessible media viewer
   - [x] Inline HLS video (native on Safari, a Rust Media Source Extensions player elsewhere) and click-to-load YouTube, Vimeo, Loom and Streamable players
   - [x] Profile pictures beside names; profiles with registration date, counts and bio
-  - [x] Spam labels from the Farcaster app's public dataset, shown and never used to hide
   - [x] Wallet activity by chain for verified EVM addresses
   - [x] Provenance per cast (signing app and backend) and the protocol design in [PROVENANCE.md](PROVENANCE.md)
   - [x] Edge caching with stale-while-revalidate, coalescing and upstream guards ([BUDGET.md](BUDGET.md))
@@ -41,11 +40,11 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
 - **A second backend.** Read the same casts from a Snapchain node (or a second Hypersnap operator). Show which backends returned a cast, and let readers pick the source. Reconcile by message hash, not by text.
 - **Smaller app.** The WebAssembly module is about 410 KB compressed, mostly the Leptos runtime and `serde_json`. Candidates: a leaner JSON decoder for payloads, splitting rarely used views, and trimming web-sys features.
 - **Solana activity.** Find a keyless source of Solana address history that allows browser or Worker requests, or document a key-based option that keeps the key out of the repository.
-- **Reading controls kept in the browser.** Local mutes and filters (clearly separate from network labels), saved posts, and remembered collapse state.
+- **Reading controls kept in the browser.** Local mutes and filters, saved posts, and remembered collapse state.
 - **Ingress provenance.** Prototype phase 2 of [PROVENANCE.md](PROVENANCE.md), signed ingress receipts, against a Hypersnap fork, and show receipts when nodes publish them.
 - **Pagination beyond the pool** for channels and profiles: cursor-based loading as the reader scrolls, as the front page already does, within the subrequest budget.
 - **Vote badges in feeds**: one Multicall3 batch per page ([VOTE.md](VOTE.md#alternatives-considered)).
 
 ## Not planned
 
-Sign-in, posting, reactions, wallets that sign, and anything that hides content based on a third party's label.
+Sign-in, posting, reactions, wallets that sign, and anything that hides content based on who posted it.

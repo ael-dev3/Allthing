@@ -4,7 +4,7 @@
 Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly app plus a workers-rs API Worker, deployed to Cloudflare Workers (Free plan) at https://allthing.social. Read `docs/ARCHITECTURE.md` first.
 
 - **Read-only.** Never add login, signing, wallet connections or write paths unless asked to.
-- **Never hide content** based on labels. Show labels where they belong, with their source.
+- **Never hide content** because of who posted it. Allthing shows no account labels; spam is judged by a cast's content (see Mini apps and spam below).
 - **Where code goes.**
   - Pure logic and data types, with unit tests, go in `crates/allthing-core`.
   - Provider quirks go in `crates/allthing-data/src/hypersnap.rs` and `crates/allthing-core/src/normalize.rs`.
@@ -20,7 +20,7 @@ Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly a
 - **Secrets.** Never commit secrets, tokens, `.dev.vars` or `.env` files, or session URLs.
 - **Checks.**
   - Run `bash scripts/check.sh` (fmt, Clippy native and wasm32, tests, license audit).
-  - End to end: `SKIP_LABELS=1 bash scripts/build.sh && npx playwright test`. Playwright starts `wrangler dev` on port 8787.
+  - End to end: `bash scripts/build.sh && npx playwright test`. Playwright starts `wrangler dev` on port 8787.
   - Against production: `E2E_BASE_URL=https://allthing.social npx playwright test`.
   - The static copy: `bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test`.
 - **Versions and commits.** Follow `docs/RELEASING.md`:

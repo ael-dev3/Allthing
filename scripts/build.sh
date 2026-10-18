@@ -3,15 +3,14 @@
 #
 # Builds everything Cloudflare serves for Allthing:
 #   - crates/allthing-worker/build/  the Worker (Rust, via worker-build)
-#   - dist/                          static assets: the WebAssembly app, styles,
-#                                    fonts and the spam-label shards
+#   - dist/                          static assets: the WebAssembly app, styles
+#                                    and fonts
 #
 # Cloudflare Workers Builds runs this as the build command (its image has no
 # Rust, so this installs it); `npx wrangler deploy` then uploads both. It
 # works the same on a laptop.
 #
-#   bash scripts/build.sh                # everything
-#   SKIP_LABELS=1 bash scripts/build.sh  # skip the ~125 MB label download
+#   bash scripts/build.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -70,56 +69,5 @@ fi
 export WASM_OPT_BIN
 log "Building the browser app"
 cargo xtask dist
-
-# 6. Spam labels from the Farcaster app's public dataset (Git LFS). Optional:
-#    without it, profiles say the label data is unavailable.
-if [ -z "${SKIP_LABELS:-}" ]; then
-  log "Building spam-label shards"
-  mkdir -p target/labels
-  oid="$(curl -fsSL https://raw.githubusercontent.com/warpcast/labels/main/spam.jsonl 2>/dev/null | awk '/^oid sha256:/ { sub(/^oid sha256:/, ""); print }' || true)"
-  file="target/labels/spam-${oid:-unknown}.jsonl"
-  version="lfs:${oid:0:12}"
-  # Unchanged upstream? Copy the shards the live site already serves (a few
-  # MB of free static assets) instead of downloading the dataset again.
-  live="${ALLTHING_LIVE_URL:-https://allthing.social}/data/labels/spam"
-  if [ -n "$oid" ] && [ ! -s "$file" ] && meta="$(curl -fsSL "$live/meta.json" 2>/dev/null)" &&
-    shards="$(printf '%s' "$meta" | python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["shards"] if m.get("version")==sys.argv[1] else "")' "$version")" &&
-    [ -n "$shards" ]; then
-    out=dist/data/labels/spam
-    rm -rf "$out" && mkdir -p "$out"
-    copied=yes
-    for ((i = 0; i < shards; i++)); do
-      name="$(printf '%04d.txt' "$i")"
-      curl -fsSL --retry 2 -o "$out/$name" "$live/$name" || { copied=no; break; }
-    done
-    if [ "$copied" = yes ]; then
-      printf '%s' "$meta" >"$out/meta.json"
-      log "Reused $shards label shards ($version) from the live site"
-      SKIP_DOWNLOAD=1
-    else
-      rm -rf "$out"
-    fi
-  fi
-  if [ -z "${SKIP_DOWNLOAD:-}" ] && [ -n "$oid" ] && [ ! -s "$file" ]; then
-    if ! curl -fsSL --retry 3 -o "$file.part" "https://media.githubusercontent.com/media/warpcast/labels/main/spam.jsonl"; then
-      rm -rf target/labels/repo
-      git clone --quiet --depth 1 https://github.com/warpcast/labels target/labels/repo &&
-        git -C target/labels/repo lfs pull --include spam.jsonl &&
-        cp target/labels/repo/spam.jsonl "$file.part" || true
-    fi
-    if [ -s "$file.part" ] && [ "$(sha256sum "$file.part" | cut -d' ' -f1)" = "$oid" ]; then
-      mv "$file.part" "$file"
-    else
-      rm -f "$file.part"
-    fi
-  fi
-  if [ -n "${SKIP_DOWNLOAD:-}" ]; then
-    :
-  elif [ -s "$file" ]; then
-    cargo xtask labels "$file" "$version"
-  else
-    echo "warning: could not download the spam-label dataset; profiles will show labels as unavailable" >&2
-  fi
-fi
 
 log "Built dist/ and crates/allthing-worker/build/"

@@ -8,7 +8,6 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
  ───────                                   ──────────────────────────────────            ─────────
  index.html, boot.js        ── static ──▶  Workers Static Assets (free, no Worker run)
  allthing-*.wasm/.js/.css                  dist/: hashed, cached for a year
- /data/labels/spam/NNNN.txt                dist/data: spam-label shards, cached a day
 
  one call per page          ── /api/* ──▶  allthing-worker (Rust, workers-rs)
  GET /api/v1/home …                          rate limit (per IP) → edge cache (Cache API)
@@ -29,11 +28,11 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 
 | Crate | Target | Role |
 |---|---|---|
-| `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, spam-label shards, profile cards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
+| `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, the content spam filter, profile cards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
 | `allthing-data` | native + wasm32 | The page builders that assemble each payload, and the Hypersnap and RPC clients behind guards. The runtime is abstracted as a `Host` (clock, HTTP with a timeout, background work), so the same code runs in the Worker and in the browser. |
 | `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController`, `waitUntil` and D1. Its cron handler runs the indexer. |
 | `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, prefetching and scroll restoration. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
-| `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`; `cargo xtask labels` turns the spam-label dataset into shards. |
+| `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`. |
 
 `scripts/build.sh` runs `worker-build` for the Worker and `cargo xtask dist` for the app. The xtask runs `cargo build`, `wasm-bindgen --target web` and `wasm-opt -Oz`, then writes fingerprinted files (`allthing-<hash>.wasm/.js/.css`, `boot-<hash>.js`) and fills them into `web/index.html`. Both WebAssembly builds use `opt-level = "z"`, LTO, one codegen unit and `panic = "abort"`.
 
@@ -99,14 +98,13 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 | Channel records: display name, description, picture, banner, follower and member counts, lead, moderators, pinned cast, link | The Farcaster app's public channel API (`api.farcaster.xyz/v1/channel`), one read per channel build | Best-effort: without it a channel page shows Hypersnap's data. It sends no CORS headers, so the static copy never has it. Hypersnap's `member_count` counts the accounts that have cast in a feed, so it is shown as "casters", never as members. |
 | Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Farcaster" and the like (the Farcaster app's account, fid 9152, is still named Warpcast; `allthing_core::clients::client_name` calls it Farcaster), and the front page's bar of the apps posting today's trending casts |
 | When an account joined | Its onchain registration, as Hypersnap reports it; for accounts registered before the ID registry moved to OP Mainnet (7 Nov 2023), which all report that day, the fname server's public transfer log (`fnames.farcaster.xyz/transfers?fid=`) | Those show when they got their first username, which the old sign-up registered along with the account. It allows cross-origin reads, so the static copy shows it too. |
-| Spam labels | [warpcast/labels](https://github.com/warpcast/labels) `spam.jsonl` (Git LFS) | Compacted at deploy time into 32 KB shards, one character per fid, read by the browser as static files. Shown on profiles; never used to hide anything. |
 | Wallet activity | Account nonces of verified EVM addresses (up to 5) on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad, from keyless public RPCs; on Solana, the signatures of verified addresses (up to 2, 1,000 each) from its public RPC | A nonce counts transactions *sent* from an address; a Solana signature, any transaction involving it, shown as "1,000+" at the cap. Shares use largest-remainder rounding. The static copy can't read Solana: its RPC refuses browsers. |
 | Video | Cloudflare Stream behind `stream.farcaster.xyz` (and `stream.warpcast.com`), fetched by the browser | Posters are Stream thumbnails next to the redirected manifest. |
 
 **Mini apps and frames are filtered out server-side.** Allthing doesn't run them, so a cast whose embeds or text link to a mini app or frame is dropped:
 - **Detection by URL.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it.
 - **Detection by page.** Hypersnap returns no embed metadata, so mini apps on their own domains are found by reading the linked page's meta tags (`fc:miniapp`, `fc:frame`, `fc:frame:*`, `of:*`). The Worker reads a few unknown links per build, remembers each verdict per URL, and carries the verdicts in the payload (`Annotations.links`); `thread::mark_mini_apps` then flags the casts. Ordinary casts and quoted casts share the same twelve-link quota per invocation. Quoted links are checked before stripping hidden quote content, and locally deferred checks remain eligible on the next build. See [BUDGET.md](BUDGET.md#3-subrequests-per-invocation).
-- **Spam.** `spam.rs` flags casts by the owner's content rules: links or embeds on `*.vercel.app`, anything mentioning or linking gig-bot, DEGEN reward or airdrop bait ("Just unlocked my DEGEN rewards", `?degen=1` links), and DEGEN staking promotions (yeetr.fun links or names, "stake your DEGEN"). `normalize.rs` sets `Cast.spam`, and spam goes wherever mini apps go. The rules read only the cast's own text, links and mentions, never an account label.
+- **Spam.** `spam.rs` flags casts by the owner's content rules: links or embeds on `*.vercel.app`, anything mentioning or linking gig-bot, DEGEN reward or airdrop bait ("Just unlocked my DEGEN rewards", `?degen=1` links), and DEGEN staking promotions (yeetr.fun links or names, "stake your DEGEN"). `normalize.rs` sets `Cast.spam`, and spam goes wherever mini apps go. The rules read only the cast's own text, links and mentions, never anything about the account that posted it.
 - **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`; a replies preview made from a post payload goes through the same `thread::reply_preview`). A quoted cast that is hidden, in a listing or on a post page, comes without its content (`quotes::as_quote`) and shows as "Quoted cast hidden: spam" or "…: mini app". Like and recast previews, single or batched, list people, not casts.
 - **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
@@ -126,7 +124,7 @@ Hypersnap ranks trending casts over 7 days at most, and its search ignores dates
 
 - **Boot.** `index.html` shows a static header and a soft glow while `boot.js` imports the wasm-bindgen glue and instantiates the module. The app then mounts into `#app` and removes the placeholder. `www.allthing.social` is sent to the apex before anything loads.
 - **Routing.** Routes: `/`, `/c/<id>` (or `/c?id=`), `/p/<hash>` (or `/p?hash=`), `/u/<name>` (or `/u?name=`), `/channels`, `/search?q=`. The query forms keep links from the old static site working. Any other path renders "not found".
-- **One request per page.** Each page reads one payload (`api.rs`, with a 5-minute in-memory cache). Sorting (hot, new, top) re-ranks the pool locally (`allthing_core::ranking`). Lists show 25 cards at a time and grow as the reader scrolls. Profiles also read `/wallets`, `/vote` and one static label shard, and so does a profile card when it opens.
+- **One request per page.** Each page reads one payload (`api.rs`, with a 5-minute in-memory cache). Sorting (hot, new, top) re-ranks the pool locally (`allthing_core::ranking`). Lists show 25 cards at a time and grow as the reader scrolls. Profiles also read `/wallets` and `/vote`, and so does a profile card when it opens.
 - **Speed** ([PERFORMANCE.md](PERFORMANCE.md)):
   - posts open instantly from the feed's own data;
   - cards prefetch on hover and in idle time, within caps, and the cards in view have who liked and recasted them preloaded in batches;
@@ -151,7 +149,7 @@ A static host can't run the Worker, so `cargo xtask pages` builds a second varia
 
 - compiled with the `static-host` feature, `api.rs` answers `/api/v1/...` paths in-process: `allthing_data::Endpoint::from_path` and `build` run with a browser `Host` (`window.fetch`, `AbortController`, `setTimeout`) and a budget of 30 upstream calls per page;
 - it preloads nothing from the viewport, popover previews included: they load when they open, as they did before the batches. `/api/v1/engagement` still builds in-process if asked for (its 12 reads fit the budget of 30), and a replies preview still comes from the post that hovering its card built;
-- compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset, label shard and the router live under that prefix;
+- compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset and the router live under that prefix;
 - `404.html` is a copy of `index.html`, which is how GitHub Pages serves deep links to a single-page app.
 
 Annotations memoized in the page (origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Farcaster app's API sends no CORS headers, so the browser can't read it: channel pages show Hypersnap's data alone, and votes recorded only by the app are unknown. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.

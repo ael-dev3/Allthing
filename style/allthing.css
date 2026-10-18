@@ -1698,52 +1698,6 @@ code {
   font-weight: 600;
 }
 
-.spam-label {
-  display: inline-block;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid;
-  cursor: help;
-}
-
-.spam-label-spam {
-  color: #9b3510;
-  background: #fff1e8;
-  border-color: rgba(155, 53, 16, 0.25);
-}
-
-.spam-label-nerfed {
-  color: #9e1f19;
-  background: #fdecec;
-  border-color: rgba(158, 31, 25, 0.3);
-}
-
-.spam-label-ok {
-  color: #22663f;
-  background: #eaf6ef;
-  border-color: rgba(34, 102, 63, 0.25);
-}
-
-.spam-label-none {
-  color: var(--ink-3);
-  background: #f2f1ed;
-  border-color: var(--line-2);
-  font-weight: 500;
-}
-
-.label-note {
-  position: relative;
-  margin: 14px 0 0;
-  padding: 10px 13px;
-  border-radius: 11px;
-  background: #fff6ee;
-  border: 1px solid rgba(155, 53, 16, 0.18);
-  color: #6c3313;
-  font-size: 13.5px;
-}
-
 .wallets {
   margin-top: 14px;
   background: var(--card);
@@ -2853,7 +2807,6 @@ code {
   text-align: right;
 }
 
-.profile-card .spam-label,
 .profile-card .vote {
   font-size: 12px;
   padding: 2px 8px;

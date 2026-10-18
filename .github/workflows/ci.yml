@@ -63,7 +63,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      SKIP_LABELS: "1"
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v6

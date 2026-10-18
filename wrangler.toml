@@ -15,7 +15,7 @@ routes = [
   { pattern = "www.allthing.social", custom_domain = true },
 ]
 
-# The browser app, styles and spam-label shards, built by scripts/build.sh.
+# The browser app, its styles and fonts, built by scripts/build.sh.
 # Requests for assets are free and never invoke the Worker; unknown paths
 # get index.html (client-side routing). Only /api/* runs the Worker.
 [assets]

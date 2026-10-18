@@ -524,7 +524,9 @@ test.describe("media", () => {
 });
 
 test.describe("profiles", () => {
-  test("show registration, counts, wallet activity by chain and the app label", async ({ page }) => {
+  test("show registration, counts, the vote and wallet activity by chain, and no account label", async ({ page }) => {
+    const labelReads: string[] = [];
+    page.on("request", (r) => r.url().includes("/data/labels/") && labelReads.push(r.url()));
     await page.goto(at("/u/0xael.eth"));
     const profile = page.locator(".profile");
     await expect(profile.locator(".profile-name")).toHaveText(/\S/);
@@ -535,7 +537,9 @@ test.describe("profiles", () => {
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ following/);
     await expect(profile.locator(".bio")).toHaveText(/\S/);
     await expect(profile.locator(".fact", { hasText: "Joined" }).locator("dd")).toHaveText(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/);
-    await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText(/no label|labeled|spam|Nerfed|unavailable/i);
+    // No spam label from the Farcaster app's dataset, and nothing read for one.
+    await expect(page.getByText(/Farcaster app label|Labeled likely spam|Not labeled spam|Nerfed for/)).toHaveCount(0);
+    expect(labelReads).toEqual([]);
     // The vote, read onchain on Base (0xael.eth voted to stay).
     await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted yes");
     await expect(profile.getByText(/Neynar/)).toHaveCount(0);
@@ -573,24 +577,6 @@ test.describe("profiles", () => {
     await expect(list).toHaveCount(0);
   });
 
-  test("a flagged account shows the label and still shows every cast", async ({ page }) => {
-    // Pretend the main client nerfed this account, via the static label shard.
-    await page.route("**/data/labels/spam/meta.json", (route) =>
-      route.fulfill({
-        json: { source: "test", version: "test", newest_label: 1_780_000_000, built_at: 0, shard_size: 32768, shards: 120, counts: { likely_spam: 0, not_spam: 0, nerfed: 1 } },
-      }),
-    );
-    await page.route("**/data/labels/spam/0016.txt", (route) =>
-      route.fulfill({ body: "-".repeat(539854 % 32768) + "3" + "-".repeat(32768 - (539854 % 32768) - 1), contentType: "text/plain" }),
-    );
-    await page.goto(at("/u/0xael.eth"));
-    await expect(page.locator(".spam-label")).toHaveText("Nerfed for malicious activity");
-    await expect(page.locator(".label-note")).toContainText("never hides anyone's casts");
-    await expect(page.locator(".vote-fact .vote")).toBeVisible();
-    await expect(firstCard(page)).toBeVisible();
-    expect(await page.locator(".cast-card").count()).toBeGreaterThan(5);
-    await shoot(page, "profile-labeled");
-  });
 
   test("dotted ENS-style names and the old static-site links resolve", async ({ page }) => {
     await page.goto(at("/u/?name=balajis.eth"));
