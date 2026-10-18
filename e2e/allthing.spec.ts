@@ -567,6 +567,75 @@ test.describe("threads and navigation", () => {
     await shoot(page, "replies-popover");
   });
 
+  test("back restores the place deep in the feed and holds it, even when the post loads slowly", async ({ page }) => {
+    test.setTimeout(120_000);
+    // A post the client never prefetched: its data takes 2.5 s.
+    await page.route(/\/api\/v1\/cast\?/, async (route) => {
+      await new Promise((done) => setTimeout(done, 2500));
+      await route.continue();
+    });
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    // Several pages deep: more than one server page of trending casts.
+    for (let i = 0; i < 40 && (await page.locator(".cast-card").count()) < 110; i++) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(600);
+    }
+    const loaded = await page.locator(".cast-card").count();
+    expect(loaded).toBeGreaterThan(100);
+    await page.locator(".cast-card").nth(80).scrollIntoViewIfNeeded();
+    await page.mouse.wheel(0, -150);
+    await page.waitForTimeout(600);
+    // The card under the header line, and where it sits.
+    const anchor = () =>
+      page.evaluate(() => {
+        const list = document.querySelector(".cast-list")!.getBoundingClientRect();
+        const card = document.elementFromPoint(list.left + 24, 120)?.closest(".cast-card");
+        return { hash: card?.getAttribute("data-hash") ?? "", top: Math.round(card?.getBoundingClientRect().top ?? 0) };
+      });
+    const before = await anchor();
+    expect(before.hash).not.toBe("");
+    const topOf = (hash: string) =>
+      page.evaluate((h) => Math.round(document.querySelector(`.cast-card[data-hash="${h}"]`)?.getBoundingClientRect().top ?? -1e6), hash);
+    // Open the anchor card itself, clicking where it is (no scrolling first).
+    const openAnchor = async () => {
+      const box = await page.evaluate((h) => {
+        // The card's empty bottom-right corner: not a link, not under the header.
+        const r = document.querySelector(`.cast-card[data-hash="${h}"]`)!.getBoundingClientRect();
+        return { x: r.right - 10, y: Math.min(r.bottom, window.innerHeight) - 8 };
+      }, before.hash);
+      await page.mouse.click(box.x, box.y);
+      await expect(page).toHaveURL(new RegExp(`/p/${before.hash}$`));
+    };
+    await openAnchor();
+    await page.waitForTimeout(500);
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`${at("/")}$`));
+    for (const at of [500, 2000, 4000, 7000]) {
+      await page.waitForTimeout(at === 500 ? 500 : at === 2000 ? 1500 : at === 4000 ? 2000 : 3000);
+      // Polled briefly: an image loading above can shift it for a frame
+      // before the hold puts it back.
+      await expect
+        .poll(async () => Math.abs((await topOf(before.hash)) - before.top), { message: `card back in place at ${at} ms`, timeout: 400, intervals: [50] })
+        .toBeLessThanOrEqual(4);
+    }
+    expect(await page.locator(".cast-card").count()).toBeGreaterThanOrEqual(loaded);
+
+    // The reader's own scrolling during the hold is not undone. (Images are
+    // let finish first, so only the wheel moves the page.)
+    await openAnchor();
+    await page.goBack();
+    await page.waitForTimeout(800);
+    await settleImages(page);
+    const held = await topOf(before.hash);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(800);
+    expect(held - (await topOf(before.hash)), "the wheel moved the page").toBeGreaterThan(300);
+    // ...and it stays where the reader put it (no snapping back).
+    await page.waitForTimeout(1500);
+    expect(held - (await topOf(before.hash)), "still where the reader scrolled").toBeGreaterThan(300);
+  });
+
   test("one search box finds posts, people and channels", async ({ page }) => {
     await page.goto(at("/"));
     const box = page.getByRole("searchbox", { name: /Search casts, people and channels/ });
