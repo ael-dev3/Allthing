@@ -117,7 +117,9 @@ pub fn Popover(
     // have the click toggle the popover straight back closed.
     let focus_in = move |_: ev::FocusEvent| {
         let keyboard = button.get_untracked().is_some_and(|b| b.matches(":focus-visible").unwrap_or(false));
-        if hover && keyboard && state.get_untracked() != State::Open {
+        // Escape returns focus here while the closing animation runs.
+        // That focus must not open the panel again.
+        if hover && keyboard && state.get_untracked() == State::Closed {
             open();
         }
     };
@@ -157,19 +159,25 @@ pub fn Popover(
         }
     };
     // While open, a click anywhere else closes it.
-    Effect::new(move |previous: Option<Option<WindowListenerHandle>>| {
-        if let Some(Some(handle)) = previous {
-            handle.remove();
-        }
-        (state.get() == State::Open).then(|| {
-            window_event_listener(ev::click, move |ev| {
+    let outside_click = StoredValue::new(None::<WindowListenerHandle>);
+    let remove_outside_click = move || {
+        outside_click.update_value(|current| {
+            if let Some(handle) = current.take() {
+                handle.remove();
+            }
+        });
+    };
+    Effect::new(move |_| {
+        remove_outside_click();
+        if state.get() == State::Open {
+            outside_click.set_value(Some(window_event_listener(ev::click, move |ev| {
                 let target = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
                 let inside = root.get_untracked().zip(target).is_some_and(|(root, t)| root.contains(Some(&t)));
                 if !inside {
                     close();
                 }
-            })
-        })
+            })));
+        }
     });
     // Once the panel is laid out, measure it and nudge it back inside the
     // viewport if it hangs over either side.
@@ -178,7 +186,7 @@ pub fn Popover(
             return;
         }
         request_animation_frame(move || {
-            let Some(panel) = panel.get_untracked() else { return };
+            let Some(panel) = panel.try_get_untracked().flatten() else { return };
             let rect = panel.get_bounding_client_rect();
             // On phones an overflowing panel widens the layout viewport
             // (innerWidth), so bound it by the screen as well.
@@ -197,7 +205,10 @@ pub fn Popover(
             shift.set(dx.round());
         });
     });
-    on_cleanup(cancel);
+    on_cleanup(move || {
+        cancel();
+        remove_outside_click();
+    });
 
     let id = format!("pop-{}", next_id());
     view! {
@@ -231,7 +242,6 @@ pub fn Popover(
                     id=id.clone()
                     role="dialog"
                     aria-label=label.clone()
-                    on:click=|ev: ev::MouseEvent| ev.stop_propagation()
                 >
                     {content.run()}
                 </div>
