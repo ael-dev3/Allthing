@@ -419,6 +419,8 @@ code {
 
 .cast-card {
   position: relative;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 200px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2156,6 +2158,12 @@ code {
    popover is open above its neighbours. */
 .cast-card:has(.popover-panel) {
   z-index: 30;
+}
+
+/* Open panels overflow the card; keyboard focus must always render. */
+.cast-card:has(.popover-panel),
+.cast-card:focus-within {
+  content-visibility: visible;
 }
 
 .cast-card .cast-title,
