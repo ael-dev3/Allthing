@@ -44,9 +44,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 
 - Links are handled by the Leptos router, so there are no full reloads.
 - Clicking anywhere on a card navigates (`nav::card_click`), unless the click lands on a link or button, or text is being selected. Ctrl-, ⌘- and shift-click open a new tab as with any link.
-- Opening a post from a card goes straight to the router, like a link, and the post rises in with a short CSS animation (off under `prefers-reduced-motion`).
-  - A view transition (`document.startViewTransition`) was used at first. It cost about 100 ms on a long feed, to snapshot the page first. A bug also made it wait for Chrome's 4 s timeout: its promise waited for an animation frame, and rendering is paused during the transition.
-  - Full-page navigations still cross-fade (`@view-transition { navigation: auto }`).
+- Opening a post from a card goes straight to the router, like a link, and the post rises in with a short CSS animation (off under `prefers-reduced-motion`). There are no view transitions: snapshotting a long feed before each navigation cost about 100 ms.
 - **Scroll**: `history.scrollRestoration` is `manual`, and `nav.rs` (`ScrollMemory`) restores each page's place on back and forward.
   - **What it saves**: the card under the line just below the header and its offset in the viewport, plus the pixel position for pages without cards. It saves on scroll and, in the capture phase, on every click, so that the scrolls a navigation causes don't overwrite it.
   - **What comes back**: lists show as many cards as before (`CastList` remembers per page), and the front page keeps the later trending pages it had loaded for 5 minutes.
