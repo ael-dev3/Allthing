@@ -43,6 +43,11 @@ pub struct Annotations {
     /// Casts whose origin is still being resolved in the background.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pending: u32,
+    /// Link URL (see [`crate::embeds::link_key`]) -> whether its page
+    /// declares a mini app or frame. Read from the page's meta tags by the
+    /// Worker, and carried to the next build of the same payload.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub links: BTreeMap<String, bool>,
 }
 
 fn is_zero(n: &u32) -> bool {

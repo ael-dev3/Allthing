@@ -22,6 +22,9 @@ pub enum Upstream {
     Chain(&'static str),
     /// The farcaster.xyz app's public read API (vote status).
     FarcasterApp,
+    /// Pages that casts link to, read for mini app meta tags. Many sites,
+    /// so no breaker: one broken site says nothing about the others.
+    LinkPage,
 }
 
 impl Upstream {
@@ -31,6 +34,7 @@ impl Upstream {
             Upstream::BaseRpc => "base-rpc",
             Upstream::Chain(slug) => slug,
             Upstream::FarcasterApp => "farcaster-app",
+            Upstream::LinkPage => "link-pages",
         }
     }
 
@@ -41,6 +45,7 @@ impl Upstream {
             Upstream::BaseRpc => (10, 2.0),
             Upstream::Chain("solana") => (2, 0.2),
             Upstream::FarcasterApp => (6, 1.0),
+            Upstream::LinkPage => (12, 2.0),
             Upstream::Chain(_) => (4, 0.5),
         }
     }
@@ -48,7 +53,23 @@ impl Upstream {
     fn timeout_ms(self) -> u32 {
         match self {
             Upstream::Hypersnap => 8000,
+            Upstream::LinkPage => 2500,
             _ => 5000,
+        }
+    }
+
+    fn accept(self) -> &'static str {
+        match self {
+            Upstream::LinkPage => "text/html",
+            _ => "application/json",
+        }
+    }
+
+    /// Only a page's `<head>` is needed, which is near its start.
+    fn max_bytes(self) -> Option<u32> {
+        match self {
+            Upstream::LinkPage => Some(131_072),
+            _ => None,
         }
     }
 }
@@ -131,7 +152,7 @@ pub fn guard_status(now: f64) -> Vec<serde_json::Value> {
 fn admit(inv: &Invocation, upstream: Upstream) -> Result<(), UpstreamError> {
     let now = inv.now();
     with_guard(upstream, now, |guard| {
-        if !guard.breaker.allow(now) {
+        if upstream != Upstream::LinkPage && !guard.breaker.allow(now) {
             return Err(UpstreamError::Busy(guard.breaker.retry_after_ms(now)));
         }
         if !guard.bucket.try_take(now) {
@@ -154,7 +175,9 @@ fn record(
 ) {
     let now = inv.now();
     with_guard(upstream, now, |guard| match outcome {
+        Ok(_) if upstream == Upstream::LinkPage => {}
         Ok(_) => guard.breaker.success(),
+        Err(_) if upstream == Upstream::LinkPage => guard.failures += 1,
         // Our own budget, or a client-side 4xx, says nothing about upstream health.
         Err(UpstreamError::Budget | UpstreamError::Parse(_)) => {}
         Err(UpstreamError::Status(code)) if *code < 500 && *code != 429 => {}
@@ -177,8 +200,14 @@ pub async fn send(
     missing_on_400: bool,
 ) -> Result<Option<Vec<u8>>, UpstreamError> {
     admit(inv, upstream)?;
-    let request =
-        HttpRequest { method, url: url.to_owned(), body: body.map(str::to_owned), timeout_ms: upstream.timeout_ms() };
+    let request = HttpRequest {
+        method,
+        url: url.to_owned(),
+        body: body.map(str::to_owned),
+        timeout_ms: upstream.timeout_ms(),
+        accept: upstream.accept(),
+        max_bytes: upstream.max_bytes(),
+    };
     let (outcome, retry_after) = match inv.fetch(request).await {
         Ok(response) => match (response.status, response.body) {
             (_, Some(bytes)) => (Ok(Some(bytes)), None),
