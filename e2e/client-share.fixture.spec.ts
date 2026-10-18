@@ -50,3 +50,13 @@ test("no share bar until enough casts have a known app", async ({ page }) => {
   await expect(page.locator(".cast-card").first()).toBeVisible();
   await expect(page.locator(".client-share")).toHaveCount(0);
 });
+
+test("the Farcaster app is never called @warpcast, in links or tooltips", async ({ page }) => {
+  await serve(page, 25);
+  await page.goto("/");
+  const via = page.locator(".cast-card").first().locator(".origin");
+  await expect(via).toHaveText("via Farcaster");
+  await expect(via.locator("a")).toHaveAttribute("href", /\/u\/fid(:|%3A)9152$/);
+  await expect(via).toHaveAttribute("title", /requested by Farcaster \(app fid 9152\)/);
+  expect(await page.locator("[title*='warpcast' i], a[href*='/u/warpcast']").count()).toBe(0);
+});
