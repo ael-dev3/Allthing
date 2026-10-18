@@ -567,7 +567,11 @@ test.describe("threads and navigation", () => {
     await shoot(page, "replies-popover");
   });
 
-  test("back restores the place deep in the feed and holds it, even when the post loads slowly", async ({ page }) => {
+  for (const { card, atLeast } of [
+    { card: 20, atLeast: 50 },
+    { card: 80, atLeast: 100 },
+  ])
+  test(`back restores the place at card ${card} of ${atLeast}+ and holds it, even when the post loads slowly`, async ({ page }) => {
     test.setTimeout(120_000);
     // A post the client never prefetched: its data takes 2.5 s.
     await page.route(/\/api\/v1\/cast\?/, async (route) => {
@@ -577,13 +581,13 @@ test.describe("threads and navigation", () => {
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     // Several pages deep: more than one server page of trending casts.
-    for (let i = 0; i < 40 && (await page.locator(".cast-card").count()) < 110; i++) {
+    for (let i = 0; i < 40 && (await page.locator(".cast-card").count()) < atLeast + 10; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await page.waitForTimeout(600);
     }
     const loaded = await page.locator(".cast-card").count();
-    expect(loaded).toBeGreaterThan(100);
-    await page.locator(".cast-card").nth(80).scrollIntoViewIfNeeded();
+    expect(loaded).toBeGreaterThan(atLeast);
+    await page.locator(".cast-card").nth(card).scrollIntoViewIfNeeded();
     await page.mouse.wheel(0, -150);
     await page.waitForTimeout(600);
     // The card under the header line, and where it sits.
