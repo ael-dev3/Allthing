@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
+
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
