@@ -6,5 +6,4 @@ pub mod channels;
 pub mod home;
 pub mod post;
 pub mod search;
-pub mod side;
 pub mod user;

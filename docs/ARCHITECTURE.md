@@ -37,7 +37,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 
 | Endpoint | Payload | Built from |
 |---|---|---|
-| `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, trending channels, annotations | `feed/trending`, `channel/trending` |
+| `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, annotations | `feed/trending` |
 | `/api/v1/channel?id=<id or parent URL>` | `ChannelPayload`: the channel and a pool of its casts | `channel`, `feed/parent_urls` (every spelling of the channel's parent URL) |
 | `/api/v1/cast?hash=<hash>` | `CastPayload`: the thread (5 levels), the parent, quoted casts, the channel | `cast/conversation`, `cast` |
 | `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (with an exact-match search fallback for ENS-style names), `user/bulk`, `feed/user/casts` |

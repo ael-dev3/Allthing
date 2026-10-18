@@ -110,19 +110,15 @@ async fn trending_channels(inv: &Invocation) -> Vec<Channel> {
 }
 
 /// Trending casts. `offset` 0 is the front page; later offsets are the
-/// next pages that infinite scroll loads, without the channel list.
+/// next pages that infinite scroll loads.
 pub async fn home(inv: Rc<Invocation>, offset: u32, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    let (casts, channels) = join(hypersnap::trending_casts(&inv, POOL_SIZE, offset), async {
-        if offset == 0 { trending_channels(&inv).await } else { Vec::new() }
-    })
-    .await;
+    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset).await;
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
-    let channels = if offset == 0 { with_defaults(channels, 12) } else { channels };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let pool = drop_hidden(&inv, casts, &mut notes).await;
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
-    Built::json(&HomePayload { pool, channels, notes, meta: meta(&inv) }, api::HOME_CACHE)
+    Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
 }
 
 pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {

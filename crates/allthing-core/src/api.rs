@@ -85,8 +85,6 @@ impl Annotations {
 pub struct HomePayload {
     pub pool: Vec<Cast>,
     #[serde(default)]
-    pub channels: Vec<Channel>,
-    #[serde(default)]
     pub notes: Annotations,
     pub meta: Meta,
 }
