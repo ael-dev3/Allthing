@@ -580,7 +580,11 @@ test.describe("threads and navigation", () => {
   test("read-only: no sign-in, no writes", async ({ page }) => {
     const writes: string[] = [];
     page.on("request", (r) => {
-      if (r.method() !== "GET" && r.method() !== "HEAD" && new URL(r.url()).origin === new URL(page.url() || "http://x").origin) writes.push(r.url());
+      const url = new URL(r.url());
+      // Cloudflare Web Analytics reports page timings to /cdn-cgi/rum; that is
+      // the platform's beacon, not a write by Allthing.
+      if (url.pathname === "/cdn-cgi/rum") return;
+      if (r.method() !== "GET" && r.method() !== "HEAD" && url.origin === new URL(page.url() || "http://x").origin) writes.push(r.url());
     });
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
