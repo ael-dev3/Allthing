@@ -98,16 +98,17 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
     }
 }
 
-/// Previous and next page links for a paginated listing.
+/// Says so when a page shows a cached copy because the data source isn't
+/// answering; nothing otherwise.
 #[component]
-pub fn Freshness(age: u32, stale: bool) -> impl IntoView {
-    let text = match (stale, age) {
-        (true, _) => "Showing a cached copy: the Farcaster data source is not answering right now.".to_owned(),
-        (false, 0..=59) => "Updated just now".to_owned(),
-        (false, 60..=3599) => format!("Updated {} min ago", age / 60),
-        (false, _) => format!("Updated {} h ago", age / 3600),
-    };
-    view! { <p class="freshness" class:stale=stale role=stale.then_some("status")>{text}</p> }
+pub fn StaleNotice(stale: bool) -> impl IntoView {
+    stale.then(|| {
+        view! {
+            <p class="stale-notice" role="status">
+                "Showing a cached copy: the Farcaster data source is not answering right now."
+            </p>
+        }
+    })
 }
 
 #[component]
