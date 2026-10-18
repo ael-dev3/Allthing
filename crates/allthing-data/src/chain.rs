@@ -43,18 +43,25 @@ pub fn encode_get_scores(fids: &[u64]) -> String {
 pub fn decode_scores(hex: &str, expected: usize) -> Option<Vec<u32>> {
     let hex = hex.strip_prefix("0x")?;
     let word = |i: usize| -> Option<u64> {
-        let w = hex.get(i * 64..(i + 1) * 64)?;
-        if !w[..48].bytes().all(|b| b == b'0') {
+        let start = i.checked_mul(64)?;
+        let end = start.checked_add(64)?;
+        let w = hex.as_bytes().get(start..end)?;
+        if !w[..48].iter().all(|b| *b == b'0') {
             return None;
         }
-        u64::from_str_radix(&w[48..], 16).ok()
+        u64::from_str_radix(std::str::from_utf8(&w[48..]).ok()?, 16).ok()
     };
-    let offset = word(0)? as usize / 32;
-    let len = word(offset)? as usize;
+    // A single dynamic array starts after its one-word return-value head.
+    // Check before casting so malformed offsets cannot truncate on wasm32.
+    if word(0)? != 32 {
+        return None;
+    }
+    let offset = 1;
+    let len = usize::try_from(word(offset)?).ok()?;
     if len != expected {
         return None;
     }
-    (0..len).map(|i| word(offset + 1 + i).map(|v| v.min(1_000_000) as u32)).collect()
+    (0..len).map(|i| word(i.checked_add(offset + 1)?).map(|v| v.min(1_000_000) as u32)).collect()
 }
 
 /// fid -> Neynar score in millionths, in batches of up to 150 fids.
@@ -181,5 +188,16 @@ mod tests {
         let scores = decode_scores(answer, 5).unwrap();
         let shown: Vec<String> = scores.iter().map(|m| allthing_core::format::score(*m)).collect();
         assert_eq!(shown, ["1.00", "1.00", "0.74", "0.96", "1.00"]);
+    }
+
+    #[test]
+    fn malformed_abi_words_return_none_instead_of_panicking() {
+        let unicode = format!("0x{}é{}", "0".repeat(47), "0".repeat(15));
+        assert_eq!(decode_scores(&unicode, 0), None);
+        for offset in [0, 1, 31, 33, u64::MAX] {
+            let answer = format!("0x{offset:064x}{:064x}", 0);
+            assert_eq!(decode_scores(&answer, 0), None, "accepted invalid offset {offset}");
+        }
+        assert_eq!(decode_scores(&format!("0x{:064x}{:064x}", 32, 0), 0), Some(vec![]));
     }
 }
