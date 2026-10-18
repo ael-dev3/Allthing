@@ -2454,6 +2454,16 @@ code {
   flex: 1;
 }
 
+.wallet-list li.copy-failed {
+  flex-wrap: wrap;
+}
+
+.wallet-copy-error {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .copy {
   font: 600 11.5px/1 var(--font-ui);
   color: var(--accent);
