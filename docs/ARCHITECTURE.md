@@ -26,7 +26,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 | `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, spam-label shards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
 | `allthing-data` | native + wasm32 | The page builders that assemble each payload, and the Hypersnap and RPC clients behind guards. The runtime is abstracted as a `Host` (clock, HTTP with a timeout, background work), so the same code runs in the Worker and in the browser. |
 | `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController` and `waitUntil`. |
-| `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, keyboard navigation. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
+| `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, prefetching and scroll restoration. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
 | `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`; `cargo xtask labels` turns the spam-label dataset into shards. |
 
 `scripts/build.sh` runs `worker-build` for the Worker and `cargo xtask dist` for the app. The xtask runs `cargo build`, `wasm-bindgen --target web` and `wasm-opt -Oz`, then writes fingerprinted files (`allthing-<hash>.wasm/.js/.css`, `boot-<hash>.js`) and fills them into `web/index.html`. Both WebAssembly builds use `opt-level = "z"`, LTO, one codegen unit and `panic = "abort"`.
@@ -43,11 +43,17 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (with an exact-match search fallback for ENS-style names), `user/bulk`, `feed/user/casts` |
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
+| `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
+| `/api/v1/search?q=<query>` | `SearchPayload`: casts, people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts), `user/search`, `channel/search` |
+| `/api/v1/reactions?hash=<hash>&kind=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
+| `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |
+| `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's Farcaster vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
 | `/api/v1/status` | isolate and upstream-guard state | nothing: no upstream calls, no cache |
+| `/version` (and `/api/v1/version`) | `{"name","version","commit"}` | nothing |
 
 Paths are relative to `https://haatz.quilibrium.com/v2/farcaster/` (Hypersnap's Neynar-compatible API). Payloads carry `Meta` (backend, fetch time, staleness) and `Annotations`, shared by every cast on the page:
 
-- **scores**: Neynar user scores by fid, read onchain on Base. One `eth_call` to `getScores(uint256[])` on the scores contract covers up to 150 fids; scores are memoized for 6 h per isolate.
+- **scores**: Neynar user scores by fid, read onchain on Base ([SCORE.md](SCORE.md)). One `eth_call` to `getScores(uint256[])` on the scores contract covers up to 150 fids; scores are memoized for 12 h per isolate.
 - **origins**: for each cast, its signer key and the fid of the app that registered that key. The app comes from the signer's `SignedKeyRequest` metadata: `requestFid` from Hypersnap's `/v1/signersByFid`, or decoded from the key's onchain event (`/v1/onChainEventsByFid`) when the key has since been removed. Signers are matched to casts with `/v1/castById` (one cast) or `/v1/castsByFid` (several).
 - **apps**: the names and pictures of those app fids.
 - **pending**: how many casts are still unattributed. Origins resolve progressively, up to 12 new authors per build, and each payload carries the previous one's origins forward.
@@ -77,23 +83,34 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 
 | Data | Source | Notes |
 |---|---|---|
-| Casts, threads, channels, users | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. Shown as the "Hypersnap" backend on each cast. |
+| Casts, threads, channels, users, search, reactions | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. |
+| The Farcaster vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
 | Neynar user score | Neynar's score contract on Base, via public RPCs (`mainnet.base.org`, publicnode) | Shown beside names when above zero, with tiers at 0.5 and 0.9 |
 | Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Warpcast" and the like |
 | Spam labels | [warpcast/labels](https://github.com/warpcast/labels) `spam.jsonl` (Git LFS) | Compacted at deploy time into 32 KB shards, one character per fid, read by the browser as static files. Shown on profiles; never used to hide anything. |
 | Wallet activity | Account nonces of verified EVM addresses (up to 5) on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad, from keyless public RPCs | A nonce counts transactions *sent* from an address. Shares use largest-remainder rounding. Solana is not measured: its public RPC refuses Workers and browsers. |
 | Video | Cloudflare Stream behind `stream.farcaster.xyz` (and `stream.warpcast.com`), fetched by the browser | Posters are Stream thumbnails next to the redirected manifest. |
 
+**Mini apps and frames are filtered out server-side.** Allthing doesn't run them, so a cast whose embeds or text link to a mini app or frame is dropped:
+- **Detection.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it. Hypersnap returns no embed metadata.
+- **Lists.** The builders drop flagged casts from home, channels, profiles, search and reply previews (`thread::without_mini_apps`).
+- **Threads.** `thread::prune_mini_apps` drops a flagged reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden".
+
 Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The rest of the code sees the `allthing_core::model` types only.
 
 ## The browser app
 
 - **Boot.** `index.html` shows a static header and a soft glow while `boot.js` imports the wasm-bindgen glue and instantiates the module. The app then mounts into `#app` and removes the placeholder. `www.allthing.social` is sent to the apex before anything loads.
-- **Routing.** Routes: `/`, `/c/<id>` (or `/c?id=`), `/p/<hash>` (or `/p?hash=`), `/u/<name>` (or `/u?name=`), `/channels`, `/about`. The query forms keep links from the old static site working. Any other path renders "not found".
-- **One request per page.** Each page reads one payload (`api.rs`, with a 60-second in-memory cache for back and forward). Sorting (hot, new, top) and paging (25 per page) re-rank the pool locally (`allthing_core::ranking`, `listing`). Profiles also read `/wallets` and one static label shard.
-- **Media.** `media.rs` turns embeds into a gallery with generated alt text that names the author and quotes the cast. Hovering an image opens a preview after 140 ms, sized to fit. The lightbox is a modal dialog with a focus trap, Escape, arrow keys and pointer swipes, and it returns focus to the tile that opened it.
-- **Video.** `player.rs` and `video.rs`: an IntersectionObserver loads the master playlist 600 px before a video scrolls into view. Safari plays the playlist natively. Elsewhere the Rust player parses master and media playlists (`allthing_core::hls`), picks a rendition by height (480p for hover previews, 720p inline, 1080p in the viewer), and feeds fMP4 segments into separate video and audio `SourceBuffer`s. It keeps 24 s buffered ahead, follows seeks, steps over gaps and ends the stream. Plain `.mp4` and `.webm` files play natively. YouTube, Vimeo, Loom and Streamable links render as facades that load the provider's iframe only on click; YouTube uses `youtube-nocookie.com`.
-- **Threads.** `CommentTree` renders replies recursively. Collapsing animates the row height and marks the hidden subtree `inert`. `keys.rs` adds `j`/`k`/`o`/`x` over any element marked `data-nav`.
+- **Routing.** Routes: `/`, `/c/<id>` (or `/c?id=`), `/p/<hash>` (or `/p?hash=`), `/u/<name>` (or `/u?name=`), `/channels`, `/search?q=`. The query forms keep links from the old static site working. Any other path renders "not found".
+- **One request per page.** Each page reads one payload (`api.rs`, with a 5-minute in-memory cache). Sorting (hot, new, top) re-ranks the pool locally (`allthing_core::ranking`). Lists show 25 cards at a time and grow as the reader scrolls. Profiles also read `/wallets`, `/vote` and one static label shard.
+- **Speed** ([PERFORMANCE.md](PERFORMANCE.md)):
+  - posts open instantly from the feed's own data;
+  - cards prefetch on hover and in idle time, within caps;
+  - `nav.rs` restores scroll on back and forward, and runs view transitions.
+- **Popovers.** `popover.rs` is one accessible popover (hover or focus after 280 ms, tap on touch, Escape, outside click). `who.rs` uses it for who liked, recasted and replied. It is also behind the profile's "Wallets" button, which lists every verified address with copy-to-clipboard.
+- **Media.** `media.rs` turns embeds into a gallery with generated alt text that names the author and quotes the cast. The lightbox is a modal dialog with a focus trap, Escape, arrow keys and pointer swipes, and it returns focus to the tile that opened it.
+- **Video.** `player.rs` and `video.rs`: an IntersectionObserver loads the master playlist 600 px before a video scrolls into view. Safari plays the playlist natively. Videos autoplay muted when at least 60% visible and pause when scrolled away. Only one plays at a time, and none autoplay with reduced motion, Save-Data or a 2g connection. Elsewhere the Rust player parses master and media playlists (`allthing_core::hls`), picks a rendition by height (720p inline, 1080p in the viewer), and feeds fMP4 segments into separate video and audio `SourceBuffer`s. It keeps 24 s buffered ahead, follows seeks, steps over gaps and ends the stream. Plain `.mp4` and `.webm` files play natively. YouTube, Vimeo, Loom and Streamable links render as facades that load the provider's iframe only on click; YouTube uses `youtube-nocookie.com`.
+- **Threads.** `CommentTree` renders replies recursively. Collapsing animates the row height and marks the hidden subtree `inert`.
 - **Design.** `style/allthing.css` is a light theme: warm paper, an indigo accent, cyan and gold for the "portal" details, and Instrument Serif for display type. It adds a faint lattice and glows behind the page and a slowly drifting line under the header. Cards rise in and lift on hover, threads expand, and skeletons shimmer. `prefers-reduced-motion` turns the motion off.
 
 ## The static copy (GitHub Pages)
@@ -118,4 +135,5 @@ Annotations memoized in the page (scores, origins, apps) carry over between page
 
 - **Unit tests**: `cargo test` covers the core against recorded Hypersnap responses, the Worker's ABI decoding of onchain scores, link shortening in the app, and the xtask's CSS minifier and fingerprinting.
 - **Lints**: `scripts/check.sh` runs rustfmt and Clippy with `-D warnings` for the native and wasm32 targets, and the `cargo deny` license audit.
+- **Performance**: `e2e/perf.spec.ts` checks the budget in [PERFORMANCE.md](PERFORMANCE.md); CI runs it against production after each push to `main`.
 - **End to end**: `e2e/allthing.spec.ts` runs Playwright against `wrangler dev`, or against production with `E2E_BASE_URL`, using live data. Video playback runs against a small VP9/Opus HLS fixture (`e2e/fixtures/hls`), because Playwright's Chromium cannot decode H.264.

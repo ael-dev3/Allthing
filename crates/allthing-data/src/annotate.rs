@@ -53,7 +53,7 @@ type SignerApps = Rc<HashMap<String, Option<u64>>>;
 
 const SIGNERS_TTL_MS: f64 = 3_600_000.0;
 const APPS_TTL_MS: f64 = 86_400_000.0;
-const SCORES_TTL_MS: f64 = 21_600_000.0;
+const SCORES_TTL_MS: f64 = 43_200_000.0;
 
 thread_local! {
     /// Cast hash -> origin. Origins never change, so no TTL.

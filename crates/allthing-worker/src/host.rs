@@ -22,7 +22,7 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     let network = |e: worker::Error| FetchError::Network(e.to_string());
     let headers = Headers::new();
     let _ = headers.set("accept", "application/json");
-    let _ = headers.set("user-agent", "allthing/0.2 (+https://allthing.social)");
+    let _ = headers.set("user-agent", &format!("allthing/{} (+https://allthing.social)", crate::VERSION));
     let mut init = RequestInit::new();
     let method = match request.method {
         HttpMethod::Get => Method::Get,

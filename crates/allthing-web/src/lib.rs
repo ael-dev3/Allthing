@@ -6,8 +6,8 @@ mod api;
 mod components;
 #[cfg(feature = "static-host")]
 mod host;
-mod keys;
 mod labels;
+mod nav;
 mod pages;
 mod util;
 mod video;
@@ -21,14 +21,21 @@ use leptos_router::path;
 use wasm_bindgen::prelude::*;
 
 use crate::components::layout::{NotFound, SiteFooter, SiteHeader};
-use crate::components::media::{HoverPreview, Lightbox, Viewer};
-use crate::keys::KeyboardNav;
-use crate::pages::about::About;
+use crate::components::media::{Lightbox, Viewer};
+use crate::components::who::{WhoDialog, WhoList};
 use crate::pages::channel::ChannelPage;
 use crate::pages::channels::ChannelsPage;
 use crate::pages::home::Home;
 use crate::pages::post::PostPage;
+use crate::pages::search::SearchPage;
 use crate::pages::user::UserPage;
+
+/// This build's version (the workspace version) and short commit.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const COMMIT: &str = match option_env!("ALLTHING_COMMIT") {
+    Some(commit) => commit,
+    None => "dev",
+};
 
 /// A page's annotations, shared by all its casts.
 pub type Notes = Arc<Annotations>;
@@ -47,6 +54,7 @@ pub fn start() {
 #[component]
 fn App() -> impl IntoView {
     provide_context(Viewer::new());
+    provide_context(WhoList::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>
@@ -61,13 +69,13 @@ fn App() -> impl IntoView {
                     <Route path=path!("/u/:name") view=UserPage/>
                     <Route path=path!("/u") view=UserPage/>
                     <Route path=path!("/channels") view=ChannelsPage/>
-                    <Route path=path!("/about") view=About/>
+                    <Route path=path!("/search") view=SearchPage/>
                 </Routes>
             </main>
             <SiteFooter/>
             <Lightbox/>
-            <HoverPreview/>
-            <KeyboardNav/>
+            <WhoDialog/>
+            <nav::ScrollMemory/>
         </Router>
     }
 }

@@ -112,6 +112,67 @@ pub struct ChannelsPayload {
     pub meta: Meta,
 }
 
+/// One search box: casts, people and channels matching a query.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchPayload {
+    pub query: String,
+    pub casts: Vec<Cast>,
+    pub users: Vec<User>,
+    pub channels: Vec<Channel>,
+    #[serde(default)]
+    pub notes: Annotations,
+    pub meta: Meta,
+}
+
+/// Which reactions a who-list shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReactionKind {
+    Likes,
+    Recasts,
+}
+
+impl ReactionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReactionKind::Likes => "likes",
+            ReactionKind::Recasts => "recasts",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<ReactionKind> {
+        match value {
+            "likes" => Some(ReactionKind::Likes),
+            "recasts" => Some(ReactionKind::Recasts),
+            _ => None,
+        }
+    }
+}
+
+/// Who liked or recasted a cast, newest first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReactionsPayload {
+    pub hash: String,
+    pub kind: ReactionKind,
+    pub users: Vec<UserSummary>,
+    /// More reactors exist than are listed.
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub scores: BTreeMap<u64, u32>,
+    pub meta: Meta,
+}
+
+/// The first direct replies of a cast, for the replies preview.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepliesPayload {
+    pub hash: String,
+    pub replies: Vec<Cast>,
+    #[serde(default)]
+    pub notes: Annotations,
+    pub meta: Meta,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
     pub error: String,
@@ -122,6 +183,15 @@ pub struct ApiError {
 
 pub fn home_path() -> String {
     format!("{API_PREFIX}/home")
+}
+
+/// The next trending pages, for infinite scroll.
+pub fn home_page_path(offset: u32) -> String {
+    if offset == 0 { home_path() } else { format!("{API_PREFIX}/home?offset={offset}") }
+}
+
+pub fn vote_path(fid: u64) -> String {
+    format!("{API_PREFIX}/vote?fid={fid}")
 }
 
 pub fn channel_path(key: &str) -> String {
@@ -147,6 +217,19 @@ pub fn channels_path(query: Option<&str>) -> String {
     }
 }
 
+pub fn search_path(query: &str) -> String {
+    format!("{API_PREFIX}/search?q={}", percent_encode(query.trim()))
+}
+
+/// `limit` is a short preview (10) or the full list (100).
+pub fn reactions_path(hash: &str, kind: ReactionKind, limit: u32) -> String {
+    format!("{API_PREFIX}/reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
+}
+
+pub fn replies_path(hash: &str) -> String {
+    format!("{API_PREFIX}/replies?hash={hash}")
+}
+
 /// How long each endpoint's edge-cached payload is served, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicy {
@@ -166,6 +249,11 @@ pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep:
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 pub const WALLET_CACHE: CachePolicy = CachePolicy { fresh: 21_600, stale: 86_400, keep: 172_800, browser: 3600 };
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
+pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
+pub const REACTIONS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 86_400, browser: 300 };
+pub const REPLIES_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
+/// Votes change rarely (a vote can be changed or revoked); hourly is plenty.
+pub const VOTE_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 /// Lookups that found nothing (unknown user, missing cast).
 pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 300, browser: 120 };
 
@@ -182,6 +270,9 @@ mod tests {
         assert_eq!(channels_path(Some(" art ")), "/api/v1/channels?q=art");
         assert_eq!(channels_path(Some("")), "/api/v1/channels");
         assert_eq!(wallets_path(3), "/api/v1/wallets?fid=3");
+        assert_eq!(search_path(" art club "), "/api/v1/search?q=art%20club");
+        assert_eq!(reactions_path("0xab", ReactionKind::Likes, 10), "/api/v1/reactions?hash=0xab&type=likes&limit=10");
+        assert_eq!(replies_path("0xab"), "/api/v1/replies?hash=0xab");
     }
 
     #[test]

@@ -10,11 +10,11 @@ use allthing_core::embeds::{host_of, is_hls};
 use allthing_core::video::VideoLink;
 use leptos::ev;
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{HtmlVideoElement, IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
 
-use crate::util::can_hover;
+use crate::util::prefers_reduced_motion;
 use crate::video::{MsePlayer, Stream, attach, load_stream, mse_supported, native_hls};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,7 +37,34 @@ struct Playback {
     player: Option<MsePlayer>,
     stream: Option<Rc<Stream>>,
     observer: Option<(IntersectionObserver, ObserverCallback)>,
+    /// Watches how much of the video is on screen, for autoplay.
+    visibility: Option<(IntersectionObserver, ObserverCallback)>,
 }
+
+thread_local! {
+    /// The one video allowed to play at a time.
+    static ACTIVE: RefCell<Option<HtmlVideoElement>> = const { RefCell::new(None) };
+}
+
+/// Make `video` the only one playing: pause whichever was.
+fn claim(video: &HtmlVideoElement) {
+    ACTIVE.with(|active| {
+        let mut active = active.borrow_mut();
+        if let Some(previous) = active.as_ref().filter(|p| *p != video) {
+            let _ = previous.pause();
+        }
+        *active = Some(video.clone());
+    });
+}
+
+/// Muted autoplay in view, unless the reader prefers reduced motion or is
+/// saving data.
+fn autoplay_allowed() -> bool {
+    !prefers_reduced_motion() && !crate::api::constrained_network()
+}
+
+/// Share of a video that must be on screen for it to autoplay.
+const AUTOPLAY_RATIO: f64 = 0.6;
 
 /// Make sure `video` has a source of at least `height`, keeping its position.
 fn ensure_source(
@@ -74,10 +101,17 @@ fn play(video: &HtmlVideoElement) {
     if let Ok(promise) = video.play() {
         let video = video.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            // Autoplay with sound can be refused; fall back to muted.
-            if wasm_bindgen_futures::JsFuture::from(promise).await.is_err() && !video.muted() {
-                video.set_muted(true);
-                let _ = video.play();
+            // Autoplay with sound can be refused; fall back to muted. Other
+            // rejections (an interrupted play, a new source) are not refusals.
+            if let Err(error) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                let refused = js_sys::Reflect::get(&error, &JsValue::from_str("name"))
+                    .ok()
+                    .and_then(|n| n.as_string())
+                    .is_some_and(|n| n == "NotAllowedError");
+                if refused && !video.muted() {
+                    video.set_muted(true);
+                    let _ = video.play();
+                }
             }
         });
     }
@@ -99,9 +133,13 @@ pub fn HlsVideo(
     let status = RwSignal::new(Status::Idle);
     let engaged = RwSignal::new(full);
     let previewing = RwSignal::new(false);
-    // Views and cleanups must be Send; the browser objects live in local storage.
-    let playback =
-        StoredValue::new_local(Rc::new(RefCell::new(Playback { player: None, stream: None, observer: None })));
+    let playback = StoredValue::new_local(Rc::new(RefCell::new(Playback {
+        player: None,
+        stream: None,
+        observer: None,
+        visibility: None,
+    })));
+    let in_view = RwSignal::new(false);
     let hls = is_hls(&url);
     let url = StoredValue::new(url);
 
@@ -119,6 +157,7 @@ pub fn HlsVideo(
             if play_at.is_some() {
                 video.set_muted(false);
                 video.set_controls(true);
+                claim(&video);
                 play(&video);
             }
             return;
@@ -136,6 +175,7 @@ pub fn HlsVideo(
                             Ok(()) => {
                                 video.set_muted(false);
                                 video.set_controls(true);
+                                claim(&video);
                                 play(&video);
                             }
                             Err(e) => status.set(Status::Failed(e)),
@@ -179,30 +219,60 @@ pub fn HlsVideo(
             if let Some((observer, _)) = state.observer.take() {
                 observer.disconnect();
             }
+            if let Some((observer, _)) = state.visibility.take() {
+                observer.disconnect();
+            }
             state.player = None;
         });
     });
 
-    let start_preview = move |_: ev::MouseEvent| {
-        if engaged.get_untracked() || !can_hover() || status.get_untracked() != Status::Ready {
+    // Autoplay muted while mostly on screen; pause when scrolled away.
+    let start_autoplay = move || {
+        if engaged.get_untracked() || status.get_untracked() != Status::Ready || !autoplay_allowed() {
             return;
         }
         let Some(video) = video_ref.get_untracked() else { return };
         if playback.with_value(|p| ensure_source(&video, &url.get_value(), p, PREVIEW_HEIGHT)).is_ok() {
             video.set_muted(true);
             previewing.set(true);
+            claim(&video);
             play(&video);
         }
     };
-    let stop_preview = move |_: ev::MouseEvent| {
-        if engaged.get_untracked() {
+    Effect::new(move |_| {
+        if full {
             return;
         }
-        previewing.set(false);
-        if let Some(video) = video_ref.get_untracked() {
-            let _ = video.pause();
+        if in_view.get() && status.get() == Status::Ready {
+            start_autoplay();
+        } else if !in_view.get() {
+            previewing.set(false);
+            if let Some(video) = video_ref.get_untracked() {
+                let _ = video.pause();
+            }
         }
-    };
+    });
+    Effect::new(move |_| {
+        let Some(element) = container.get() else { return };
+        if full || playback.with_value(|p| p.borrow().visibility.is_some()) {
+            return;
+        }
+        let callback = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+            if let Some(entry) =
+                entries.iter().filter_map(|e| e.dyn_into::<IntersectionObserverEntry>().ok()).next_back()
+            {
+                in_view.set(entry.is_intersecting() && entry.intersection_ratio() >= AUTOPLAY_RATIO);
+            }
+        });
+        let options = IntersectionObserverInit::new();
+        let thresholds = js_sys::Array::of2(&JsValue::from_f64(0.0), &JsValue::from_f64(AUTOPLAY_RATIO));
+        options.set_threshold(&thresholds);
+        if let Ok(observer) = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options) {
+            observer.observe(&element);
+            playback.with_value(|p| p.borrow_mut().visibility = Some((observer, callback)));
+        }
+    });
+
     let engage = move |_: ev::MouseEvent| {
         let Some(video) = video_ref.get_untracked() else { return };
         engaged.set(true);
@@ -215,6 +285,7 @@ pub fn HlsVideo(
             Ok(()) => {
                 video.set_muted(false);
                 video.set_controls(true);
+                claim(&video);
                 play(&video);
             }
             Err(e) => status.set(Status::Failed(e)),
@@ -228,8 +299,6 @@ pub fn HlsVideo(
             class:previewing=move || previewing.get()
             class:loading=move || status.get() == Status::Loading
             node_ref=container
-            on:mouseenter=start_preview
-            on:mouseleave=stop_preview
         >
             <video
                 node_ref=video_ref

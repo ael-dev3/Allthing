@@ -13,9 +13,15 @@ Thanks for helping. Small, focused pull requests are easiest to review. For larg
 ## Workflow
 
 1. Install [rustup](https://rustup.rs) and Node.js 22.12+, then `npm ci`. `rust-toolchain.toml` pins Rust and the wasm32 target.
-2. Build with `SKIP_LABELS=1 bash scripts/build.sh` and run with `npx wrangler dev`.
-3. Before pushing, run `bash scripts/check.sh` (rustfmt, Clippy for native and wasm32, unit tests, `cargo deny` license audit). For UI or API changes, also run `npx playwright test`.
-4. Explain what changed for readers, and how you checked it.
+2. Branch from `main` with a short-lived branch named for the change: `feat/…`, `fix/…`, `perf/…`, `docs/…` or `chore/…`.
+3. Build with `SKIP_LABELS=1 bash scripts/build.sh` and run with `npx wrangler dev`.
+4. Before pushing, run `bash scripts/check.sh` (version consistency, rustfmt, Clippy for native and wasm32, unit tests, `cargo deny` license audit). For UI or API changes, also run `npx playwright test`, and for anything on the reading path, `npx playwright test e2e/perf.spec.ts`.
+5. Write commits as [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `feat`, `fix`, `perf`, `refactor`, `docs`, `test` or `chore`, with an optional scope (`fix(player): …`).
+6. Add a line to `CHANGELOG.md` under `[Unreleased]` for anything a reader or operator would notice.
+7. Open a pull request whose title is a Conventional Commit. It is squash-merged once CI is green. `main` must always be deployable: Cloudflare deploys every push to it.
+8. Explain what changed for readers, and how you checked it.
+
+Versions follow SemVer from the workspace `Cargo.toml`. How releases are cut, tagged and published is in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Licensing
 

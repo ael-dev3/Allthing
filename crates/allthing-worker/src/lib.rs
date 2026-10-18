@@ -22,6 +22,13 @@ use worker::{Context, Env, Headers, Method, Request, Response, Result, Url, even
 use crate::cache::Served;
 use crate::host::WorkerHost;
 
+/// The workspace version and the short commit this Worker was built from.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const COMMIT: &str = match option_env!("ALLTHING_COMMIT") {
+    Some(commit) => commit,
+    None => "dev",
+};
+
 /// Cloudflare allows 50 subrequests (fetches and Cache API calls) per
 /// invocation on the Free plan; keep a margin for the response path.
 const SUBREQUEST_BUDGET: u32 = 45;
@@ -40,6 +47,9 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         let mut target = url.clone();
         target.set_host(Some(&apex))?;
         return Response::redirect_with_status(target, 301);
+    }
+    if url.path() == "/version" || url.path() == "/api/v1/version" {
+        return version();
     }
     if !url.path().starts_with("/api/") {
         return error(404, "Not found", None);
@@ -121,6 +131,15 @@ fn error(status: u16, message: &str, retry_after: Option<u32>) -> Result<Respons
     }
     let body = ApiError { error: message.to_owned(), retry_after };
     Ok(Response::from_json(&body)?.with_status(status).with_headers(headers))
+}
+
+/// `{"name","version","commit"}`: which release is deployed.
+fn version() -> Result<Response> {
+    let headers = Headers::new();
+    headers.set("content-type", "application/json; charset=utf-8")?;
+    headers.set("cache-control", "no-store")?;
+    let body = serde_json::json!({ "name": "allthing", "version": VERSION, "commit": COMMIT });
+    Ok(Response::from_json(&body)?.with_headers(headers))
 }
 
 /// Health and guard state of the isolate that answers. Makes no upstream

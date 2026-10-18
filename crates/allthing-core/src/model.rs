@@ -143,9 +143,21 @@ pub struct Cast {
     pub recasts: u64,
     #[serde(default)]
     pub replies: u64,
+    /// The cast embeds a mini app or frame. Allthing does not run them, so
+    /// such casts are left out of listings, and kept in threads only as an
+    /// emptied node when they have replies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mini_app: bool,
 }
 
 impl Cast {
+    /// Drop a mini app cast's content, keeping its place in a thread.
+    pub fn strip_mini_app(&mut self) {
+        self.text.clear();
+        self.mentions.clear();
+        self.embeds.clear();
+    }
+
     pub fn is_reply(&self) -> bool {
         self.parent_hash.is_some()
     }
