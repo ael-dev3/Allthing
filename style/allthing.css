@@ -472,6 +472,15 @@ code {
   transition: transform 0.28s var(--ease), box-shadow 0.28s var(--ease), border-color 0.28s var(--ease);
   animation: rise 0.5s var(--ease) both;
   animation-delay: calc(var(--i, 0) * 26ms);
+  /* Off-screen cards skip layout and paint, so a re-sort of a long list
+     re-lays out only what is on screen. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+/* A card whose popover is open must not clip it: its containment is off. */
+.cast-card:has(.popover-panel) {
+  content-visibility: visible;
 }
 
 @keyframes rise {
