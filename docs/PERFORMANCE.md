@@ -51,6 +51,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
   - **What it saves**: the card under the line just below the header and its offset in the viewport, plus the pixel position for pages without cards. It saves on scroll and, in the capture phase, on every click, so that the scrolls a navigation causes don't overwrite it.
   - **What comes back**: lists show as many cards as before (`CastList` remembers per page), and the front page keeps the later trending pages it had loaded for 5 minutes.
   - **How long it holds**: after Back, the card is put back and held there for 6 s against late changes (images loading above it, lists growing back, a late scroll-to-top). The reader's own wheel, touch, key or mouse input ends the hold.
+  - **Images keep their size**: a single image's natural size is remembered once it has loaded, and the image is drawn at that size when the list is rendered again. Back therefore doesn't make the page grow while images arrive, including after the hold ends.
   - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 

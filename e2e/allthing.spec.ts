@@ -570,6 +570,36 @@ test.describe("threads and navigation", () => {
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
   });
 
+  test("back lays out the feed's images at their size before they load", async ({ page }) => {
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    // A card with a single image, scrolled past so its image has loaded.
+    const image = page.locator(".cast-card .media-grid.n1 .tile-image img").first();
+    await image.scrollIntoViewIfNeeded();
+    await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > 0)).toBe(true);
+    const hash = await image.evaluate((img) => img.closest(".cast-card")!.getAttribute("data-hash")!);
+    const height = await image.evaluate((img) => Math.round(img.getBoundingClientRect().height));
+    expect(height).toBeGreaterThan(50);
+    // Open it inside the app, as a reader does.
+    await page.locator(`.cast-card[data-hash="${hash}"] .cast-title`).click();
+    await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
+    await expect(page.locator(".post")).toBeVisible();
+    // Images now take 3 s to arrive.
+    await page.route(
+      (url) => !url.pathname.startsWith("/api/"),
+      async (route) => {
+        if (route.request().resourceType() === "image") await new Promise((done) => setTimeout(done, 3000));
+        await route.fallback();
+      },
+    );
+    await page.goBack();
+    const again = page.locator(`.cast-card[data-hash="${hash}"] .media-grid.n1 .tile-image img`);
+    await expect(again).toBeAttached();
+    // Its box is already the loaded image's size: nothing below it will move.
+    expect(await again.evaluate((img: HTMLImageElement) => img.complete)).toBe(false);
+    expect(Math.abs((await again.evaluate((img) => img.getBoundingClientRect().height)) - height)).toBeLessThanOrEqual(2);
+  });
+
   test("opening a post from the feed renders at once, and back restores the scroll position", async ({ page }) => {
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
