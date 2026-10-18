@@ -126,35 +126,91 @@ pub struct WalletActivity {
     pub fetched_at: i64,
 }
 
-/// Fill in `percent` with the largest-remainder method so shares sum to 100,
-/// and order chains by activity (failed chains last).
+/// Fill in `percent` with the largest-remainder method, and order chains by
+/// activity (failed chains last). A chain under 1% of the total is not shown
+/// (percent 0), and the spare points go only to shown chains, so the shown
+/// shares sum to exactly 100.
 pub fn apportion(chains: &mut [ChainActivity]) -> u64 {
     let total: u64 = chains.iter().filter(|c| c.error.is_none()).map(|c| c.count).sum();
+    let shown = |c: &ChainActivity| c.error.is_none() && c.count > 0 && c.count * 100 >= total;
+    let shown_total: u64 = chains.iter().filter(|c| shown(c)).map(|c| c.count).sum();
     let mut remainders: Vec<(usize, u64)> = Vec::new();
     let mut assigned = 0u64;
     for (i, c) in chains.iter_mut().enumerate() {
         c.percent = 0;
-        if c.error.is_some() {
+        if !shown(c) {
             continue;
         }
         let scaled = c.count * 100;
-        if let (Some(share), Some(remainder)) = (scaled.checked_div(total), scaled.checked_rem(total)) {
-            c.percent = share as u32;
-            assigned += share;
-            remainders.push((i, remainder));
-        }
+        let share = scaled / shown_total;
+        c.percent = share as u32;
+        assigned += share;
+        remainders.push((i, scaled % shown_total));
     }
-    // Hand the points lost to rounding down to the largest remainders.
-    if !remainders.is_empty() {
-        remainders.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        for (i, _) in remainders.into_iter().take((100 - assigned) as usize) {
-            chains[i].percent += 1;
-        }
+    remainders.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (i, _) in remainders.into_iter().take((100 - assigned) as usize) {
+        chains[i].percent += 1;
     }
     chains.sort_by(|a, b| {
         a.error.is_some().cmp(&b.error.is_some()).then(b.count.cmp(&a.count)).then(a.chain.cmp(&b.chain))
     });
     total
+}
+
+#[cfg(test)]
+mod apportion_tests {
+    use super::*;
+
+    fn chain(name: &str, count: u64) -> ChainActivity {
+        ChainActivity {
+            chain: name.into(),
+            name: name.into(),
+            kind: ChainKind::Evm,
+            count,
+            capped: false,
+            percent: 0,
+            error: None,
+        }
+    }
+
+    /// 0xael.eth (fid 539854) on 18 Oct 2026: Optimism's 95 of 33,090 is 0.29%,
+    /// so it is not shown, and the rest sum to 100.
+    #[test]
+    fn a_chain_under_one_percent_is_not_shown_and_the_rest_sum_to_100() {
+        let mut chains = vec![
+            chain("base", 32520),
+            chain("ethereum", 388),
+            chain("optimism", 95),
+            chain("monad", 66),
+            chain("arbitrum", 19),
+            chain("celo", 2),
+        ];
+        assert_eq!(apportion(&mut chains), 33090);
+        let pct = |name: &str| chains.iter().find(|c| c.chain == name).unwrap().percent;
+        assert_eq!((pct("optimism"), pct("monad"), pct("arbitrum"), pct("celo")), (0, 0, 0, 0));
+        assert_eq!((pct("base"), pct("ethereum")), (99, 1));
+        assert_eq!(chains.iter().map(|c| c.percent).sum::<u32>(), 100);
+    }
+
+    #[test]
+    fn shares_of_shown_chains_sum_to_exactly_100() {
+        let mut chains = vec![chain("a", 1), chain("b", 1), chain("c", 1)];
+        assert_eq!(apportion(&mut chains), 3);
+        assert_eq!(chains.iter().map(|c| c.percent).collect::<Vec<_>>(), vec![34, 33, 33]);
+
+        let mut chains = vec![chain("base", 800), chain("eth", 7), chain("zero", 0)];
+        apportion(&mut chains);
+        assert_eq!(chains.iter().find(|c| c.chain == "base").unwrap().percent, 100);
+        assert_eq!(chains.iter().find(|c| c.chain == "eth").unwrap().percent, 0);
+        assert_eq!(chains.iter().map(|c| c.percent).sum::<u32>(), 100);
+    }
+
+    #[test]
+    fn no_activity_means_no_shares() {
+        let mut chains = vec![chain("a", 0)];
+        assert_eq!(apportion(&mut chains), 0);
+        assert_eq!(chains[0].percent, 0);
+    }
 }
 
 /// The user's verified addresses, primary first, deduplicated.
@@ -194,43 +250,6 @@ pub fn parse_quantity(value: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn activity(chain: &str, count: u64) -> ChainActivity {
-        ChainActivity {
-            chain: chain.into(),
-            name: chain.into(),
-            kind: ChainKind::Evm,
-            count,
-            capped: false,
-            percent: 0,
-            error: None,
-        }
-    }
-
-    #[test]
-    fn apportions_to_exactly_100() {
-        let mut chains = vec![activity("a", 1), activity("b", 1), activity("c", 1)];
-        assert_eq!(apportion(&mut chains), 3);
-        assert_eq!(chains.iter().map(|c| c.percent).sum::<u32>(), 100);
-        assert_eq!(chains.iter().map(|c| c.percent).collect::<Vec<_>>(), vec![34, 33, 33]);
-
-        let mut chains = vec![activity("eth", 7), activity("base", 800), activity("op", 8), activity("zero", 0)];
-        let mut failed = activity("sol", 0);
-        failed.error = Some("timeout".into());
-        chains.push(failed);
-        assert_eq!(apportion(&mut chains), 815);
-        assert_eq!(chains[0].chain, "base");
-        assert_eq!(chains[0].percent, 98);
-        assert_eq!(chains.iter().map(|c| c.percent).sum::<u32>(), 100);
-        assert_eq!(chains.last().unwrap().chain, "sol");
-    }
-
-    #[test]
-    fn no_activity_means_no_shares() {
-        let mut chains = vec![activity("a", 0)];
-        assert_eq!(apportion(&mut chains), 0);
-        assert_eq!(chains[0].percent, 0);
-    }
 
     #[test]
     fn collects_addresses_primary_first() {
