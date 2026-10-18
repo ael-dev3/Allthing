@@ -148,11 +148,20 @@ pub struct Cast {
     /// emptied node when they have replies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mini_app: bool,
+    /// The cast is spam by Allthing's content rules (see [`crate::spam`]),
+    /// left out like a mini app cast.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spam: bool,
 }
 
 impl Cast {
-    /// Drop a mini app cast's content, keeping its place in a thread.
-    pub fn strip_mini_app(&mut self) {
+    /// Left out of listings: a mini app or spam.
+    pub fn hidden(&self) -> bool {
+        self.mini_app || self.spam
+    }
+
+    /// Drop a hidden cast's content, keeping its place in a thread.
+    pub fn strip_hidden(&mut self) {
         self.text.clear();
         self.mentions.clear();
         self.embeds.clear();

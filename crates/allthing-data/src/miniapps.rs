@@ -53,8 +53,8 @@ async fn read(inv: &Invocation, url: &str) -> Option<bool> {
     }
 }
 
-/// Verdicts for the links of `casts` that aren't already known to be mini
-/// apps: `known` (carried from the previous payload) first, then this
+/// Verdicts for the links of `casts` that aren't already hidden (known mini
+/// apps, spam): `known` (carried from the previous payload) first, then this
 /// isolate's memory, then up to [`MAX_CHECKS`] pages read now, as the build's
 /// budget allows. Links still
 /// unknown are left out, and their casts stay listed until they are known.
@@ -66,7 +66,7 @@ pub async fn check<'a>(
     let now = inv.now();
     let mut verdicts = BTreeMap::new();
     let mut unknown = Vec::new();
-    for url in casts.into_iter().filter(|c| !c.mini_app).flat_map(Cast::link_urls) {
+    for url in casts.into_iter().filter(|c| !c.hidden()).flat_map(Cast::link_urls) {
         if !worth_checking_for_mini_app(url) {
             continue;
         }
@@ -152,6 +152,7 @@ mod tests {
             recasts: 0,
             replies: 0,
             mini_app: false,
+            spam: false,
         }
     }
 

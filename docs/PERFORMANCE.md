@@ -65,6 +65,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 - Lists render 25 cards at a time.
 - A sentinel 1,200 px below the last card shows the next 25 before the reader reaches it.
 - On the front page, once the loaded pool runs out, the next trending page (`/api/v1/home?offset=100`, … up to 900) is fetched at the same point, so the next cards are usually ready before they are needed.
+- The end is checked again after cards or a server page arrive. Short and empty filtered pages keep filling without requiring the sentinel to leave and re-enter the viewport; failures still wait for retry backoff, and loading stops at offset 900.
 
 ## Measurements
 

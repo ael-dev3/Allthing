@@ -21,8 +21,11 @@ test("sorting reorders every loaded trending page without rebuilding cards or fe
   const requests: string[] = [];
   page.on("request", (request) => { if (request.url().includes("/api/v1/home")) requests.push(request.url()); });
   await page.route("**/api/v1/home?offset=100", (route) => route.fulfill({ json: { pool: next, meta } }));
+  const end = page.waitForResponse((response) => response.url().endsWith("/api/v1/home?offset=200"));
   await page.goto("/");
   await expect(page.locator(".cast-card[data-hash]")).toHaveCount(4);
+  await end;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const count = requests.length;
   const firstCard = await page.locator('.cast-card[data-hash="' + first[0].hash + '"]').elementHandle();
   const sort = page.getByRole("navigation", { name: "Sort", exact: true });
@@ -109,4 +112,40 @@ test("later-page annotations survive navigation back to the feed", async ({ page
   await page.goBack();
   await expect(card.locator(".score")).toHaveText("0.91");
   await expect(card.locator(".origin")).toContainText("via Fixture app");
+});
+
+test("an empty filtered page advances to the next page without another scroll", async ({ page }) => {
+  await page.route("**/api/v1/home?offset=100", (route) => route.fulfill({ json: { pool: [], meta } }));
+  await page.route("**/api/v1/home?offset=200", (route) => route.fulfill({ json: { pool: [next[0]], meta } }));
+  await page.goto("/");
+  await expect(page.locator(`.cast-card[data-hash="${next[0].hash}"]`)).toBeVisible({ timeout: 5000 });
+});
+
+test("empty later pages stop at the trending pagination limit", async ({ page }) => {
+  const offsets: number[] = [];
+  await page.route("**/api/v1/home?offset=*", (route) => {
+    offsets.push(Number(new URL(route.request().url()).searchParams.get("offset")));
+    return route.fulfill({ json: { pool: [], meta } });
+  });
+  await page.goto("/");
+  await expect.poll(() => offsets, { timeout: 5000 }).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900]);
+  await expect(page.locator(".cast-card[data-hash]")).toHaveCount(2);
+  await page.waitForTimeout(200);
+  expect(offsets).toHaveLength(9);
+});
+
+test("a failed later page observes its retry delay while the end stays visible", async ({ page }) => {
+  const attempts: number[] = [];
+  await page.route("**/api/v1/home?offset=100", (route) => {
+    attempts.push(Date.now());
+    return route.fulfill({ status: attempts.length === 1 ? 503 : 200,
+      json: attempts.length === 1 ? { error: "Busy" } : { pool: next, meta } });
+  });
+  await page.goto("/");
+  await expect.poll(() => attempts.length).toBe(1);
+  await page.waitForTimeout(300);
+  expect(attempts).toHaveLength(1);
+  await expect(page.locator(`.cast-card[data-hash="${next[0].hash}"]`)).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1] - attempts[0]).toBeGreaterThanOrEqual(1900);
 });
