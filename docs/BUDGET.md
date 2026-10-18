@@ -28,11 +28,13 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** | none: the payload holds the whole pool and the browser re-ranks it locally |
-| Scrolling past the front page's pool | 1 per 100 casts (`/api/v1/home?offset=`) | none |
+| Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
 Images and videos never touch the Worker. They load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.
+
+The front page fills the space near the end of the list even when filtering leaves a batch short or empty. It can request offsets 100 through 900, at most nine additional payloads (1,000 source casts including the first page). Each payload remains a separate cached, guarded invocation with the same 45-subrequest budget. Failed pages keep their 2, 4 and 8 second retry delays. Deep scrolling or short filtered batches can therefore cost up to ten home requests per visit; the typical capacity estimate below does not describe that worst case.
 
 **Prefetching** ([PERFORMANCE.md](PERFORMANCE.md)) spends Worker requests ahead of clicks, within caps:
 - hover or touch on a card: one `/api/v1/cast` request, deduplicated;

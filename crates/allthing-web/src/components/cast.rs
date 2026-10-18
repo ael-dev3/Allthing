@@ -98,6 +98,7 @@ pub fn CastCard(
 
 /// How many cards infinite scroll adds at a time.
 const STEP: usize = 25;
+const LOAD_AHEAD_PX: f64 = 1200.0;
 
 /// A listing that grows as the reader scrolls. `on_end` asks for more casts
 /// (the next server page) a little before the reader reaches the end.
@@ -107,6 +108,9 @@ pub fn CastList(
     #[prop(into)] notes: Signal<Notes>,
     #[prop(optional)] show_parent: bool,
     #[prop(optional)] on_end: Option<Callback<()>>,
+    /// Changes after a server page completes, even if it added no casts.
+    #[prop(into, optional)]
+    page_cursor: Signal<u32>,
 ) -> impl IntoView {
     // Back to a list shows as many cards as before, so the reader's place
     // exists before the scroll position is restored.
@@ -137,6 +141,21 @@ pub fn CastList(
         let Some(element) = sentinel.get() else { return };
         observe_once_visible(&element, grow);
     });
+    // A short or filtered page can leave the sentinel inside the observer's
+    // margin, so there is no new intersection event to continue the feed.
+    Effect::new(move |_| {
+        let _ = (casts.with(Vec::len), shown.get(), page_cursor.get());
+        request_animation_frame(move || {
+            let Some(element) = sentinel.try_get_untracked().flatten() else { return };
+            if !element.is_connected() {
+                return;
+            }
+            let height = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or(0.0);
+            if element.get_bounding_client_rect().top() < height + LOAD_AHEAD_PX {
+                grow();
+            }
+        });
+    });
     view! {
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
             <div class="cast-list">
@@ -159,13 +178,12 @@ fn observe_once_visible(element: &web_sys::Element, f: impl Fn() + 'static) {
         }
     });
     let options = IntersectionObserverInit::new();
-    options.set_root_margin("1200px 0px");
+    options.set_root_margin(&format!("{LOAD_AHEAD_PX}px 0px"));
     if let Ok(observer) = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options) {
         observer.observe(element);
-        let observer = StoredValue::new_local(observer);
-        on_cleanup(move || observer.with_value(|o| o.disconnect()));
+        let observer = StoredValue::new_local((observer, callback));
+        on_cleanup(move || observer.with_value(|(observer, _)| observer.disconnect()));
     }
-    callback.forget();
 }
 
 thread_local! {
