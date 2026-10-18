@@ -26,7 +26,8 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Channel directory | 1 (`/api/v1/channels`) | none |
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
 | Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
-| Opening a profile card (hovering a picture or name for 350 ms, keyboard focus resting on it, or a tap) | up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | the label shard and `meta.json`, as on profiles |
+| Feed cards coming into view, with a mouse | up to 2 per new author (`/api/v1/vote`, `/api/v1/wallets`, edge-cached 1 h and 6 h), two at a time, at most 12 authors per 5 minutes; none on touch screens, Save-Data or 2g | none |
+| Opening a profile card (hovering a picture or name for 100 ms, keyboard focus resting on it, or a tap) | **0** when its author was preloaded; otherwise up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | the label shard and `meta.json`, as on profiles |
 | Typing in the search box | 1 per distinct query, after typing pauses for 250 ms (`/api/v1/search`, the same payload the results page uses, so pressing Enter then costs nothing) | none |
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |

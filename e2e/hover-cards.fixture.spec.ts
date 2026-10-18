@@ -81,15 +81,20 @@ test.beforeEach(({}, testInfo) => {
   test.skip(Boolean(testInfo.project.use.hasTouch) && !testInfo.titlePath.some((t) => t.includes("touch")), "hover needs a mouse");
 });
 
-test("hovering a picture shows the account's card; its vote, label and wallets load then", async ({ page }) => {
+test("cards in view preload their authors' vote and wallets, so a hovered card opens complete", async ({ page }) => {
   const requests = await serve(page);
   await page.goto("/");
   await expect(chipLink(feedCard(page), "author")).toHaveText("@alice");
-  expect(requests).toEqual({ vote: 0, wallets: 0, user: 0 });
+  // The three authors in view: their vote and wallets, before any hover.
+  await expect.poll(() => requests.vote + requests.wallets).toBe(6);
+  expect(requests.user).toBe(0);
 
   await chipLink(feedCard(page), "user-link").hover();
   const profile = profileOf(page, "Alice", "alice");
-  await expect(profile).toBeVisible();
+  // Open within the 100 ms delay, and complete in its first frame: no loading state.
+  await expect(profile).toBeVisible({ timeout: 500 });
+  await expect(profile.locator(".vote-fact dd")).toHaveText("Voted yes", { timeout: 100 });
+  await expect(profile.locator(".vote-loading, .share-bar.loading")).toHaveCount(0);
   await expect(profile).toBeInViewport({ ratio: 1 });
   await expect(profile.getByRole("link", { name: /Alice\s*@alice/ })).toHaveAttribute("href", "/u/alice");
   await expect(profile.locator(".profile-card-bio")).toHaveText("Interested in reading conversations.");
@@ -99,12 +104,10 @@ test("hovering a picture shows the account's card; its vote, label and wallets l
   // profile's own wording.
   await expect(profile.locator(".fact", { hasText: "Joined" }).locator("dd")).toHaveText("before Nov 2023");
 
-  // The vote and the wallets load once the card is open.
-  await expect(profile.locator(".vote-fact dd")).toHaveText("Voted yes");
   await expect(profile.locator(".share-bar[role=img]")).toHaveAttribute("aria-label", "Base 75%, Ethereum 25%");
   await expect(profile.locator(".share-list li")).toHaveText([/Base\s*75%/, /Ethereum\s*25%/]);
-  expect(requests.vote).toBe(1);
-  expect(requests.wallets).toBe(1);
+  // Opening it read nothing more.
+  expect(requests.vote + requests.wallets).toBe(6);
   // The Farcaster app's label shows, and the cast stays listed.
   await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText("Labeled likely spam");
   await expect(feedCard(page).locator(".cast-text")).toHaveText("Hover card fixture");
