@@ -18,6 +18,14 @@ use crate::util::{href, set_title};
 
 /// The trending list ends after this many casts.
 const LAST_OFFSET: u32 = 900;
+/// How long the later pages are kept for a return to the front page
+/// (as long as the client cache keeps the first page).
+const KEEP_MS: f64 = 300_000.0;
+
+thread_local! {
+    /// Later trending pages already loaded, kept for Back: (when, casts, next offset).
+    static LOADED: std::cell::RefCell<Option<(f64, Vec<Cast>, u32)>> = const { std::cell::RefCell::new(None) };
+}
 
 #[component]
 pub fn Home() -> impl IntoView {
@@ -25,8 +33,13 @@ pub fn Home() -> impl IntoView {
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let data = LocalResource::new(|| async { api::get::<HomePayload>(&home_path()).await });
     // Later trending pages, appended by infinite scroll (each ranked on its own).
-    let more = RwSignal::new(Vec::<Cast>::new());
-    let next_offset = RwSignal::new(100u32);
+    let (kept, kept_offset) = LOADED
+        .with(|l| l.borrow().clone())
+        .filter(|(at, _, _)| js_sys::Date::now() - at < KEEP_MS)
+        .map(|(_, casts, offset)| (casts, offset))
+        .unwrap_or((Vec::new(), 100));
+    let more = RwSignal::new(kept);
+    let next_offset = RwSignal::new(kept_offset);
     let loading = RwSignal::new(false);
     Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
     let load_more = Callback::new(move |()| {
@@ -45,6 +58,9 @@ pub fn Home() -> impl IntoView {
                     .collect();
                 more.update(|m| m.extend(fresh));
                 next_offset.set(offset + 100);
+                LOADED.with(|l| {
+                    *l.borrow_mut() = Some((js_sys::Date::now(), more.get_untracked(), offset + 100));
+                });
             } else {
                 next_offset.set(LAST_OFFSET + 100);
             }

@@ -47,7 +47,11 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 - Opening a post from a card goes straight to the router, like a link, and the post rises in with a short CSS animation (off under `prefers-reduced-motion`).
   - A view transition (`document.startViewTransition`) was used at first. It cost about 100 ms on a long feed, to snapshot the page first. A bug also made it wait for Chrome's 4 s timeout: its promise waited for an animation frame, and rendering is paused during the transition.
   - Full-page navigations still cross-fade (`@view-transition { navigation: auto }`).
-- **Scroll**: `history.scrollRestoration` is `manual`, and `nav::ScrollMemory` saves each entry's position. Back and forward restore it once the content is tall enough (it retries for up to 90 animation frames). Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
+- **Scroll**: `history.scrollRestoration` is `manual`, and `nav.rs` (`ScrollMemory`) restores each page's place on back and forward.
+  - **What it saves**: the card under the line just below the header and its offset in the viewport, plus the pixel position for pages without cards. It saves on scroll and, in the capture phase, on every click, so that the scrolls a navigation causes don't overwrite it.
+  - **What comes back**: lists show as many cards as before (`CastList` remembers per page), and the front page keeps the later trending pages it had loaded for 5 minutes.
+  - **How long it holds**: after Back, the card is put back and held there for 6 s against late changes (images loading above it, lists growing back, a late scroll-to-top). The reader's own wheel, touch, key or mouse input ends the hold.
+  - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 
 ### 4. Edge
