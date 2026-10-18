@@ -167,6 +167,27 @@ test.describe("front page", () => {
     expect(points).toEqual([...points].sort((a, b) => b - a));
   });
 
+  test("a feed page that fails to load is tried again", async ({ page }) => {
+    // The second page fails once, as a Worker error would.
+    let failed = 0;
+    await page.route(/\/api\/v1\/home\?offset=100$/, async (route: Route) => {
+      if (failed++ === 0) return route.fulfill({ status: 500, json: { error: "upstream failed" } });
+      await route.fallback();
+    });
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    await expect
+      .poll(
+        async () => {
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          return page.locator(".cast-card").count();
+        },
+        { timeout: 30_000, intervals: [600] },
+      )
+      .toBeGreaterThan(100);
+    expect(failed).toBeGreaterThanOrEqual(2);
+  });
+
   test("each page view costs one API call", async ({ page }) => {
     test.skip(PAGES, "the static copy has no API: the browser reads Hypersnap itself");
     const calls = await apiRequests(page, async () => {
