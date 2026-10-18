@@ -140,7 +140,7 @@ pub fn prefetch(path: &str) {
     });
 }
 
-/// The response the boot script already requested for `path`, if any. It is
+/// The response the inline script in index.html already requested for `path`, if any. It is
 /// handed out once.
 fn early_response(path: &str) -> Option<js_sys::Promise> {
     use wasm_bindgen::JsValue;
