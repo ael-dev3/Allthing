@@ -9,6 +9,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
 - The front page's data request starts from a small inline script in `index.html` as soon as the page arrives, alongside the WebAssembly download, instead of after the app starts. It is still one API call.
+- Media is bigger. A single image or video takes its own shape, as wide as the card and at most 70% of the window tall (80% when portrait), instead of at most 580 px wide and 460 px tall. Its frame fits it, so a narrow image has no bars beside it, and a portrait video is no longer letterboxed in a 16:10 box. Back to a feed still lays images out at their size at once, and now videos too.
 - Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
 

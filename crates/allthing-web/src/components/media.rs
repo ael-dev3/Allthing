@@ -68,7 +68,20 @@ fn remember_size(src: &str, event: &ev::Event) {
             }
             sizes.insert(src.to_owned(), (width, height));
         });
+        // Give its tile the box a later visit gives it from the start.
+        if let Some(tile) = img.parent_element().filter(|t| t.get_attribute("data-sized").is_none()) {
+            let _ = tile.set_attribute("style", &size_style(width, height));
+            let _ = tile.set_attribute("data-sized", "");
+            if height > width {
+                let _ = tile.set_attribute("data-portrait", "");
+            }
+        }
     }
+}
+
+/// The CSS variables a sized media box is laid out with.
+pub fn size_style(width: u32, height: u32) -> String {
+    format!("--w: {width}; --h: {height}")
 }
 
 impl Viewer {
@@ -185,12 +198,15 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                     let src = resized_image_url(&item.url, ImageSize::Inline);
                     let size = known_size(&src);
                     let key = src.clone();
+                    // A size seen before sizes the tile at once (see `remember_size`).
+                    let style = size.map(|(w, h)| size_style(w, h));
+                    let sized = size.map(|_| "");
+                    let portrait = size.and_then(|(w, h)| (h > w).then_some(""));
                     let img = view! {
                         <img
                             src=src
                             width=size.map(|(w, _)| w)
                             height=size.map(|(_, h)| h)
-                            style=size.map(|(w, h)| format!("--w: {w}; --h: {h}"))
                             on:load=move |event| remember_size(&key, &event)
                             alt=item.alt.clone()
                             loading="lazy"
@@ -201,14 +217,22 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                     if open_on_click {
                         let label = format!("Open {} in the media viewer", item.alt);
                         view! {
-                            <button class="tile tile-image" type="button" aria-label=label on:click=move |_| open()>
+                            <button
+                                class="tile tile-image"
+                                type="button"
+                                aria-label=label
+                                style=style
+                                data-sized=sized
+                                data-portrait=portrait
+                                on:click=move |_| open()
+                            >
                                 {img}
                             </button>
                         }
                         .into_any()
                     } else {
                         view! {
-                            <a class="tile tile-image" href=href.clone()>
+                            <a class="tile tile-image" href=href.clone() style=style data-sized=sized data-portrait=portrait>
                                 {img}
                             </a>
                         }
