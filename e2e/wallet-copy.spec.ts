@@ -2,7 +2,7 @@
 import { expect, test } from "@playwright/test";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
-type ClipboardWindow = Window & { finishCopy: () => void };
+type ClipboardWindow = Window & { finishCopy: () => void; copyCalls: number };
 const address = `0x${"b".repeat(40)}`;
 
 test.beforeEach(async ({ page }) => {
@@ -16,7 +16,10 @@ test.beforeEach(async ({ page }) => {
 test("copy feedback waits for the clipboard write", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
-      writeText: () => new Promise<void>((resolve) => { (window as ClipboardWindow).finishCopy = resolve; }),
+      writeText: () => {
+        (window as ClipboardWindow).copyCalls = ((window as ClipboardWindow).copyCalls ?? 0) + 1;
+        return new Promise<void>((resolve) => { (window as ClipboardWindow).finishCopy = resolve; });
+      },
     } });
   });
   await page.goto("/u/fixture");
@@ -26,6 +29,9 @@ test("copy feedback waits for the clipboard write", async ({ page }) => {
   await copy.click();
   await expect(copy).toHaveText("Copying…");
   await expect(copy).toBeDisabled();
+  await expect(copy).toBeFocused();
+  await copy.dispatchEvent("click");
+  expect(await page.evaluate(() => (window as ClipboardWindow).copyCalls)).toBe(1);
   await page.evaluate(() => (window as ClipboardWindow).finishCopy());
   await expect(copy).toHaveText("Copied");
   await expect(copy).toBeEnabled();

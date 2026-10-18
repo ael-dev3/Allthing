@@ -284,6 +284,9 @@ fn WalletRow(kind: &'static str, address: String) -> impl IntoView {
     let attempt = RwSignal::new(0_u32);
     let full = address.clone();
     let copy = move |_| {
+        if state.get_untracked() == CopyState::Pending {
+            return;
+        }
         let generation = attempt.get_untracked().wrapping_add(1);
         attempt.set(generation);
         state.set(CopyState::Pending);
@@ -308,7 +311,7 @@ fn WalletRow(kind: &'static str, address: String) -> impl IntoView {
             <span class="chain-tag">{kind}</span>
             <code title=address.clone()>{short_address(&address)}</code>
             <button type="button" class="copy" on:click=copy aria-label=format!("Copy {address}")
-                disabled=move || state.get() == CopyState::Pending>
+                aria-disabled=move || (state.get() == CopyState::Pending).to_string()>
                 {move || match state.get() {
                     CopyState::Pending => "Copying…",
                     CopyState::Copied => "Copied",
