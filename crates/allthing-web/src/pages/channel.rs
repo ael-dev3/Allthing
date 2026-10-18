@@ -50,7 +50,7 @@ pub fn ChannelPage() -> impl IntoView {
         let path = channel_href(&key);
         match data.get() {
             None | Some(None) => view! {
-                <Columns side=().into_any()>
+                <Columns>
                     <div class="listing-head"><h1 class="page-title">"/"{allthing_core::channels::channel_label(&key)}</h1></div>
                     <CastSkeletons/>
                 </Columns>

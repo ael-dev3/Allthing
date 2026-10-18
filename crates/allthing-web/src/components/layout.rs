@@ -29,7 +29,6 @@ pub fn SiteHeader() -> impl IntoView {
                 <Wordmark/>
                 <nav class="main-nav" aria-label="Main">
                     <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
-                    <a href=href("/channels") aria-current=move || current("/channels").then_some("page")>"Channels"</a>
                 </nav>
                 <SearchBox/>
                 <span class="readonly-pill" title="Allthing only reads public Farcaster data. There is no sign-in and nothing is ever posted.">"read-only"</span>
@@ -68,11 +67,18 @@ pub fn SideBox(#[prop(into)] title: String, children: Children) -> impl IntoView
 /// `profile-columns`, which moves the sidebar under the profile header on
 /// narrow screens.
 #[component]
-pub fn Columns(side: AnyView, #[prop(optional, into)] class: String, children: Children) -> impl IntoView {
+pub fn Columns(
+    /// Sidebar content; without it the page is one centered column.
+    #[prop(optional)]
+    side: Option<AnyView>,
+    #[prop(optional, into)] class: String,
+    children: Children,
+) -> impl IntoView {
+    let single = if side.is_none() { " single" } else { "" };
     view! {
-        <div class=format!("columns {class}")>
+        <div class=format!("columns{single} {class}")>
             <div class="content">{children()}</div>
-            <aside class="side" aria-label="Sidebar">{side}</aside>
+            {side.map(|side| view! { <aside class="side" aria-label="Sidebar">{side}</aside> })}
         </div>
     }
 }

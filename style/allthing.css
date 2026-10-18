@@ -285,6 +285,13 @@ code {
   align-items: start;
 }
 
+/* No sidebar (the front page): one column, as wide as the main column
+   beside a sidebar, centered. */
+.columns.single {
+  grid-template-columns: minmax(0, 770px);
+  justify-content: center;
+}
+
 .side {
   position: sticky;
   top: 78px;

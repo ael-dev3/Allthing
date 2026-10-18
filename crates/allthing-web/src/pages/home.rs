@@ -13,7 +13,6 @@ use leptos_router::hooks::use_query_map;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice};
-use crate::pages::side::ChannelsBox;
 use crate::util::{href, set_title};
 
 /// The trending list ends after this many casts.
@@ -114,10 +113,9 @@ pub fn Home() -> impl IntoView {
     retry.set_value(Some(load_more));
 
     move || {
-        let side = |channels: Vec<allthing_core::model::Channel>| view! { <ChannelsBox channels/> }.into_any();
         match data.get() {
             None => view! {
-                <Columns side=side(Vec::new())>
+                <Columns>
                     <Heading sort/>
                     <CastSkeletons/>
                 </Columns>
@@ -152,7 +150,7 @@ pub fn Home() -> impl IntoView {
                     all
                 });
                 view! {
-                    <Columns side=side(payload.channels.clone())>
+                    <Columns>
                         <Heading sort/>
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>

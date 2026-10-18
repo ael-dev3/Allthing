@@ -74,7 +74,7 @@ pub fn PostPage() -> impl IntoView {
             });
             let notes: Notes = Arc::new(notes);
             return view! {
-                <Columns side=().into_any()>
+                <Columns>
                     <MainCast cast notes payload/>
                     <section class="replies" aria-label="Replies" aria-busy="true">
                         <div class="replies-head"><h2>"Replies"</h2></div>

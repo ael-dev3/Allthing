@@ -132,7 +132,12 @@ test.describe("front page", () => {
     // 0.3: no backend badges, intro, ranking or keyboard boxes; a Home button,
     // and a one-line footer with the version.
     await expect(page.locator(".backend")).toHaveCount(0);
-    await expect(page.locator(".main-nav a")).toHaveText(["Home", "Channels"]);
+    await expect(page.locator(".main-nav a")).toHaveText(["Home"]);
+    // No sidebar: the feed is one centered column.
+    await expect(page.locator(".side")).toHaveCount(0);
+    const feed = await page.locator(".columns .content").boundingBox();
+    const viewport = page.viewportSize()!;
+    expect(Math.abs(feed!.x + feed!.width / 2 - viewport.width / 2)).toBeLessThan(viewport.width > 900 ? 24 : 40);
     await expect(page.getByText("Front page")).toHaveCount(0);
     // No "Updated N min ago" anywhere.
     await expect(page.getByText(/Updated (just now|\d+ (min|h) ago)/)).toHaveCount(0);
