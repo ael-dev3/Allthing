@@ -614,6 +614,23 @@ test.describe("phone width", () => {
     await shoot(page, "phone-channels");
   });
 
+  test("profiles show the wallet panel before the casts", async ({ page }) => {
+    await page.goto(at("/u/0xael.eth"));
+    const panel = page.locator(".side .side-box").first();
+    const firstCast = page.locator(".cast-card").first();
+    await expect(firstCast).toBeVisible();
+    await expect(panel).toBeVisible();
+    const [p, c, h] = await Promise.all([panel.boundingBox(), firstCast.boundingBox(), page.locator(".profile").boundingBox()]);
+    expect(p!.y).toBeGreaterThan(h!.y + h!.height - 1);
+    expect(p!.y + p!.height).toBeLessThan(c!.y);
+    await panel.getByRole("button", { name: /verified wallet/ }).tap();
+    const list = page.getByRole("dialog", { name: "Verified wallets" });
+    await expect(list).toBeVisible();
+    await page.waitForTimeout(200);
+    await expectClearOfHeader(page, list);
+    await shoot(page, "phone-profile-wallets");
+  });
+
   test("tapping a replies count opens the preview", async ({ page }) => {
     await page.goto(at("/"));
     const button = page.locator(".cast-card button.stat-replies").first();
