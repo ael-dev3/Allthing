@@ -144,6 +144,7 @@ test.describe("front page", () => {
       Math.max(...cards.map((c) => Number(c.getAttribute("data-ts")))),
     );
     expect(Date.now() / 1000 - newest).toBeLessThan(2 * 86_400);
+    await settleImages(page);
     await shoot(page, "home");
   });
 
