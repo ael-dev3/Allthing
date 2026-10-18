@@ -174,6 +174,36 @@ fn await_sound(video: HtmlVideoElement) {
     AWAITING_SOUND.with(|a| *a.borrow_mut() = Some(video));
 }
 
+/// Whether `video` has at least [`AUTOPLAY_RATIO`] of itself on screen.
+fn mostly_in_view(video: &HtmlVideoElement) -> bool {
+    let rect = video.get_bounding_client_rect();
+    let height = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or(0.0);
+    let shown = rect.bottom().min(height) - rect.top().max(0.0);
+    rect.height() > 0.0 && shown / rect.height() >= AUTOPLAY_RATIO
+}
+
+/// Whether a video higher on the page than `video` is autoplaying and still
+/// in view. Autoplay goes to the topmost video in view, so `video` waits:
+/// otherwise whichever loaded last would take over, a reply's video from
+/// the post's.
+fn autoplaying_above(video: &HtmlVideoElement) -> bool {
+    ACTIVE.with(|active| {
+        active.borrow().as_ref().is_some_and(|(other, by_reader)| {
+            !*by_reader
+                && other != video
+                && !other.paused()
+                && video.compare_document_position(other) & web_sys::Node::DOCUMENT_POSITION_PRECEDING != 0
+                && mostly_in_view(other)
+        })
+    })
+}
+
+thread_local! {
+    /// Fires when an autoplaying video leaves the screen, so the videos still
+    /// in view look again for which of them should play.
+    static AUTOPLAY_TURN: ArcTrigger = ArcTrigger::new();
+}
+
 /// Muted autoplay in view, unless the reader prefers reduced motion or is
 /// saving data.
 fn autoplay_allowed() -> bool {
@@ -420,7 +450,7 @@ pub fn HlsVideo(
             return;
         }
         let Some(video) = video_ref.get_untracked() else { return };
-        if reader_watching_other(&video) {
+        if reader_watching_other(&video) || autoplaying_above(&video) {
             return;
         }
         if playback.with_value(|p| ensure_source(&video, &url.get_value(), p, PREVIEW_HEIGHT)).is_ok() {
@@ -439,12 +469,18 @@ pub fn HlsVideo(
         if full {
             return;
         }
+        AUTOPLAY_TURN.with(ArcTrigger::track);
         if in_view.get() && status.get() == Status::Ready {
             start_autoplay();
         } else if !in_view.get() {
             previewing.set(false);
-            if let Some(video) = video_ref.get_untracked() {
+            if let Some(video) = video_ref.get_untracked()
+                && !video.paused()
+            {
                 let _ = video.pause();
+                // Another video in view may play now: let them look, after
+                // this effect has finished.
+                set_timeout(|| AUTOPLAY_TURN.with(ArcTrigger::notify), Duration::ZERO);
             }
         }
     });
