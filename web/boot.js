@@ -5,8 +5,9 @@ if (location.hostname === "www.allthing.social") {
   location.replace("https://allthing.social" + location.pathname + location.search + location.hash);
 } else {
   try {
+    const module = compiled();
     const { default: init } = await import("./{{JS}}");
-    await init({ module_or_path: "{{BASE}}/assets/{{WASM}}" });
+    await init({ module_or_path: await module });
   } catch (error) {
     console.error("Allthing could not load", error);
     const boot = document.getElementById("boot");
@@ -34,5 +35,20 @@ if (location.hostname === "www.allthing.social") {
     if (root) root.replaceChildren(main);
     else document.body.append(main);
     if (document.activeElement === document.body) reload.focus();
+  }
+}
+
+// The Worker's copy of the module, compressed at brotli's highest level, or
+// the static copy if the Worker can't answer (its daily allowance spent,
+// say). Only fetching and compiling fall back: an error while the app starts
+// still shows the panel.
+async function compiled() {
+  const fallback = "{{BASE}}/assets/{{WASM}}";
+  if ("{{WASM_URL}}" === fallback) return fallback;
+  try {
+    return await WebAssembly.compileStreaming(fetch("{{WASM_URL}}"));
+  } catch (error) {
+    console.warn("Allthing: loading the static copy of the app", error);
+    return fallback;
   }
 }

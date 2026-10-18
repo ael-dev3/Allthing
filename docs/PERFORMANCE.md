@@ -92,6 +92,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - **Server time**: every API answer says how long the Worker spent on it in a `Server-Timing` header, named after how it was served (`fresh;dur=3`, or `miss;dur=1840` for a build the request waited for). Browsers show it in their network panel and in `PerformanceResourceTiming.serverTiming`. Clocks in a Worker only advance across I/O, so it measures waiting on the cache and upstream, not CPU time.
 - **Compact JSON**: payloads skip empty and default fields (`skip_serializing_if`). Cloudflare compresses responses with Brotli for clients that accept it.
 - **Immutable assets**: the app's `.wasm`, `.js` and `.css` are fingerprinted and served with `Cache-Control: public, max-age=31536000, immutable` (`web/_headers`).
+- **The WebAssembly at brotli's highest level**: the edge compresses static assets on the fly at a fast level, which left the 1.5 MB module at about 550 KB. The build also writes a copy compressed at quality 11 (`<name>.wasm.br`, about 434 KB), and the page loads the module from `/wasm/<name>`, which the Worker answers with that copy (`Content-Encoding: br`, passed through as it is) to browsers that accept brotli, and with the module itself to the rest. That is a fifth less to download before anything renders. If the Worker can't answer, `boot.js` loads `/assets/<name>`, the static copy.
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
 
 ### 5. Infinite scroll

@@ -17,11 +17,14 @@ routes = [
 
 # The browser app, its styles and fonts, built by scripts/build.sh.
 # Requests for assets are free and never invoke the Worker; unknown paths
-# get index.html (client-side routing). Only /api/* runs the Worker.
+# get index.html (client-side routing). /api/* runs the Worker, and so does
+# /wasm/*: the app's WebAssembly, served compressed at brotli's highest
+# level from the copy the build writes (ASSETS reads it).
 [assets]
 directory = "dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/version"]
+run_worker_first = ["/api/*", "/version", "/wasm/*"]
 
 # Per-client backstop so one client cannot drain the 100k requests/day
 # allowance: 120 API calls a minute per IP, per Cloudflare location.

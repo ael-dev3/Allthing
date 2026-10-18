@@ -50,6 +50,22 @@ fn available(program: &str) -> bool {
     Command::new(program).arg("--version").output().is_ok_and(|o| o.status.success())
 }
 
+/// Write `input` compressed at brotli's highest level to `output`, with
+/// Node's zlib (wrangler needs Node anyway). Without Node no copy is written,
+/// and the Worker serves the module as it is.
+fn brotli(input: &Path, output: &Path) {
+    const SCRIPT: &str = "const z = require('zlib'), fs = require('fs'); \
+        const bytes = fs.readFileSync(process.argv[1]); \
+        fs.writeFileSync(process.argv[2], z.brotliCompressSync(bytes, { params: { \
+          [z.constants.BROTLI_PARAM_QUALITY]: 11, [z.constants.BROTLI_PARAM_LGWIN]: 24, \
+          [z.constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } }));";
+    let _ = fs::remove_file(output);
+    match Command::new(tool("NODE_BIN", "node")).args(["-e", SCRIPT]).arg(input).arg(output).status() {
+        Ok(status) if status.success() => {}
+        _ => eprintln!("xtask: could not compress {} with Node; the Worker will serve it as is", input.display()),
+    }
+}
+
 /// FNV-1a, for cache-busting file names.
 fn fingerprint(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -166,6 +182,14 @@ fn site(site: &Site) -> Result<()> {
     let wasm = read(&wasm_path)?;
     let wasm_name = format!("allthing-{}.wasm", fingerprint(&wasm));
     write(&assets.join(&wasm_name), &wasm)?;
+    // The Worker serves the module at /wasm/ from a copy compressed at
+    // brotli's highest level; the static copy has no Worker.
+    let wasm_url = if site.static_host {
+        format!("{base}/assets/{wasm_name}")
+    } else {
+        brotli(&assets.join(&wasm_name), &assets.join(format!("{wasm_name}.br")));
+        format!("/wasm/{wasm_name}")
+    };
     let js = read(&bindgen_out.join("allthing.js"))?;
     let js_name = format!("allthing-{}.js", fingerprint(&js));
     write(&assets.join(&js_name), &js)?;
@@ -175,7 +199,11 @@ fn site(site: &Site) -> Result<()> {
     write(&assets.join(&css_name), &css)?;
 
     let boot_template = String::from_utf8(read(&root.join("web/boot.js"))?).map_err(|e| e.to_string())?;
-    let boot = boot_template.replace("{{JS}}", &js_name).replace("{{WASM}}", &wasm_name).replace("{{BASE}}", base);
+    let boot = boot_template
+        .replace("{{JS}}", &js_name)
+        .replace("{{WASM_URL}}", &wasm_url)
+        .replace("{{WASM}}", &wasm_name)
+        .replace("{{BASE}}", base);
     let boot_name = format!("boot-{}.js", fingerprint(boot.as_bytes()));
     write(&assets.join(&boot_name), &boot)?;
 
@@ -198,7 +226,7 @@ fn site(site: &Site) -> Result<()> {
     let html = html
         .replace("{{CSS}}", &format!("{base}/assets/{css_name}"))
         .replace("{{JS}}", &format!("{base}/assets/{js_name}"))
-        .replace("{{WASM}}", &format!("{base}/assets/{wasm_name}"))
+        .replace("{{WASM}}", &wasm_url)
         .replace("{{BOOT}}", &format!("{base}/assets/{boot_name}"))
         .replace("{{BASE}}", base);
     write(&dist.join("index.html"), &html)?;
