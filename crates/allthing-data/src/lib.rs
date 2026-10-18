@@ -74,11 +74,12 @@ pub trait Host {
 pub struct Invocation {
     host: Rc<dyn Host>,
     budget: Cell<u32>,
+    link_checks: Cell<usize>,
 }
 
 impl Invocation {
     pub fn new(host: Rc<dyn Host>, budget: u32) -> Invocation {
-        Invocation { host, budget: Cell::new(budget) }
+        Invocation { host, budget: Cell::new(budget), link_checks: Cell::new(miniapps::MAX_CHECKS) }
     }
 
     /// Unix milliseconds.
@@ -98,6 +99,13 @@ impl Invocation {
 
     pub fn remaining_subrequests(&self) -> u32 {
         self.budget.get()
+    }
+
+    /// All link-checking phases share one quota, including quoted casts.
+    pub(crate) fn take_link_checks(&self, wanted: usize) -> usize {
+        let taken = wanted.min(self.link_checks.get());
+        self.link_checks.set(self.link_checks.get() - taken);
+        taken
     }
 
     pub fn wait_until(&self, future: impl Future<Output = ()> + 'static) {
