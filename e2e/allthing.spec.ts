@@ -286,6 +286,31 @@ test.describe("media", () => {
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 3 && v.currentTime >= 4.5), { timeout: 15_000 }).toBe(true);
   });
 
+  test("a click on a video while its playlist loads plays it once loaded", async ({ page }) => {
+    await useFixtureStream(page);
+    // Hold the playlist until the reader has clicked.
+    let release!: () => void;
+    const clicked = new Promise<void>((done) => (release = done));
+    await page.route("https://stream.farcaster.xyz/v1/video/**", async (route: Route) => {
+      if (route.request().url().endsWith(".m3u8")) await clicked;
+      await route.fallback();
+    });
+    try {
+      await page.goto(at(`/p/${VIDEO_CAST}`));
+      const player = page.locator(".post .video").first();
+      await expect(player).toHaveClass(/\bloading\b/);
+      await player.locator(".video-play").click();
+      release();
+      const video = player.locator("video");
+      await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(0.1);
+      // With sound and controls, as a click asks, not a muted autoplay.
+      await expect(video).toHaveJSProperty("muted", false);
+      await expect(video).toHaveJSProperty("controls", true);
+    } finally {
+      release();
+    }
+  });
+
   test("a video scrolling into view autoplays without flashing the play icon", async ({ page }) => {
     await useFixtureStream(page);
     // The playlist takes a moment, as over a real network...
