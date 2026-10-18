@@ -65,6 +65,8 @@ features = [
     "History",
     "ScrollRestoration",
     "RequestInit",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
     "Response",
     "ScrollBehavior",
     "ScrollIntoViewOptions",
