@@ -286,6 +286,26 @@ pub const LATEST_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 60, keep: 
 pub const CHANNEL_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 900, keep: 86_400, browser: 60 };
 pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
+/// When the account in a cached profile payload got its first username, if
+/// the payload is `fid`'s and knew it: a build whose own read failed keeps it.
+pub fn first_username_at_in(payload: &[u8], fid: u64) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct Previous {
+        user: PreviousUser,
+    }
+    #[derive(Deserialize)]
+    struct PreviousUser {
+        fid: u64,
+        #[serde(default)]
+        first_username_at: Option<i64>,
+    }
+    let user = serde_json::from_slice::<Previous>(payload).ok()?.user;
+    if user.fid == fid { user.first_username_at } else { None }
+}
+
+/// A profile built while a secondary read failed (when the account joined):
+/// refreshed soon, so the gap isn't kept for the usual five minutes.
+pub const USER_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 300, keep: 86_400, browser: 15 };
 pub const WALLET_CACHE: CachePolicy = CachePolicy { fresh: 21_600, stale: 86_400, keep: 172_800, browser: 3600 };
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
@@ -378,10 +398,27 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_keeps_the_first_username_date_its_previous_copy_had() {
+        let payload = br#"{"user":{"fid":3,"username":"dwr","first_username_at":1623888000},"pool":[],"meta":{"backend":"hypersnap","fetched_at":0}}"#;
+        assert_eq!(first_username_at_in(payload, 3), Some(1_623_888_000));
+        assert_eq!(first_username_at_in(payload, 4), None);
+        assert_eq!(first_username_at_in(br#"{"user":{"fid":3,"username":"dwr"},"pool":[]}"#, 3), None);
+        assert_eq!(first_username_at_in(b"not json", 3), None);
+    }
+
+    #[test]
     fn policies_are_ordered() {
-        for policy in
-            [HOME_CACHE, LATEST_CACHE, CHANNEL_CACHE, CAST_CACHE, USER_CACHE, WALLET_CACHE, CHANNELS_CACHE, MISS_CACHE]
-        {
+        for policy in [
+            HOME_CACHE,
+            LATEST_CACHE,
+            CHANNEL_CACHE,
+            CAST_CACHE,
+            USER_CACHE,
+            USER_RETRY_CACHE,
+            WALLET_CACHE,
+            CHANNELS_CACHE,
+            MISS_CACHE,
+        ] {
             assert!(policy.fresh <= policy.stale && policy.stale <= policy.keep);
             assert!(policy.browser <= policy.fresh);
         }

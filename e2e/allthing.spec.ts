@@ -532,7 +532,7 @@ test.describe("profiles", () => {
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ followers/);
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ following/);
     await expect(profile.locator(".bio")).toHaveText(/\S/);
-    await expect(profile.locator(".fact", { hasText: "Registered" }).locator("dd")).toHaveText(/\d{4}/);
+    await expect(profile.locator(".fact", { hasText: "Joined" }).locator("dd")).toHaveText(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/);
     await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText(/no label|labeled|spam|Nerfed|unavailable/i);
     // The vote, read onchain on Base (0xael.eth voted to stay).
     await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted yes");
@@ -541,6 +541,9 @@ test.describe("profiles", () => {
     await expect(page.getByText(/Voted to (stay|leave)|Stay vote revoked|Did not vote|checking…/)).toHaveCount(0);
     await page.goto(at("/u/vitalik.eth"));
     await expect(page.locator(".profile .vote-fact .vote")).toHaveText("Didn't vote");
+    // Registered before the ID registry's move to OP Mainnet: joined when
+    // the account got its first username, on 18 Nov 2022.
+    await expect(page.locator(".profile .fact", { hasText: "Joined" }).locator("dd")).toHaveText("18 Nov 2022");
 
     // The side area holds only the wallet infographic.
     const wallets = page.locator(".side .wallets");

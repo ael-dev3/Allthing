@@ -8,7 +8,7 @@ use allthing_core::api::{UserPayload, user_path, vote_path, wallets_path};
 use allthing_core::format::{full_number, short_address};
 use allthing_core::labels::SpamLabel;
 use allthing_core::listing::{replies_only, top_level};
-use allthing_core::model::User;
+use allthing_core::model::{Joined, User};
 use allthing_core::params::username_from_param;
 use allthing_core::ranking::{Sort, sorted};
 use allthing_core::time::{duration_since, format_date};
@@ -27,10 +27,6 @@ use crate::components::text::CastText;
 use crate::labels::{LabelState, spam_label};
 use crate::util::{now, set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
-
-/// FIDs registered before the November 2023 move of the ID registry to OP
-/// Mainnet report the migration date as their registration.
-const MIGRATION_DAY: std::ops::Range<i64> = 1_699_315_200..1_699_401_600;
 
 #[component]
 pub fn UserPage() -> impl IntoView {
@@ -107,12 +103,18 @@ fn ProfileHeader(user: User) -> impl IntoView {
         let fid = user.fid;
         move || spam_label(fid)
     });
-    let registered = user.registered_at.map(|ts| {
-        if MIGRATION_DAY.contains(&ts) {
-            ("before Nov 2023".to_owned(), "Registered before the ID registry moved to OP Mainnet on 7 Nov 2023, which is the earliest date onchain data reports.".to_owned())
-        } else {
-            (format_date(ts), format!("Registered onchain {} ago", duration_since(ts, now())))
-        }
+    const MIGRATION: &str =
+        "the ID registry moved to OP Mainnet on 7 Nov 2023, which is the earliest date onchain data has for it";
+    let joined = user.joined().map(|joined| match joined {
+        Joined::Registered(ts) => (format_date(ts), format!("Registered onchain {} ago.", duration_since(ts, now()))),
+        Joined::FirstUsername(ts) => (
+            format_date(ts),
+            format!(
+                "Got its first username {} ago. The account was registered before {MIGRATION}.",
+                duration_since(ts, now())
+            ),
+        ),
+        Joined::BeforeMigration => ("before Nov 2023".to_owned(), format!("Registered before {MIGRATION}.")),
     });
     view! {
         <section class="profile" aria-label="Profile">
@@ -134,9 +136,9 @@ fn ProfileHeader(user: User) -> impl IntoView {
                 view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> }.into_any()
             }}
             <dl class="facts">
-                {registered.map(|(date, note)| view! {
+                {joined.map(|(date, note)| view! {
                     <div class="fact" title=note>
-                        <dt>"Registered"</dt>
+                        <dt>"Joined"</dt>
                         <dd>{date}</dd>
                     </div>
                 })}

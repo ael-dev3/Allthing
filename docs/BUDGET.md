@@ -58,6 +58,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | channel | 2 min | 15 min | 24 h | 60 s |
 | cast | 2 min | 30 min | 24 h | 60 s |
 | user | 5 min | 30 min | 24 h | 2 min |
+| user, when the first-username read failed | 30 s | 5 min | 24 h | 15 s |
 | wallets | 6 h | 24 h | 48 h | 1 h |
 | channels | 1 h | 24 h | 48 h | 10 min |
 | search | 5 min | 30 min | 24 h | 2 min |
@@ -84,7 +85,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
 | channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
-| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + apps ≤1 + cache write 1 (≤ 23) |
+| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤12 + apps ≤1 + cache write 1 (≤ 24) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
 | search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + cache write 1 (≤ 18) |

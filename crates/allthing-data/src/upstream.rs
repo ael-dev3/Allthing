@@ -22,6 +22,8 @@ pub enum Upstream {
     Chain(&'static str),
     /// The farcaster.xyz app's public read API (vote status, channel details).
     FarcasterApp,
+    /// The fname server's public transfer log (when accounts got usernames).
+    Fnames,
     /// Pages that casts link to, read for mini app meta tags. Many sites,
     /// so no breaker: one broken site says nothing about the others.
     LinkPage,
@@ -34,6 +36,7 @@ impl Upstream {
             Upstream::BaseRpc => "base-rpc",
             Upstream::Chain(slug) => slug,
             Upstream::FarcasterApp => "farcaster-app",
+            Upstream::Fnames => "fnames",
             Upstream::LinkPage => "link-pages",
         }
     }
@@ -45,6 +48,7 @@ impl Upstream {
             Upstream::BaseRpc => (10, 2.0),
             Upstream::Chain("solana") => (2, 0.2),
             Upstream::FarcasterApp => (6, 1.0),
+            Upstream::Fnames => (6, 1.0),
             Upstream::LinkPage => (12, 2.0),
             Upstream::Chain(_) => (4, 0.5),
         }
