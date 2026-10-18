@@ -2043,7 +2043,7 @@ code {
   margin: 0 0 26px;
 }
 
-.results-group h2 {
+.results-group > h2 {
   font: 400 24px/1.1 var(--font-display);
   margin: 0 0 10px;
 }
@@ -2055,6 +2055,24 @@ code {
   padding: 0;
   display: grid;
   gap: 8px;
+}
+
+.people {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+
+.channel-results {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+}
+
+.results-group > h2 .count {
+  font: 500 13px/1 var(--font-ui);
+  color: var(--ink-3);
+  margin-left: 4px;
+}
+
+.show-all {
+  margin-top: 10px;
 }
 
 .person,
@@ -2083,6 +2101,16 @@ code {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.person-text > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person .small {
+  white-space: nowrap;
 }
 
 .channel-results img {
