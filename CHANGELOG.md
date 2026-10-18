@@ -9,6 +9,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Opening a post, a profile or a channel directly (from a link elsewhere, or a reload) starts its data request as soon as the page arrives, alongside the app's download, as the front page already did. Before, it waited for the app to boot, about 450 ms on production. It is still one API call.
 
+### Fixed
+
+- Taps, clicks and keystrokes show their result sooner on every page: about 16–32 ms instead of 40–64 ms after the input in a headless browser without a GPU. The line of light drifting along the header animated its background, which repainted the header in every frame while it ran (always), and the next frame after an input waited behind that work. It now slides by transform, which the compositor animates without repainting; it looks the same and still stops under reduced motion.
+
 ## [0.4.0] - 2026-10-18
 
 - Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
