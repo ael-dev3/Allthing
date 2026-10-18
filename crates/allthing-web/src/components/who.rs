@@ -2,12 +2,17 @@
 //! Who liked or recasted a cast (a short list on hover, the full list in a
 //! dialog), and a preview of a cast's replies.
 
+use std::cell::RefCell;
+
 use allthing_core::api::{ReactionKind, ReactionsPayload, RepliesPayload, reactions_path, replies_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::model::Embed;
 use allthing_core::text::truncate_title;
 use leptos::ev;
 use leptos::prelude::*;
+use leptos_router::hooks::use_location;
+use wasm_bindgen::JsCast;
+use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::chips::{Avatar, ScoreBadge, TimeAgo};
@@ -17,9 +22,32 @@ use crate::util::{cast_href, user_href};
 #[derive(Clone, Copy)]
 pub struct WhoList(pub RwSignal<Option<(String, ReactionKind)>>);
 
+thread_local! {
+    static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
+}
+
 impl WhoList {
     pub fn new() -> WhoList {
         WhoList(RwSignal::new(None))
+    }
+
+    pub fn open(self, hash: String, kind: ReactionKind) {
+        let active = document().active_element();
+        // "See everyone" lives in a temporary preview. Return to its count
+        // button, which remains on the page after the preview closes.
+        let trigger = active
+            .as_ref()
+            .and_then(|el| el.closest(".popover").ok().flatten())
+            .and_then(|root| root.query_selector(".popover-trigger").ok().flatten());
+        RETURN_FOCUS.with(|r| *r.borrow_mut() = trigger.or(active).and_then(|el| el.dyn_into().ok()));
+        self.0.set(Some((hash, kind)));
+    }
+
+    fn close(self) {
+        self.0.set(None);
+        if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
+            let _ = element.focus();
+        }
     }
 }
 
@@ -76,7 +104,7 @@ pub fn WhoPreview(hash: String, kind: ReactionKind) -> impl IntoView {
                 view! {
                     <People payload=fetched.data.clone()/>
                     {more.then(|| view! {
-                        <button type="button" class="link-button" on:click=move |_| who.0.set(Some((hash.clone(), kind)))>"See everyone →"</button>
+                        <button type="button" class="link-button" on:click=move |_| who.open(hash.clone(), kind)>"See everyone →"</button>
                     })}
                 }
                 .into_any()
@@ -89,13 +117,62 @@ pub fn WhoPreview(hash: String, kind: ReactionKind) -> impl IntoView {
 #[component]
 pub fn WhoDialog() -> impl IntoView {
     let who = use_who_list();
-    let close = move || who.0.set(None);
-    let keys = window_event_listener(ev::keydown, move |ev| {
-        if ev.key() == "Escape" && who.0.with_untracked(Option::is_some) {
-            close();
+    let location = use_location();
+    let dialog = NodeRef::<leptos::html::Div>::new();
+    let close = move || who.close();
+    // A history navigation or a link in the list must not leave the modal
+    // covering a different page. Its old opener no longer needs focus.
+    Effect::new(move |_| {
+        let _ = (location.pathname.get(), location.search.get());
+        who.0.set(None);
+        RETURN_FOCUS.with(|r| r.borrow_mut().take());
+    });
+    Effect::new(move |_| {
+        let open = who.0.with(Option::is_some);
+        if let Some(root) = document().document_element() {
+            let _ = root.class_list().toggle_with_force("who-open", open);
         }
     });
-    on_cleanup(move || keys.remove());
+    let keys = window_event_listener(ev::keydown, move |ev| {
+        if who.0.with_untracked(Option::is_none) {
+            return;
+        }
+        match ev.key().as_str() {
+            "Escape" => {
+                ev.prevent_default();
+                close();
+            }
+            "Tab" => {
+                let Some(root) = dialog.get_untracked() else { return };
+                let Ok(nodes) = root.query_selector_all("button, a[href]") else { return };
+                let first = nodes.get(0).and_then(|n| n.dyn_into::<HtmlElement>().ok());
+                let last = nodes.get(nodes.length().saturating_sub(1)).and_then(|n| n.dyn_into::<HtmlElement>().ok());
+                let active = document().active_element();
+                let at = |el: &Option<HtmlElement>| {
+                    el.as_ref().map(|e| e.unchecked_ref::<web_sys::Element>().clone()) == active
+                };
+                if ev.shift_key() && at(&first) {
+                    ev.prevent_default();
+                    if let Some(last) = last {
+                        let _ = last.focus();
+                    }
+                } else if !ev.shift_key() && at(&last) {
+                    ev.prevent_default();
+                    if let Some(first) = first {
+                        let _ = first.focus();
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+    on_cleanup(move || {
+        keys.remove();
+        RETURN_FOCUS.with(|r| r.borrow_mut().take());
+        if let Some(root) = document().document_element() {
+            let _ = root.class_list().remove_1("who-open");
+        }
+    });
     move || {
         who.0.get().map(|(hash, kind)| {
             let path = reactions_path(&hash, kind, 100);
@@ -110,9 +187,12 @@ pub fn WhoDialog() -> impl IntoView {
                 }
             });
             view! {
-                <div class="modal-backdrop" on:click=move |_| close()>
-                    <div class="modal who-modal" role="dialog" aria-modal="true" aria-label=heading(kind)
-                        on:click=|ev: ev::MouseEvent| ev.stop_propagation()>
+                <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
+                    if ev.target() == ev.current_target() {
+                        close();
+                    }
+                }>
+                    <div class="modal who-modal" role="dialog" aria-modal="true" aria-label=heading(kind) node_ref=dialog>
                         <header class="modal-head">
                             <h2>{heading(kind)}</h2>
                             <button type="button" class="modal-close" aria-label="Close" node_ref=close_button on:click=move |_| close()>"×"</button>

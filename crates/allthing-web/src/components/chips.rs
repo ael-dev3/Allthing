@@ -136,7 +136,7 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
                 trigger_label=format!("{}{}: show who", compact_number(n), many)
                 trigger_class=format!("stat {class}")
                 hover=true
-                on_activate=Callback::new(move |()| who.0.set(Some((hash.clone(), kind))))
+                on_activate=Callback::new(move |()| who.open(hash.clone(), kind))
                 trigger=move || stat_body(icon, n, one, many)
                 content=move || view! { <WhoPreview hash=preview_hash.clone() kind/> }
             />
