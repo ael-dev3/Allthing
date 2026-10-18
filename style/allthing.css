@@ -1888,17 +1888,215 @@ code {
 
 /* ---------- Channels ---------- */
 
-.channel-head {
+/* A channel's header. Every part is optional: the banner keeps a fixed 3:1
+   box so nothing moves when it loads, and the picture overlaps its bottom
+   edge with the names below it; without a banner the picture sits beside
+   the names. */
+.channel-hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 14px;
+}
+
+.channel-banner {
+  aspect-ratio: 3 / 1;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(360px 120px at 18% 50%, var(--glow-cyan), transparent 70%),
+    radial-gradient(420px 130px at 70% 40%, var(--glow-violet), transparent 70%),
+    var(--paper-2);
+}
+
+.channel-banner img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.channel-hero-body {
+  position: relative;
+  padding: 18px 22px;
+}
+
+.channel-identity {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 10px;
+  gap: 16px;
+  min-width: 0;
+}
+
+.channel-hero.has-banner .channel-identity {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .channel-image {
-  border-radius: 14px;
+  flex: none;
+  width: 88px;
+  height: 88px;
+  border-radius: var(--radius);
   object-fit: cover;
-  box-shadow: 0 0 0 3px #fff, 0 0 0 4px var(--line);
+  background: var(--paper-2);
+  box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--line), 0 14px 34px -14px rgba(79, 67, 212, 0.55);
+}
+
+/* Half the picture over the banner: the body's top padding plus half its height. */
+.channel-hero.has-banner .channel-image {
+  margin-top: -62px;
+}
+
+.channel-names {
+  min-width: 0;
+}
+
+.channel-handle {
+  margin: 5px 0 0;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.channel-description {
+  margin: 14px 0 0;
+  max-width: 68ch;
+  font-size: 15.5px;
+  overflow-wrap: anywhere;
+}
+
+.channel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.channel-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 500;
+}
+
+.channel-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-link .icon,
+.pinned-label .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.channel-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 14px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.host-group {
+  min-width: 0;
+}
+
+.host-group dt {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 7px;
+}
+
+.host-group dd {
+  margin: 0;
+}
+
+.host-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 14px;
+}
+
+.host-list li {
+  min-width: 0;
+}
+
+.host {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.host:hover {
+  color: var(--accent);
+}
+
+.host-name {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-more {
+  font: 600 12.5px/1 var(--font-ui);
+  color: var(--ink-2);
+  background: var(--paper-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 5px 9px;
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+.host-more:hover {
+  color: var(--ink);
+  border-color: rgba(79, 67, 212, 0.35);
+}
+
+.pinned-cast {
+  margin: 0 0 16px;
+}
+
+.pinned-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 7px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #8a5d12;
 }
 
 .search {
@@ -1969,7 +2167,7 @@ code {
   font-size: 14.5px;
 }
 
-.members {
+.channel-count {
   margin-left: auto;
   font-size: 12px;
   color: var(--ink-3);
@@ -2716,6 +2914,31 @@ code {
 
   .profile-name {
     font-size: 31px;
+  }
+
+  .channel-hero-body {
+    padding: 14px 15px 15px;
+  }
+
+  .channel-identity {
+    gap: 12px;
+  }
+
+  .channel-image {
+    width: 64px;
+    height: 64px;
+  }
+
+  .channel-hero.has-banner .channel-image {
+    margin-top: -46px;
+  }
+
+  .channel-description {
+    font-size: 15px;
+  }
+
+  .channel-hosts {
+    gap: 10px 20px;
   }
 
   .comment-inner {

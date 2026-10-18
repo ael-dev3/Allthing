@@ -1,0 +1,31 @@
+{
+  "result": {
+    "channel": {
+      "id": "dev",
+      "url": "chain://eip155:1/erc721:0x7dd4e31f1530ac682c8ea4d8016e95773e08d8b0",
+      "name": "dev",
+      "description": "Cultivating curiosity for software developers",
+      "descriptionMentions": [],
+      "descriptionMentionsPositions": [],
+      "imageUrl": "https://ipfs.decentralized-content.com/ipfs/bafkreigbei45ni5zsliszzeivotgee5auj2ykkh6zrzjwvm4izviidusny",
+      "createdAt": 1689121073,
+      "followerCount": 183421,
+      "memberCount": 475,
+      "publicCasting": true,
+      "leadFid": 191,
+      "moderatorFids": [
+        191,
+        2172,
+        834,
+        725,
+        6841,
+        7657,
+        864314
+      ],
+      "externalLink": {
+        "title": "",
+        "url": ""
+      }
+    }
+  }
+}

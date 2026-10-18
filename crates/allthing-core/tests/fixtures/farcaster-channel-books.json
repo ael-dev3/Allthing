@@ -1,0 +1,32 @@
+{
+  "result": {
+    "channel": {
+      "id": "books",
+      "url": "chain://eip155:1/erc721:0xc18f6a34019f5ba0fc5bc8cb6fe52e898d6bbbee",
+      "name": "Books",
+      "description": "A vibrant community of readers where we discuss ideas, learn together, and recommend books to help each other grow. DM  for an invite with a link to a bookish cast you’ve posted.",
+      "descriptionMentions": [
+        129
+      ],
+      "descriptionMentionsPositions": [
+        119
+      ],
+      "imageUrl": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/44e5f409-f698-4e97-9283-860ab6597800/rectcrop3",
+      "createdAt": 1687928905,
+      "followerCount": 80091,
+      "memberCount": 501,
+      "publicCasting": false,
+      "headerImageUrl": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/48b3a25b-d98d-47fe-23ff-8b333ddf6a00/original",
+      "leadFid": 129,
+      "moderatorFids": [
+        129,
+        396644
+      ],
+      "pinnedCastHash": "0xbe7d6df1ecda1ffa6a2aa2e435b486cc37cf1135",
+      "externalLink": {
+        "title": "",
+        "url": ""
+      }
+    }
+  }
+}

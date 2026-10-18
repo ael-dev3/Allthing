@@ -912,8 +912,49 @@ test.describe("threads and navigation", () => {
     await expect(page.locator(".channel-card").first()).toBeVisible();
     await page.locator(".channel-card a", { hasText: "/farcaster" }).click();
     await expect(page).toHaveURL(/\/c\/farcaster/);
-    await expect(page.locator(".page-title")).toHaveText("/farcaster");
+    // The Farcaster app's display name, or the id where the app can't be read (the static copy).
+    await expect(page.locator(".page-title")).toHaveText(/^(Farcaster|\/farcaster)$/);
     await expect(firstCard(page)).toBeVisible();
+  });
+
+  test("channel pages show the channel's details and true member counts", async ({ page }) => {
+    for (const { id, name } of [
+      { id: "dev", name: "/dev" },
+      { id: "farcaster", name: "Farcaster" },
+      { id: "base", name: "Base" },
+    ]) {
+      await page.goto(at(`/c/${id}`));
+      await expect(firstCard(page)).toBeVisible();
+      const hero = page.locator(".channel-hero");
+      const counts = hero.locator(".channel-stats .count");
+      if (PAGES) {
+        // The static copy can't read the Farcaster app's channel API (no CORS
+        // headers): Hypersnap's count of casters shows, never called members.
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(`/${id}`);
+        await expect(counts).toHaveText([/^[\d,]+ casters?$/]);
+        await expect(hero).not.toContainText(/\bmembers?\b/);
+        continue;
+      }
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(name);
+      if (name !== `/${id}`) await expect(hero.locator(".channel-handle")).toHaveText(`/${id}`);
+      const members = counts.filter({ hasText: /^[\d,]+ members?$/ });
+      await expect(members.or(counts.filter({ hasText: /^[\d,]+ followers?$/ })).first()).toBeVisible();
+      await expect(counts.filter({ hasText: /casters?$/ })).toHaveCount(0);
+      if (id === "dev") {
+        // Hypersnap's count of distinct casters (15,664) was shown as members; /dev has a few hundred.
+        const n = Number((await members.innerText()).replace(/\D/g, ""));
+        expect(n, "/dev's member count").toBeGreaterThan(0);
+        expect(n, "/dev's member count").toBeLessThan(5000);
+      }
+      if (id === "farcaster") {
+        const pinned = page.getByRole("region", { name: "Pinned" });
+        if (await pinned.count()) {
+          const card = pinned.locator(".cast-card");
+          await expect(card).toHaveCount(1);
+          await expect(card.locator("header.cast-meta .user-chip .author")).toHaveText(/^@/);
+        }
+      }
+    }
   });
 
   test("read-only: no sign-in, no writes", async ({ page }) => {
@@ -1002,7 +1043,7 @@ test.describe("phone width", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("pages fit the screen without sideways scrolling", async ({ page }) => {
-    for (const path of ["/", "/u/0xael.eth", `/p/${VIDEO_CAST}`, "/search?q=farcaster", "/channels"]) {
+    for (const path of ["/", "/u/0xael.eth", `/p/${VIDEO_CAST}`, "/search?q=farcaster", "/c/farcaster", "/channels"]) {
       await page.goto(at(path));
       await expect(page.locator("main .cast-card, main .person, main .channel-card, main .post").first()).toBeVisible();
       await page.waitForTimeout(500);

@@ -8,10 +8,10 @@ use allthing_core::api::{
     self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, LatestPayload, Meta, QuotedCast,
     ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
 };
-use allthing_core::channels::{channel_url_for_id, is_channel_id};
+use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel, Embed};
-use allthing_core::normalize;
+use allthing_core::normalize::{self, RawAppChannel};
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
 use allthing_core::ranking::TrendingWindow;
@@ -37,12 +37,10 @@ fn targets(casts: &[&Cast]) -> Vec<Target> {
     casts.iter().map(|c| (c.author.fid, c.hash.clone())).collect()
 }
 
-/// Trending channels worth showing: named, and not near-empty.
+/// Trending channels worth showing: named, and not near-empty (fewer than
+/// ten accounts have cast there).
 fn named_channels(raw: Vec<normalize::RawChannel>) -> Vec<Channel> {
-    raw.iter()
-        .map(normalize::channel)
-        .filter(|c| is_channel_id(&c.id) && c.member_count.is_none_or(|m| m >= 10))
-        .collect()
+    raw.iter().map(normalize::channel).filter(|c| is_channel_id(&c.id) && c.casters.is_none_or(|n| n >= 10)).collect()
 }
 
 /// Top up a short trending list with well-known channels.
@@ -56,10 +54,7 @@ fn with_defaults(mut channels: Vec<Channel>, limit: usize) -> Vec<Channel> {
                 id: (*id).to_owned(),
                 name: (*id).to_owned(),
                 parent_url: channel_url_for_id(id),
-                description: None,
-                image_url: None,
-                member_count: None,
-                created_at: None,
+                ..Channel::default()
             });
         }
     }
@@ -181,24 +176,64 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
 }
 
+/// The Farcaster app's record of a channel, when it has an id there and the
+/// app can be read (it can't from a browser: no CORS).
+async fn app_channel(inv: &Invocation, id: Option<&str>) -> Option<RawAppChannel> {
+    hypersnap::app_channel(inv, id?).await.ok().flatten()
+}
+
 pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    // The feed URL is almost always predictable from the key, so fetch it
-    // alongside the channel lookup instead of after it.
+    // The feed URL is almost always predictable from the key, and so is the
+    // id the Farcaster app knows the channel by: fetch the feed and the app's
+    // record alongside the channel lookup instead of after it.
     let guess = if is_channel_id(&key) { channel_url_for_id(&key) } else { key.clone() };
-    let (channel, guessed) =
-        join(hypersnap::channel(&inv, &key), hypersnap::channel_casts(&inv, &guess, POOL_SIZE / 2)).await;
-    let Some(channel) = channel.map_err(Failure::upstream)? else {
+    let app_id = if is_channel_id(&key) { Some(key.clone()) } else { channel_id_for_url(&key) };
+    let (channel, guessed, app) = join3(
+        hypersnap::channel(&inv, &key),
+        hypersnap::channel_casts(&inv, &guess, POOL_SIZE / 2),
+        app_channel(&inv, app_id.as_deref()),
+    )
+    .await;
+    let Some(mut channel) = channel.map_err(Failure::upstream)? else {
         return Ok(Built::not_found("No such channel"));
     };
-    let raw = match guessed {
-        Ok(casts) if channel.parent_url == guess => casts,
-        _ => hypersnap::channel_casts(&inv, &channel.parent_url, POOL_SIZE / 2).await.map_err(Failure::upstream)?,
-    };
+    // Then, alongside the feed when the guess was wrong, the accounts the
+    // app's record names (one `user/bulk`) and its pinned cast. Both are
+    // best-effort: what can't be read is left out of the page.
+    let fids = app.as_ref().map(RawAppChannel::fids).unwrap_or_default();
+    let pinned_hash = app.as_ref().and_then(RawAppChannel::pinned_hash);
+    let (raw, users, pinned) = join3(
+        async {
+            match guessed {
+                Ok(casts) if channel.parent_url == guess => Ok(casts),
+                _ => hypersnap::channel_casts(&inv, &channel.parent_url, POOL_SIZE / 2).await,
+            }
+        },
+        async { hypersnap::users_bulk(&inv, &fids).await.unwrap_or_default() },
+        async {
+            match &pinned_hash {
+                Some(hash) => hypersnap::cast(&inv, hash).await.ok().flatten(),
+                None => None,
+            }
+        },
+    )
+    .await;
+    let raw = raw.map_err(Failure::upstream)?;
+    if let Some(app) = &app {
+        normalize::enrich_channel(&mut channel, app, &users);
+    }
     // Hypersnap merges several shards per page, so order isn't guaranteed.
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
-    let casts = raw.iter().map(normalize::cast).collect();
-    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
-    let refs: Vec<&Cast> = pool.iter().collect();
+    let mut casts: Vec<Cast> = raw.iter().map(normalize::cast).collect();
+    let mut pinned: Vec<Cast> = pinned.iter().map(normalize::cast).collect();
+    // The pinned cast's links are checked first, with the feed's, and it is
+    // left out like any listed cast if it is a mini app or spam.
+    notes.links = miniapps::check(&inv, pinned.iter().chain(&casts), &notes.links).await;
+    mark_mini_apps(&mut pinned, &notes.links);
+    mark_mini_apps(&mut casts, &notes.links);
+    channel.pinned = without_hidden(pinned).pop();
+    let pool = newest_unique(without_hidden(casts), POOL_SIZE as usize);
+    let refs: Vec<&Cast> = channel.pinned.iter().chain(&pool).collect();
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
@@ -574,5 +609,125 @@ mod tests {
         hub.events.insert(("2".into(), "newest".into()), page(&[]));
         // The build fails, so the previous copy stays (with its cursors).
         assert!(build(Rc::new(hub), None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod channel_tests {
+    use std::cell::RefCell;
+
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    const PINNED: &str = "0x50184b62b4c52fd76628713562e1eda3dccaf63d";
+
+    /// Hypersnap and the Farcaster app as /c/farcaster finds them. Without
+    /// `app`, the app can't be read, as from a browser (it sends no CORS
+    /// headers). Everything else (signers, scores) is missing.
+    struct Upstreams {
+        app: bool,
+        pinned_text: &'static str,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Upstreams {
+        fn new(app: bool, pinned_text: &'static str) -> Rc<Upstreams> {
+            Rc::new(Upstreams { app, pinned_text, requests: RefCell::new(Vec::new()) })
+        }
+
+        fn sent(&self, prefix: &str) -> usize {
+            self.requests.borrow().iter().filter(|url| url.starts_with(prefix)).count()
+        }
+    }
+
+    impl Host for Upstreams {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            self.requests.borrow_mut().push(request.url.clone());
+            let json =
+                |body: String| Ok(HttpResponse { status: 200, retry_after: None, body: Some(body.into_bytes()) });
+            let v2 = |path: &str| request.url.starts_with(&format!("{}/v2/farcaster/{path}", hypersnap::BASE));
+            let response = if request.url.starts_with("https://api.farcaster.xyz/v1/channel?channelId=farcaster") {
+                if self.app {
+                    json(include_str!("../../allthing-core/tests/fixtures/farcaster-channel-farcaster.json").into())
+                } else {
+                    Err(FetchError::Network("blocked by CORS".into()))
+                }
+            } else if v2("channel?") {
+                json(include_str!("../../allthing-core/tests/fixtures/hypersnap-channel-legacy.json").into())
+            } else if v2("feed/parent_urls?") {
+                json(r#"{"casts":[{"hash":"0x01","text":"gm","timestamp":"2026-10-18T10:00:00Z","author":{"fid":2,"username":"v"}}]}"#.into())
+            } else if v2("user/bulk?fids=1") {
+                json(r#"{"users":[{"fid":1,"username":"farcaster","display_name":"Farcaster"}]}"#.into())
+            } else if v2(&format!("cast?identifier={PINNED}")) {
+                json(format!(
+                    r#"{{"cast":{{"hash":"{}","text":"{}","timestamp":"2026-10-01T00:00:00Z","author":{{"fid":37,"username":"balajis.eth"}}}}}}"#,
+                    &PINNED[2..],
+                    self.pinned_text
+                ))
+            } else {
+                Ok(HttpResponse { status: 404, retry_after: None, body: None })
+            };
+            async move { response }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn build(host: &Rc<Upstreams>) -> (ChannelPayload, u32) {
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let built = channel(inv.clone(), "farcaster".into(), None).now_or_never().unwrap().ok().unwrap();
+        assert_eq!(built.status, 200);
+        (serde_json::from_slice(&built.body).unwrap(), 45 - inv.remaining_subrequests())
+    }
+
+    #[test]
+    fn channel_pages_add_the_apps_details_for_three_more_reads() {
+        let host = Upstreams::new(true, "$2048 FOR FARCASTER CLIENTS");
+        let (payload, spent) = build(&host);
+        let channel = &payload.channel;
+        assert_eq!((channel.name.as_str(), channel.id.as_str()), ("Farcaster", "farcaster"));
+        assert_eq!(
+            (channel.follower_count, channel.member_count, channel.casters),
+            (Some(445_632), Some(1), Some(94_568))
+        );
+        assert!(channel.header_image_url.is_some() && channel.image_url.is_some());
+        assert_eq!(channel.lead.as_ref().map(|u| u.username.as_str()), Some("farcaster"));
+        assert!(channel.moderators.is_empty(), "the only moderator is the lead");
+        assert_eq!(channel.pinned.as_ref().map(|c| c.hash.as_str()), Some(PINNED));
+        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0x01"]);
+        // One read of the app, then the accounts it names and its pinned cast.
+        assert_eq!(host.sent("https://api.farcaster.xyz/"), 1);
+        assert_eq!(host.sent(&format!("{}/v2/farcaster/user/bulk", hypersnap::BASE)), 1);
+        assert_eq!(host.sent(&format!("{}/v2/farcaster/cast?", hypersnap::BASE)), 1);
+        assert_eq!(spent as usize, host.requests.borrow().len());
+    }
+
+    #[test]
+    fn without_the_app_a_channel_page_shows_hypersnaps_data_and_no_member_count() {
+        let host = Upstreams::new(false, "unused");
+        let (payload, _) = build(&host);
+        let channel = &payload.channel;
+        assert_eq!(channel.name, "farcaster");
+        assert_eq!((channel.follower_count, channel.member_count, channel.casters), (None, None, Some(94_568)));
+        assert_eq!(channel.counts(), [allthing_core::model::ChannelCount::Casters(94_568)]);
+        assert!(channel.lead.is_none() && channel.pinned.is_none() && channel.header_image_url.is_none());
+        assert_eq!(payload.pool.len(), 1);
+        // Nothing else is read for it.
+        assert_eq!(host.sent(&format!("{}/v2/farcaster/user/bulk", hypersnap::BASE)), 0);
+        assert_eq!(host.sent(&format!("{}/v2/farcaster/cast?", hypersnap::BASE)), 0);
+    }
+
+    #[test]
+    fn a_pinned_mini_app_is_left_out() {
+        let host = Upstreams::new(true, "play https://farcaster.xyz/miniapps/abc/game");
+        let (payload, _) = build(&host);
+        assert!(payload.channel.pinned.is_none());
+        assert_eq!(payload.channel.member_count, Some(1));
     }
 }

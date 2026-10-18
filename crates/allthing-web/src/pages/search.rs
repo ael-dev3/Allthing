@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use allthing_core::api::{SearchPayload, search_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
-use allthing_core::format::{compact_number, plural};
+use allthing_core::format::compact_number;
 use leptos::prelude::*;
 
 use crate::Notes;
@@ -97,7 +97,8 @@ pub fn SearchPage() -> impl IntoView {
                                                 {c.image_url.clone().map(|src| view! { <img src=resized_image_url(&src, ImageSize::Avatar) alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"/> })}
                                                 <strong>"/"{c.id.clone()}</strong>
                                             </a>
-                                            {c.member_count.map(|m| view! { <span class="muted small">{plural(m, "member", "members")}</span> })}
+                                            // Search results come from Hypersnap, whose count is of casters: `counts` says so.
+                                            {c.counts().first().map(|count| view! { <span class="muted small" title=count.describe()>{count.label()}</span> })}
                                         </li>
                                     }).collect_view()}
                                 </ul>

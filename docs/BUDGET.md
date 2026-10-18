@@ -81,7 +81,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | home | cache read 1 + trending casts 1 + link pages ≤12 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
-| channel | as home, plus channel lookup 1 and a possible feed refetch 1 |
+| channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
 | user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + apps ≤1 + cache write 1 (≤ 23) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
@@ -110,7 +110,7 @@ WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild st
 
 Allthing's goal is that the number of viewers barely changes upstream volume.
 
-- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins are memoized.
+- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins are memoized. A channel page's rebuild also reads the Farcaster app's channel record once, which shares the vote's farcaster.xyz bucket; if that read fails or is refused, the page is built from Hypersnap alone.
 - **Per isolate token buckets** (`crates/allthing-data/src/upstream.rs`) cap bursts:
 
   | Upstream | Burst | Sustained |
@@ -118,7 +118,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
   | Hypersnap | 40 | 10 requests/s |
   | Base RPC (vote) | 10 | 2 requests/s |
   | Each chain RPC (wallets) | 4 | 1 request every 2 s |
-  | farcaster.xyz client API (vote) | 6 | 1 request/s |
+  | farcaster.xyz public API (votes, channel records) | 6 | 1 request/s |
   | Link pages (mini app meta tags), all sites together | 12 | 2 requests/s |
 
   A request finding an empty bucket is not sent. The payload is served from cache, or the API answers 503 with `Retry-After`.
@@ -138,7 +138,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 
 ## 7. The static copy
 
-The GitHub Pages copy (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)) uses no Worker and no Cloudflare quota. Each visitor's browser runs the builders with the same guards and a budget of 30 upstream calls per page. Without a shared cache, its load on Hypersnap grows with its readers, which is one reason `allthing.social` is the primary site.
+The GitHub Pages copy (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)) uses no Worker and no Cloudflare quota. Each visitor's browser runs the builders with the same guards and a budget of 30 upstream calls per page. Without a shared cache, its load on Hypersnap grows with its readers, which is one reason `allthing.social` is the primary site. The Farcaster app's API sends no CORS headers, so the browser can't read it: there, channel pages show only what Hypersnap gives (the name, the casts and how many accounts have cast), and the failed read costs one call of the 30 until the breaker opens.
 
 ## 8. Watching it
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hypersnap, a Snapchain read node that also serves a Neynar-shaped
 //! `/v2/farcaster` API. Allthing reads every Farcaster message through it.
+//! The Farcaster app's public API fills in what only the app knows: votes to
+//! leave it, and channels' hosts, pictures and member counts.
 
 use std::collections::HashMap;
 
@@ -8,7 +10,9 @@ use allthing_core::channels::{
     canonical_parent_url, channel_id_for_url, legacy_url, parent_url_variants, short_parent_url_label,
 };
 use allthing_core::model::Channel;
-use allthing_core::normalize::{self, RawCast, RawChannel, RawFeed, RawUser, RawUserList, RawUserSearch};
+use allthing_core::normalize::{
+    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawUser, RawUserList, RawUserSearch,
+};
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
 use serde::Deserialize;
@@ -134,22 +138,16 @@ pub async fn channel(inv: &Invocation, key: &str) -> Result<Option<Channel>, Ups
         get_json(inv, Upstream::Hypersnap, &v2("channel", &[("id", &parent_url), ("type", "parent_url")]), true)
             .await?;
     let known = found.and_then(|r| r.channel).map(|c| normalize::channel(&c));
-    Ok(Some(Channel {
-        id: known
-            .as_ref()
-            .map(|c| c.id.clone())
-            .or_else(|| channel_id_for_url(&parent_url))
-            .unwrap_or_else(|| canonical_parent_url(&parent_url)),
-        name: known
-            .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| if legacy.is_some() { key.to_owned() } else { short_parent_url_label(&parent_url) }),
-        description: known.as_ref().and_then(|c| c.description.clone()),
-        image_url: known.as_ref().and_then(|c| c.image_url.clone()),
-        member_count: known.as_ref().and_then(|c| c.member_count),
-        created_at: known.as_ref().and_then(|c| c.created_at),
-        parent_url,
-    }))
+    let id = known
+        .as_ref()
+        .map(|c| c.id.clone())
+        .or_else(|| channel_id_for_url(&parent_url))
+        .unwrap_or_else(|| canonical_parent_url(&parent_url));
+    let name = known
+        .as_ref()
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| if legacy.is_some() { key.to_owned() } else { short_parent_url_label(&parent_url) });
+    Ok(Some(Channel { id, name, parent_url, ..known.unwrap_or_default() }))
 }
 
 pub async fn channel_casts(inv: &Invocation, parent_url: &str, limit: u32) -> Result<Vec<RawCast>, UpstreamError> {
@@ -237,6 +235,17 @@ pub async fn app_vote(inv: &Invocation, fid: u64) -> Result<Option<String>, Upst
     let url = url("https://client.farcaster.xyz", "v2/user-by-fid", &[("fid", &fid.to_string())]);
     let found: Option<AppUser> = get_json(inv, Upstream::FarcasterApp, &url, true).await?;
     Ok(found.and_then(|a| a.result).and_then(|r| r.user).and_then(|u| u.viewer_context).and_then(|v| v.opt_in_status))
+}
+
+/// The farcaster.xyz app's record of a channel, by id: display name,
+/// description, pictures, true member and follower counts, lead, moderators
+/// and pinned cast. Public and unauthenticated, but it sends no CORS headers,
+/// so a browser (the static copy) can't read it. `Ok(None)` for an unknown
+/// channel, which it answers with HTTP 400.
+pub async fn app_channel(inv: &Invocation, id: &str) -> Result<Option<RawAppChannel>, UpstreamError> {
+    let url = url("https://api.farcaster.xyz", "v1/channel", &[("channelId", id)]);
+    let found: Option<RawAppChannelResponse> = get_json(inv, Upstream::FarcasterApp, &url, true).await?;
+    Ok(found.and_then(|r| r.result).and_then(|r| r.channel))
 }
 
 /// Search runs a Tantivy query; keep user input to plain words.

@@ -185,21 +185,143 @@ impl Cast {
     }
 }
 
+/// A link a channel's hosts put on it, such as "Join" or "Subscribe".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalLink {
+    /// An http(s) URL.
+    pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+}
+
+/// A channel, or any parent-URL feed. Hypersnap supplies the id, name, feed
+/// URL and caster count; the Farcaster app's channel API, where it can be
+/// read, the rest. Everything after `parent_url` is optional, so payloads
+/// cached before a field existed stay readable.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channel {
     /// Route key, same meaning as [`ChannelRef::id`].
     pub id: String,
+    /// A display name ("Farcaster") when the Farcaster app gives one, else
+    /// the id or a short label for the parent URL.
     pub name: String,
     pub parent_url: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// The accounts the description mentions, spliced into it as "@username".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub description_mentions: Vec<Mention>,
+    /// The channel's picture.
     #[serde(default)]
     pub image_url: Option<String>,
+    /// The channel's banner, usually 3:1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_image_url: Option<String>,
+    /// Members, as the Farcaster app counts them.
     #[serde(default)]
     pub member_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follower_count: Option<u64>,
+    /// How many accounts have cast in the feed (Hypersnap's `member_count`).
+    /// Not members: a channel's casters need not be members, nor its members
+    /// casters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casters: Option<u64>,
     /// Unix seconds.
     #[serde(default)]
     pub created_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<UserSummary>,
+    /// Moderators other than the lead, in the channel's order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moderators: Vec<UserSummary>,
+    /// The cast the channel's hosts pinned, unless it is a mini app or spam.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<Cast>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_link: Option<ExternalLink>,
+}
+
+/// One of a channel's headline numbers, saying what it counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelCount {
+    Followers(u64),
+    Members(u64),
+    /// Accounts that have cast in the feed.
+    Casters(u64),
+}
+
+impl ChannelCount {
+    pub fn value(self) -> u64 {
+        match self {
+            ChannelCount::Followers(n) | ChannelCount::Members(n) | ChannelCount::Casters(n) => n,
+        }
+    }
+
+    fn nouns(self) -> (&'static str, &'static str) {
+        match self {
+            ChannelCount::Followers(_) => ("follower", "followers"),
+            ChannelCount::Members(_) => ("member", "members"),
+            ChannelCount::Casters(_) => ("caster", "casters"),
+        }
+    }
+
+    /// The noun for this count: "member" or "members".
+    pub fn noun(self) -> &'static str {
+        let (one, many) = self.nouns();
+        if self.value() == 1 { one } else { many }
+    }
+
+    /// "475 members".
+    pub fn label(self) -> String {
+        let (one, many) = self.nouns();
+        crate::format::plural(self.value(), one, many)
+    }
+
+    /// What the number means and where it comes from, for a tooltip.
+    pub fn describe(self) -> &'static str {
+        match self {
+            ChannelCount::Followers(_) => "Accounts following the channel, from the Farcaster app.",
+            ChannelCount::Members(_) => "Members of the channel, from the Farcaster app.",
+            ChannelCount::Casters(_) => "Accounts that have cast in this channel, counted by Hypersnap.",
+        }
+    }
+}
+
+impl Channel {
+    /// The numbers worth showing, most telling first: followers and members
+    /// when the Farcaster app reported them, otherwise the accounts that have
+    /// cast there. Hypersnap's caster count is never presented as members.
+    pub fn counts(&self) -> Vec<ChannelCount> {
+        let reported: Vec<ChannelCount> =
+            [self.follower_count.map(ChannelCount::Followers), self.member_count.map(ChannelCount::Members)]
+                .into_iter()
+                .flatten()
+                .collect();
+        if reported.is_empty() { self.casters.map(ChannelCount::Casters).into_iter().collect() } else { reported }
+    }
+
+    /// Whether the channel has a display name of its own ("Farcaster" for
+    /// /farcaster), rather than its id or a feed's label.
+    pub fn has_display_name(&self) -> bool {
+        crate::channels::is_channel_id(&self.id) && self.name != self.id
+    }
+
+    /// The page title: the display name ("Farcaster"), else "/" and the id
+    /// or the feed's label ("/dev", "/erc20:0x4ed4…efed").
+    pub fn heading(&self) -> String {
+        if self.has_display_name() { self.name.clone() } else { format!("/{}", self.name) }
+    }
+
+    /// The line under the title: "/id" under a display name, and a feed's
+    /// parent URL under its label.
+    pub fn subheading(&self) -> Option<String> {
+        if self.has_display_name() {
+            Some(format!("/{}", self.id))
+        } else {
+            (self.name != self.id).then(|| self.id.clone())
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,4 +329,62 @@ pub struct ThreadNode {
     pub cast: Cast,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<ThreadNode>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn channel(id: &str, name: &str) -> Channel {
+        Channel {
+            id: id.into(),
+            name: name.into(),
+            parent_url: format!("https://warpcast.com/~/channel/{id}"),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn counts_never_call_casters_members() {
+        // Hypersnap alone: its number counts casters, and says so.
+        let hypersnap = Channel { casters: Some(15_664), ..channel("dev", "dev") };
+        assert_eq!(hypersnap.counts(), [ChannelCount::Casters(15_664)]);
+        assert_eq!(hypersnap.counts()[0].label(), "15,664 casters");
+        // With the Farcaster app's numbers, those are shown instead.
+        let app = Channel { follower_count: Some(183_421), member_count: Some(475), ..hypersnap.clone() };
+        assert_eq!(app.counts(), [ChannelCount::Followers(183_421), ChannelCount::Members(475)]);
+        assert_eq!(app.counts().iter().map(|c| c.label()).collect::<Vec<_>>(), ["183,421 followers", "475 members"]);
+        assert_eq!(ChannelCount::Members(1).label(), "1 member");
+        assert_eq!(ChannelCount::Followers(1).noun(), "follower");
+        assert_eq!(ChannelCount::Casters(1).noun(), "caster");
+        assert!(channel("dev", "dev").counts().is_empty());
+    }
+
+    #[test]
+    fn display_names_are_only_for_named_channels() {
+        let farcaster = channel("farcaster", "Farcaster");
+        assert!(farcaster.has_display_name());
+        assert_eq!((farcaster.heading(), farcaster.subheading().as_deref()), ("Farcaster".into(), Some("/farcaster")));
+        let dev = channel("dev", "dev");
+        assert!(!dev.has_display_name());
+        assert_eq!((dev.heading(), dev.subheading()), ("/dev".into(), None));
+        let feed = Channel { id: "https://example.com/a".into(), name: "example.com/a".into(), ..Default::default() };
+        assert!(!feed.has_display_name());
+        assert_eq!(
+            (feed.heading(), feed.subheading().as_deref()),
+            ("/example.com/a".into(), Some("https://example.com/a"))
+        );
+    }
+
+    #[test]
+    fn payloads_cached_before_the_rich_fields_stay_readable() {
+        let old: Channel = serde_json::from_str(
+            r#"{"id":"dev","name":"dev","parent_url":"https://warpcast.com/~/channel/dev","description":null,"image_url":null,"member_count":9,"created_at":null}"#,
+        )
+        .unwrap();
+        assert_eq!((old.member_count, old.lead, old.moderators.len(), old.pinned), (Some(9), None, 0, None));
+        // Empty rich fields stay out of the JSON.
+        let json = serde_json::to_string(&channel("dev", "dev")).unwrap();
+        assert!(!json.contains("moderators") && !json.contains("pinned") && !json.contains("casters"), "{json}");
+    }
 }

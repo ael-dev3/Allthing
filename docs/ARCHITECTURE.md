@@ -15,6 +15,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
                                              → coalesced build → guarded upstream calls  ──▶  Hypersnap /v2 + /v1
                                                                                          ──▶  Base RPC (Farcaster vote)
                                                                                          ──▶  EVM RPCs (wallet activity)
+                                                                                         ──▶  farcaster.xyz (votes, channel records)
 
  images, video, posters     ── direct ──▶  imagedelivery.net, Cloudflare Stream, …  (never proxied)
 ```
@@ -38,7 +39,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | Endpoint | Payload | Built from |
 |---|---|---|
 | `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, annotations | `feed/trending` |
-| `/api/v1/channel?id=<id or parent URL>` | `ChannelPayload`: the channel and a pool of its casts | `channel`, `feed/parent_urls` (every spelling of the channel's parent URL) |
+| `/api/v1/channel?id=<id or parent URL>` | `ChannelPayload`: the channel (with its banner, picture, description, follower and member counts, lead, moderators, pinned cast and link where the Farcaster app has them) and a pool of its casts | `channel`, `feed/parent_urls` (every spelling of the channel's parent URL) and farcaster.xyz `v1/channel` in parallel, then `user/bulk` (lead, moderators, mentions) and `cast` (the pinned cast) |
 | `/api/v1/cast?hash=<hash>` | `CastPayload`: the thread (5 levels), the parent, quoted casts, the channel | `cast/conversation`, `cast` |
 | `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (it knows current fnames only; any other name goes through the hub's `userNameProofByName`, then `user/bulk` for the FID it names), `user/bulk`, `feed/user/casts` |
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
@@ -86,6 +87,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 |---|---|---|
 | Casts, threads, channels, users, search, reactions | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. |
 | The Farcaster vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
+| Channel records: display name, description, picture, banner, follower and member counts, lead, moderators, pinned cast, link | The Farcaster app's public channel API (`api.farcaster.xyz/v1/channel`), one read per channel build | Best-effort: without it a channel page shows Hypersnap's data. It sends no CORS headers, so the static copy never has it. Hypersnap's `member_count` counts the accounts that have cast in a feed, so it is shown as "casters", never as members. |
 | Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Farcaster" and the like (the Farcaster app's account, fid 9152, is still named Warpcast; `allthing_core::clients::client_name` calls it Farcaster), and the front page's bar of the apps posting today's trending casts |
 | Spam labels | [warpcast/labels](https://github.com/warpcast/labels) `spam.jsonl` (Git LFS) | Compacted at deploy time into 32 KB shards, one character per fid, read by the browser as static files. Shown on profiles; never used to hide anything. |
 | Wallet activity | Account nonces of verified EVM addresses (up to 5) on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad, from keyless public RPCs | A nonce counts transactions *sent* from an address. Shares use largest-remainder rounding. Solana is not measured: its public RPC refuses Workers and browsers. |
@@ -98,7 +100,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 - **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`).
 - **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
-Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The rest of the code sees the `allthing_core::model` types only.
+Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, a channel's `member_count` is its number of distinct casters (`Channel.casters`), user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The Farcaster app's channel record is merged in by `normalize::enrich_channel`. The rest of the code sees the `allthing_core::model` types only.
 
 ## The browser app
 
@@ -109,6 +111,7 @@ Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel fee
   - posts open instantly from the feed's own data;
   - cards prefetch on hover and in idle time, within caps;
   - `nav.rs` restores scroll on back and forward, and makes the whole card open the post.
+- **Channel pages.** `pages/channel.rs` heads the feed with the channel's banner (a fixed 3:1 box, cover-cropped), its picture over the banner's edge, its name and `/id`, description, follower and member counts, link, lead and moderators (six, then "+N"), and puts the pinned cast above the feed. Each part shows only when the payload has it, so a channel known only to Hypersnap shows its name and how many accounts have cast there.
 - **Popovers.** `popover.rs` is one accessible popover (hover or focus after 280 ms, tap on touch, Escape, outside click). `who.rs` uses it for who liked, recasted and replied. It is also behind the profile's "Wallets" button, which lists every verified address with copy-to-clipboard.
 - **Media.** `media.rs` turns embeds into a gallery with generated alt text that names the author and quotes the cast. The lightbox is a modal dialog with a focus trap, Escape, arrow keys and pointer swipes, and it returns focus to the tile that opened it.
 - **Video.** `player.rs` and `video.rs`: an IntersectionObserver loads the master playlist 600 px before a video scrolls into view. Safari plays the playlist natively. Videos autoplay when at least 60% visible and pause when scrolled away. They autoplay muted unless the reader turned sound on: playing a video or unmuting one turns it on, and muting one turns it off. The choice is kept in localStorage (`allthing.sound`). Each player notes the muted state it set, so a `volumechange` it didn't cause is the reader's. Before the reader has interacted with the page, browsers refuse sound; the video then plays muted, and its sound comes on at the first tap or key press. Only one plays at a time, and none autoplay with reduced motion, Save-Data or a 2g connection. Elsewhere the Rust player parses master and media playlists (`allthing_core::hls`), picks a rendition by height (720p inline, 1080p in the viewer), and feeds fMP4 segments into separate video and audio `SourceBuffer`s. It keeps 24 s buffered ahead, follows seeks, steps over gaps and ends the stream. Plain `.mp4` and `.webm` files play natively. YouTube, Vimeo, Loom and Streamable links render as facades that load the provider's iframe only on click; YouTube uses `youtube-nocookie.com`.
@@ -123,7 +126,7 @@ A static host can't run the Worker, so `cargo xtask pages` builds a second varia
 - compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset, label shard and the router live under that prefix;
 - `404.html` is a copy of `index.html`, which is how GitHub Pages serves deep links to a single-page app.
 
-Annotations memoized in the page (origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
+Annotations memoized in the page (origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Farcaster app's API sends no CORS headers, so the browser can't read it: channel pages show Hypersnap's data alone, and votes recorded only by the app are unknown. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
 
 ## Security and privacy
 
