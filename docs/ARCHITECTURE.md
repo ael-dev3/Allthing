@@ -44,6 +44,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
 | `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
+| `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter). Month, year and all time use 7 days, Hypersnap's widest window | `feed/trending` with `time_window` |
 | `/api/v1/search?q=<query>` | `SearchPayload`: casts, people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts), `user/search`, `channel/search` |
 | `/api/v1/reactions?hash=<hash>&type=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
 | `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |

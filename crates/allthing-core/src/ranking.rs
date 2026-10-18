@@ -43,6 +43,89 @@ impl Sort {
     }
 }
 
+/// How far back the front page reaches, named as Reddit's `t=` names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TimeRange {
+    Hour,
+    #[default]
+    Day,
+    Week,
+    Month,
+    Year,
+    All,
+}
+
+impl TimeRange {
+    /// In menu order, the widest first.
+    pub const ALL: [TimeRange; 6] =
+        [TimeRange::All, TimeRange::Year, TimeRange::Month, TimeRange::Week, TimeRange::Day, TimeRange::Hour];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TimeRange::Hour => "hour",
+            TimeRange::Day => "day",
+            TimeRange::Week => "week",
+            TimeRange::Month => "month",
+            TimeRange::Year => "year",
+            TimeRange::All => "all",
+        }
+    }
+
+    /// Unknown or missing values fall back to the default, Today.
+    pub fn parse(value: Option<&str>) -> TimeRange {
+        TimeRange::ALL.into_iter().find(|r| Some(r.as_str()) == value).unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TimeRange::Hour => "Past hour",
+            TimeRange::Day => "Today",
+            TimeRange::Week => "Past week",
+            TimeRange::Month => "Past month",
+            TimeRange::Year => "Past year",
+            TimeRange::All => "All time",
+        }
+    }
+
+    /// The trending window this range is ranked over. Hypersnap's widest is
+    /// 7 days, so the longer ranges show the past week's casts.
+    pub fn window(self) -> TrendingWindow {
+        match self {
+            TimeRange::Hour => TrendingWindow::Hour,
+            TimeRange::Day => TrendingWindow::Day,
+            TimeRange::Week | TimeRange::Month | TimeRange::Year | TimeRange::All => TrendingWindow::Week,
+        }
+    }
+
+    /// Whether its trending window reaches back over the whole range.
+    pub fn covered(self) -> bool {
+        matches!(self, TimeRange::Hour | TimeRange::Day | TimeRange::Week)
+    }
+}
+
+/// The windows Hypersnap ranks trending casts over (`time_window`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TrendingWindow {
+    Hour,
+    #[default]
+    Day,
+    Week,
+}
+
+impl TrendingWindow {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrendingWindow::Hour => "1h",
+            TrendingWindow::Day => "24h",
+            TrendingWindow::Week => "7d",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<TrendingWindow> {
+        [TrendingWindow::Hour, TrendingWindow::Day, TrendingWindow::Week].into_iter().find(|w| w.as_str() == value)
+    }
+}
+
 /// Recasts spread a cast to new audiences, so they count double; each reply
 /// counts once, like a like.
 pub const RECAST_WEIGHT: u64 = 2;
@@ -132,6 +215,25 @@ pub fn sort_thread(nodes: &mut [ThreadNode], sort: CommentSort) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_ranges_map_to_trending_windows() {
+        assert_eq!(TimeRange::parse(None), TimeRange::Day);
+        assert_eq!(TimeRange::parse(Some("week")), TimeRange::Week);
+        assert_eq!(TimeRange::parse(Some("fortnight")), TimeRange::Day);
+        for range in TimeRange::ALL {
+            assert_eq!(TimeRange::parse(Some(range.as_str())), range);
+        }
+        assert_eq!(TimeRange::Hour.window().as_str(), "1h");
+        assert_eq!(TimeRange::Day.window().as_str(), "24h");
+        // Hypersnap ranks over at most 7 days: longer ranges use that, and say so.
+        for range in [TimeRange::Week, TimeRange::Month, TimeRange::Year, TimeRange::All] {
+            assert_eq!(range.window(), TrendingWindow::Week);
+        }
+        assert!(TimeRange::Week.covered() && !TimeRange::Month.covered() && !TimeRange::All.covered());
+        assert_eq!(TrendingWindow::parse("7d"), Some(TrendingWindow::Week));
+        assert_eq!(TrendingWindow::parse("30d"), None);
+    }
     use crate::model::UserSummary;
     use crate::time::parse_rfc3339;
 

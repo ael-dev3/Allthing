@@ -17,10 +17,11 @@ use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
 
-use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind};
+use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind, home_page_path};
 use allthing_core::params::{
     channel_key_from_decoded, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
+use allthing_core::ranking::TrendingWindow;
 use futures::future::LocalBoxFuture;
 
 use crate::upstream::UpstreamError;
@@ -157,8 +158,8 @@ impl Failure {
 /// An API endpoint and its parameters, parsed from `/api/v1/<name>?…`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Endpoint {
-    /// Trending casts from `offset` (0 for the front page).
-    Home(u32),
+    /// Trending casts over a window, from `offset` (0 for the front page).
+    Home(u32, TrendingWindow),
     Channel(String),
     Cast(String),
     User(String),
@@ -182,11 +183,17 @@ impl Endpoint {
     pub fn parse(name: &str, query: impl Fn(&str) -> Option<String>) -> Result<Endpoint, BadRequest> {
         let bad = |message| BadRequest { status: 400, message };
         match name {
-            "/home" => match query("offset").map(|o| o.parse::<u32>()) {
-                None => Ok(Endpoint::Home(0)),
-                Some(Ok(offset)) if offset % 100 == 0 && offset < 1000 => Ok(Endpoint::Home(offset)),
-                Some(_) => Err(bad("Expected ?offset=<multiple of 100 below 1000>")),
-            },
+            "/home" => {
+                let window = match query("window") {
+                    None => TrendingWindow::Day,
+                    Some(w) => TrendingWindow::parse(&w).ok_or(bad("Expected ?window=1h|24h|7d"))?,
+                };
+                match query("offset").map(|o| o.parse::<u32>()) {
+                    None => Ok(Endpoint::Home(0, window)),
+                    Some(Ok(offset)) if offset % 100 == 0 && offset < 1000 => Ok(Endpoint::Home(offset, window)),
+                    Some(_) => Err(bad("Expected ?offset=<multiple of 100 below 1000>")),
+                }
+            }
             "/reactions" => {
                 let hash = query("hash").and_then(|v| hash_from_param(&v)).ok_or(bad("Expected ?hash=<cast hash>"))?;
                 let kind =
@@ -265,8 +272,9 @@ impl Endpoint {
     /// The name this payload is cached under, such as `cast?hash=0x…`.
     pub fn cache_name(&self) -> String {
         match self {
-            Endpoint::Home(0) => "home".into(),
-            Endpoint::Home(offset) => format!("home?offset={offset}"),
+            Endpoint::Home(offset, window) => {
+                home_page_path(*offset, *window).trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
+            }
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
@@ -286,7 +294,7 @@ impl Endpoint {
     /// whose slowly gathered annotations are carried forward.
     pub async fn build(&self, inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
         match self.clone() {
-            Endpoint::Home(offset) => pages::home(inv, offset, previous).await,
+            Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,
@@ -306,9 +314,18 @@ mod tests {
 
     #[test]
     fn parses_api_paths() {
-        assert_eq!(Endpoint::from_path("/api/v1/home"), Ok(Endpoint::Home(0)));
-        assert_eq!(Endpoint::from_path("/api/v1/home?offset=200"), Ok(Endpoint::Home(200)));
+        assert_eq!(Endpoint::from_path("/api/v1/home"), Ok(Endpoint::Home(0, TrendingWindow::Day)));
+        assert_eq!(Endpoint::from_path("/api/v1/home?offset=200"), Ok(Endpoint::Home(200, TrendingWindow::Day)));
         assert_eq!(Endpoint::from_path("/api/v1/home?offset=150").map_err(|e| e.status), Err(400));
+        assert_eq!(
+            Endpoint::from_path("/api/v1/home?window=7d&offset=100"),
+            Ok(Endpoint::Home(100, TrendingWindow::Week))
+        );
+        assert_eq!(Endpoint::from_path("/api/v1/home?window=30d").map_err(|e| e.status), Err(400));
+        // An explicit default window is cached with the plain front page.
+        assert_eq!(Endpoint::from_path("/api/v1/home?window=24h").unwrap().cache_name(), "home");
+        assert_eq!(Endpoint::Home(200, TrendingWindow::Day).cache_name(), "home?offset=200");
+        assert_eq!(Endpoint::Home(0, TrendingWindow::Hour).cache_name(), "home?window=1h");
         assert_eq!(
             Endpoint::from_path(
                 "/api/v1/reactions?hash=0x3b6c0db881a351984ab7844cd56265d492431d79&type=recasts&limit=100"

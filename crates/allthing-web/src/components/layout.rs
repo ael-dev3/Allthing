@@ -2,9 +2,10 @@
 //! Page frame: header with the wordmark, footer, sidebar boxes, sort tabs,
 //! pagination and loading or error states.
 
-use allthing_core::ranking::Sort;
+use allthing_core::ranking::{Sort, TimeRange};
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::{use_location, use_navigate};
 
 use crate::api::Failure;
 use crate::components::search::SearchBox;
@@ -101,6 +102,35 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
                 })
                 .collect_view()}
         </nav>
+    }
+}
+
+/// Reddit's time filter: how far back the front page reaches, kept in the
+/// URL as `t` next to the sort.
+#[component]
+pub fn TimeFilter(path: String, sort: Sort, current: TimeRange) -> impl IntoView {
+    let navigate = use_navigate();
+    let change = move |ev: leptos::ev::Event| {
+        let range = TimeRange::parse(Some(&event_target_value(&ev)));
+        let href = with_query(
+            &path,
+            &[
+                ("sort", (sort != Sort::Hot).then(|| sort.as_str().to_owned())),
+                ("t", (range != TimeRange::default()).then(|| range.as_str().to_owned())),
+            ],
+        );
+        navigate(&href, NavigateOptions { scroll: false, ..Default::default() });
+    };
+    view! {
+        <label class="time-filter">
+            <span class="visually-hidden">"Time range"</span>
+            <select on:change=change>
+                {TimeRange::ALL
+                    .into_iter()
+                    .map(|range| view! { <option value=range.as_str() selected=range == current>{range.label()}</option> })
+                    .collect_view()}
+            </select>
+        </label>
     }
 }
 

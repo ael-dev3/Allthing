@@ -3,17 +3,17 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{Annotations, HomePayload, home_page_path, home_path};
+use allthing_core::api::{Annotations, HomePayload, home_page_path};
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
-use allthing_core::ranking::{Sort, sorted};
+use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted};
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
-use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice};
-use crate::util::{href, set_title};
+use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice, TimeFilter};
+use crate::util::{href, set_title, with_query};
 
 /// The trending list ends after this many casts.
 const LAST_OFFSET: u32 = 900;
@@ -32,6 +32,7 @@ struct LoadedPage {
 #[derive(Clone)]
 struct Loaded {
     at: f64,
+    window: TrendingWindow,
     pages: Vec<LoadedPage>,
     next_offset: u32,
 }
@@ -45,12 +46,17 @@ thread_local! {
 pub fn Home() -> impl IntoView {
     let query = use_query_map();
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
-    let data = LocalResource::new(|| async { api::get::<HomePayload>(&home_path()).await });
+    let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
+    let window = Memo::new(move |_| range.get().window());
+    let data = LocalResource::new(move || {
+        let window = window.get();
+        async move { api::get::<HomePayload>(&home_page_path(0, window)).await }
+    });
     // Keep page boundaries so appending a page does not move earlier cards.
     // Each page is ranked using the currently selected sort.
     let (kept, kept_offset) = LOADED
         .with(|l| l.borrow().clone())
-        .filter(|loaded| js_sys::Date::now() - loaded.at < KEEP_MS)
+        .filter(|loaded| js_sys::Date::now() - loaded.at < KEEP_MS && loaded.window == window.get_untracked())
         .map(|loaded| (loaded.pages, loaded.next_offset))
         .unwrap_or((Vec::new(), 100));
     let more = RwSignal::new(kept);
@@ -67,10 +73,16 @@ pub fn Home() -> impl IntoView {
             return;
         }
         loading.set(true);
+        let asked = window.get_untracked();
         wasm_bindgen_futures::spawn_local(async move {
-            let result = api::get::<HomePayload>(&home_page_path(offset)).await;
-            // The request can finish after navigation disposed this page.
+            let result = api::get::<HomePayload>(&home_page_path(offset, asked)).await;
+            // The request can finish after navigation disposed this page, or
+            // after the reader picked another time range.
             if next_offset.is_disposed() {
+                return;
+            }
+            if window.get_untracked() != asked {
+                loading.set(false);
                 return;
             }
             if let Ok(page) = result {
@@ -85,6 +97,7 @@ pub fn Home() -> impl IntoView {
                 LOADED.with(|l| {
                     *l.borrow_mut() = Some(Loaded {
                         at: js_sys::Date::now(),
+                        window: asked,
                         pages: more.get_untracked(),
                         next_offset: offset + 100,
                     });
@@ -111,12 +124,22 @@ pub fn Home() -> impl IntoView {
         });
     });
     retry.set_value(Some(load_more));
+    // Another time range is another list: start it from its first page.
+    Effect::new(move |previous: Option<TrendingWindow>| {
+        let current = window.get();
+        if previous.is_some_and(|p| p != current) {
+            more.set(Vec::new());
+            next_offset.set(100);
+            failures.set_value(0);
+        }
+        current
+    });
 
     move || {
         match data.get() {
             None => view! {
                 <Columns>
-                    <Heading sort/>
+                    <Heading sort range/>
                     <CastSkeletons/>
                 </Columns>
             }
@@ -151,7 +174,7 @@ pub fn Home() -> impl IntoView {
                 });
                 view! {
                     <Columns>
-                        <Heading sort/>
+                        <Heading sort range/>
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
@@ -164,11 +187,24 @@ pub fn Home() -> impl IntoView {
 }
 
 #[component]
-fn Heading(sort: Memo<Sort>) -> impl IntoView {
+fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+    // "new" is newest first, whatever the range.
+    let ranged = move || sort.get() != Sort::New;
     view! {
         <div class="listing-head">
             <h1 class="visually-hidden">"Trending on Farcaster"</h1>
-            {move || view! { <SortTabs path=href("/") current=sort.get()/> }}
+            {move || {
+                let t = (range.get() != TimeRange::default()).then(|| range.get().as_str().to_owned());
+                view! {
+                    <div class="sort-row">
+                        <SortTabs path=with_query(&href("/"), &[("t", t)]) current=sort.get()/>
+                        {ranged().then(|| view! { <TimeFilter path=href("/") sort=sort.get() current=range.get()/> })}
+                    </div>
+                }
+            }}
         </div>
+        {move || (ranged() && !range.get().covered()).then(|| view! {
+            <p class="range-note">"Farcaster's trending data reaches back 7 days, so this shows the past week's casts."</p>
+        })}
     }
 }

@@ -13,6 +13,7 @@ use allthing_core::model::{Cast, Channel, Embed};
 use allthing_core::normalize;
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
+use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, without_hidden};
 use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
@@ -111,8 +112,13 @@ async fn trending_channels(inv: &Invocation) -> Vec<Channel> {
 
 /// Trending casts. `offset` 0 is the front page; later offsets are the
 /// next pages that infinite scroll loads.
-pub async fn home(inv: Rc<Invocation>, offset: u32, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset).await;
+pub async fn home(
+    inv: Rc<Invocation>,
+    offset: u32,
+    window: TrendingWindow,
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<Built, Failure> {
+    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let pool = drop_hidden(&inv, casts, &mut notes).await;
