@@ -4,11 +4,11 @@
 //! build (`static-host`), the same payloads are built in the browser.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use allthing_core::api::ApiError;
+use allthing_core::api::{ApiError, EngagementPayload, EngagementRequest};
 use allthing_core::profile::UserCard;
 use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
@@ -79,7 +79,10 @@ struct Raw {
 
 thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
-    static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
+    static IN_FLIGHT: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Reactions previews that an engagement batch on its way will file: a
+    /// preview opened meanwhile waits for it instead of asking again.
+    static COVERED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     /// Profile-card reads waiting for a free prefetch slot, oldest first.
     static CARD_QUEUE: RefCell<std::collections::VecDeque<String>> = const { RefCell::new(std::collections::VecDeque::new()) };
     /// Accounts whose card facts were queued this visit, and when the count
@@ -148,31 +151,117 @@ pub fn constrained_network() -> bool {
     save_data || slow
 }
 
+/// What became of a prefetch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prefetch {
+    /// On its way.
+    Started,
+    /// Not needed: already kept or on its way, or the network is constrained.
+    Skipped,
+    /// Too many requests on their way; try again later.
+    Full,
+}
+
 /// Fetch `path` into the client cache in the background, so opening it later
 /// is instant. Skipped when already cached or loading, when too many
 /// prefetches are running, and on Save-Data or slow connections.
 pub fn prefetch(path: &str) {
+    start_prefetch(path, |_, _| {});
+}
+
+/// [`prefetch`], running `landed` with the answer (if any) and the time it
+/// came, before it is kept.
+fn start_prefetch(path: &str, landed: impl FnOnce(Option<&Raw>, f64) + 'static) -> Prefetch {
     let now = js_sys::Date::now();
     let cached = CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < ttl(path) && r.status == 200));
     if cached || constrained_network() {
-        return;
+        return Prefetch::Skipped;
     }
     let started = IN_FLIGHT.with(|f| {
         let mut f = f.borrow_mut();
-        if f.len() >= MAX_PREFETCHES || f.contains(path) { false } else { f.insert(path.to_owned()) }
+        if f.contains(path) {
+            Prefetch::Skipped
+        } else if f.len() >= MAX_PREFETCHES {
+            Prefetch::Full
+        } else {
+            f.insert(path.to_owned());
+            Prefetch::Started
+        }
     });
-    if !started {
-        return;
+    if started != Prefetch::Started {
+        return started;
     }
     let path = path.to_owned();
     wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(raw) = fetch_raw(&path).await {
-            let now = js_sys::Date::now();
+        let raw = fetch_raw(&path).await.ok();
+        let now = js_sys::Date::now();
+        landed(raw.as_ref(), now);
+        if let Some(raw) = raw {
             remember(&path, raw, now);
         }
         IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
         pump_cards();
     });
+    Prefetch::Started
+}
+
+/// Preload who liked and recasted a batch of feed cards
+/// (`/api/v1/engagement`), through [`prefetch`]'s cap and checks, and file
+/// each list under its own `/reactions?…&limit=10` path as if it had been
+/// asked for alone, so hovering a count shows its people at once. A preview
+/// opened while the batch is on its way waits for it instead of asking
+/// again. When this returns [`Prefetch::Started`], `landed` runs once the
+/// batch is in, whatever came of it.
+pub fn preload_engagement(request: &EngagementRequest, landed: impl FnOnce() + 'static) -> Prefetch {
+    let covered: Vec<String> = request.preview_paths().collect();
+    let filed = covered.clone();
+    let started = start_prefetch(&request.path(), move |raw, now| {
+        if let Some(raw) = raw {
+            seed_engagement(raw, &filed, now);
+        }
+        COVERED.with(|c| {
+            let mut c = c.borrow_mut();
+            for path in &filed {
+                c.remove(path);
+            }
+        });
+        landed();
+    });
+    // The fetch starts from a later task, so this is in place before it lands.
+    if started == Prefetch::Started {
+        COVERED.with(|c| c.borrow_mut().extend(covered));
+    }
+    started
+}
+
+/// File the previews of an engagement batch that were `asked` for, each
+/// under its own reactions path, dated as the batch: with its arrival time
+/// and its age, so the client cache expires each one, and reports its age,
+/// as if it had been asked for alone when the batch was. An answer already
+/// kept for a path stays when it was read upstream no earlier.
+fn seed_engagement(batch: &Raw, asked: &[String], now: f64) {
+    if batch.status != 200 {
+        return;
+    }
+    let Ok(payload) = serde_json::from_str::<EngagementPayload>(&batch.body) else { return };
+    // When an answer was read upstream, on this browser's clock.
+    let read_at = |raw: &Raw| raw.at - f64::from(raw.age) * 1000.0;
+    for (path, preview) in payload.by_path() {
+        if !asked.contains(&path) {
+            continue;
+        }
+        let newer = CACHE.with(|c| {
+            c.borrow()
+                .get(&path)
+                .is_some_and(|kept| kept.status == 200 && now - kept.at < ttl(&path) && read_at(kept) >= read_at(batch))
+        });
+        if newer {
+            continue;
+        }
+        let Ok(body) = serde_json::to_string(preview) else { continue };
+        let raw = Raw { status: 200, body: body.into(), retry_after: None, ..batch.clone() };
+        keep(&path, raw, now);
+    }
 }
 
 /// A cached answer for `path`, if there is a fresh one: read synchronously,
@@ -300,18 +389,17 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
 /// busy answers and unreadable bodies are asked for again next time.
 fn remember(path: &str, raw: Raw, now: f64) {
-    let keep = match raw.status {
+    let worth = match raw.status {
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
     };
-    if !keep {
-        return;
+    if worth {
+        keep(path, raw, now);
     }
-    cache_response(path, raw, now);
 }
 
-fn cache_response(path: &str, raw: Raw, now: f64) {
+fn keep(path: &str, raw: Raw, now: f64) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         if !c.contains_key(path) && c.len() >= CLIENT_CAPACITY {
@@ -326,16 +414,37 @@ fn cache_response(path: &str, raw: Raw, now: f64) {
     });
 }
 
-/// GET an API path, reusing a recent answer for the same path.
-pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
-    // A request for the same path is on its way (a prefetch, or the search
-    // box's suggestions): wait for it, don't repeat it.
+/// A recent answer for `path`, read at once, without waiting or fetching:
+/// a popover whose data is kept renders it in the frame it opens.
+pub fn peek<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T>, Failure>> {
+    cached(path, js_sys::Date::now())
+}
+
+/// Wait while a request that brings `path` is on its way: a prefetch, an
+/// engagement batch that covers it, or the search box's suggestions (up to
+/// 10 s).
+async fn arriving(path: &str) {
+    let on_its_way = || IN_FLIGHT.with(|f| f.borrow().contains(path)) || COVERED.with(|c| c.borrow().contains(path));
     for _ in 0..400 {
-        if !IN_FLIGHT.with(|f| f.borrow().contains(path)) {
+        if !on_its_way() {
             break;
         }
         crate::video::sleep(25).await;
     }
+}
+
+/// What a request already made brings for `path`, once it is in, without
+/// fetching it otherwise: `None` when nothing is kept or on its way.
+pub async fn settled<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T>, Failure>> {
+    arriving(path).await;
+    peek(path)
+}
+
+/// GET an API path, reusing a recent answer for the same path.
+pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
+    // A request that brings this path is on its way: wait for it, don't
+    // repeat it.
+    arriving(path).await;
     let now = js_sys::Date::now();
     if let Some(result) = cached(path, now) {
         return result;
@@ -361,13 +470,15 @@ pub async fn get_text(path: &str) -> Option<Rc<str>> {
     let raw = fetch_raw(path).await.ok()?;
     let body = (raw.status == 200).then(|| raw.body.clone());
     if body.is_some() {
-        cache_response(path, raw, js_sys::Date::now());
+        keep(path, raw, js_sys::Date::now());
     }
     body
 }
 
 #[cfg(test)]
 mod tests {
+    use allthing_core::api::{ReactionKind, ReactionsPayload, reactions_path};
+
     use super::*;
 
     fn response(status: u16, body: &str) -> Raw {
@@ -451,5 +562,66 @@ mod tests {
         remember("/test/capacity/next", next, 301_500.0);
         assert_eq!(CACHE.with(|c| c.borrow().len()), 2);
         assert!(cached::<serde_json::Value>("/test/capacity/224", 301_500.0).unwrap().is_ok());
+    }
+
+    fn batch(at: f64, age: u32, body: &str) -> Raw {
+        Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None }
+    }
+
+    /// A batch that read who liked `hash`: one person, and more.
+    fn likes_batch(hash: &str, name: &str) -> String {
+        format!(
+            r#"{{"previews":[{{"hash":"{hash}","kind":"likes","users":[{{"fid":2,"username":"{name}"}}],"more":true,"meta":{{"backend":"hypersnap","fetched_at":7}}}}],"meta":{{"backend":"hypersnap","fetched_at":7}}}}"#
+        )
+    }
+
+    #[test]
+    fn engagement_batches_file_each_preview_under_its_own_path() {
+        let hash = format!("0x{}", "c".repeat(40));
+        let likes = reactions_path(&hash, ReactionKind::Likes, 10);
+        let recasts = reactions_path(&hash, ReactionKind::Recasts, 10);
+        seed_engagement(&batch(1000.0, 30, &likes_batch(&hash, "reader")), &[likes.clone(), recasts.clone()], 1000.0);
+        let hit = cached::<ReactionsPayload>(&likes, 3000.0).unwrap().unwrap();
+        assert_eq!((hit.data.hash.as_str(), hit.data.kind), (hash.as_str(), ReactionKind::Likes));
+        assert_eq!(hit.data.users[0].username, "reader");
+        assert!(hit.data.more && hit.data.meta.fetched_at == 7);
+        // Dated as the batch: its age when it came, plus the time since,
+        // and kept as long as the batch.
+        assert_eq!(hit.age, 32);
+        assert!(cached::<ReactionsPayload>(&likes, 1000.0 + CLIENT_TTL_MS).is_none());
+        // A list the batch didn't bring loads when its popover opens.
+        assert!(cached::<ReactionsPayload>(&recasts, 3000.0).is_none());
+    }
+
+    #[test]
+    fn a_batch_files_only_what_was_asked_and_never_replaces_a_newer_answer() {
+        let hash = format!("0x{}", "d".repeat(40));
+        let path = reactions_path(&hash, ReactionKind::Likes, 10);
+        let single = |name: &str, at: f64, age: u32| {
+            let body = format!(
+                r#"{{"hash":"{hash}","kind":"likes","users":[{{"fid":3,"username":"{name}"}}],"meta":{{"backend":"hypersnap","fetched_at":0}}}}"#
+            );
+            Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None }
+        };
+        let name = |now: f64| cached::<ReactionsPayload>(&path, now).unwrap().unwrap().data.users[0].username.clone();
+        let asked = std::slice::from_ref(&path);
+        // Not asked for: not filed.
+        seed_engagement(&batch(1000.0, 30, &likes_batch(&hash, "batch")), &[], 1000.0);
+        assert!(cached::<ReactionsPayload>(&path, 1000.0).is_none());
+        // Read upstream before the batch's data was: replaced.
+        remember(&path, single("older", 1000.0, 40), 1000.0);
+        seed_engagement(&batch(1000.0, 30, &likes_batch(&hash, "batch")), asked, 1000.0);
+        assert_eq!(name(1000.0), "batch");
+        // Read upstream after it: kept.
+        remember(&path, single("newer", 2000.0, 0), 2000.0);
+        seed_engagement(&batch(2000.0, 30, &likes_batch(&hash, "batch")), asked, 2000.0);
+        assert_eq!(name(2000.0), "newer");
+        // A batch that failed, or isn't a batch, files nothing.
+        let other = format!("0x{}", "e".repeat(40));
+        let other_path = reactions_path(&other, ReactionKind::Likes, 10);
+        let failed = Raw { status: 503, ..batch(1000.0, 0, &likes_batch(&other, "busy")) };
+        seed_engagement(&failed, std::slice::from_ref(&other_path), 1000.0);
+        seed_engagement(&batch(1000.0, 0, r#"{"error":"nope"}"#), std::slice::from_ref(&other_path), 1000.0);
+        assert!(cached::<ReactionsPayload>(&other_path, 1000.0).is_none());
     }
 }

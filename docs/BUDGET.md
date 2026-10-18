@@ -25,8 +25,10 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`) | 1 label shard and `meta.json`, about 32 KB raw |
 | Channel directory | 1 (`/api/v1/channels`) | none |
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
-| Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
+| Feed cards coming into view, with a mouse | 1 per run of six cards in view (`/api/v1/engagement`: who liked and recasted them), one at a time, at least 2 s apart, at most 4 per page view; none on touch screens, with Save-Data or on 2g | none |
 | Feed cards coming into view, with a mouse | up to 2 per new author (`/api/v1/vote`, `/api/v1/wallets`, edge-cached 1 h and 6 h), two at a time, at most 12 authors per 5 minutes; none on touch screens, Save-Data or 2g | none |
+| Hovering likes or recasts | **0** on a card whose batch is in; otherwise 1 per popover (`/api/v1/reactions`), after a 280 ms delay, then cached | none |
+| Hovering replies | **0** once hovering the card has prefetched its post; otherwise 1 (`/api/v1/replies`), then cached | none |
 | Opening a profile card (hovering a picture or name for 100 ms, keyboard focus resting on it, or a tap) | **0** when its author was preloaded; otherwise up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | the label shard and `meta.json`, as on profiles |
 | Typing in the search box | 1 per distinct query, after typing pauses for 250 ms (`/api/v1/search`, the same payload the results page uses, so pressing Enter then costs nothing) | none |
 | Opening a post already prefetched | **0** | none: client cache |
@@ -43,11 +45,12 @@ The front page fills the space near the end of the list even when filtering leav
 **Prefetching** ([PERFORMANCE.md](PERFORMANCE.md)) spends Worker requests ahead of clicks, within caps:
 - hover or touch on a card: one `/api/v1/cast` request, deduplicated;
 - cards that stay in view: at most 6 a minute;
+- who liked and recasted the cards in view: one `/api/v1/engagement` batch per run of six cards, one at a time, at least 2 s apart, at most 4 per page view, and only where a pointer can hover ([PERFORMANCE.md](PERFORMANCE.md#popover-previews));
 - never more than 2 in flight, and none on Save-Data or 2g.
 
-A reader who opens posts they hovered spends nothing extra; idle viewport prefetches cost at most 6 requests a minute per active reader.
+A reader who opens posts they hovered spends nothing extra; idle viewport prefetches cost at most 6 requests a minute per active reader, and preloaded previews at most 4 per feed view (one for a reader who doesn't scroll). Hovering a preloaded count then costs nothing.
 
-**Capacity:** about **60,000 page views a day** with a typical mix, including prefetches and popovers (about 1.6 Worker requests per view). That is before counting views that cost nothing (sorting, back/forward, revisits). Each profile card a reader opens adds up to 2 more, and nothing for that account again within 5 minutes.
+**Capacity:** about **43,000 page views a day** with a typical mix, including prefetches, popovers and preloaded previews (about 2.3 Worker requests per view). That assumes about half of all views are feeds read with a mouse, each adding one or two batches. That is before counting views that cost nothing (sorting, back/forward, revisits). `MAX_BATCHES` in `crates/allthing-web/src/preload.rs` trades preloaded cards for capacity: without preloads it is about 60,000 (about 1.6 requests per view). Each profile card a reader opens adds up to 2 more, and nothing for that account again within 5 minutes.
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby
 
@@ -66,6 +69,8 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | channels | 1 h | 24 h | 48 h | 10 min |
 | search | 5 min | 30 min | 24 h | 2 min |
 | reactions (who liked, recasted) | 5 min | 1 h | 24 h | 5 min |
+| engagement (preloaded like and recast previews of six cards) | 5 min | 1 h | 24 h | 5 min |
+| engagement missing a list (a read failed, or the bucket was kept for page builds) | 15 s | 1 min | 24 h | 0 |
 | replies (popover preview) | 2 min | 30 min | 24 h | 60 s |
 | vote | 1 h | 24 h | 48 h | 10 min |
 | not found (404) | 5 min | — | 5 min | 2 min |
@@ -95,9 +100,12 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | channels | 3 |
 | search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + quoted casts ≤1 + cache write 1 (≤ 19) |
 | reactions | cache read 1 + reactions 1 + cache write 1 (≤ 3) |
+| engagement | cache read 1 + one `reactions/cast` read per list ≤12 (six cards, likes and recasts; six at a time) + cache write 1 (≤ 14) |
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤12 + cache write 1 (≤ 15) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
 | `/version` | 0 |
+
+**Preloaded previews** (`/engagement`) give way to page builds. As each list's read starts, the batch checks the isolate's Hypersnap bucket and reads only while it holds more than 16 tokens, likes first. Lists left out make the batch partial: it is cached for 15 s, then rebuilt, and the client loads those lists when their popover opens. With no room at all it answers 503, and the client does the same. A batch's cache key is its sorted hashes, and batches follow the list (cards 1–6, 7–12, …), so readers of the same feed share each batch's edge cache entry.
 
 **Origins** (which app posted a cast) cost two upstream calls per author: the author's signers, and the cast's signer (or one page of the author's recent casts). They are resolved progressively. Each build resolves up to 12 new authors, carries already-resolved origins forward from the previous payload, and keeps a bounded per-isolate memory of 20,000 resolved casts, which never change. A busy front page is fully attributed within a few refreshes.
 
@@ -116,6 +124,7 @@ Parsing is the main CPU cost, and it happens only when a payload is (re)built. M
 - trending feed, 100 casts (206 KB of JSON): **0.74 ms**
 - a user's casts, 100 casts (178 KB): **0.68 ms**
 - a channel feed, 200 casts (382 KB): **1.46 ms**. Channel feeds come back at twice the requested limit, so Allthing requests 50.
+- who liked a cast, 100 people (124 KB): **0.17 ms** to parse and put in time order, reading only the fields a name shows (0.27 ms as full user objects). An engagement batch is at most 12 such lists: about **2 ms** when every list is full, and about half that for a typical run, whose recast lists are short. That is why a batch holds six cards: eight, 16 full lists, would take about 2.7 ms, 4 to 7 ms as WebAssembly.
 
 A feed build also parses its quoted casts: one bulk read, usually a handful of casts and at most 100, and only those not carried from the previous payload.
 
@@ -138,7 +147,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
   | farcaster.xyz public API (votes, channel records) | 6 | 1 request/s |
   | Link pages (mini app meta tags), all sites together | 12 | 2 requests/s |
 
-  A request finding an empty bucket is not sent. The payload is served from cache, or the API answers 503 with `Retry-After`.
+  A request finding an empty bucket is not sent. The payload is served from cache, or the API answers 503 with `Retry-After`. Preloaded previews never take Hypersnap's below 16 tokens ([§3](#3-subrequests-per-invocation)), and one reader's batches ask for at most 6 reads a second, below its refill ([PERFORMANCE.md](PERFORMANCE.md#popover-previews)).
 - **Circuit breakers** (one per upstream, per isolate, except link pages, which are many unrelated sites): three consecutive failures (timeouts, 5xx, 429) open the breaker for 5 s, doubling up to 5 minutes. An upstream's `Retry-After` is honored, up to the same cap. While open, nothing is sent and cached copies are served.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
@@ -149,6 +158,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 ## 6. Abuse and the daily request limit
 
 - **Per-client limit**: the `API_LIMITER` rate-limiting binding allows 120 API calls a minute per IP per Cloudflare location, and answers 429 with `Retry-After: 60` beyond that. It is a backstop; normal browsing uses a few calls a minute.
+- **Batches**: one `/api/v1/engagement` request can cost up to 12 upstream reads, but only while the isolate's Hypersnap bucket holds more than 16 tokens. A flood of batches for made-up combinations of casts gets 503s once it reaches that floor, and page builds keep the rest.
 - **Read-only**: anything but GET or HEAD on `/api/*` gets 405. The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
 - **The browser app** never polls; it makes one API call per page, caches answers for 5 minutes, prefetches within the caps above, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
 - **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`) get 429 until 00:00 UTC. Static assets keep being served free, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
@@ -156,7 +166,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 
 ## 7. The static copy
 
-The GitHub Pages copy (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)) uses no Worker and no Cloudflare quota. Each visitor's browser runs the builders with the same guards and a budget of 30 upstream calls per page. Without a shared cache, its load on Hypersnap grows with its readers, which is one reason `allthing.social` is the primary site. The Farcaster app's API sends no CORS headers, so the browser can't read it: there, channel pages show only what Hypersnap gives (the name, the casts and how many accounts have cast), and the failed read costs one call of the 30 until the breaker opens.
+The GitHub Pages copy (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)) uses no Worker and no Cloudflare quota. Each visitor's browser runs the builders with the same guards and a budget of 30 upstream calls per page. It preloads no popover previews: they load when they open, one `reactions/cast` read each. Without a shared cache, its load on Hypersnap grows with its readers, which is one reason `allthing.social` is the primary site. The Farcaster app's API sends no CORS headers, so the browser can't read it: there, channel pages show only what Hypersnap gives (the name, the casts and how many accounts have cast), and the failed read costs one call of the 30 until the breaker opens.
 
 Linked HTML uses the same 128 KB body limit in the browser: chunks are copied only up to the limit, and the remaining stream is cancelled, including on a timeout. Ordinary JSON responses remain uncapped. This bounds the retained HTML bytes and avoids waiting for a large or stalled tail; bytes a server already delivered in a chunk can still exceed the retained limit.
 
