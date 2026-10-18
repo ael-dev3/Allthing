@@ -34,6 +34,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Changing the front-page sort reorders each loaded trending page, including later pages, while keeping page boundaries stable as more arrives. Later pages retain their scores and posting-app metadata, including when returning to the feed. A request that finishes after navigating away no longer accesses disposed feed state.
 - Popovers (who liked, recasted, replies) open toward the side with more room, so the replies preview on the first card no longer slides under the sticky header. Their height fits the space available, and the card with an open popover sits above the next card instead of under it.
 - Timestamps with impossible dates (30 February, 31 April), out-of-range time zone offsets or trailing text are rejected instead of being rolled over into a different date.
+- Channel parent URLs and search terms retain literal percent escapes instead of being decoded again. The static API parser treats form-encoded spaces and literal plus signs the same way as the Worker.
 - On touch screens, tapping a likes, recasts or replies count opens its popover. Before, the tap's focus opened it and the tap itself closed it again. On narrow screens, popovers are nudged to stay on screen.
 - Escape closes a keyboard popover without reopening it on the returning focus. Preview links stay in the app, and leaving an open preview removes its outside-click listener.
 - On phones, a cast with a wide image no longer makes its list wider than the screen.

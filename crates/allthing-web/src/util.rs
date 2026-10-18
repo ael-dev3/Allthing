@@ -3,6 +3,8 @@
 
 use allthing_core::channels::is_channel_id;
 use allthing_core::params::percent_encode;
+use leptos::prelude::*;
+use leptos_router::hooks::use_location;
 use wasm_bindgen::JsCast;
 
 /// Unix seconds, from the browser clock.
@@ -41,6 +43,14 @@ pub const BASE: &str = match option_env!("ALLTHING_BASE_PATH") {
 /// A site path, such as `/channels`, under [`BASE`].
 pub fn href(path: &str) -> String {
     format!("{BASE}{path}")
+}
+
+/// A query value decoded exactly once. The router's ParamsMap also
+/// unescapes values already decoded by URLSearchParams, which changes
+/// literal escapes such as "%2F" inside searches and parent URLs.
+pub fn use_query_param(name: &'static str) -> Memo<Option<String>> {
+    let location = use_location();
+    Memo::new(move |_| web_sys::UrlSearchParams::new_with_str(&location.search.get()).ok().and_then(|q| q.get(name)))
 }
 
 pub fn element_by_id<T: JsCast>(id: &str) -> Option<T> {

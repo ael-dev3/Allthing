@@ -19,7 +19,7 @@ use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind};
 use allthing_core::params::{
-    channel_key_from_param, hash_from_param, percent_decode, percent_encode, username_from_param,
+    channel_key_from_decoded, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
 use futures::future::LocalBoxFuture;
 
@@ -208,7 +208,7 @@ impl Endpoint {
                 .map(Endpoint::Replies)
                 .ok_or(bad("Expected ?hash=<cast hash>")),
             "/channel" => query("id")
-                .and_then(|v| channel_key_from_param(&v))
+                .and_then(|v| channel_key_from_decoded(&v))
                 .map(Endpoint::Channel)
                 .ok_or(bad("Expected ?id=<channel id or parent URL>")),
             "/cast" => query("hash")
@@ -254,7 +254,9 @@ impl Endpoint {
             .filter(|pair| !pair.is_empty())
             .filter_map(|pair| {
                 let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                Some((percent_decode(key)?, percent_decode(value)?))
+                // Match URL query parsing in the Worker: '+' is a space,
+                // while an encoded '%2B' remains a literal plus sign.
+                Some((percent_decode(&key.replace('+', " "))?, percent_decode(&value.replace('+', " "))?))
             })
             .collect();
         Endpoint::parse(name, |key| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
@@ -337,5 +339,29 @@ mod tests {
         );
         assert_eq!(Endpoint::Channels(None).cache_name(), "channels");
         assert_eq!(Endpoint::Wallets(3).cache_name(), "wallets?fid=3");
+    }
+
+    #[test]
+    fn channel_paths_round_trip_parent_url_escapes() {
+        for parent in [
+            "https://example.com/a%2Fb",
+            "https://example.com/100%25?tag=x%26y",
+            "https://example.com/%252F",
+            "https://example.com/🌴?q=a+b",
+        ] {
+            let endpoint = Endpoint::Channel(parent.into());
+            assert_eq!(Endpoint::from_path(&allthing_core::api::channel_path(parent)), Ok(endpoint.clone()));
+            assert_eq!(Endpoint::parse("/channel", |key| (key == "id").then(|| parent.into())), Ok(endpoint));
+        }
+    }
+
+    #[test]
+    fn static_query_parsing_matches_form_encoding() {
+        assert_eq!(Endpoint::from_path("/api/v1/search?q=art+club"), Ok(Endpoint::Search("art club".into())));
+        assert_eq!(Endpoint::from_path("/api/v1/search?q=C%2B%2B+%2520"), Ok(Endpoint::Search("C++ %20".into())));
+        assert_eq!(
+            Endpoint::from_path("/api/v1/channels?%71=Art+Club"),
+            Ok(Endpoint::Channels(Some("art club".into())))
+        );
     }
 }
