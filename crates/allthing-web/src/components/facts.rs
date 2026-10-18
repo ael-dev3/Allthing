@@ -47,7 +47,9 @@ pub fn VoteFact(fid: u64) -> impl IntoView {
         }
         .into_any()
     };
-    move || match data.get() {
+    // Prefetched (see `api::prefetch_card_facts`): shown in the first frame.
+    let ready = api::ready::<VotePayload>(&vote_path(fid));
+    move || match data.get().or_else(|| ready.clone().map(Ok)) {
         None => {
             Some(row(view! { <span class="vote vote-loading" aria-busy="true" aria-label="Loading the vote"></span> }
                 .into_any()))
@@ -106,8 +108,10 @@ fn LabelBadge(state: LabelState) -> impl IntoView {
 /// so it has an endpoint of its own, cached for hours.
 #[component]
 pub fn WalletShares(fid: u64) -> impl IntoView {
+    let ready = api::ready::<WalletActivity>(&wallets_path(fid));
     let data = LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await });
-    move || match data.get() {
+    // Prefetched (see `api::prefetch_card_facts`): shown in the first frame.
+    move || match data.get().or_else(|| ready.clone().map(Ok)) {
         None => view! { <div class="share-bar loading" aria-label="Loading wallet activity"></div> }.into_any(),
         Some(Err(_)) => view! { <p class="muted small">"Wallet activity is unavailable right now."</p> }.into_any(),
         Some(Ok(fetched)) => view! { <WalletBreakdown activity=fetched.data.as_ref().clone()/> }.into_any(),

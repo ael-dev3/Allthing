@@ -150,7 +150,7 @@ pub fn html_declares_mini_app(html: &str) -> bool {
         if name == "body" && templates == 0 {
             break;
         }
-        if matches!(name, "script" | "style" | "title" | "textarea") {
+        if matches!(name, "script" | "style" | "title" | "textarea" | "xmp" | "iframe" | "noembed" | "noframes") {
             // HTML treats their contents as text, even when it looks like tags.
             let close = format!("</{name}");
             rest = rest
@@ -336,6 +336,20 @@ mod tests {
         }
         assert!(html_declares_mini_app("<head><script>const s = '</head>';</script><meta name='fc:frame'></head>"));
         assert!(!html_declares_mini_app("<head><script>'</scripture><meta name=fc:frame>'</script></head>"));
+    }
+
+    #[test]
+    fn fallback_html_examples_do_not_declare_metadata() {
+        for tag in ["noframes", "iframe", "noembed", "xmp"] {
+            let example = format!("<head><{tag}><meta name='fc:frame'></{tag}></head>");
+            assert!(!html_declares_mini_app(&example), "metadata is text inside {tag}");
+        }
+        // An inert example does not hide a real declaration after it, and
+        // a longer tag name in the example cannot end the raw-text element.
+        assert!(html_declares_mini_app(
+            "<head><noframes><meta name='description'></noframes><meta name='fc:frame'></head>"
+        ));
+        assert!(!html_declares_mini_app("<head><noframes></noframes-example><meta name='fc:frame'></noframes></head>"));
     }
 
     #[test]

@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
+
 - A rate limit or unreadable upstream page no longer marks an indexed backfill feed as finished. The indexer keeps its cursor and retries it on a later turn; genuinely missing feeds still finish.
 - Video sound controls use native focus behavior. Browser tests activate already visible controls without automatically scrolling them first, preserving the viewport while checking sound, focus and keyboard activation.
 
@@ -31,6 +33,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - Like and recast popovers on feed cards open with their people already listed, without "Loading…": the cards in view load them ahead, six cards per request (`/api/v1/engagement`, edge-cached; one at a time, at most four per page view, and none on touch screens, with Save-Data or on 2g, or in the static copy). A replies popover reuses the post that hovering its card prefetched. Who liked or recasted a cast is now listed newest first across Hypersnap's shards, not just within the last one.
+- Profile cards open after 100 ms instead of 350 ms, and complete: the vote and wallet activity of the authors of feed cards in view are prefetched (two at a time, at most 12 accounts per 5 minutes, only where a pointer hovers), so an opened card has no loading state.
 - Post pages drop the "Posted via" box. The posting app is a quiet line in the post's meta ("via Farcaster"), and its signing key and app fid show on hover.
 - Profiles say when the account joined. Accounts registered before the ID registry moved to OP Mainnet in November 2023 showed "before Nov 2023", the earliest date onchain data has for them; they now show when they got their first username (dwr: 17 Jun 2021), read from the fname server's public transfer log, which the old sign-up registered along with the account. If that read fails, the profile keeps the date its previous copy had and is rebuilt within a minute. Newer accounts show their onchain registration, as before.
 - The front page has a Reddit-style time filter next to hot and top: All time, Past year, Past month, Past week, Today (the default) and Past hour, kept in the URL as `t`. Up to a week, it picks the window Hypersnap ranks trending casts over: 1 hour, 24 hours or 7 days. Past month, Past year and All time are ranked from Allthing's own index (see Added). A link with a time range still costs one API request, started by the inline script.

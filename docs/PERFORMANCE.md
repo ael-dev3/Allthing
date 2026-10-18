@@ -98,7 +98,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 
 | | 0.2.0 | 0.3.0 |
 |---|---|---|
-| Edge cache cold for that post | 840–1,350 ms | 20–28 ms |
+| Edge cache cold for that post | 840–1,100 ms | 20–28 ms |
 | Edge cache warm | ≈ 335 ms | 20–28 ms |
 
 Both columns were measured on https://allthing.social, from the same cloud sandbox, on 2026-10-18.
