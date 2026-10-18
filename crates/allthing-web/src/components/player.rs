@@ -177,6 +177,9 @@ pub fn HlsVideo(
                     poster.set(stream.poster(if full { 1080 } else { 720 }));
                     playback.with_value(|p| p.borrow_mut().stream = Some(stream));
                     status.set(Status::Ready);
+                    // A click while the playlist was loading engaged the
+                    // video: play it now, as the click asked.
+                    let play_at = play_at.or_else(|| engaged.get_untracked().then_some(INLINE_HEIGHT));
                     if let (Some(height), Some(video)) = (play_at, video_ref.get_untracked()) {
                         match playback.with_value(|p| ensure_source(&video, &src, p, height)) {
                             Ok(()) => {
