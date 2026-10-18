@@ -627,12 +627,14 @@ test.describe("threads and navigation", () => {
     expect(Math.abs((await page.evaluate(() => window.scrollY)) - before)).toBeLessThan(40);
   });
 
-  test("posts name the signing app, without backend badges or outbound app links", async ({ page }) => {
+  test("posts name the signing app in their meta line, without a side box or backend badges", async ({ page }) => {
     await page.goto(at(`/p/${VIDEO_CAST}`));
-    const box = page.locator(".side-box", { hasText: "Posted via" });
-    await expect(box.locator("dd").first()).toContainText(/\S/);
-    await expect(box.locator("dd").first()).not.toContainText("Warpcast");
-    await expect(box).toContainText(/0x[0-9a-f]{4}…[0-9a-f]{4}/);
+    await expect(page.locator(".side-box", { hasText: "Posted via" })).toHaveCount(0);
+    await expect(page.locator(".side-box", { hasText: "/" })).toHaveCount(0);
+    const via = page.locator(".post .post-via");
+    await expect(via).toContainText("via ");
+    await expect(via).not.toContainText("Warpcast");
+    await expect(via).toHaveAttribute("title", /Signed with key 0x[0-9a-f]{4}…[0-9a-f]{4}/);
     await expect(page.getByText(/Hypersnap|view on farcaster/i)).toHaveCount(0);
     await shoot(page, "post");
   });

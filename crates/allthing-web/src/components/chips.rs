@@ -2,7 +2,7 @@
 //! Small inline pieces: times, avatars, user chips, engagement and provenance.
 
 use crate::Notes;
-use allthing_core::clients::client_name;
+use allthing_core::clients::{client_name, client_profile};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, full_number, short_address};
 use allthing_core::model::{Cast, UserSummary};
@@ -146,12 +146,12 @@ pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
         (Some(origin), Some(app)) => {
             let name = client_name(&app).to_owned();
             let title = format!(
-                "Signed with key {} requested by @{} (fid {}).",
+                "Signed with key {} requested by {} (app fid {}).",
                 short_address(&origin.signer),
-                app.username,
+                name,
                 app.fid
             );
-            view! { <span class="origin" title=title>"via "<a href=user_href(&app.username)>{name}</a></span> }
+            view! { <span class="origin" title=title>"via "<a href=user_href(&client_profile(&app))>{name}</a></span> }
                 .into_any()
         }
         (Some(origin), None) => {

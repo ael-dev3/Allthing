@@ -202,12 +202,20 @@ fn ttl(path: &str) -> f64 {
 
 /// A recent answer for `path`, if one is kept.
 fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>, Failure>> {
-    CACHE.with(|c| {
+    let result = CACHE.with(|c| {
         c.borrow().get(path).filter(|raw| now - raw.at < ttl(path)).map(|raw| {
             let age = raw.age.saturating_add(((now - raw.at).max(0.0) / 1000.0) as u32);
             decode::<T>(&Raw { age, ..raw.clone() })
         })
-    })
+    });
+    // A prefetch can validate JSON syntax without knowing its payload type.
+    // Discard structurally invalid data so the next visit can recover.
+    if matches!(result, Some(Err(Failure::Failed(_) | Failure::Busy { .. }))) {
+        CACHE.with(|c| c.borrow_mut().remove(path));
+        None
+    } else {
+        result
+    }
 }
 
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
@@ -251,7 +259,9 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     }
     let raw = raw?;
     let result = decode::<T>(&raw);
-    remember(path, raw, now);
+    if result.is_ok() || raw.status == 404 {
+        remember(path, raw, now);
+    }
     result
 }
 
@@ -283,6 +293,16 @@ mod tests {
         }
         remember("/test/garbled", response(200, "<html>"), 1000.0);
         assert!(cached::<serde_json::Value>("/test/garbled", 2000.0).is_none());
+    }
+
+    #[test]
+    fn malformed_prefetched_payloads_do_not_poison_the_typed_cache() {
+        for body in ["{}", r#"{"query":"recovery","users":[]}"#] {
+            // Prefetching only knows the path, not its eventual payload type.
+            remember("/test/wrong-shape", response(200, body), 1000.0);
+            assert!(cached::<allthing_core::api::SearchPayload>("/test/wrong-shape", 2000.0).is_none());
+            assert!(CACHE.with(|c| !c.borrow().contains_key("/test/wrong-shape")));
+        }
     }
 
     #[test]
