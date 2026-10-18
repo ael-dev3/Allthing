@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use allthing_core::api::{CastPayload, cast_path};
+use allthing_core::clients::client_name;
 use allthing_core::format::{full_number, plural, short_address};
 use allthing_core::model::Cast;
 use allthing_core::params::hash_from_param;
@@ -217,7 +218,7 @@ fn ProvenanceBox(cast: Cast, notes: Notes) -> impl IntoView {
                 <dt>"App"</dt>
                 <dd>{match (&origin, &app) {
                     (Some(_), Some(app)) => view! {
-                        <a href=user_href(&app.username)>{app.name().to_owned()}</a>
+                        <a href=user_href(&app.username)>{client_name(app).to_owned()}</a>
                         <span class="muted">{format!(" · app fid {}", app.fid)}</span>
                     }.into_any(),
                     (Some(o), None) => match o.app_fid {

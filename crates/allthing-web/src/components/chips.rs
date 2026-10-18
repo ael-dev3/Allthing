@@ -2,6 +2,7 @@
 //! Small inline pieces: times, avatars, user chips, engagement and provenance.
 
 use crate::Notes;
+use allthing_core::clients::client_name;
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, full_number, short_address};
 use allthing_core::model::{Cast, UserSummary};
@@ -134,14 +135,14 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
     view! { <div class="engagement" title=title>{likes}{recasts}{replies}</div> }
 }
 
-/// "via Warpcast", from the app that requested the cast's signer key.
+/// "via Farcaster", from the app that requested the cast's signer key.
 #[component]
 pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
     let origin = notes.origins.get(&hash).cloned();
     let app = notes.app_for(&hash).cloned();
     match (origin, app) {
         (Some(origin), Some(app)) => {
-            let name = if app.display_name.is_empty() { app.username.clone() } else { app.display_name.clone() };
+            let name = client_name(&app).to_owned();
             let title = format!(
                 "Signed with key {} requested by @{} (fid {}).",
                 short_address(&origin.signer),

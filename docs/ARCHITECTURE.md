@@ -85,7 +85,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 |---|---|---|
 | Casts, threads, channels, users, search, reactions | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. |
 | The Farcaster vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
-| Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Warpcast" and the like |
+| Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Farcaster" and the like (the Farcaster app's account, fid 9152, is still named Warpcast; `allthing_core::clients::client_name` calls it Farcaster), and the front page's bar of the apps posting today's trending casts |
 | Spam labels | [warpcast/labels](https://github.com/warpcast/labels) `spam.jsonl` (Git LFS) | Compacted at deploy time into 32 KB shards, one character per fid, read by the browser as static files. Shown on profiles; never used to hide anything. |
 | Wallet activity | Account nonces of verified EVM addresses (up to 5) on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad, from keyless public RPCs | A nonce counts transactions *sent* from an address. Shares use largest-remainder rounding. Solana is not measured: its public RPC refuses Workers and browsers. |
 | Video | Cloudflare Stream behind `stream.farcaster.xyz` (and `stream.warpcast.com`), fetched by the browser | Posters are Stream thumbnails next to the redirected manifest. |

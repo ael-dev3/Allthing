@@ -175,8 +175,8 @@ Apps can already mint a separate signer key per surface or backend and register 
 
 | Data | Shown as |
 |---|---|
-| Signer `requestFid` (today) | "via Warpcast" chip, with the signer key in the tooltip and the Provenance box |
-| `ClientTag` (phase 3) | "via Warpcast 4.2", verified against the signer |
+| Signer `requestFid` (today) | "via Farcaster" chip, with the signer key in the tooltip and the Provenance box |
+| `ClientTag` (phase 3) | "via Farcaster 4.2", verified against the signer |
 | Ingress receipt, operator known (phase 2) | "entered via Hypersnap (Quilibrium), 14:02 UTC", with the signature status |
 | Ingress receipt, unknown node | "entered via an unregistered node 12D3Koo…" |
 | No receipt | "entry point not recorded" (today's text) |

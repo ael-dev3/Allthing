@@ -1708,6 +1708,62 @@ code {
   min-width: 4px;
 }
 
+/* The apps posting today's trending casts, under the sort tabs. */
+.client-share {
+  margin: -4px 0 14px;
+}
+
+.client-share .share-bar {
+  height: 6px;
+}
+
+.client-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 7px 0 0;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.client-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.client-legend .pct {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.client-legend .swatch {
+  width: 8px;
+  height: 8px;
+}
+
+.client-0 {
+  background: var(--accent);
+}
+
+.client-1 {
+  background: #2f6fde;
+}
+
+.client-2 {
+  background: var(--cyan);
+}
+
+.client-3 {
+  background: var(--gold);
+}
+
+.client-4 {
+  background: #a3a8b8;
+}
+
 .share-list {
   list-style: none;
   padding: 0;

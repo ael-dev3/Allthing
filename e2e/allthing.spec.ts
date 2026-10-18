@@ -627,7 +627,8 @@ test.describe("threads and navigation", () => {
   test("posts name the signing app, without backend badges or outbound app links", async ({ page }) => {
     await page.goto(at(`/p/${VIDEO_CAST}`));
     const box = page.locator(".side-box", { hasText: "Posted via" });
-    await expect(box.locator("dd").first()).toContainText(/Warpcast|Farcaster|app fid/);
+    await expect(box.locator("dd").first()).toContainText(/\S/);
+    await expect(box.locator("dd").first()).not.toContainText("Warpcast");
     await expect(box).toContainText(/0x[0-9a-f]{4}…[0-9a-f]{4}/);
     await expect(page.getByText(/Hypersnap|view on farcaster/i)).toHaveCount(0);
     await shoot(page, "post");

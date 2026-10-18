@@ -12,6 +12,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
+use crate::components::clients::ClientShareBar;
 use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice, TimeFilter};
 use crate::util::{href, set_title, with_query};
 
@@ -175,6 +176,7 @@ pub fn Home() -> impl IntoView {
                 view! {
                     <Columns>
                         <Heading sort range/>
+                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=window.get()/>
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
