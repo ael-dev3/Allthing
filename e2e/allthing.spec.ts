@@ -311,6 +311,45 @@ test.describe("media", () => {
     }
   });
 
+  test("a video the reader started keeps playing when another one could autoplay", async ({ page }) => {
+    // Tall enough that the post's video and a reply's video are both in view.
+    await page.setViewportSize({ width: 1280, height: 2000 });
+    await useFixtureStream(page);
+    // The post gets a reply with a second video, whose playlist arrives only
+    // once the reader's video is playing.
+    const second = "https://stream.farcaster.xyz/v1/video/second-video.m3u8";
+    await page.route(/\/api\/v1\/cast\?/, async (route: Route) => {
+      const payload = await (await route.fetch()).json();
+      const cast = payload.thread.cast;
+      payload.thread.children.unshift({
+        cast: { ...cast, hash: `0x${"2".repeat(40)}`, text: "A reply with a video", embeds: [{ kind: "video", url: second }], replies: 0 },
+        children: [],
+      });
+      await route.fulfill({ json: payload });
+    });
+    let release!: () => void;
+    const started = new Promise<void>((done) => (release = done));
+    await page.route(second, async (route: Route) => {
+      await started;
+      await route.fallback();
+    });
+    try {
+      await page.goto(at(`/p/${VIDEO_CAST}`));
+      const mine = page.locator(".post .video").first().locator("video");
+      const reply = page.locator(".video").nth(1).locator("video");
+      await expect(reply).toBeAttached();
+      await page.locator(".post .video").first().locator(".video-play").click();
+      await expect.poll(() => mine.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(0.1);
+      release();
+      // The reply's playlist arrives and it could autoplay; give it time.
+      await page.waitForTimeout(2500);
+      expect(await mine.evaluate((v: HTMLVideoElement) => !v.paused && !v.muted), "the reader's video still playing with sound").toBe(true);
+      expect(await reply.evaluate((v: HTMLVideoElement) => v.paused), "the reply's video did not take over").toBe(true);
+    } finally {
+      release();
+    }
+  });
+
   test("a video scrolling into view autoplays without flashing the play icon", async ({ page }) => {
     await useFixtureStream(page);
     // The playlist takes a moment, as over a real network...

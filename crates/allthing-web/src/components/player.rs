@@ -43,19 +43,29 @@ struct Playback {
 }
 
 thread_local! {
-    /// The one video allowed to play at a time.
-    static ACTIVE: RefCell<Option<HtmlVideoElement>> = const { RefCell::new(None) };
+    /// The one video allowed to play at a time, and whether the reader
+    /// started it.
+    static ACTIVE: RefCell<Option<(HtmlVideoElement, bool)>> = const { RefCell::new(None) };
 }
 
-/// Make `video` the only one playing: pause whichever was.
-fn claim(video: &HtmlVideoElement) {
+/// Make `video` the only one playing: pause whichever was. `by_reader` is
+/// whether the reader started it (not a muted autoplay).
+fn claim(video: &HtmlVideoElement, by_reader: bool) {
     ACTIVE.with(|active| {
         let mut active = active.borrow_mut();
-        if let Some(previous) = active.as_ref().filter(|p| *p != video) {
+        if let Some((previous, _)) = active.as_ref().filter(|(p, _)| p != video) {
             let _ = previous.pause();
         }
-        *active = Some(video.clone());
+        *active = Some((video.clone(), by_reader));
     });
+}
+
+/// Whether the reader is watching a video other than `video`: one they
+/// started that is still playing. Autoplay doesn't take over from it.
+fn reader_watching_other(video: &HtmlVideoElement) -> bool {
+    ACTIVE.with(|active| {
+        active.borrow().as_ref().is_some_and(|(p, by_reader)| *by_reader && p != video && !p.paused() && !p.ended())
+    })
 }
 
 /// Muted autoplay in view, unless the reader prefers reduced motion or is
@@ -164,7 +174,7 @@ pub fn HlsVideo(
             if play_at.is_some() {
                 video.set_muted(false);
                 video.set_controls(true);
-                claim(&video);
+                claim(&video, true);
                 play(&video);
             }
             return;
@@ -185,7 +195,7 @@ pub fn HlsVideo(
                             Ok(()) => {
                                 video.set_muted(false);
                                 video.set_controls(true);
-                                claim(&video);
+                                claim(&video, true);
                                 play(&video);
                             }
                             Err(e) => status.set(Status::Failed(e)),
@@ -274,6 +284,9 @@ pub fn HlsVideo(
             return;
         }
         let Some(video) = video_ref.get_untracked() else { return };
+        if reader_watching_other(&video) {
+            return;
+        }
         if playback.with_value(|p| ensure_source(&video, &url.get_value(), p, PREVIEW_HEIGHT)).is_ok() {
             // Muted and inline before play(), or iOS Safari refuses autoplay
             // or takes the video fullscreen.
@@ -281,7 +294,7 @@ pub fn HlsVideo(
             video.set_muted(true);
             let _ = video.set_attribute("playsinline", "");
             previewing.set(true);
-            claim(&video);
+            claim(&video, false);
             play(&video);
         }
     };
@@ -331,7 +344,7 @@ pub fn HlsVideo(
             Ok(()) => {
                 video.set_muted(false);
                 video.set_controls(true);
-                claim(&video);
+                claim(&video, true);
                 play(&video);
             }
             Err(e) => status.set(Status::Failed(e)),
