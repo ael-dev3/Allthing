@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
+
 ### Added
 
 - Video sound sticks: once the reader turns a video's sound on (its badge, its controls, or a click to play it), later videos autoplay with sound until they mute one. The choice is kept in the browser's local storage. The "Sound off · tap for sound" badge on an autoplaying video is now a button that turns its sound on or off in place. Where the browser won't play sound before the reader has interacted with the page, the video plays muted and its sound comes on at their first tap or key press.
