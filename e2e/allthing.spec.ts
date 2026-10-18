@@ -250,9 +250,18 @@ test.describe("media", () => {
     await expect(player).toBeVisible();
     await expect.poll(() => player.getAttribute("class")).not.toMatch(/loading/);
 
+    // Muted and inline in the markup, as iOS Safari requires for autoplay.
+    await expect(video).toHaveAttribute("muted", "");
+    await expect(video).toHaveAttribute("playsinline", "");
     // In view: plays muted without a click.
     await player.scrollIntoViewIfNeeded();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.muted && !v.paused)).toBe(true);
+    // While it plays, no play icon is drawn over it; a "sound off" badge is.
+    await expect(player).toHaveClass(/autoplaying/);
+    await expect(player.locator(".video-play svg")).toBeHidden();
+    await expect(player.locator(".video-sound")).toBeVisible();
+    await expect(player.getByRole("button", { name: /^Play with sound:/ })).toBeVisible();
+    await shoot(page, "video-autoplaying");
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(0.3);
     expect(await video.evaluate((v: HTMLVideoElement) => v.src)).toMatch(/^blob:/);
     // Off screen: paused.
@@ -260,9 +269,12 @@ test.describe("media", () => {
     await page.evaluate(() => document.body.style.minHeight = "4000px");
     await page.evaluate(() => window.scrollTo(0, 3500));
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    // Paused: the play icon is back.
+    await expect(player).not.toHaveClass(/autoplaying/);
+    await expect(player.locator(".video-play svg")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
 
-    await player.getByRole("button", { name: /^Play video:/ }).click();
+    await player.getByRole("button", { name: /^Play (video|with sound):/ }).click();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.muted)).toBe(true);
     const playedTo = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(playedTo + 0.5);
@@ -315,7 +327,8 @@ test.describe("media", () => {
     const video = player.locator("video");
     await expect(video).toHaveAttribute("src", `${clip}#t=0.1`);
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.muted && !v.paused)).toBe(true);
-    await player.getByRole("button", { name: /^Play video:/ }).click();
+    await expect(player).toHaveClass(/autoplaying/);
+    await player.getByRole("button", { name: /^Play with sound:/ }).click();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.muted && v.currentTime > 0.5), { timeout: 15_000 }).toBe(true);
     await expect(player.locator(".video-note")).toHaveCount(0);
   });
