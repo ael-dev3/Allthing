@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Feature request
+description: Suggest an idea that would make Allthing better for reading Farcaster.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Allthing is a read-only client: there is no sign-in, it never posts, reacts or connects a wallet, and it never hides content because of a third party's label. The [roadmap](https://github.com/ael-dev3/Allthing/blob/main/docs/ROADMAP.md) lists what is planned and what isn't.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today, and for whom?
+      placeholder: When I read a long thread, I can't …
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like Allthing to do? Mockups and examples from other apps are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways to solve it, or workarounds you use now.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I understand that Allthing stays read-only (no sign-in, posting, reactions or wallet connections) and doesn't hide content because of a third party's label.
+          required: true

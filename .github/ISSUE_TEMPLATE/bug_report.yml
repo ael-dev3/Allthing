@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Bug report
+description: Something on allthing.social, or in a local build, doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please check the [open issues](https://github.com/ael-dev3/Allthing/issues) first.
+
+        **Security problems don't belong here.** Report them privately, as [SECURITY.md](https://github.com/ael-dev3/Allthing/blob/main/SECURITY.md) describes.
+  - type: input
+    id: url
+    attributes:
+      label: Page URL
+      description: The page where it happens.
+      placeholder: https://allthing.social/p/0x…
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Desktop or phone
+      options:
+        - Desktop
+        - Phone
+        - Tablet
+        - More than one
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: The browser and its version (from its About page), and the operating system.
+      placeholder: Safari on iOS, Chrome on Windows, Firefox on Android, …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Allthing version
+      description: Shown at the bottom of every page, as a version and a commit.
+      placeholder: v0.3.0 (abc1234)
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. Scroll to …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include any error message shown on the page or in the browser console.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Drag images or videos here. Leave out anything private.

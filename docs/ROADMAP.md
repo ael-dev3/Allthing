@@ -28,6 +28,13 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
   - [x] mini app filtering;
   - [x] a simpler interface;
   - [x] a release process.
+- **Since 0.3.0, unreleased** ([changelog](../CHANGELOG.md#unreleased)):
+  - [x] a Reddit-style time filter on the front page;
+  - [x] each cast's whole text in feeds, and media at its own shape;
+  - [x] video sound that stays on once the reader turns it on;
+  - [x] spam, and mini apps on their own domains, left out;
+  - [x] a plainer interface, without Neynar scores, the Channels sidebar or "Updated N min ago";
+  - [x] browser regression tests on every pull request.
 
 ## Next
 

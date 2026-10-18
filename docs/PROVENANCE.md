@@ -3,10 +3,10 @@
 
 **Status:** design proposal (October 2026). Phase 1 is implemented in Allthing; phases 2 and 3 are proposals for "our chain": a Snapchain-compatible node (Hypersnap or a fork of it) that Allthing's community could run.
 
-Allthing shows two kinds of provenance on every cast:
+Allthing tracks two kinds of provenance for every cast:
 
-- **Posted via**: the app that signed the cast.
-- **Read from**: the backend Allthing fetched the cast from.
+- **Posted via**: the app that signed the cast, shown on every cast.
+- **Read from**: the backend Allthing fetched the cast from, recorded in every payload.
 
 This document explains what the Farcaster protocol records today and what it does not. It also proposes how a node, and then the protocol, could record *client* and *backend (ingress)* provenance in a way that can be verified rather than merely claimed.
 
@@ -87,7 +87,7 @@ Everything here is read-only, needs no protocol change, and uses public endpoint
    - **Onchain keys** carry KeyRegistry metadata, which `allthing-core::provenance` ABI-decodes.
 
    Keys that have since been removed fall back to `/v1/onChainEventsByFid?event_type=EVENT_TYPE_SIGNER`. The app fid resolves to its Farcaster account (for example @warpcast). Resolved origins are immutable, so they are cached indefinitely in the Worker, and the unresolved remainder is filled in by later refreshes. [BUDGET.md](BUDGET.md) has the costs.
-2. **Read from.** Every payload records the backend that served it. Today that is always Hypersnap (`haatz.quilibrium.com`), a read node mirroring Snapchain mainnet. Each cast carries a badge, and the post page's Provenance box states plainly that the network entry point is *not recorded*.
+2. **Read from.** Every payload records the backend that served it. Today that is always Hypersnap (`haatz.quilibrium.com`), a read node mirroring Snapchain mainnet. Since 0.3.0 the pages don't show it: the backend badges on casts and the "Read from" and entry-point lines of the post page's provenance box were removed.
 3. **No guessing.** Allthing never infers an ingress backend from timing, signer or app, because none of those identify the node a message entered through.
 
 ## 3. Goals for our chain
@@ -179,7 +179,7 @@ Apps can already mint a separate signer key per surface or backend and register 
 | `ClientTag` (phase 3) | "via Farcaster 4.2", verified against the signer |
 | Ingress receipt, operator known (phase 2) | "entered via Hypersnap (Quilibrium), 14:02 UTC", with the signature status |
 | Ingress receipt, unknown node | "entered via an unregistered node 12D3Koo…" |
-| No receipt | "entry point not recorded" (today's text) |
+| No receipt | "entry point not recorded" |
 
 ## 7. Open questions
 

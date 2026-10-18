@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Architecture
 
-Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serves two things: a static WebAssembly app, and a small JSON API that the app calls once per page. All of it is Rust, except generated glue and a short boot script.
+Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serves two things: a static WebAssembly app, and a small JSON API that the app calls once per page. All of it is Rust, except generated glue, a short boot script and a one-line inline script that starts the front page's data request.
 
 ```text
  Browser                                   Cloudflare (one Worker, Free plan)            Upstreams
@@ -132,7 +132,7 @@ Annotations memoized in the page (origins, apps) carry over between pages during
 
 - **Read-only**: there are no accounts, cookies, keys, signers or write paths. The Worker accepts only `GET` and `HEAD`.
 - **No secrets**: every upstream is public and keyless. The Workers Builds token lives in Cloudflare, never in the repository.
-- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. The one exception is `static.cloudflareinsights.com`, for Cloudflare Web Analytics, which Cloudflare injects when it is switched on for the zone. It is cookieless, and turning it off in the dashboard removes the script. Its POST of page timings to `/cdn-cgi/rum`, handled by Cloudflare rather than the Worker, is the only non-GET request a page makes. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted. There is no `unsafe-eval`, no inline scripts and no framing of the site.
+- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. The one exception is `static.cloudflareinsights.com`, for Cloudflare Web Analytics, which Cloudflare injects when it is switched on for the zone. It is cookieless, and turning it off in the dashboard removes the script. Its POST of page timings to `/cdn-cgi/rum`, handled by Cloudflare rather than the Worker, is the only non-GET request a page makes. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted. There is no `unsafe-eval` and no framing of the site, and the only inline scripts are the early data request and the speculation rules in `web/index.html`, each allowed by its hash.
 - **Links** in casts get `rel="noopener noreferrer nofollow ugc"`. Cast text is tokenized and rendered as text nodes, never as HTML.
 - **Abuse**: a per-IP rate limit (`API_LIMITER`, 120 a minute), the caching above, and guards that refuse to send rather than queue. See [BUDGET.md](BUDGET.md).
 

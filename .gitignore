@@ -3,13 +3,20 @@
 /dist/
 /dist-pages/
 /crates/allthing-worker/build/
+**/*.rs.bk
 
-# Node tooling (wrangler, Playwright)
-/node_modules/
-/.wrangler/
+# Node tooling (wrangler, Playwright); wrangler also leaves .wrangler/ in e2e/
+node_modules/
+.wrangler/
 /test-results/
 /playwright-report/
 /blob-report/
+/playwright/.cache/
+
+# Screenshots saved by the live end-to-end suite (e2e/allthing.spec.ts). Only
+# the one the README shows is tracked; add a `!` line to track another.
+/docs/screenshots/*
+!/docs/screenshots/home.png
 
 # Never commit secrets or local settings
 .env
@@ -18,7 +25,11 @@
 *.pem
 *.key
 
+# Editors, operating systems and logs
 .DS_Store
+Thumbs.db
 *.log
-/.idea/
-/.vscode/
+*.swp
+*~
+.idea/
+.vscode/

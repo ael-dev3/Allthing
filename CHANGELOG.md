@@ -19,6 +19,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
 - The header's Channels button and the front page's Channels sidebar are gone: the feed is one centered column, and the Worker no longer looks up trending channels for it. Channels are still found through search and channel links, and `/channels` still lists them.
+- The README is rewritten, with a wordmark for light and dark themes, CI, license and release badges, the features, the architecture and a quick start. A code of conduct, issue forms for bugs and feature requests and a pull request template join refreshed contributing and security guides, stale screenshots are gone, and `.gitignore` covers what local wrangler and Playwright runs leave behind.
 
 ### Removed
 
