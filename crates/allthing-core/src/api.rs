@@ -50,6 +50,14 @@ fn is_zero(n: &u32) -> bool {
 }
 
 impl Annotations {
+    /// Take `fresh` scores for `fids`, keeping the ones already known for
+    /// those fids (from Hypersnap or the page's previous copy) wherever no
+    /// fresh score came back, as when the onchain read fails.
+    pub fn merge_scores(&mut self, fresh: BTreeMap<u64, u32>, fids: &[u64]) {
+        self.scores.retain(|fid, _| fids.contains(fid));
+        self.scores.extend(fresh);
+    }
+
     /// The app a cast was posted from, if known.
     pub fn app_for(&self, hash: &str) -> Option<&UserSummary> {
         let fid = self.origins.get(hash)?.app_fid?;
@@ -260,6 +268,18 @@ pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scores_survive_a_failed_read() {
+        let mut notes = Annotations::default();
+        notes.scores.extend([(1, 740_000), (2, 500_000), (9, 100_000)]);
+        // The onchain read failed: what was known for the page's fids stays.
+        notes.merge_scores(BTreeMap::new(), &[1, 2, 3]);
+        assert_eq!(notes.scores, BTreeMap::from([(1, 740_000), (2, 500_000)]));
+        // A fresh read wins over what was known.
+        notes.merge_scores(BTreeMap::from([(1, 750_000), (3, 900_000)]), &[1, 2, 3]);
+        assert_eq!(notes.scores, BTreeMap::from([(1, 750_000), (2, 500_000), (3, 900_000)]));
+    }
 
     #[test]
     fn paths_encode_keys() {

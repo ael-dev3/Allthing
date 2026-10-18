@@ -272,7 +272,7 @@ pub async fn annotate(inv: &Invocation, notes: &mut Annotations, fids: &[u64], t
     let mut origin_notes = std::mem::take(notes);
     let (scores, pending) = join(scores(inv, fids), origins(inv, &mut origin_notes, targets, max_authors)).await;
     *notes = origin_notes;
-    notes.scores = scores;
+    notes.merge_scores(scores, fids);
     notes.pending = pending;
     apps(inv, notes).await;
 }
