@@ -55,6 +55,9 @@ pub fn Popover(
     // how tall it may be, measured each time it opens.
     let below = RwSignal::new(false);
     let max_height = RwSignal::new(MAX_PANEL_PX);
+    // Sideways nudge that keeps the open panel on screen on narrow viewports.
+    let shift = RwSignal::new(0.0_f64);
+    let panel = NodeRef::<leptos::html::Div>::new();
     let place = move || {
         let Some(button) = button.get_untracked() else { return };
         let rect = button.get_bounding_client_rect();
@@ -64,6 +67,7 @@ pub fn Popover(
         let open_below = above_room < MAX_PANEL_PX && below_room > above_room;
         below.set(open_below);
         max_height.set(if open_below { below_room } else { above_room }.clamp(120.0, MAX_PANEL_PX));
+        shift.set(0.0);
     };
 
     let cancel = move || {
@@ -108,8 +112,12 @@ pub fn Popover(
             }
         }
     };
+    // Keyboard focus opens hover popovers. A tap or click also focuses the
+    // button, but then the click itself decides; opening here as well would
+    // have the click toggle the popover straight back closed.
     let focus_in = move |_: ev::FocusEvent| {
-        if hover && state.get_untracked() != State::Open {
+        let keyboard = button.get_untracked().is_some_and(|b| b.matches(":focus-visible").unwrap_or(false));
+        if hover && keyboard && state.get_untracked() != State::Open {
             open();
         }
     };
@@ -163,6 +171,32 @@ pub fn Popover(
             })
         })
     });
+    // Once the panel is laid out, measure it and nudge it back inside the
+    // viewport if it hangs over either side.
+    Effect::new(move || {
+        if state.get() != State::Open {
+            return;
+        }
+        request_animation_frame(move || {
+            let Some(panel) = panel.get_untracked() else { return };
+            let rect = panel.get_bounding_client_rect();
+            // On phones an overflowing panel widens the layout viewport
+            // (innerWidth), so bound it by the screen as well.
+            let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
+            let screen = window().screen().ok().and_then(|s| s.width().ok()).map_or(inner, f64::from);
+            let viewport = inner.min(screen);
+            let left = rect.left() - shift.get_untracked();
+            let margin = 8.0;
+            let mut dx = 0.0;
+            if left + rect.width() > viewport - margin {
+                dx = viewport - margin - rect.width() - left;
+            }
+            if left + dx < margin {
+                dx = margin - left;
+            }
+            shift.set(dx.round());
+        });
+    });
     on_cleanup(cancel);
 
     let id = format!("pop-{}", next_id());
@@ -192,7 +226,8 @@ pub fn Popover(
                     class="popover-panel"
                     class:closing=move || state.get() == State::Closing
                     class:below=move || below.get()
-                    style=move || format!("max-height: {}px", max_height.get().round())
+                    node_ref=panel
+                    style=move || format!("max-height: {}px; translate: {}px 0", max_height.get().round(), shift.get())
                     id=id.clone()
                     role="dialog"
                     aria-label=label.clone()

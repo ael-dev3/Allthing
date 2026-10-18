@@ -31,6 +31,8 @@ async function expectClearOfHeader(page: Page, panel: Locator) {
   expect(box && header && viewport).toBeTruthy();
   expect(box!.y).toBeGreaterThanOrEqual(header!.y + header!.height - 1);
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 1);
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 1);
   // Nothing else is painted over it: the topmost element across its
   // middle and near its bottom belongs to the panel.
   const covered = await panel.evaluate((el) => {
@@ -595,6 +597,55 @@ test.describe("threads and navigation", () => {
     await expect(page.locator(".error-panel")).toContainText("Nothing here");
     await page.goto(at("/definitely/not/a/page"));
     await expect(page.locator(".error-panel")).toContainText("Page not found");
+  });
+});
+
+test.describe("phone width", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("pages fit the screen without sideways scrolling", async ({ page }) => {
+    for (const path of ["/", "/u/0xael.eth", `/p/${VIDEO_CAST}`, "/search?q=farcaster", "/channels"]) {
+      await page.goto(at(path));
+      await expect(page.locator("main .cast-card, main .person, main .channel-card, main .post").first()).toBeVisible();
+      await page.waitForTimeout(500);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `${path} scrolls sideways`).toBeLessThanOrEqual(0);
+    }
+    await shoot(page, "phone-channels");
+  });
+
+  test("profiles show the wallet panel before the casts", async ({ page }) => {
+    await page.goto(at("/u/0xael.eth"));
+    const panel = page.locator(".side .side-box").first();
+    const firstCast = page.locator(".cast-card").first();
+    await expect(firstCast).toBeVisible();
+    await expect(panel).toBeVisible();
+    const [p, c, h] = await Promise.all([panel.boundingBox(), firstCast.boundingBox(), page.locator(".profile").boundingBox()]);
+    expect(p!.y).toBeGreaterThan(h!.y + h!.height - 1);
+    expect(p!.y + p!.height).toBeLessThan(c!.y);
+    await panel.getByRole("button", { name: /verified wallet/ }).tap();
+    const list = page.getByRole("dialog", { name: "Verified wallets" });
+    await expect(list).toBeVisible();
+    await page.waitForTimeout(200);
+    await expectClearOfHeader(page, list);
+    await shoot(page, "phone-profile-wallets");
+  });
+
+  test("tapping a replies count opens the preview", async ({ page }) => {
+    await page.goto(at("/"));
+    const button = page.locator(".cast-card button.stat-replies").first();
+    await expect(button).toBeVisible();
+    await button.tap();
+    const replies = page.getByRole("dialog", { name: "Replies" });
+    await expect(replies).toBeVisible();
+    await expect(replies.locator(".reply-item").first()).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(at("/"));
+    await page.waitForTimeout(200);
+    await expectClearOfHeader(page, replies);
+    await shoot(page, "phone-replies");
+    // A second tap closes it.
+    await button.tap();
+    await expect(replies).toHaveCount(0);
   });
 });
 
