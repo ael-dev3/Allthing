@@ -2,18 +2,18 @@
 //! A profile: who the account is, how others rate and label it, where its
 //! wallets are active, and its casts. Labels inform; they never hide content.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use allthing_core::api::{UserPayload, user_path, wallets_path};
+use allthing_core::api::{UserPayload, user_path, vote_path, wallets_path};
 use allthing_core::format::{full_number, score as format_score, short_address};
 use allthing_core::labels::SpamLabel;
-use allthing_core::listing::{PAGE_SIZE, paginate, parse_page, replies_only, top_level};
+use allthing_core::listing::{replies_only, top_level};
 use allthing_core::model::User;
 use allthing_core::params::username_from_param;
 use allthing_core::ranking::{Sort, sorted};
 use allthing_core::time::{duration_since, format_date};
-use allthing_core::wallet::{ChainKind, WalletActivity};
+use allthing_core::vote::VotePayload;
+use allthing_core::wallet::WalletActivity;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 
@@ -21,11 +21,12 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
-use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, Pager, SideBox, SortTabs};
+use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SortTabs};
+use crate::components::popover::Popover;
 use crate::components::text::CastText;
 use crate::labels::{LabelState, spam_label};
-use crate::pages::side::KeyboardBox;
 use crate::util::{now, set_title, user_href, with_query};
+use wasm_bindgen::JsCast;
 
 /// FIDs registered before the November 2023 move of the ID registry to OP
 /// Mainnet report the migration date as their registration.
@@ -40,7 +41,6 @@ pub fn UserPage() -> impl IntoView {
     });
     let replies_tab = Memo::new(move |_| query.read().get("tab").as_deref() == Some("replies"));
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::New));
-    let page = Memo::new(move |_| parse_page(query.read().get("page").as_deref()));
     let data = LocalResource::new(move || {
         let name = name.get();
         async move {
@@ -73,35 +73,26 @@ pub fn UserPage() -> impl IntoView {
                 let notes: Notes = Arc::new(payload.notes.clone());
                 let user = payload.user.clone();
                 let path = user_href(&user.username);
-                let listing = if replies_tab.get() {
-                    replies_only(&payload.pool)
-                } else {
-                    sorted(&top_level(&payload.pool), sort.get())
-                };
-                let slice = paginate(listing.len(), page.get(), PAGE_SIZE);
-                let casts = listing[slice.offset..slice.end].to_vec();
-                let side = view! {
-                    <AppsBox payload=payload.clone()/>
-                    <AddressesBox user=user.clone()/>
-                    <KeyboardBox/>
-                }
-                .into_any();
+                let pool = payload.pool.clone();
+                // Switching sort or tab reorders the list, not the page.
+                let casts = Signal::derive(move || {
+                    if replies_tab.get() { replies_only(&pool) } else { sorted(&top_level(&pool), sort.get()) }
+                });
+                let side = view! { <WalletPanel user=user.clone()/> }.into_any();
                 let casts_link = path.clone();
                 let replies_link = with_query(&path, &[("tab", Some("replies".to_owned()))]);
                 view! {
                     <Columns side>
                         <ProfileHeader user=user.clone() score=notes.scores.get(&user.fid).copied()/>
-                        <WalletPanel fid=user.fid/>
                         <nav class="tabs" aria-label="Profile sections">
-                            <a href=casts_link class:selected=!replies_tab.get() aria-current=(!replies_tab.get()).then_some("page")>"Casts"</a>
-                            <a href=replies_link.clone() class:selected=replies_tab.get() aria-current=replies_tab.get().then_some("page")>"Replies"</a>
+                            <a href=casts_link data-noscroll="" class:selected=move || !replies_tab.get() aria-current=move || (!replies_tab.get()).then_some("page")>"Casts"</a>
+                            <a href=replies_link data-noscroll="" class:selected=move || replies_tab.get() aria-current=move || replies_tab.get().then_some("page")>"Replies"</a>
                         </nav>
-                        {(!replies_tab.get()).then(|| view! {
+                        {move || (!replies_tab.get()).then(|| view! {
                             <div class="listing-head"><SortTabs path=path.clone() current=sort.get() default_sort=Sort::New/></div>
                         })}
                         <Freshness age stale/>
-                        <CastList casts notes show_parent=replies_tab.get()/>
-                        <Pager path=if replies_tab.get() { replies_link } else { path.clone() } slice sort=sort.get() default_sort=Sort::New/>
+                        {move || view! { <CastList casts notes=notes.clone() show_parent=replies_tab.get()/> }}
                     </Columns>
                 }
                 .into_any()
@@ -158,6 +149,7 @@ fn ProfileHeader(user: User, score: Option<u32>) -> impl IntoView {
                         <dd>{date}</dd>
                     </div>
                 })}
+                <VoteFact fid=user.fid/>
                 <div class="fact">
                     <dt>"Farcaster app label"</dt>
                     <dd>{move || match label.get() {
@@ -205,16 +197,27 @@ fn LabelBadge(state: LabelState) -> impl IntoView {
     }
 }
 
-/// Wallet activity by chain, loaded separately because it queries many RPCs.
+/// Wallet activity by chain, loaded separately because it queries many RPCs,
+/// with the account's verified addresses one click away.
 #[component]
-fn WalletPanel(fid: u64) -> impl IntoView {
+fn WalletPanel(user: User) -> impl IntoView {
+    let fid = user.fid;
     let data = LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await });
+    let addresses: Vec<(&'static str, String)> = user
+        .eth_addresses
+        .iter()
+        .map(|a| ("EVM", a.clone()))
+        .chain(user.sol_addresses.iter().map(|a| ("SOL", a.clone())))
+        .collect();
     view! {
-        <section class="wallets" aria-label="Wallet activity by chain">
-            <h2>"Wallet activity by chain"</h2>
+        <section class="wallets side-box" aria-label="Wallet activity by chain">
+            <div class="wallets-head">
+                <h2>"Wallet activity"</h2>
+                {(!addresses.is_empty()).then(|| view! { <WalletsButton addresses=addresses.clone()/> })}
+            </div>
             {move || match data.get() {
-                None => view! { <p class="muted wallets-loading">"Counting transactions on each chain…"</p> }.into_any(),
-                Some(Err(failure)) => view! { <p class="muted">{format!("Unavailable: {}", failure.message())}</p> }.into_any(),
+                None => view! { <div class="share-bar loading" aria-label="Loading wallet activity"></div> }.into_any(),
+                Some(Err(_)) => view! { <p class="muted small">"Wallet activity is unavailable right now."</p> }.into_any(),
                 Some(Ok(fetched)) => view! { <WalletBreakdown activity=fetched.data.as_ref().clone()/> }.into_any(),
             }}
         </section>
@@ -223,112 +226,106 @@ fn WalletPanel(fid: u64) -> impl IntoView {
 
 #[component]
 fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
-    if activity.addresses.is_empty() {
-        return view! { <p class="muted">"No verified addresses, so there is no wallet activity to show."</p> }
-            .into_any();
-    }
     let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.count > 0).cloned().collect();
-    let idle: Vec<String> =
-        activity.chains.iter().filter(|c| c.error.is_none() && c.count == 0).map(|c| c.name.clone()).collect();
-    let failed: Vec<_> = activity.chains.iter().filter(|c| c.error.is_some()).cloned().collect();
-    let evm_addresses = activity.addresses.iter().filter(|a| a.kind == ChainKind::Evm).count();
+    if measured.is_empty() {
+        return view! { <p class="muted small">"No onchain activity from verified wallets."</p> }.into_any();
+    }
     let bar_label = measured.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
     view! {
-        {if measured.is_empty() {
-            view! { <p class="muted">"No transactions sent from the verified addresses on the measured chains."</p> }.into_any()
-        } else {
-            view! {
-                <div class="share-bar" role="img" aria-label=bar_label>
-                    {measured.iter().filter(|c| c.percent > 0).map(|c| view! {
-                        <span class=format!("seg chain-{}", c.chain) style=format!("flex-grow: {}", c.percent) title=format!("{}: {}%", c.name, c.percent)></span>
-                    }).collect_view()}
-                </div>
-                <ul class="share-list">
-                    {measured.iter().map(|c| view! {
-                        <li>
-                            <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
-                            <span class="chain-name">{c.name.clone()}</span>
-                            <strong class="pct">{if c.percent == 0 { "<1%".to_owned() } else { format!("{}%", c.percent) }}</strong>
-                            <span class="muted">{format!("{} sent", full_number(c.count))}</span>
-                        </li>
-                    }).collect_view()}
+        <div class="share-bar" role="img" aria-label=bar_label>
+            {measured.iter().filter(|c| c.percent > 0).map(|c| view! {
+                <span class=format!("seg chain-{}", c.chain) style=format!("flex-grow: {}", c.percent) title=format!("{}: {}%", c.name, c.percent)></span>
+            }).collect_view()}
+        </div>
+        <ul class="share-list">
+            {measured.iter().map(|c| view! {
+                <li title=format!("{} transactions sent", full_number(c.count))>
+                    <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
+                    <span class="chain-name">{c.name.clone()}</span>
+                    <strong class="pct">{if c.percent == 0 { "<1%".to_owned() } else { format!("{}%", c.percent) }}</strong>
+                </li>
+            }).collect_view()}
+        </ul>
+    }
+    .into_any()
+}
+
+/// "Wallets": every verified address, each copyable in one click.
+#[component]
+fn WalletsButton(addresses: Vec<(&'static str, String)>) -> impl IntoView {
+    let count = addresses.len();
+    let addresses = StoredValue::new(addresses);
+    view! {
+        <Popover
+            label="Verified wallets"
+            trigger_label=format!("Show {count} verified wallet{}", if count == 1 { "" } else { "s" })
+            trigger_class="wallets-button"
+            trigger=move || view! { "Wallets" <span class="badge">{count}</span> }
+            content=move || view! {
+                <ul class="wallet-list">
+                    {addresses.get_value().into_iter().map(|(kind, address)| view! { <WalletRow kind address/> }).collect_view()}
                 </ul>
             }
-            .into_any()
-        }}
-        {(!idle.is_empty()).then(|| view! { <p class="muted small">"No activity on "{idle.join(", ")}"."</p> })}
-        {failed.into_iter().map(|c| view! {
-            <p class="muted small chain-missing">{format!("{}: {}", c.name, c.error.unwrap_or_default())}</p>
-        }).collect_view()}
-        <details class="sources">
-            <summary>{format!("How this is measured ({evm_addresses} EVM address{})", if evm_addresses == 1 { "" } else { "es" })}</summary>
-            <ul>{activity.sources.iter().map(|s| view! { <li>{s.clone()}</li> }).collect_view()}</ul>
-            <p class="muted small">"Smart-contract wallets send through bundlers, so their own counts can be low. Cached for six hours."</p>
-        </details>
+        />
     }
-    .into_any()
-}
-
-/// Which apps signed this account's recent casts.
-#[component]
-fn AppsBox(payload: Arc<UserPayload>) -> impl IntoView {
-    let notes = &payload.notes;
-    let mut counts: BTreeMap<Option<u64>, u32> = BTreeMap::new();
-    for cast in &payload.pool {
-        if let Some(origin) = notes.origins.get(&cast.hash) {
-            *counts.entry(origin.app_fid).or_default() += 1;
-        }
-    }
-    let total: u32 = counts.values().sum();
-    if total == 0 {
-        return ().into_any();
-    }
-    let mut rows: Vec<(String, Option<String>, u32)> = counts
-        .into_iter()
-        .map(|(fid, n)| {
-            let app = fid.and_then(|f| notes.apps.get(&f));
-            let name = match (app, fid) {
-                (Some(app), _) => app.name().to_owned(),
-                (None, Some(fid)) => format!("app fid {fid}"),
-                (None, None) => "unattributed key".to_owned(),
-            };
-            (name, app.map(|a| user_href(&a.username)), n)
-        })
-        .collect();
-    rows.sort_by_key(|row| std::cmp::Reverse(row.2));
-    view! {
-        <SideBox title="Posts via">
-            <ul class="apps">
-                {rows.into_iter().map(|(name, href, n)| view! {
-                    <li>
-                        {match href {
-                            Some(href) => view! { <a href=href>{name}</a> }.into_any(),
-                            None => view! { <span>{name}</span> }.into_any(),
-                        }}
-                        <span class="muted">{format!("{}%", n * 100 / total)}</span>
-                    </li>
-                }).collect_view()}
-            </ul>
-            <p class="muted small">{format!("Across {total} recent casts, by the app that registered each signing key.")}</p>
-        </SideBox>
-    }
-    .into_any()
 }
 
 #[component]
-fn AddressesBox(user: User) -> impl IntoView {
-    let eth = user.eth_addresses.clone();
-    let sol = user.sol_addresses.clone();
-    if eth.is_empty() && sol.is_empty() {
-        return ().into_any();
-    }
+fn WalletRow(kind: &'static str, address: String) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    let full = address.clone();
+    let copy = move |_| {
+        copy_text(&full);
+        copied.set(true);
+        set_timeout(move || copied.set(false), std::time::Duration::from_millis(1400));
+    };
     view! {
-        <SideBox title="Verified addresses">
-            <ul class="addresses">
-                {eth.iter().map(|a| view! { <li><span class="chain-tag">"EVM"</span><code title=a.clone()>{short_address(a)}</code></li> }).collect_view()}
-                {sol.iter().map(|a| view! { <li><span class="chain-tag">"SOL"</span><code title=a.clone()>{short_address(a)}</code></li> }).collect_view()}
-            </ul>
-        </SideBox>
+        <li>
+            <span class="chain-tag">{kind}</span>
+            <code title=address.clone()>{short_address(&address)}</code>
+            <button type="button" class="copy" on:click=copy aria-label=format!("Copy {address}")>
+                {move || if copied.get() { "Copied" } else { "Copy" }}
+            </button>
+            <span class="visually-hidden" aria-live="polite">{move || copied.get().then_some("Copied to clipboard")}</span>
+        </li>
     }
-    .into_any()
+}
+
+/// Copy `text` with the async Clipboard API (no permission prompt for writes).
+fn copy_text(text: &str) {
+    use wasm_bindgen::JsValue;
+    let Some(window) = web_sys::window() else { return };
+    let clipboard = js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("clipboard")).ok();
+    let write = clipboard.as_ref().and_then(|c| js_sys::Reflect::get(c, &JsValue::from_str("writeText")).ok());
+    if let (Some(clipboard), Some(write)) = (clipboard, write.and_then(|w| w.dyn_into::<js_sys::Function>().ok())) {
+        let _ = write.call1(&clipboard, &JsValue::from_str(text));
+    }
+}
+
+/// How the account voted when farcaster.xyz asked everyone to stay or leave.
+#[component]
+fn VoteFact(fid: u64) -> impl IntoView {
+    let data = LocalResource::new(move || async move { api::get::<VotePayload>(&vote_path(fid)).await });
+    view! {
+        <div class="fact vote-fact">
+            <dt>
+                "Farcaster vote "
+                <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
+            </dt>
+            <dd>{move || match data.get() {
+                None => view! { <span class="muted">"checking…"</span> }.into_any(),
+                Some(Err(_)) => view! { <span class="muted">"unavailable"</span> }.into_any(),
+                Some(Ok(fetched)) => {
+                    let (label, detail) = fetched.data.summary();
+                    let class = match label {
+                        "Voted to stay" => "vote vote-stay",
+                        "Voted to leave" => "vote vote-leave",
+                        "Stay vote revoked" => "vote vote-revoked",
+                        _ => "vote vote-none",
+                    };
+                    view! { <span class=class title=detail>{label}</span> }.into_any()
+                }
+            }}</dd>
+        </div>
+    }
 }

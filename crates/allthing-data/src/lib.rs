@@ -16,7 +16,7 @@ use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
 
-use allthing_core::api::{API_PREFIX, ApiError, CachePolicy};
+use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind};
 use allthing_core::params::{
     channel_key_from_param, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
@@ -151,12 +151,17 @@ impl Failure {
 /// An API endpoint and its parameters, parsed from `/api/v1/<name>?…`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Endpoint {
-    Home,
+    /// Trending casts from `offset` (0 for the front page).
+    Home(u32),
     Channel(String),
     Cast(String),
     User(String),
     Wallets(u64),
     Channels(Option<String>),
+    Search(String),
+    Reactions(String, ReactionKind, u32),
+    Replies(String),
+    Vote(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,7 +176,31 @@ impl Endpoint {
     pub fn parse(name: &str, query: impl Fn(&str) -> Option<String>) -> Result<Endpoint, BadRequest> {
         let bad = |message| BadRequest { status: 400, message };
         match name {
-            "/home" => Ok(Endpoint::Home),
+            "/home" => match query("offset").map(|o| o.parse::<u32>()) {
+                None => Ok(Endpoint::Home(0)),
+                Some(Ok(offset)) if offset % 100 == 0 && offset < 1000 => Ok(Endpoint::Home(offset)),
+                Some(_) => Err(bad("Expected ?offset=<multiple of 100 below 1000>")),
+            },
+            "/reactions" => {
+                let hash = query("hash").and_then(|v| hash_from_param(&v)).ok_or(bad("Expected ?hash=<cast hash>"))?;
+                let kind =
+                    query("type").and_then(|v| ReactionKind::parse(&v)).ok_or(bad("Expected ?type=likes|recasts"))?;
+                let limit = match query("limit").as_deref() {
+                    None | Some("10") => 10,
+                    Some("100") => 100,
+                    Some(_) => return Err(bad("Expected ?limit=10|100")),
+                };
+                Ok(Endpoint::Reactions(hash, kind, limit))
+            }
+            "/vote" => query("fid")
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|f| *f > 0)
+                .map(Endpoint::Vote)
+                .ok_or(bad("Expected ?fid=<number>")),
+            "/replies" => query("hash")
+                .and_then(|v| hash_from_param(&v))
+                .map(Endpoint::Replies)
+                .ok_or(bad("Expected ?hash=<cast hash>")),
             "/channel" => query("id")
                 .and_then(|v| channel_key_from_param(&v))
                 .map(Endpoint::Channel)
@@ -196,6 +225,16 @@ impl Endpoint {
                 }
                 Ok(Endpoint::Channels(q))
             }
+            "/search" => {
+                let q = query("q")
+                    .map(|q| q.trim().to_owned())
+                    .filter(|q| !q.is_empty())
+                    .ok_or(bad("Expected ?q=<search>"))?;
+                if q.chars().count() > 100 {
+                    return Err(bad("Search query too long"));
+                }
+                Ok(Endpoint::Search(q))
+            }
             _ => Err(BadRequest { status: 404, message: "Unknown endpoint" }),
         }
     }
@@ -218,13 +257,20 @@ impl Endpoint {
     /// The name this payload is cached under, such as `cast?hash=0x…`.
     pub fn cache_name(&self) -> String {
         match self {
-            Endpoint::Home => "home".into(),
+            Endpoint::Home(0) => "home".into(),
+            Endpoint::Home(offset) => format!("home?offset={offset}"),
+            Endpoint::Reactions(hash, kind, limit) => {
+                format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
+            }
+            Endpoint::Replies(hash) => format!("replies?hash={hash}"),
+            Endpoint::Vote(fid) => format!("vote?fid={fid}"),
             Endpoint::Channel(id) => format!("channel?id={}", percent_encode(id)),
             Endpoint::Cast(hash) => format!("cast?hash={hash}"),
             Endpoint::User(name) => format!("user?name={}", percent_encode(name)),
             Endpoint::Wallets(fid) => format!("wallets?fid={fid}"),
             Endpoint::Channels(Some(q)) => format!("channels?q={}", percent_encode(q)),
             Endpoint::Channels(None) => "channels".into(),
+            Endpoint::Search(q) => format!("search?q={}", percent_encode(&q.to_lowercase())),
         }
     }
 
@@ -232,12 +278,16 @@ impl Endpoint {
     /// whose slowly gathered annotations are carried forward.
     pub async fn build(&self, inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
         match self.clone() {
-            Endpoint::Home => pages::home(inv, previous).await,
+            Endpoint::Home(offset) => pages::home(inv, offset, previous).await,
+            Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
+            Endpoint::Replies(hash) => pages::replies(inv, hash).await,
+            Endpoint::Vote(fid) => pages::vote(inv, fid).await,
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
             Endpoint::Cast(hash) => pages::cast(inv, hash, previous).await,
             Endpoint::User(name) => pages::user(inv, name, previous).await,
             Endpoint::Wallets(fid) => pages::wallets(inv, fid).await,
             Endpoint::Channels(q) => pages::channels(inv, q).await,
+            Endpoint::Search(q) => pages::search(inv, q).await,
         }
     }
 }
@@ -248,7 +298,16 @@ mod tests {
 
     #[test]
     fn parses_api_paths() {
-        assert_eq!(Endpoint::from_path("/api/v1/home"), Ok(Endpoint::Home));
+        assert_eq!(Endpoint::from_path("/api/v1/home"), Ok(Endpoint::Home(0)));
+        assert_eq!(Endpoint::from_path("/api/v1/home?offset=200"), Ok(Endpoint::Home(200)));
+        assert_eq!(Endpoint::from_path("/api/v1/home?offset=150").map_err(|e| e.status), Err(400));
+        assert_eq!(
+            Endpoint::from_path(
+                "/api/v1/reactions?hash=0x3b6c0db881a351984ab7844cd56265d492431d79&type=recasts&limit=100"
+            ),
+            Ok(Endpoint::Reactions("0x3b6c0db881a351984ab7844cd56265d492431d79".into(), ReactionKind::Recasts, 100))
+        );
+        assert_eq!(Endpoint::from_path("/api/v1/search?q=hyperion"), Ok(Endpoint::Search("hyperion".into())));
         assert_eq!(
             Endpoint::from_path("/api/v1/cast?hash=0x3b6c0db881a351984ab7844cd56265d492431d79"),
             Ok(Endpoint::Cast("0x3b6c0db881a351984ab7844cd56265d492431d79".into()))

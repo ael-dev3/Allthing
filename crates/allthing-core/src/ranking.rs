@@ -149,6 +149,7 @@ mod tests {
             likes,
             recasts,
             replies,
+            mini_app: false,
         }
     }
 

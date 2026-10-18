@@ -38,7 +38,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
         }
     };
     view! {
-        <div class="comment" class:collapsed=move || collapsed.get() data-nav="" id=format!("c-{}", &cast.hash[2..10])>
+        <div class="comment" class:collapsed=move || collapsed.get() id=format!("c-{}", &cast.hash[2..10])>
             <div class="comment-head">
                 <button
                     class="toggle"
@@ -60,13 +60,17 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             </div>
             <div class="comment-body" prop:inert=move || collapsed.get()>
                 <div class="comment-inner">
-                    <div class="comment-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div>
+                    {if cast.mini_app {
+                        view! { <p class="mini-app-note">"Mini app post hidden"</p> }.into_any()
+                    } else {
+                        view! { <div class="comment-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
+                    }}
                     <MediaGrid cast=cast.clone() open_on_click=true/>
                     <VideoLinks cast=cast.clone()/>
                     <LinkCards cast=cast.clone()/>
                     <div class="comment-foot">
                         <Engagement cast=cast.clone()/>
-                        <a class="permalink" href=href.clone() data-primary="">"permalink"</a>
+                        <a class="permalink" href=href.clone()>"permalink"</a>
                     </div>
                     {(!node.children.is_empty()).then(|| view! {
                         <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid/></div>

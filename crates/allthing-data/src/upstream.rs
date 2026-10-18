@@ -20,6 +20,8 @@ pub enum Upstream {
     BaseRpc,
     /// A chain's public JSON-RPC, for wallet activity.
     Chain(&'static str),
+    /// The farcaster.xyz app's public read API (vote status).
+    FarcasterApp,
 }
 
 impl Upstream {
@@ -28,6 +30,7 @@ impl Upstream {
             Upstream::Hypersnap => "hypersnap",
             Upstream::BaseRpc => "base-rpc",
             Upstream::Chain(slug) => slug,
+            Upstream::FarcasterApp => "farcaster-app",
         }
     }
 
@@ -37,6 +40,7 @@ impl Upstream {
             Upstream::Hypersnap => (40, 10.0),
             Upstream::BaseRpc => (10, 2.0),
             Upstream::Chain("solana") => (2, 0.2),
+            Upstream::FarcasterApp => (6, 1.0),
             Upstream::Chain(_) => (4, 0.5),
         }
     }

@@ -24,6 +24,7 @@ pub mod text;
 pub mod thread;
 pub mod time;
 pub mod video;
+pub mod vote;
 pub mod wallet;
 
 pub use model::*;

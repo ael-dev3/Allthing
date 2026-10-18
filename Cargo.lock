@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-data"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "allthing-core",
  "futures",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-web"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "allthing-core",
  "allthing-data",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-worker"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "allthing-core",
  "allthing-data",
@@ -1983,7 +1983,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "allthing-core",
  "serde_json",

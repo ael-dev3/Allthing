@@ -39,8 +39,8 @@ pub fn ChannelsPage() -> impl IntoView {
                 Some(Ok(fetched)) => view! {
                     <ul class="channel-grid">
                         {fetched.data.channels.iter().enumerate().map(|(i, c)| view! {
-                            <li class="channel-card" style=format!("--i: {}", i.min(16)) data-nav="">
-                                <a href=channel_href(&c.id) data-primary="">
+                            <li class="channel-card" style=format!("--i: {}", i.min(16))>
+                                <a href=channel_href(&c.id)>
                                     {c.image_url.clone().map(|src| view! { <img src=resized_image_url(&src, ImageSize::Avatar) alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer"/> })}
                                     <span class="channel-text">
                                         <strong>"/"{c.id.clone()}</strong>

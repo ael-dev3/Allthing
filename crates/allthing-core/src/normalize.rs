@@ -101,12 +101,18 @@ pub struct RawHtml {
     pub og_image: Option<Vec<RawOgImage>>,
     #[serde(rename = "ogTitle")]
     pub og_title: Option<String>,
+    #[serde(rename = "fcFrame", alias = "fc:frame")]
+    pub fc_frame: Option<Value>,
+    #[serde(rename = "fcMiniapp", alias = "fc:miniapp")]
+    pub fc_miniapp: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct RawEmbedMetadata {
     pub content_type: Option<String>,
     pub html: Option<RawHtml>,
+    /// Neynar's parsed frame, for frame embeds.
+    pub frame: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -301,6 +307,24 @@ pub fn embed(raw: &RawEmbed) -> Option<Embed> {
     })
 }
 
+/// A raw embed that is a mini app or frame, by its URL or its metadata
+/// (`fc:frame` / `fc:miniapp` meta tags, as Neynar-shaped APIs report them).
+fn embed_is_mini_app(raw: &RawEmbed) -> bool {
+    if raw.url.as_deref().is_some_and(crate::embeds::is_mini_app_url) {
+        return true;
+    }
+    let Some(metadata) = &raw.metadata else { return false };
+    metadata.frame.as_ref().is_some_and(|f| !f.is_null())
+        || metadata.html.as_ref().is_some_and(|h| h.fc_frame.is_some() || h.fc_miniapp.is_some())
+}
+
+/// Mini app links pasted into the text count too.
+fn text_has_mini_app(text: &str) -> bool {
+    crate::text::tokenize(text, &[])
+        .iter()
+        .any(|t| matches!(t, crate::text::Token::Url(url) if crate::embeds::is_mini_app_url(url)))
+}
+
 pub fn cast(raw: &RawCast) -> Cast {
     let mentions: Vec<Mention> = raw
         .mentioned_profiles
@@ -330,6 +354,8 @@ pub fn cast(raw: &RawCast) -> Cast {
         likes: raw.reactions.as_ref().and_then(|r| r.likes_count).unwrap_or(0),
         recasts: raw.reactions.as_ref().and_then(|r| r.recasts_count).unwrap_or(0),
         replies: raw.replies.as_ref().and_then(|r| r.count).unwrap_or(0),
+        mini_app: raw.embeds.iter().flatten().any(embed_is_mini_app)
+            || text_has_mini_app(raw.text.as_deref().unwrap_or("")),
     }
 }
 
@@ -371,6 +397,25 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    #[test]
+    fn flags_mini_app_casts() {
+        let parse = |json: &str| cast(&serde_json::from_str::<RawCast>(json).unwrap());
+        assert!(parse(r#"{"hash":"ab","text":"play","embeds":[{"url":"https://farcaster.xyz/miniapps/Z6gEN6rYltaz/swarmhood"}]}"#).mini_app);
+        assert!(parse(r#"{"hash":"ab","text":"try https://warpcast.com/~/frames/x now"}"#).mini_app);
+        assert!(
+            parse(r#"{"hash":"ab","embeds":[{"url":"https://game.example","metadata":{"html":{"fcFrame":"vNext"}}}]}"#)
+                .mini_app
+        );
+        assert!(
+            parse(r#"{"hash":"ab","embeds":[{"url":"https://game.example","metadata":{"frame":{"version":"next"}}}]}"#)
+                .mini_app
+        );
+        assert!(
+            !parse(r#"{"hash":"ab","text":"see https://example.com","embeds":[{"url":"https://i.imgur.com/a.png"}]}"#)
+                .mini_app
+        );
     }
 
     #[test]
@@ -453,6 +498,7 @@ mod tests {
         let c = cast(&raw);
         assert_eq!(c.text, "gm @dwr and @balajis.eth");
         assert_eq!(c.hash, "0xab");
+        assert!(!c.mini_app);
         assert_eq!(c.mentions.len(), 2);
     }
 

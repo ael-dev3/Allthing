@@ -6,12 +6,15 @@ use crate::Notes;
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, full_number, score, short_address};
 use allthing_core::model::{Cast, UserSummary};
-use allthing_core::provenance::Backend;
 use allthing_core::ranking::points;
 use allthing_core::time::{format_date_time, iso_utc, time_ago};
 use leptos::prelude::*;
 
-use crate::util::{PROVENANCE_DOC_URL, now, user_href};
+use crate::components::popover::Popover;
+use crate::components::who::{RepliesPreview, WhoPreview, use_who_list};
+use crate::util::{cast_href, now, user_href};
+use allthing_core::api::ReactionKind;
+use leptos_router::hooks::use_navigate;
 
 #[component]
 pub fn TimeAgo(ts: i64) -> impl IntoView {
@@ -88,9 +91,26 @@ pub fn UserChip(
     }
 }
 
+fn stat_body(icon: &'static str, n: u64, one: &'static str, many: &'static str) -> AnyView {
+    view! {
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
+        <span class="n">{compact_number(n)}</span>
+        <span class="label">{if n == 1 { one } else { many }}</span>
+    }
+    .into_any()
+}
+
+const HEART: &str = "M8 13.5S2.5 10 2.5 6.2A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.2C13.5 10 8 13.5 8 13.5z";
+const RECAST: &str = "M4 5.5h7l-1.8-1.8M12 10.5H5l1.8 1.8M4 5.5v3M12 10.5v-3";
+const BUBBLE: &str = "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z";
+
 /// Likes, recasts and replies as what they are: Farcaster has no downvotes.
+/// Hovering a count previews who liked or recasted, or the replies; clicking
+/// opens the full list, or the post.
 #[component]
 pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> impl IntoView {
+    let who = use_who_list();
+    let navigate = use_navigate();
     let pts = points(&cast);
     let title = format!(
         "{} likes, {} recasts, {} replies. Ranked by engagement points: likes + 2 × recasts + replies = {}.",
@@ -99,31 +119,52 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
         full_number(cast.replies),
         full_number(pts)
     );
-    let replies = view! {
-        <span class="stat stat-replies">
-            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>
-            <span class="n">{compact_number(cast.replies)}</span>
-            <span class="label">{if cast.replies == 1 { " reply" } else { " replies" }}</span>
-        </span>
+    let cast_hash = cast.hash.clone();
+    let reaction = |kind: ReactionKind, n: u64, class: &'static str| {
+        let (icon, one, many) = match kind {
+            ReactionKind::Likes => (HEART, " like", " likes"),
+            ReactionKind::Recasts => (RECAST, " recast", " recasts"),
+        };
+        if n == 0 {
+            return view! { <span class=format!("stat {class}")>{stat_body(icon, n, one, many)}</span> }.into_any();
+        }
+        let hash = cast_hash.clone();
+        let preview_hash = hash.clone();
+        view! {
+            <Popover
+                label=match kind { ReactionKind::Likes => "Liked by", ReactionKind::Recasts => "Recasted by" }
+                trigger_label=format!("{}{}: show who", compact_number(n), many)
+                trigger_class=format!("stat {class}")
+                hover=true
+                on_activate=Callback::new(move |()| who.0.set(Some((hash.clone(), kind))))
+                trigger=move || stat_body(icon, n, one, many)
+                content=move || view! { <WhoPreview hash=preview_hash.clone() kind/> }
+            />
+        }
+        .into_any()
     };
-    view! {
-        <div class="engagement" title=title>
-            <span class="stat stat-likes">
-                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.5S2.5 10 2.5 6.2A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.2C13.5 10 8 13.5 8 13.5z"/></svg>
-                <span class="n">{compact_number(cast.likes)}</span>
-                <span class="label">{if cast.likes == 1 { " like" } else { " likes" }}</span>
-            </span>
-            <span class="stat stat-recasts">
-                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 5.5h7l-1.8-1.8M12 10.5H5l1.8 1.8M4 5.5v3M12 10.5v-3"/></svg>
-                <span class="n">{compact_number(cast.recasts)}</span>
-                <span class="label">{if cast.recasts == 1 { " recast" } else { " recasts" }}</span>
-            </span>
-            {match reply_href {
-                Some(href) => view! { <a class="replies-link" href=href>{replies}</a> }.into_any(),
-                None => replies.into_any(),
-            }}
-        </div>
-    }
+    let likes = reaction(ReactionKind::Likes, cast.likes, "stat-likes");
+    let recasts = reaction(ReactionKind::Recasts, cast.recasts, "stat-recasts");
+    let replies = if cast.replies == 0 {
+        view! { <span class="stat stat-replies">{stat_body(BUBBLE, 0, " reply", " replies")}</span> }.into_any()
+    } else {
+        let n = cast.replies;
+        let target = reply_href.unwrap_or_else(|| cast_href(&cast.hash));
+        let hash = cast.hash.clone();
+        view! {
+            <Popover
+                label="Replies"
+                trigger_label=format!("{} {}: preview", compact_number(n), if n == 1 { "reply" } else { "replies" })
+                trigger_class="stat stat-replies"
+                hover=true
+                on_activate=Callback::new(move |()| navigate(&target, Default::default()))
+                trigger=move || stat_body(BUBBLE, n, " reply", " replies")
+                content=move || view! { <RepliesPreview hash=hash.clone()/> }
+            />
+        }
+        .into_any()
+    };
+    view! { <div class="engagement" title=title>{likes}{recasts}{replies}</div> }
 }
 
 /// "via Warpcast", from the app that requested the cast's signer key.
@@ -135,7 +176,7 @@ pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
         (Some(origin), Some(app)) => {
             let name = if app.display_name.is_empty() { app.username.clone() } else { app.display_name.clone() };
             let title = format!(
-                "Signed with key {} requested by @{} (fid {}). Read through Hypersnap.",
+                "Signed with key {} requested by @{} (fid {}).",
                 short_address(&origin.signer),
                 app.username,
                 app.fid
@@ -155,21 +196,6 @@ pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
             view! { <span class="origin origin-unknown" title=title>{label}</span> }.into_any()
         }
         _ => ().into_any(),
-    }
-}
-
-/// Which backend Allthing read the data from.
-#[component]
-pub fn BackendBadge(#[prop(optional)] backend: Backend) -> impl IntoView {
-    let title = format!(
-        "Read from {} (haatz.quilibrium.com), a read node that mirrors Snapchain mainnet. Farcaster does not record which node a message was first submitted to; see the provenance design doc.",
-        backend.label()
-    );
-    view! {
-        <a class="backend" href=PROVENANCE_DOC_URL title=title target="_blank" rel="noopener">
-            <span class="dot" aria-hidden="true"></span>
-            {backend.label()}
-        </a>
     }
 }
 

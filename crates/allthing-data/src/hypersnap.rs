@@ -25,10 +25,54 @@ fn v1(path: &str, query: &[(&str, &str)]) -> String {
     url(BASE, &format!("v1/{path}"), query)
 }
 
-pub async fn trending_casts(inv: &Invocation, limit: u32) -> Result<Vec<RawCast>, UpstreamError> {
-    let feed: Option<RawFeed> =
-        get_json(inv, Upstream::Hypersnap, &v2("feed/trending", &[("limit", &limit.to_string())]), false).await?;
+/// Trending casts, ranked by Hypersnap; `offset` pages through the list
+/// (its cursor is a plain offset, and the list ends at 1,000 casts).
+pub async fn trending_casts(inv: &Invocation, limit: u32, offset: u32) -> Result<Vec<RawCast>, UpstreamError> {
+    let (limit, offset) = (limit.to_string(), offset.to_string());
+    let query: &[(&str, &str)] =
+        if offset == "0" { &[("limit", &limit)] } else { &[("limit", &limit), ("cursor", &offset)] };
+    let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2("feed/trending", query), false).await?;
     Ok(feed.map(|f| f.casts).unwrap_or_default())
+}
+
+#[derive(Deserialize)]
+struct CastList {
+    #[serde(default)]
+    casts: Vec<RawCast>,
+}
+
+/// Fully hydrated casts (embeds, counts) by hash, up to 100 per call.
+pub async fn casts_bulk(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCast>, UpstreamError> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = hashes.join(",");
+    let found: Option<CastList> = get_json(inv, Upstream::Hypersnap, &v2("casts", &[("casts", &list)]), true).await?;
+    Ok(found.map(|l| l.casts).unwrap_or_default())
+}
+
+#[derive(Deserialize)]
+struct Reactions {
+    #[serde(default)]
+    reactions: Vec<Reaction>,
+}
+
+#[derive(Deserialize)]
+struct Reaction {
+    user: Option<RawUser>,
+}
+
+/// The users who liked (`likes`) or recasted (`recasts`) a cast: hydrated,
+/// oldest first, and at most 100 (Hypersnap does not page further).
+pub async fn reactions(inv: &Invocation, hash: &str, kind: &str, limit: u32) -> Result<Vec<RawUser>, UpstreamError> {
+    let found: Option<Reactions> = get_json(
+        inv,
+        Upstream::Hypersnap,
+        &v2("reactions/cast", &[("hash", hash), ("types", kind), ("limit", &limit.to_string())]),
+        true,
+    )
+    .await?;
+    Ok(found.map(|r| r.reactions.into_iter().filter_map(|r| r.user).collect()).unwrap_or_default())
 }
 
 pub async fn trending_channels(inv: &Invocation, limit: u32) -> Result<Vec<RawChannel>, UpstreamError> {
@@ -119,6 +163,66 @@ pub async fn user_by_username(inv: &Invocation, username: &str) -> Result<Option
         .find(|u| u.username.as_deref().is_some_and(|name| name.eq_ignore_ascii_case(username))))
 }
 
+pub async fn search_users(inv: &Invocation, query: &str, limit: u32) -> Result<Vec<RawUser>, UpstreamError> {
+    let search: Option<RawUserSearch> =
+        get_json(inv, Upstream::Hypersnap, &v2("user/search", &[("q", query), ("limit", &limit.to_string())]), true)
+            .await?;
+    Ok(search.map(RawUserSearch::into_users).unwrap_or_default())
+}
+
+#[derive(Deserialize)]
+struct CastSearch {
+    result: Option<RawFeed>,
+}
+
+#[derive(Deserialize)]
+struct AppUser {
+    result: Option<AppUserResult>,
+}
+
+#[derive(Deserialize)]
+struct AppUserResult {
+    user: Option<AppUserInner>,
+}
+
+#[derive(Deserialize)]
+struct AppUserInner {
+    #[serde(rename = "viewerContext")]
+    viewer_context: Option<AppViewerContext>,
+}
+
+#[derive(Deserialize)]
+struct AppViewerContext {
+    #[serde(rename = "optInStatus")]
+    opt_in_status: Option<String>,
+}
+
+/// The farcaster.xyz app's record of an FID's vote (its only record of
+/// "leave" votes), from its public, unauthenticated user endpoint.
+pub async fn app_vote(inv: &Invocation, fid: u64) -> Result<Option<String>, UpstreamError> {
+    let url = url("https://client.farcaster.xyz", "v2/user-by-fid", &[("fid", &fid.to_string())]);
+    let found: Option<AppUser> = get_json(inv, Upstream::FarcasterApp, &url, true).await?;
+    Ok(found.and_then(|a| a.result).and_then(|r| r.user).and_then(|u| u.viewer_context).and_then(|v| v.opt_in_status))
+}
+
+/// Search runs a Tantivy query; keep user input to plain words.
+pub fn search_terms(query: &str) -> String {
+    query
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '_' | '@' | '#' | '$') { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub async fn search_casts(inv: &Invocation, query: &str, limit: u32) -> Result<Vec<RawCast>, UpstreamError> {
+    let search: Option<CastSearch> =
+        get_json(inv, Upstream::Hypersnap, &v2("cast/search", &[("q", query), ("limit", &limit.to_string())]), true)
+            .await?;
+    Ok(search.and_then(|s| s.result).map(|f| f.casts).unwrap_or_default())
+}
+
 pub async fn users_bulk(inv: &Invocation, fids: &[u64]) -> Result<Vec<RawUser>, UpstreamError> {
     if fids.is_empty() {
         return Ok(Vec::new());
@@ -165,11 +269,15 @@ struct ConversationResponse {
 }
 
 /// A cast with up to five levels of replies.
-pub async fn conversation(inv: &Invocation, hash: &str) -> Result<Option<RawCast>, UpstreamError> {
+/// A cast with its replies `depth` levels deep.
+pub async fn conversation(inv: &Invocation, hash: &str, depth: u32) -> Result<Option<RawCast>, UpstreamError> {
     let found: Option<ConversationResponse> = get_json(
         inv,
         Upstream::Hypersnap,
-        &v2("cast/conversation", &[("identifier", hash), ("type", "hash"), ("reply_depth", "5"), ("limit", "50")]),
+        &v2(
+            "cast/conversation",
+            &[("identifier", hash), ("type", "hash"), ("reply_depth", &depth.to_string()), ("limit", "50")],
+        ),
         true,
     )
     .await?;

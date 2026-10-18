@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use allthing_core::vote::{MINTED_SELECTOR, OnchainVote, REVOKED_SELECTOR, VOTE_CONTRACT, encode_fid_call};
 use allthing_core::wallet::{ChainInfo, parse_quantity};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -20,6 +21,7 @@ const GET_SCORES_SELECTOR: &str = "23d36428";
 
 #[derive(Deserialize)]
 struct RpcResponse {
+    id: Option<Value>,
     result: Option<Value>,
     error: Option<Value>,
 }
@@ -91,6 +93,33 @@ pub async fn neynar_scores(inv: &Invocation, fids: &[u64]) -> Result<HashMap<u64
     Ok(out)
 }
 
+/// The FID's stay vote on Base: `minted(fid)` and its revocation count, in
+/// one batched request.
+pub async fn vote(inv: &Invocation, fid: u64) -> Result<OnchainVote, UpstreamError> {
+    let call = |id: u32, selector: &str| {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "eth_call",
+                "params": [{ "to": VOTE_CONTRACT, "data": encode_fid_call(selector, fid) }, "latest"] })
+    };
+    let body = Value::Array(vec![call(0, MINTED_SELECTOR), call(1, REVOKED_SELECTOR)]).to_string();
+    let word = |r: &RpcResponse| r.result.as_ref().and_then(Value::as_str).and_then(parse_quantity);
+    let mut last_error = UpstreamError::Budget;
+    for endpoint in BASE_RPCS {
+        match rpc::<Vec<RpcResponse>>(inv, Upstream::BaseRpc, endpoint, &body).await {
+            Ok(mut responses) if responses.len() == 2 => {
+                responses.sort_by_key(|r| r.id.as_ref().and_then(Value::as_u64).unwrap_or(0));
+                if let (Some(minted), Some(revoked)) = (word(&responses[0]), word(&responses[1])) {
+                    return Ok(OnchainVote::from_words(minted, revoked));
+                }
+                last_error = UpstreamError::Parse("vote eth_call failed".into());
+            }
+            Ok(_) => last_error = UpstreamError::Parse("batch answer size mismatch".into()),
+            Err(e @ (UpstreamError::Budget | UpstreamError::Busy(_))) => return Err(e),
+            Err(e) => last_error = e,
+        }
+    }
+    Err(last_error)
+}
+
 /// Sum of transactions sent (account nonces) by `addresses` on an EVM chain,
 /// in one batched JSON-RPC request.
 pub async fn evm_sent_count(inv: &Invocation, chain: &ChainInfo, addresses: &[String]) -> Result<u64, UpstreamError> {
@@ -139,5 +168,18 @@ mod tests {
         assert_eq!(decode_scores(answer, 5), Some(vec![1_000_000, 1_000_000, 0, 1_000_000, 1_000_000]));
         assert_eq!(decode_scores(answer, 4), None);
         assert_eq!(decode_scores("0x", 0), None);
+    }
+
+    /// Known FIDs, checked against Neynar's score contract on Base on
+    /// 2026-10-18 (block 0x324ded7, identical on mainnet.base.org and
+    /// publicnode): dwr, v, 0xael.eth, vitalik.eth, rish.
+    #[test]
+    fn known_fids_score_as_published() {
+        let data = encode_get_scores(&[3, 2, 539_854, 5650, 194]);
+        assert!(data.ends_with(&format!("{:064x}", 194)));
+        let answer = "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000500000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000b4aa000000000000000000000000000000000000000000000000000000000000ea60000000000000000000000000000000000000000000000000000000000000f4240";
+        let scores = decode_scores(answer, 5).unwrap();
+        let shown: Vec<String> = scores.iter().map(|m| allthing_core::format::score(*m)).collect();
+        assert_eq!(shown, ["1.00", "1.00", "0.74", "0.96", "1.00"]);
     }
 }

@@ -7,7 +7,7 @@ The relevant Free plan limits, as of October 2026:
 
 | Limit | Value | Allthing's design |
 |---|---|---|
-| Worker requests | 100,000/day (resets 00:00 UTC) | Only `/api/*` runs the Worker; everything else is a static asset |
+| Worker requests | 100,000/day (resets 00:00 UTC) | Only `/api/*` and `/version` run the Worker; everything else is a static asset |
 | Static asset requests | free and unlimited | The app, styles, fonts and label shards are all static |
 | CPU time | 10 ms per invocation | Payloads are parsed once per refresh and cached; cache hits copy bytes |
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
@@ -22,15 +22,26 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Front page `/` | 1 (`/api/v1/home`) | index.html, boot.js, app JS + WASM, CSS, font (first visit only: hashed, immutable) |
 | Channel `/c/<id>` | 1 (`/api/v1/channel`) | none after the first visit |
 | Cast `/p/<hash>` | 1 (`/api/v1/cast`) | none |
-| Profile `/u/<name>` | 2 (`/api/v1/user`, `/api/v1/wallets`) | 1 label shard and `meta.json`, about 32 KB raw |
+| Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`) | 1 label shard and `meta.json`, about 32 KB raw |
 | Channel directory | 1 (`/api/v1/channels`) | none |
-| Changing sort or page | **0** | none: the payload holds the whole pool and the browser re-ranks it locally |
-| Back/forward within 60 s | **0** | none: in-memory client cache |
+| Search `/search?q=` | 1 (`/api/v1/search`) | none |
+| Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
+| Opening a post already prefetched | **0** | none: client cache |
+| Changing sort | **0** | none: the payload holds the whole pool and the browser re-ranks it locally |
+| Scrolling past the front page's pool | 1 per 100 casts (`/api/v1/home?offset=`) | none |
+| Back/forward within 5 min | **0** | none: in-memory client cache |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
 Images and videos never touch the Worker. They load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.
 
-**Capacity:** about **80,000 page views a day** with a typical mix (about 1.2 Worker requests per view), before counting views that cost nothing (sorting, paging, back/forward, revisits).
+**Prefetching** ([PERFORMANCE.md](PERFORMANCE.md)) spends Worker requests ahead of clicks, within caps:
+- hover or touch on a card: one `/api/v1/cast` request, deduplicated;
+- cards that stay in view: at most 6 a minute;
+- never more than 2 in flight, and none on Save-Data or 2g.
+
+A reader who opens posts they hovered spends nothing extra; idle viewport prefetches cost at most 6 requests a minute per active reader.
+
+**Capacity:** about **60,000 page views a day** with a typical mix, including prefetches and popovers (about 1.6 Worker requests per view). That is before counting views that cost nothing (sorting, back/forward, revisits).
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby
 
@@ -44,6 +55,10 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | user | 5 min | 30 min | 24 h | 2 min |
 | wallets | 6 h | 24 h | 48 h | 1 h |
 | channels | 1 h | 24 h | 48 h | 10 min |
+| search | 5 min | 30 min | 24 h | 2 min |
+| reactions (who liked, recasted) | 5 min | 1 h | 24 h | 5 min |
+| replies (popover preview) | 2 min | 30 min | 24 h | 60 s |
+| vote | 1 h | 24 h | 48 h | 10 min |
 | not found (404) | 5 min | — | 5 min | 2 min |
 
 - **Fresh**: served from cache as is (1 subrequest, the cache read).
@@ -65,6 +80,11 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | user | cache read 1 + lookup 1–2 + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + scores ≤2 + apps ≤1 + cache write 1 (≤ 12) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
+| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + scores ≤2 + cache write 1 (≤ 8) |
+| reactions | cache read 1 + reactions 1 + scores ≤2 + cache write 1 (≤ 5) |
+| replies | cache read 1 + conversation (depth 1) 1 + scores ≤2 + cache write 1 (≤ 5) |
+| vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
+| `/version` | 0 |
 
 **Origins** (which app posted a cast) cost two upstream calls per author: the author's signers, and the cast's signer (or one page of the author's recent casts). They are resolved progressively. Each build resolves up to 12 new authors, carries already-resolved origins forward from the previous payload, and keeps a bounded per-isolate memory of 20,000 resolved casts, which never change. A busy front page is fully attributed within a few refreshes.
 
@@ -90,19 +110,20 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
   | Hypersnap | 40 | 10 requests/s |
   | Base RPC (scores) | 10 | 2 requests/s |
   | Each chain RPC (wallets) | 4 | 1 request every 2 s |
+  | farcaster.xyz client API (vote) | 6 | 1 request/s |
 
   A request finding an empty bucket is not sent. The payload is served from cache, or the API answers 503 with `Retry-After`.
 - **Circuit breakers** (one per upstream, per isolate): three consecutive failures (timeouts, 5xx, 429) open the breaker for 5 s, doubling up to 5 minutes. An upstream's `Retry-After` is honored, up to the same cap. While open, nothing is sent and cached copies are served.
 - **Timeouts**: 8 s for Hypersnap and 5 s for RPCs, via `AbortController`.
-- **Memoized per isolate**: Neynar scores (6 h, batched up to 150 fids per `eth_call`), signer maps (1 h), app accounts (24 h), trending channels (10 min), resolved origins (forever, bounded).
+- **Memoized per isolate**: Neynar scores (12 h, batched up to 150 fids per `eth_call`), signer maps (1 h), app accounts (24 h), trending channels (10 min), resolved origins (forever, bounded).
 - **Static, built at deploy time**: the Farcaster app's 125 MB spam-label dataset becomes 35 shards of 32 KB, one character per fid (about 1.1 MB in all). Profiles read one shard as a free static asset, with zero Worker or upstream requests. Deploys reuse the live shards unless the upstream dataset changed (`scripts/build.sh`).
-- **Solana activity is not measured**. Its public RPC refuses requests from Cloudflare Workers and from browsers (HTTP 403), and the keyless alternatives don't serve address history. The UI says so instead of retrying.
+- **Solana activity is not measured**. Its public RPC refuses requests from Cloudflare Workers and from browsers (HTTP 403), and the keyless alternatives don't serve address history. Allthing leaves it out of the activity chart instead of retrying.
 
 ## 6. Abuse and the daily request limit
 
 - **Per-client limit**: the `API_LIMITER` rate-limiting binding allows 120 API calls a minute per IP per Cloudflare location, and answers 429 with `Retry-After: 60` beyond that. It is a backstop; normal browsing uses a few calls a minute.
 - **Read-only**: anything but GET or HEAD on `/api/*` gets 405. The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
-- **The browser app** never polls; it makes one API call per page, caches answers for 60 seconds, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
+- **The browser app** never polls; it makes one API call per page, caches answers for 5 minutes, prefetches within the caps above, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
 - **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`) get 429 until 00:00 UTC. Static assets keep being served free, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
 - **Optional, set up in the dashboard**: a WAF rate-limiting rule on `/api/` and Bot Fight Mode stop abusive traffic *before* it reaches the Worker, so it doesn't count against the daily allowance.
 

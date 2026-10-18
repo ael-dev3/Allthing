@@ -14,7 +14,10 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 /// How long a fetched payload is reused without asking the Worker again.
-const CLIENT_TTL_MS: f64 = 60_000.0;
+/// Long enough that going back to a feed or post is instant.
+const CLIENT_TTL_MS: f64 = 300_000.0;
+/// At most this many prefetches in flight.
+const MAX_PREFETCHES: usize = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Failure {
@@ -71,6 +74,70 @@ struct Raw {
 
 thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
+    static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
+    /// Casts already shown in a feed, so their post page can render at once.
+    static SEEN_CASTS: RefCell<HashMap<String, (allthing_core::model::Cast, Option<u32>)>> = RefCell::new(HashMap::new());
+}
+
+/// Remember the casts a listing shows (with their authors' scores).
+pub fn remember_casts(casts: &[allthing_core::model::Cast], notes: &allthing_core::api::Annotations) {
+    SEEN_CASTS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.len() > 2000 {
+            seen.clear();
+        }
+        for cast in casts {
+            seen.insert(cast.hash.clone(), (cast.clone(), notes.scores.get(&cast.author.fid).copied()));
+        }
+    });
+}
+
+/// A cast seen in a listing, for rendering its post before the thread loads.
+pub fn seen_cast(hash: &str) -> Option<(allthing_core::model::Cast, Option<u32>)> {
+    SEEN_CASTS.with(|seen| seen.borrow().get(hash).cloned())
+}
+
+/// Whether the reader asked to save data or is on a slow connection.
+pub fn constrained_network() -> bool {
+    use wasm_bindgen::JsValue;
+    let Some(window) = web_sys::window() else { return true };
+    let Ok(connection) = js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("connection")) else {
+        return false;
+    };
+    if connection.is_undefined() {
+        return false;
+    }
+    let get = |key: &str| js_sys::Reflect::get(&connection, &JsValue::from_str(key)).ok();
+    let save_data = get("saveData").and_then(|v| v.as_bool()).unwrap_or(false);
+    let slow = get("effectiveType").and_then(|v| v.as_string()).is_some_and(|t| t.contains("2g"));
+    save_data || slow
+}
+
+/// Fetch `path` into the client cache in the background, so opening it later
+/// is instant. Skipped when already cached or loading, when too many
+/// prefetches are running, and on Save-Data or slow connections.
+pub fn prefetch(path: &str) {
+    let now = js_sys::Date::now();
+    let cached = CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < CLIENT_TTL_MS && r.status == 200));
+    if cached || constrained_network() {
+        return;
+    }
+    let started = IN_FLIGHT.with(|f| {
+        let mut f = f.borrow_mut();
+        if f.len() >= MAX_PREFETCHES || f.contains(path) { false } else { f.insert(path.to_owned()) }
+    });
+    if !started {
+        return;
+    }
+    let path = path.to_owned();
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(raw) = fetch_raw(&path).await {
+            CACHE.with(|c| {
+                c.borrow_mut().insert(path.clone(), raw);
+            });
+        }
+        IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
+    });
 }
 
 async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
@@ -112,6 +179,13 @@ fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
 
 /// GET an API path, reusing a recent answer for the same path.
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
+    // A prefetch of the same path is on its way: wait for it, don't repeat it.
+    for _ in 0..400 {
+        if !IN_FLIGHT.with(|f| f.borrow().contains(path)) {
+            break;
+        }
+        crate::video::sleep(25).await;
+    }
     let now = js_sys::Date::now();
     let cached = CACHE.with(|c| {
         c.borrow().get(path).filter(|raw| now - raw.at < CLIENT_TTL_MS && raw.status != 503 && raw.status != 429).map(
@@ -135,7 +209,7 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     let result = decode::<T>(&raw);
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() > 64 {
+        if c.len() > 200 {
             c.retain(|_, r| now - r.at < CLIENT_TTL_MS);
         }
         c.insert(path.to_owned(), raw);
