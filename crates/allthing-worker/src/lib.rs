@@ -136,6 +136,7 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
         let endpoint = endpoint.clone();
         async move { endpoint.build(inv, previous).await }.boxed_local()
     });
+    let started = inv.now();
     match cache::serve(inv, &key, build).await {
         Ok((entry, served)) => {
             let headers = Headers::new();
@@ -143,6 +144,10 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
             let browser = if served == Served::StaleIfError { 15 } else { entry.policy.browser };
             headers.set("cache-control", &format!("public, max-age={browser}"))?;
             headers.set("x-allthing-cache", served.label())?;
+            // The Worker's own time for this answer: a cache read, or the
+            // build a miss waited for. Clocks only advance across I/O, so it
+            // counts waiting on the cache and upstream, not CPU.
+            headers.set("server-timing", &format!("{};dur={:.0}", served.label(), inv.now() - started))?;
             let age = ((inv.now() - entry.fetched_at) / 1000.0).max(0.0);
             headers.set("x-allthing-age", &format!("{age:.0}"))?;
             if served == Served::StaleIfError {

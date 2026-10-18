@@ -5,6 +5,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- API answers carry a `Server-Timing` header with the Worker's time for them, named after how they were served (`fresh`, `revalidating`, `miss` or `stale-if-error`), so slow page builds can be measured in production from any browser.
+
 ### Changed
 
 - Opening a post, a profile or a channel directly (from a link elsewhere, or a reload) starts its data request as soon as the page arrives, alongside the app's download, as the front page already did. Before, it waited for the app to boot, about 450 ms on production. It is still one API call.
