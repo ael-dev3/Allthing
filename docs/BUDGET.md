@@ -30,7 +30,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
-| Changing the time range | 1 per trending window not loaded yet (`/api/v1/home?window=1h` or `7d`); the past month, year and all time share the week's payload | none |
+| Changing the time range | 1 per trending window not loaded yet (`/api/v1/home?window=1h` or `7d`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 

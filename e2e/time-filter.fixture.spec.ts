@@ -45,20 +45,13 @@ test("the time filter picks the trending window and is kept in the URL", async (
   await expect(cards.first()).toContainText("Past hour cast");
   expect(calls).toContain("/api/v1/home?window=1h");
 
-  // Longer than Hypersnap's widest window: the past week's casts, and a note.
-  await range.selectOption("month");
-  await expect(page).toHaveURL(/[?&]t=month/);
-  await expect(cards.first()).toContainText("Past week cast");
-  expect(calls).toContain("/api/v1/home?window=7d");
-  await expect(page.locator(".range-note")).toContainText("reaches back 7 days");
-
-  // The same window again needs no new request, and no note.
-  const before = calls.length;
+  // The widest range is the past week: Hypersnap ranks over 7 days at most,
+  // so there are no longer ranges to pick.
   await range.selectOption("week");
   await expect(page).toHaveURL(/[?&]t=week/);
-  await expect(page.locator(".range-note")).toHaveCount(0);
   await expect(cards.first()).toContainText("Past week cast");
-  expect(calls.length).toBe(before);
+  expect(calls).toContain("/api/v1/home?window=7d");
+  expect(await range.locator("option").allTextContents()).toEqual(["Past week", "Today", "Past hour"]);
 
   // The sort tabs keep the range; "new" is newest first, with no filter.
   await page.getByRole("navigation", { name: "Sort", exact: true }).getByRole("link", { name: "new", exact: true }).click();
@@ -74,5 +67,13 @@ test("a link with a time range costs one request, started inline", async ({ page
   await expect(page.getByRole("combobox", { name: "Time range" })).toHaveValue("week");
   // The inline script asked for the same path the app needs, and the app took it.
   expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);
+  expect(calls).toEqual(["/api/v1/home?window=7d"]);
+});
+
+test("links to the old longer ranges open the past week", async ({ page }) => {
+  const calls = await serve(page);
+  await page.goto("/?t=all");
+  await expect(page.locator(".cast-card[data-hash]").first()).toContainText("Past week cast");
+  await expect(page.getByRole("combobox", { name: "Time range" })).toHaveValue("week");
   expect(calls).toEqual(["/api/v1/home?window=7d"]);
 });

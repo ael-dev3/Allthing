@@ -251,8 +251,6 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 }
             }}
         </div>
-        {move || (ranged() && !range.get().covered()).then(|| view! {
-            <p class="range-note">"Farcaster's trending data reaches back 7 days, so this shows the past week's casts."</p>
-        })}
+
     }
 }

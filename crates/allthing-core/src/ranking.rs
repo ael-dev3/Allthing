@@ -44,36 +44,36 @@ impl Sort {
 }
 
 /// How far back the front page reaches, named as Reddit's `t=` names it.
+/// Only the ranges Hypersnap can rank over exist: its widest trending
+/// window is 7 days, so there is no past month, past year or all time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TimeRange {
     Hour,
     #[default]
     Day,
     Week,
-    Month,
-    Year,
-    All,
 }
 
 impl TimeRange {
     /// In menu order, the widest first.
-    pub const ALL: [TimeRange; 6] =
-        [TimeRange::All, TimeRange::Year, TimeRange::Month, TimeRange::Week, TimeRange::Day, TimeRange::Hour];
+    pub const ALL: [TimeRange; 3] = [TimeRange::Week, TimeRange::Day, TimeRange::Hour];
 
     pub fn as_str(self) -> &'static str {
         match self {
             TimeRange::Hour => "hour",
             TimeRange::Day => "day",
             TimeRange::Week => "week",
-            TimeRange::Month => "month",
-            TimeRange::Year => "year",
-            TimeRange::All => "all",
         }
     }
 
-    /// Unknown or missing values fall back to the default, Today.
+    /// Unknown or missing values fall back to the default, Today. Links made
+    /// when the menu offered longer ranges (`month`, `year`, `all`) open the
+    /// widest there is, the past week.
     pub fn parse(value: Option<&str>) -> TimeRange {
-        TimeRange::ALL.into_iter().find(|r| Some(r.as_str()) == value).unwrap_or_default()
+        match value {
+            Some("month" | "year" | "all") => TimeRange::Week,
+            _ => TimeRange::ALL.into_iter().find(|r| Some(r.as_str()) == value).unwrap_or_default(),
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -81,25 +81,16 @@ impl TimeRange {
             TimeRange::Hour => "Past hour",
             TimeRange::Day => "Today",
             TimeRange::Week => "Past week",
-            TimeRange::Month => "Past month",
-            TimeRange::Year => "Past year",
-            TimeRange::All => "All time",
         }
     }
 
-    /// The trending window this range is ranked over. Hypersnap's widest is
-    /// 7 days, so the longer ranges show the past week's casts.
+    /// The trending window this range is ranked over.
     pub fn window(self) -> TrendingWindow {
         match self {
             TimeRange::Hour => TrendingWindow::Hour,
             TimeRange::Day => TrendingWindow::Day,
-            TimeRange::Week | TimeRange::Month | TimeRange::Year | TimeRange::All => TrendingWindow::Week,
+            TimeRange::Week => TrendingWindow::Week,
         }
-    }
-
-    /// Whether its trending window reaches back over the whole range.
-    pub fn covered(self) -> bool {
-        matches!(self, TimeRange::Hour | TimeRange::Day | TimeRange::Week)
     }
 }
 
@@ -226,11 +217,11 @@ mod tests {
         }
         assert_eq!(TimeRange::Hour.window().as_str(), "1h");
         assert_eq!(TimeRange::Day.window().as_str(), "24h");
-        // Hypersnap ranks over at most 7 days: longer ranges use that, and say so.
-        for range in [TimeRange::Week, TimeRange::Month, TimeRange::Year, TimeRange::All] {
-            assert_eq!(range.window(), TrendingWindow::Week);
+        assert_eq!(TimeRange::Week.window().as_str(), "7d");
+        // Old links to longer ranges open the widest there is.
+        for old in ["month", "year", "all"] {
+            assert_eq!(TimeRange::parse(Some(old)), TimeRange::Week);
         }
-        assert!(TimeRange::Week.covered() && !TimeRange::Month.covered() && !TimeRange::All.covered());
         assert_eq!(TrendingWindow::parse("7d"), Some(TrendingWindow::Week));
         assert_eq!(TrendingWindow::parse("30d"), None);
     }
