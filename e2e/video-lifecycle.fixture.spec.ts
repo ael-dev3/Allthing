@@ -34,7 +34,7 @@ for (const status of [200, 503]) {
     });
     await page.goto(`/p/${hash}`);
     await requested;
-    const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+    const search = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
     await search.fill("fixture");
     await search.press("Enter");
     await expect(page).toHaveURL(/\/search\?q=fixture$/);
@@ -56,7 +56,7 @@ test("an autoplay timeout after navigation does not access the removed video", a
   await page.route("https://media.example/stream_*.m3u8", (route) => route.fulfill({ status: 503 }));
   await page.goto(`/p/${hash}`);
   await expect(page.locator(".video")).toHaveClass(/autoplay-pending/);
-  const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+  const search = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
   await search.fill("fixture");
   await search.press("Enter");
   await expect(page).toHaveURL(/\/search\?q=fixture$/);

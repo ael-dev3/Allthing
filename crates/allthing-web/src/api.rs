@@ -232,7 +232,8 @@ fn remember(path: &str, raw: Raw, now: f64) {
 
 /// GET an API path, reusing a recent answer for the same path.
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
-    // A prefetch of the same path is on its way: wait for it, don't repeat it.
+    // A request for the same path is on its way (a prefetch, or the search
+    // box's suggestions): wait for it, don't repeat it.
     for _ in 0..400 {
         if !IN_FLIGHT.with(|f| f.borrow().contains(path)) {
             break;
@@ -243,7 +244,12 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     if let Some(result) = cached(path, now) {
         return result;
     }
-    let raw = fetch_raw(path).await?;
+    let mine = IN_FLIGHT.with(|f| f.borrow_mut().insert(path.to_owned()));
+    let raw = fetch_raw(path).await;
+    if mine {
+        IN_FLIGHT.with(|f| f.borrow_mut().remove(path));
+    }
+    let raw = raw?;
     let result = decode::<T>(&raw);
     remember(path, raw, now);
     result
