@@ -19,6 +19,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Taps, clicks and keystrokes show their result sooner on every page: about 16–32 ms instead of 40–64 ms after the input in a headless browser without a GPU. The line of light drifting along the header animated its background, which repainted the header in every frame while it ran (always), and the next frame after an input waited behind that work. It now slides by transform, which the compositor animates without repainting; it looks the same and still stops under reduced motion.
 - The changelog's 0.4.0 entries are under their headings: sixteen fixes had landed above them, and four additions were filed as fixes. Two missing entries are back (the sound badge's quick second tap, and cards outside the window skipping layout), and the Solana entry says that allthing.social couldn't read Solana.
+- Wallet activity by chain follows the current rules even when the edge serves a payload it cached under older ones, which it keeps for hours. For up to a day after 0.4.0, a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.3% of its transactions). The browser now works out the shares from the counts itself.
 
 ## [0.4.0] - 2026-10-18
 

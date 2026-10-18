@@ -125,7 +125,10 @@ pub fn WalletShares(fid: u64) -> impl IntoView {
 /// Each measured chain's share of the transactions the account's verified
 /// wallets sent: a bar and its legend.
 #[component]
-fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
+fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
+    // Shares follow this version's rules from the counts, even in a payload
+    // the edge cached (for hours) under an earlier version's.
+    allthing_core::wallet::apportion(&mut activity.chains);
     // Chains under 1% are left out, so every row has a whole percent. The
     // shares sum to 100, so one chain at 100% is the only row.
     let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.percent >= 1).cloned().collect();

@@ -13,7 +13,7 @@ The wallet chart on a profile (and on its hover card) shows where an account's v
 
 - **EVM**: the count is the account nonce, which is the number of transactions each address has *sent*. Incoming transfers are not counted. It is exact, not an estimate.
 - **Solana**: there is no nonce. The count is the number of signatures involving the address, which includes transfers in. A count at the 1,000 cap shows as "1,000+".
-- **Shares**: a chain under 1% of the total (count × 100 < total) is not shown. The shares of the shown chains are divided by their own total, and rounded with the largest-remainder method, so they sum to exactly 100 and the spare points go only to shown chains. Example: 0xael.eth on 18 October 2026, where Optimism's 95 of 33,090 (0.29%) is hidden and Base shows 99%, Ethereum 1%.
+- **Shares**: a chain under 1% of the total (count × 100 < total) is not shown. The shares of the shown chains are divided by their own total, and rounded with the largest-remainder method, so they sum to exactly 100 and the spare points go only to shown chains. The browser works them out from the counts, so they follow these rules whatever the age of the payload. Example: 0xael.eth on 18 October 2026, where Optimism's 95 of 33,090 (0.29%) is hidden and Base shows 99%, Ethereum 1%.
 - **Display**: the chart and its list show only the shown chains. One chain at 100% is the only row.
 - **Unread chains**: if an EVM chain can't be read just now (rate limited, unreachable), it is left out of the shares, and the chart says that some chains weren't read. Solana being unmeasured is not shown as an error.
 
@@ -36,3 +36,4 @@ Block explorers can't give the sent count directly, so the check is nonce-based:
 
 - A rate-limited chain was dropped from the shares without a word, so the chart looked complete. It now says that some chains weren't read.
 - Chains under 1% showed as "<1%" rows. They are now hidden, so the chart shows only chains with a whole percent.
+- For up to a day after that change, the edge kept serving wallet payloads it had cached with the old shares, so a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.29%, on 18 October 2026). The browser now works out the shares from the counts itself.
