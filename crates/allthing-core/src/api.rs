@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::percent_encode;
 use crate::provenance::{Backend, Origin};
+use crate::ranking::TrendingWindow;
 
 pub const API_PREFIX: &str = "/api/v1";
 
@@ -192,9 +193,17 @@ pub fn home_path() -> String {
     format!("{API_PREFIX}/home")
 }
 
-/// The next trending pages, for infinite scroll.
-pub fn home_page_path(offset: u32) -> String {
-    if offset == 0 { home_path() } else { format!("{API_PREFIX}/home?offset={offset}") }
+/// The front page's trending casts over `window`, from `offset` (later pages
+/// are for infinite scroll). The default window (a day) has no parameter.
+pub fn home_page_path(offset: u32, window: TrendingWindow) -> String {
+    let mut query = Vec::new();
+    if window != TrendingWindow::Day {
+        query.push(format!("window={}", window.as_str()));
+    }
+    if offset != 0 {
+        query.push(format!("offset={offset}"));
+    }
+    if query.is_empty() { home_path() } else { format!("{API_PREFIX}/home?{}", query.join("&")) }
 }
 
 pub fn vote_path(fid: u64) -> String {
@@ -302,6 +311,10 @@ mod tests {
     #[test]
     fn paths_encode_keys() {
         assert_eq!(home_path(), "/api/v1/home");
+        assert_eq!(home_page_path(0, TrendingWindow::Day), "/api/v1/home");
+        assert_eq!(home_page_path(200, TrendingWindow::Day), "/api/v1/home?offset=200");
+        assert_eq!(home_page_path(0, TrendingWindow::Hour), "/api/v1/home?window=1h");
+        assert_eq!(home_page_path(100, TrendingWindow::Week), "/api/v1/home?window=7d&offset=100");
         assert_eq!(channel_path("eip155:8453/erc20:0xabc"), "/api/v1/channel?id=eip155%3A8453%2Ferc20%3A0xabc");
         assert_eq!(user_path("balajis.eth"), "/api/v1/user?name=balajis.eth");
         assert_eq!(user_path("fid:42"), "/api/v1/user?name=fid%3A42");

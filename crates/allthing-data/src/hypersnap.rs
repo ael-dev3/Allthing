@@ -10,6 +10,7 @@ use allthing_core::channels::{
 use allthing_core::model::Channel;
 use allthing_core::normalize::{self, RawCast, RawChannel, RawFeed, RawUser, RawUserList, RawUserSearch};
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
+use allthing_core::ranking::TrendingWindow;
 use serde::Deserialize;
 
 use crate::Invocation;
@@ -25,12 +26,18 @@ fn v1(path: &str, query: &[(&str, &str)]) -> String {
     url(BASE, &format!("v1/{path}"), query)
 }
 
-/// Trending casts, ranked by Hypersnap; `offset` pages through the list
-/// (its cursor is a plain offset, and the list ends at 1,000 casts).
-pub async fn trending_casts(inv: &Invocation, limit: u32, offset: u32) -> Result<Vec<RawCast>, UpstreamError> {
+/// Trending casts over `window`, ranked by Hypersnap; `offset` pages through
+/// the list (its cursor is a plain offset, and the list ends at 1,000 casts).
+pub async fn trending_casts(
+    inv: &Invocation,
+    limit: u32,
+    offset: u32,
+    window: TrendingWindow,
+) -> Result<Vec<RawCast>, UpstreamError> {
     let (limit, offset) = (limit.to_string(), offset.to_string());
+    let window = ("time_window", window.as_str());
     let query: &[(&str, &str)] =
-        if offset == "0" { &[("limit", &limit)] } else { &[("limit", &limit), ("cursor", &offset)] };
+        if offset == "0" { &[("limit", &limit), window] } else { &[("limit", &limit), ("cursor", &offset), window] };
     let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2("feed/trending", query), false).await?;
     Ok(feed.map(|f| f.casts).unwrap_or_default())
 }
