@@ -3,20 +3,19 @@
 
 use leptos::ev;
 use leptos::prelude::*;
-use leptos_router::hooks::{use_location, use_navigate, use_query_map};
+use leptos_router::hooks::{use_location, use_navigate};
 
-use crate::util::{href, with_query};
+use crate::util::{href, use_query_param, with_query};
 
 #[component]
 pub fn SearchBox() -> impl IntoView {
-    let query = use_query_map();
+    let query = use_query_param("q");
     let location = use_location();
     let input = NodeRef::<leptos::html::Input>::new();
     let navigate = use_navigate();
     // Show the current query while on the results page.
-    let current = move || {
-        location.pathname.get().ends_with("/search").then(|| query.read().get("q")).flatten().unwrap_or_default()
-    };
+    let current =
+        move || location.pathname.get().ends_with("/search").then(|| query.get()).flatten().unwrap_or_default();
     let submit = move |ev: ev::SubmitEvent| {
         ev.prevent_default();
         let q = input.get().map(|i| i.value()).unwrap_or_default();

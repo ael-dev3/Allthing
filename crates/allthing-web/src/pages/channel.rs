@@ -7,7 +7,7 @@ use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
-use allthing_core::params::channel_key_from_param;
+use allthing_core::params::channel_key_from_decoded;
 use allthing_core::ranking::{Sort, sorted};
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
@@ -16,15 +16,16 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SideBox, SortTabs};
 use crate::components::text::CastText;
-use crate::util::{channel_href, set_title};
+use crate::util::{channel_href, set_title, use_query_param};
 
 #[component]
 pub fn ChannelPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
+    let id = use_query_param("id");
     // /c/<id>, or /c?id=<parent URL> (also the old static site's form).
     let key = Memo::new(move |_| {
-        params.read().get("key").or_else(|| query.read().get("id")).and_then(|raw| channel_key_from_param(&raw))
+        params.read().get("key").or_else(|| id.get()).and_then(|raw| channel_key_from_decoded(&raw))
     });
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let data = LocalResource::new(move || {
