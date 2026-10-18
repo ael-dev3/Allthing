@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ael-dev3/Allthing/blob/main/SECURITY.md
+    about: Please report security problems privately, as SECURITY.md describes, not in a public issue.

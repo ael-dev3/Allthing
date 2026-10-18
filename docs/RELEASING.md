@@ -32,7 +32,7 @@ Scopes are optional, for example `feat(profile): …`, `fix(worker): …` or `pe
 ## Branches and pull requests
 
 - Work happens on short-lived branches cut from `main`, such as `feat/search`, `fix/video-mute` or `docs/vote`. Keep them to days, not weeks.
-- Each branch is merged through a pull request once CI (`check`) is green, using **squash merge**. The squash commit's title is a Conventional Commit, usually the PR title.
+- Each branch is merged through a pull request once CI (the `check` and `browser` jobs) is green, using **squash merge**. The squash commit's title is a Conventional Commit, usually the PR title.
 - Nobody pushes features straight to `main`. Release housekeeping (`chore(release): …`) goes through a PR like anything else.
 - Update `CHANGELOG.md` under `[Unreleased]` in the same PR as the change.
 
