@@ -146,21 +146,29 @@ struct UserResponse {
     user: Option<RawUser>,
 }
 
-/// By fname, falling back to search for ENS-style names (which Hypersnap's
-/// `by_username` does not resolve), accepting only an exact username match.
+#[derive(Deserialize)]
+struct UsernameProof {
+    fid: Option<u64>,
+}
+
+/// By username. Hypersnap's `by_username` knows each account's current
+/// fname only, so any other name, an ENS name like `vitalik.eth` or one the
+/// account has since moved away from (`dwr.eth`, now `dwr`), is looked up by
+/// the hub's username proof, which names the FID that holds it.
 pub async fn user_by_username(inv: &Invocation, username: &str) -> Result<Option<RawUser>, UpstreamError> {
     let found: Option<UserResponse> =
         get_json(inv, Upstream::Hypersnap, &v2("user/by_username", &[("username", username)]), true).await?;
     if let Some(user) = found.and_then(|r| r.user) {
         return Ok(Some(user));
     }
-    let search: Option<RawUserSearch> =
-        get_json(inv, Upstream::Hypersnap, &v2("user/search", &[("q", username), ("limit", "10")]), true).await?;
-    Ok(search
-        .map(RawUserSearch::into_users)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|u| u.username.as_deref().is_some_and(|name| name.eq_ignore_ascii_case(username))))
+    // Proofs are kept under the lowercase name; the hub answers 400 for none.
+    let name = username.to_ascii_lowercase();
+    let proof: Option<UsernameProof> =
+        get_json(inv, Upstream::Hypersnap, &v1("userNameProofByName", &[("name", &name)]), true).await?;
+    match proof.and_then(|p| p.fid) {
+        Some(fid) => Ok(users_bulk(inv, &[fid]).await?.into_iter().next()),
+        None => Ok(None),
+    }
 }
 
 pub async fn search_users(inv: &Invocation, query: &str, limit: u32) -> Result<Vec<RawUser>, UpstreamError> {
@@ -423,4 +431,83 @@ pub async fn all_onchain_signers(inv: &Invocation, fid: u64) -> Result<HashMap<S
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// A hub that knows fid 3 by its fname `dwr` and its old ENS name
+    /// `dwr.eth`, and nobody else.
+    struct Hub {
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for Hub {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let path = request.url.trim_start_matches(BASE).to_owned();
+            self.requests.borrow_mut().push(path.clone());
+            let ok = |json: &str| HttpResponse { status: 200, retry_after: None, body: Some(json.into()) };
+            let status = |status: u16| HttpResponse { status, retry_after: None, body: None };
+            let dwr = r#"{"fid":3,"username":"dwr","display_name":"Dan Romero"}"#;
+            let response = match path.as_str() {
+                "/v2/farcaster/user/by_username?username=dwr" => ok(&format!(r#"{{"user":{dwr}}}"#)),
+                "/v1/userNameProofByName?name=dwr.eth" => {
+                    ok(r#"{"name":"dwr.eth","fid":3,"type":"USERNAME_TYPE_ENS_L1"}"#)
+                }
+                "/v2/farcaster/user/bulk?fids=3" => ok(&format!(r#"{{"users":[{dwr}]}}"#)),
+                // The hub answers 400 for a name nobody holds.
+                p if p.starts_with("/v1/userNameProofByName") => status(400),
+                _ => status(404),
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn lookup(name: &str) -> (Option<u64>, Vec<String>) {
+        let hub = Rc::new(Hub { requests: RefCell::new(vec![]) });
+        let inv = Invocation::new(hub.clone(), 45);
+        let user = user_by_username(&inv, name).now_or_never().unwrap().unwrap();
+        (user.map(|u| u.fid), hub.requests.take())
+    }
+
+    #[test]
+    fn a_current_fname_takes_one_request() {
+        assert_eq!(lookup("dwr"), (Some(3), vec!["/v2/farcaster/user/by_username?username=dwr".to_owned()]));
+    }
+
+    #[test]
+    fn a_name_the_account_moved_away_from_is_found_by_its_proof() {
+        let (fid, requests) = lookup("dwr.eth");
+        assert_eq!(fid, Some(3));
+        assert_eq!(
+            requests,
+            [
+                "/v2/farcaster/user/by_username?username=dwr.eth",
+                "/v1/userNameProofByName?name=dwr.eth",
+                "/v2/farcaster/user/bulk?fids=3",
+            ]
+        );
+        // Proofs are kept lowercase.
+        assert_eq!(lookup("DWR.eth").0, Some(3));
+    }
+
+    #[test]
+    fn a_name_nobody_holds_is_not_found() {
+        let (fid, requests) = lookup("nobody.eth");
+        assert_eq!(fid, None);
+        assert_eq!(requests.len(), 2);
+    }
 }

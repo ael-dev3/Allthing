@@ -582,6 +582,9 @@ test.describe("profiles", () => {
     await page.goto(at("/u/balajis.eth"));
     await expect(page.locator(".profile .handle")).toContainText("@balajis.eth");
     await expect(firstCard(page).locator(".author")).toHaveText("@balajis.eth");
+    // A name the account holds but no longer goes by: dwr.eth is fid 3, now @dwr.
+    await page.goto(at("/u/dwr.eth"));
+    await expect(page.locator(".profile .handle")).toContainText("@dwr · fid 3");
   });
 });
 

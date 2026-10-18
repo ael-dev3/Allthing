@@ -40,7 +40,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, trending channels, annotations | `feed/trending`, `channel/trending` |
 | `/api/v1/channel?id=<id or parent URL>` | `ChannelPayload`: the channel and a pool of its casts | `channel`, `feed/parent_urls` (every spelling of the channel's parent URL) |
 | `/api/v1/cast?hash=<hash>` | `CastPayload`: the thread (5 levels), the parent, quoted casts, the channel | `cast/conversation`, `cast` |
-| `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (with an exact-match search fallback for ENS-style names), `user/bulk`, `feed/user/casts` |
+| `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (it knows current fnames only; any other name goes through the hub's `userNameProofByName`, then `user/bulk` for the FID it names), `user/bulk`, `feed/user/casts` |
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
 | `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
