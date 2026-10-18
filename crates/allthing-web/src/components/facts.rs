@@ -86,8 +86,27 @@ fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
     // Chains under 1% are left out, so every row has a whole percent. The
     // shares sum to 100, so one chain at 100% is the only row.
     let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.percent >= 1).cloned().collect();
+    // Solana's public RPC refuses browsers and, so far, Cloudflare Workers,
+    // so an account's Solana wallets usually go uncounted: say so.
+    let solana_unread =
+        activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Solana);
+    let solana_note = move || {
+        solana_unread.then(|| {
+            view! { <p class="muted small">"Solana isn't counted: its public RPC refuses Allthing's requests."</p> }
+        })
+    };
     if measured.is_empty() {
-        return view! { <p class="muted small">"No onchain activity from verified wallets."</p> }.into_any();
+        let evm_read =
+            activity.chains.iter().any(|c| c.error.is_none() && c.kind == allthing_core::wallet::ChainKind::Evm);
+        let none = (evm_read || !solana_unread).then(|| {
+            let text = if solana_unread {
+                "No activity on the EVM chains counted."
+            } else {
+                "No onchain activity from verified wallets."
+            };
+            view! { <p class="muted small">{text}</p> }
+        });
+        return view! { {none} {solana_note()} }.into_any();
     }
     // An EVM chain that couldn't be read just now is left out of the shares:
     // say so, rather than let the shares look complete.
@@ -109,6 +128,7 @@ fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
             }).collect_view()}
         </ul>
         {missed.then(|| view! { <p class="muted small">"Some chains weren't read just now, so the shares cover the rest."</p> })}
+        {solana_note()}
     }
     .into_any()
 }

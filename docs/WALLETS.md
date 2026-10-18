@@ -7,7 +7,7 @@ The wallet chart on a profile (and on its hover card) shows where an account's v
 
 - **Verified addresses**: the account's verified Ethereum and Solana addresses, from Hypersnap's user record (`user/bulk`). Up to five EVM addresses are counted per account, and up to two Solana addresses.
 - **EVM chains** (Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain, Monad): each chain's public JSON-RPC endpoints, as listed in `crates/allthing-core/src/wallet.rs`. One batched `eth_getTransactionCount` call per chain, at `latest`.
-- **Solana**: one `getSignaturesForAddress` call per address (up to 1,000 signatures) to Solana's public RPC. It refuses browsers and, from our tests, Cloudflare Workers' addresses, so Solana is usually "not measured" on the live site.
+- **Solana**: one `getSignaturesForAddress` call per address (up to 1,000 signatures) to Solana's public RPC. It refuses browsers and, from our tests, Cloudflare Workers' addresses (HTTP 403), so on the live site Solana usually goes uncounted, and the chart says so. The keyless RPCs that do answer Workers (publicnode.com, Pocket, Solana Tracker, LeoRPC) keep only recent history: on 18 October 2026 they returned no signatures for four of 0xael.eth's Solana addresses where Solana's own RPC returned 227 to 1,000, so they would undercount and are not used.
 
 ## Method
 
@@ -15,7 +15,7 @@ The wallet chart on a profile (and on its hover card) shows where an account's v
 - **Solana**: there is no nonce. The count is the number of signatures involving the address, which includes transfers in. A count at the 1,000 cap shows as "1,000+".
 - **Shares**: a chain under 1% of the total (count × 100 < total) is not shown. The shares of the shown chains are divided by their own total, and rounded with the largest-remainder method, so they sum to exactly 100 and the spare points go only to shown chains. The browser works them out from the counts, so they follow these rules whatever the age of the payload. Example: 0xael.eth on 18 October 2026, where Optimism's 95 of 33,090 (0.29%) is hidden and Base shows 99%, Ethereum 1%.
 - **Display**: the chart and its list show only the shown chains. One chain at 100% is the only row.
-- **Unread chains**: if an EVM chain can't be read just now (rate limited, unreachable), it is left out of the shares, and the chart says that some chains weren't read. Solana being unmeasured is not shown as an error.
+- **Unread chains**: if an EVM chain can't be read just now (rate limited, unreachable), it is left out of the shares, and the chart says that some chains weren't read. When the account has verified Solana addresses and Solana can't be read, the chart says that Solana isn't counted, and the payload's `sources` says so too.
 
 ## Cross-checks (18 October 2026)
 
