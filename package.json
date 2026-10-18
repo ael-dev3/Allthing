@@ -13,7 +13,8 @@
     "build": "bash scripts/build.sh",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:tools": "node --test tests/pages-server.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",
