@@ -849,6 +849,42 @@ code {
   transform: scale(0.82);
 }
 
+/* Muted autoplay: no play icon over a playing video. The button becomes a
+   clear layer over the whole video (a click turns sound on) with a small
+   "sound off" badge. */
+.video.autoplaying .video-play {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 1;
+  transform: none;
+}
+
+.video.autoplaying .video-play svg {
+  display: none;
+}
+
+.video-sound {
+  display: none;
+}
+
+.video.autoplaying .video-sound {
+  display: inline-flex;
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(17, 20, 28, 0.62);
+  color: #fff;
+  font: 600 12px/1 var(--font-ui);
+  letter-spacing: 0.01em;
+}
+
 .video.loading::after {
   content: "";
   position: absolute;

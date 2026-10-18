@@ -133,6 +133,9 @@ pub fn HlsVideo(
     let status = RwSignal::new(Status::Idle);
     let engaged = RwSignal::new(full);
     let previewing = RwSignal::new(false);
+    // Whether frames are actually advancing (the element's playing/pause
+    // events), so the play button can step aside during muted autoplay.
+    let playing = RwSignal::new(false);
     let playback = StoredValue::new_local(Rc::new(RefCell::new(Playback {
         player: None,
         stream: None,
@@ -233,7 +236,11 @@ pub fn HlsVideo(
         }
         let Some(video) = video_ref.get_untracked() else { return };
         if playback.with_value(|p| ensure_source(&video, &url.get_value(), p, PREVIEW_HEIGHT)).is_ok() {
+            // Muted and inline before play(), or iOS Safari refuses autoplay
+            // or takes the video fullscreen.
+            video.set_default_muted(true);
             video.set_muted(true);
+            let _ = video.set_attribute("playsinline", "");
             previewing.set(true);
             claim(&video);
             play(&video);
@@ -297,6 +304,7 @@ pub fn HlsVideo(
             class="video"
             class:engaged=move || engaged.get()
             class:previewing=move || previewing.get()
+            class:autoplaying=move || previewing.get() && playing.get() && !engaged.get()
             class:loading=move || status.get() == Status::Loading
             node_ref=container
         >
@@ -305,9 +313,13 @@ pub fn HlsVideo(
                 poster=move || poster.get()
                 aria-label=alt.clone()
                 playsinline=true
+                muted=true
                 preload="none"
                 loop=!full
                 prop:controls=move || engaged.get()
+                on:playing=move |_| playing.set(true)
+                on:pause=move |_| playing.set(false)
+                on:ended=move |_| playing.set(false)
                 on:error=move |_| {
                     if !hls {
                         status.set(Status::Failed("Could not play this video.".into()));
@@ -315,8 +327,25 @@ pub fn HlsVideo(
                 }
             ></video>
             <Show when=move || !engaged.get()>
-                <button class="video-play" type="button" aria-label=format!("Play video: {alt}") on:click=engage>
+                // While it autoplays muted, the button covers the video without
+                // a play icon (which would make it look paused) and offers sound.
+                <button
+                    class="video-play"
+                    type="button"
+                    aria-label={
+                        let alt = alt.clone();
+                        move || {
+                            if previewing.get() && playing.get() {
+                                format!("Play with sound: {alt}")
+                            } else {
+                                format!("Play video: {alt}")
+                            }
+                        }
+                    }
+                    on:click=engage
+                >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+                    <span class="video-sound" aria-hidden="true">"Sound off · tap for sound"</span>
                 </button>
             </Show>
             {on_expand.map(|expand| view! {
