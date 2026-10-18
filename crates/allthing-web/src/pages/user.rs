@@ -82,7 +82,7 @@ pub fn UserPage() -> impl IntoView {
                 let casts_link = path.clone();
                 let replies_link = with_query(&path, &[("tab", Some("replies".to_owned()))]);
                 view! {
-                    <Columns side>
+                    <Columns side class="profile-columns">
                         <ProfileHeader user=user.clone() score=notes.scores.get(&user.fid).copied()/>
                         <nav class="tabs" aria-label="Profile sections">
                             <a href=casts_link data-noscroll="" class:selected=move || !replies_tab.get() aria-current=move || (!replies_tab.get()).then_some("page")>"Casts"</a>
