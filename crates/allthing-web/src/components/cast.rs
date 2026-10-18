@@ -108,7 +108,14 @@ pub fn CastList(
     #[prop(optional)] show_parent: bool,
     #[prop(optional)] on_end: Option<Callback<()>>,
 ) -> impl IntoView {
-    let shown = RwSignal::new(STEP);
+    // Back to a list shows as many cards as before, so the reader's place
+    // exists before the scroll position is restored.
+    let key = crate::nav::location_key();
+    let shown = RwSignal::new(SHOWN.with(|s| s.borrow().get(&key).copied()).unwrap_or(STEP).max(STEP));
+    Effect::new(move |_| {
+        let count = shown.get();
+        SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
+    });
     let sentinel = NodeRef::<leptos::html::Div>::new();
     let remembered = notes.clone();
     Effect::new(move |_| casts.with(|c| api::remember_casts(c, &remembered)));
@@ -163,6 +170,8 @@ fn observe_once_visible(element: &web_sys::Element, f: impl Fn() + 'static) {
 }
 
 thread_local! {
+    /// How many cards each list (by page key) had shown.
+    static SHOWN: std::cell::RefCell<std::collections::HashMap<String, usize>> = Default::default();
     /// One observer for every card: posts that stay in view get prefetched.
     static PREFETCH_OBSERVER: Option<IntersectionObserver> = prefetch_observer();
     /// Viewport prefetches allowed: a small token bucket (6 a minute).
