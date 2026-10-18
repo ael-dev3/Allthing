@@ -42,6 +42,10 @@ pub fn ProfileHover(
     /// against the viewport, and keyboard focus is left to the dialog.
     #[prop(optional)]
     in_dialog: bool,
+    /// The links sit in another popover's panel (a list of who liked a
+    /// cast): the card opens beside that panel, against the viewport.
+    #[prop(optional)]
+    beside: bool,
     children: ChildrenFn,
 ) -> impl IntoView {
     let label = format!("Profile: {} (@{})", user.name(), user.username);
@@ -50,7 +54,8 @@ pub fn ProfileHover(
             label
             hover=true
             links=true
-            fixed=fixed || in_dialog
+            fixed=fixed || in_dialog || beside
+            beside
             no_focus_open=in_dialog
             max_px=CARD_MAX_PX
             class

@@ -293,7 +293,7 @@ code {
 }
 
 .page > * {
-  animation: page-in 0.42s var(--ease) both;
+  animation: page-in 0.42s var(--ease) backwards;
 }
 
 @keyframes page-in {
@@ -494,7 +494,7 @@ code {
   padding: 13px 16px 11px;
   box-shadow: var(--shadow);
   transition: transform 0.28s var(--ease), box-shadow 0.28s var(--ease), border-color 0.28s var(--ease);
-  animation: rise 0.5s var(--ease) both;
+  animation: rise 0.5s var(--ease) backwards;
   animation-delay: calc(var(--i, 0) * 26ms);
   /* Off-screen cards skip layout and paint, so a re-sort of a long list
      re-lays out only what is on screen. */
@@ -1305,7 +1305,7 @@ code {
 /* ---------- Post page ---------- */
 
 .post {
-  animation: rise 0.3s var(--ease) both;
+  animation: rise 0.3s var(--ease) backwards;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -2270,7 +2270,7 @@ code {
   color: var(--ink);
   box-shadow: var(--shadow);
   transition: transform 0.28s var(--ease), box-shadow 0.28s var(--ease);
-  animation: rise 0.5s var(--ease) both;
+  animation: rise 0.5s var(--ease) backwards;
   animation-delay: calc(var(--i, 0) * 22ms);
 }
 
@@ -2732,7 +2732,10 @@ code {
   color: var(--ink-2);
   cursor: default;
   text-align: left;
-  animation: pop-in 0.16s var(--ease) both;
+  /* `backwards`, not `both`: a panel kept its last frame's transform, and a
+     transform, even the identity, holds fixed-position panels inside it, so
+     a profile card opened from this list was clipped to the list. */
+  animation: pop-in 0.16s var(--ease) backwards;
 }
 
 .popover-panel.closing {
@@ -3032,7 +3035,7 @@ code {
   background: var(--card);
   border-radius: var(--radius);
   box-shadow: 0 40px 90px -30px rgba(27, 34, 51, 0.6);
-  animation: pop-in 0.18s var(--ease) both;
+  animation: pop-in 0.18s var(--ease) backwards;
 }
 
 .modal-head {
@@ -3393,4 +3396,19 @@ code {
   height: 14px;
   vertical-align: -2px;
   margin-right: 4px;
+}
+
+/* A profile card opened beside a who-list: a transform on an ancestor (a
+   hovered card lifts, a page's content animates in) would make that ancestor
+   the card's containing block, clipping it to the list and to the card.
+   Those transforms are off while such a card is open. */
+.cast-card:has(.popover-panel.beside),
+.columns:has(.popover-panel.beside),
+.page > *:has(.popover-panel.beside) {
+  transition: none;
+  transform: none !important;
+}
+
+.popover-panel.beside {
+  z-index: 60;
 }
