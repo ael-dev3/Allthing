@@ -3,7 +3,7 @@
 //! inline, and click-to-load facades for YouTube, Vimeo, Loom and Streamable
 //! links.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -68,6 +68,111 @@ fn reader_watching_other(video: &HtmlVideoElement) -> bool {
     })
 }
 
+/// Where the reader's choice of sound is kept between visits.
+const SOUND_KEY: &str = "allthing.sound";
+
+type EventCallback = Closure<dyn FnMut(web_sys::Event)>;
+
+thread_local! {
+    /// The sound choice for this page, for when localStorage is blocked.
+    static SOUND: Cell<bool> = const { Cell::new(false) };
+    /// A video whose autoplay with sound was refused: it plays muted until
+    /// the reader's next tap or key press turns its sound on.
+    static AWAITING_SOUND: RefCell<Option<HtmlVideoElement>> = const { RefCell::new(None) };
+    /// Listens for that tap or key press, from the first time it's needed.
+    static INTERACTION: Option<EventCallback> = interaction_listener();
+}
+
+fn storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+/// Whether videos play with sound: on once the reader unmutes a video, off
+/// once they mute one. Kept in localStorage, so it holds across visits and
+/// tabs; where storage is blocked, it holds for this page.
+fn sound_on() -> bool {
+    match storage().map(|s| s.get_item(SOUND_KEY)) {
+        Some(Ok(value)) => value.as_deref() == Some("on"),
+        _ => SOUND.with(Cell::get),
+    }
+}
+
+fn set_sound(on: bool) {
+    SOUND.with(|s| s.set(on));
+    if let Some(storage) = storage() {
+        let _ = if on { storage.set_item(SOUND_KEY, "on") } else { storage.remove_item(SOUND_KEY) };
+    }
+}
+
+/// Note on `video` the muted state the player gave it, so its volumechange
+/// events can tell the player's changes from the reader's.
+fn note_muted(video: &HtmlVideoElement, muted: bool) {
+    let _ = video.set_attribute("data-player-muted", if muted { "true" } else { "false" });
+}
+
+/// Mute or unmute `video` as the player's own doing.
+fn set_muted(video: &HtmlVideoElement, muted: bool) {
+    note_muted(video, muted);
+    video.set_muted(muted);
+}
+
+/// Whether `video` was muted or unmuted by the reader (its controls, a key)
+/// rather than by the player.
+fn muted_by_reader(video: &HtmlVideoElement) -> bool {
+    video.get_attribute("data-player-muted").is_some_and(|noted| (noted == "true") != video.muted())
+}
+
+/// Whether the page has the reader's activation right now (a tap, click or
+/// key press), where the browser says. Unmuting without it is refused, and
+/// in Chrome pauses the video.
+fn user_activation() -> bool {
+    let Some(window) = web_sys::window() else { return false };
+    let activation =
+        js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("userActivation")).unwrap_or(JsValue::UNDEFINED);
+    if activation.is_undefined() {
+        return true;
+    }
+    js_sys::Reflect::get(&activation, &JsValue::from_str("isActive")).ok().and_then(|a| a.as_bool()).unwrap_or(true)
+}
+
+/// Turns on the sound of the video awaiting it at the reader's first tap or
+/// key press, which lets a page play sound. Listens in the capture phase, so
+/// no other handler can hide the gesture.
+fn interaction_listener() -> Option<EventCallback> {
+    let window = web_sys::window()?;
+    let callback = EventCallback::new(|event: web_sys::Event| {
+        if AWAITING_SOUND.with(|a| a.borrow().is_none()) || !event.is_trusted() {
+            return;
+        }
+        // A player's own buttons set its sound themselves, and a key that
+        // grants no activation (Escape) waits for the next gesture.
+        let on_player = event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|t| t.closest(".video").ok().flatten().is_some());
+        if on_player || !user_activation() {
+            return;
+        }
+        let Some(video) = AWAITING_SOUND.with(|a| a.borrow_mut().take()) else { return };
+        // Still playing (a removed or scrolled-away video is paused), and the
+        // reader hasn't muted a video since.
+        if sound_on() && video.muted() && !video.paused() {
+            set_muted(&video, false);
+        }
+    });
+    for name in ["pointerdown", "pointerup", "touchend", "keydown", "click"] {
+        let _ = window.add_event_listener_with_callback_and_bool(name, callback.as_ref().unchecked_ref(), true);
+    }
+    Some(callback)
+}
+
+/// Turn `video`'s sound on at the reader's next tap or key press.
+fn await_sound(video: HtmlVideoElement) {
+    // Starts listening, the first time.
+    INTERACTION.with(|_| ());
+    AWAITING_SOUND.with(|a| *a.borrow_mut() = Some(video));
+}
+
 /// Muted autoplay in view, unless the reader prefers reduced motion or is
 /// saving data.
 fn autoplay_allowed() -> bool {
@@ -115,24 +220,37 @@ fn play(video: &HtmlVideoElement) {
     if let Ok(promise) = video.play() {
         let video = video.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            // Autoplay with sound can be refused; fall back to muted. Other
-            // rejections (an interrupted play, a new source) are not refusals.
+            // Playing with sound is refused until the reader has interacted
+            // with the page: play muted, and turn the sound on at their first
+            // tap or key press. Other rejections (an interrupted play, a new
+            // source) are not refusals.
             if let Err(error) = wasm_bindgen_futures::JsFuture::from(promise).await {
                 let refused = js_sys::Reflect::get(&error, &JsValue::from_str("name"))
                     .ok()
                     .and_then(|n| n.as_string())
                     .is_some_and(|n| n == "NotAllowedError");
                 if refused && !video.muted() {
-                    video.set_muted(true);
+                    set_muted(&video, true);
                     let _ = video.play();
+                    await_sound(video);
                 }
             }
         });
     }
 }
 
-/// An embedded video: poster first, a muted preview on hover, and the full
-/// player with sound and controls once clicked. `full` is the lightbox mode.
+/// Play `video` with sound and controls, as the reader asked: sound then
+/// stays on for later videos.
+fn play_with_sound(video: &HtmlVideoElement) {
+    set_sound(true);
+    set_muted(video, false);
+    video.set_controls(true);
+    claim(video, true);
+    play(video);
+}
+
+/// An embedded video: poster first, autoplay in view (muted until the reader
+/// turns sound on), and the full player with sound and controls once clicked. `full` is the lightbox mode.
 /// HLS streams go through the Rust player; plain files play natively.
 #[component]
 pub fn HlsVideo(
@@ -148,8 +266,11 @@ pub fn HlsVideo(
     let engaged = RwSignal::new(full);
     let previewing = RwSignal::new(false);
     // Whether frames are actually advancing (the element's playing/pause
-    // events), so the play button can step aside during muted autoplay.
+    // events), so the play button can step aside during autoplay.
     let playing = RwSignal::new(false);
+    // Whether it's muted (the element's volumechange events), for the sound
+    // badge and the button's name.
+    let muted = RwSignal::new(true);
     let playback = StoredValue::new_local(Rc::new(RefCell::new(Playback {
         player: None,
         stream: None,
@@ -172,10 +293,7 @@ pub fn HlsVideo(
             video.set_src(&format!("{}#t=0.1", url.get_value()));
             status.set(Status::Ready);
             if play_at.is_some() {
-                video.set_muted(false);
-                video.set_controls(true);
-                claim(&video, true);
-                play(&video);
+                play_with_sound(&video);
             }
             return;
         }
@@ -197,12 +315,7 @@ pub fn HlsVideo(
                     let play_at = play_at.or_else(|| engaged.get_untracked().then_some(INLINE_HEIGHT));
                     if let (Some(height), Some(video)) = (play_at, video_ref.get_untracked()) {
                         match playback.with_value(|p| ensure_source(&video, &src, p, height)) {
-                            Ok(()) => {
-                                video.set_muted(false);
-                                video.set_controls(true);
-                                claim(&video, true);
-                                play(&video);
-                            }
+                            Ok(()) => play_with_sound(&video),
                             Err(e) => status.set(Status::Failed(e)),
                         }
                     }
@@ -293,7 +406,8 @@ pub fn HlsVideo(
         );
     });
 
-    // Autoplay muted while mostly on screen; pause when scrolled away.
+    // Autoplay while mostly on screen, muted unless the reader turned sound
+    // on; pause when scrolled away.
     let start_autoplay = move || {
         if engaged.get_untracked() || status.get_untracked() != Status::Ready || !autoplay_allowed() {
             return;
@@ -304,9 +418,10 @@ pub fn HlsVideo(
         }
         if playback.with_value(|p| ensure_source(&video, &url.get_value(), p, PREVIEW_HEIGHT)).is_ok() {
             // Muted and inline before play(), or iOS Safari refuses autoplay
-            // or takes the video fullscreen.
+            // or takes the video fullscreen. With sound on, play() falls back
+            // to muted when the browser refuses sound.
             video.set_default_muted(true);
-            video.set_muted(true);
+            set_muted(&video, !sound_on());
             let _ = video.set_attribute("playsinline", "");
             previewing.set(true);
             claim(&video, false);
@@ -356,13 +471,20 @@ pub fn HlsVideo(
             return;
         }
         match playback.with_value(|p| ensure_source(&video, &url.get_value(), p, INLINE_HEIGHT)) {
-            Ok(()) => {
-                video.set_muted(false);
-                video.set_controls(true);
-                claim(&video, true);
-                play(&video);
-            }
+            Ok(()) => play_with_sound(&video),
             Err(e) => status.set(Status::Failed(e)),
+        }
+    };
+
+    // The badge on an autoplaying video: turns its sound on, or off, and the
+    // reader's choice holds for later videos.
+    let toggle_sound = move |_: ev::MouseEvent| {
+        let Some(video) = video_ref.get_untracked() else { return };
+        let sound = video.muted();
+        set_sound(sound);
+        set_muted(&video, !sound);
+        if sound {
+            claim(&video, true);
         }
     };
 
@@ -385,7 +507,20 @@ pub fn HlsVideo(
                 preload="none"
                 loop=!full
                 prop:controls=move || engaged.get()
-                on:playing=move |_| playing.set(true)
+                on:playing=move |_| {
+                    playing.set(true);
+                    if let Some(video) = video_ref.get_untracked() {
+                        muted.set(video.muted());
+                    }
+                }
+                on:volumechange=move |_| {
+                    let Some(video) = video_ref.get_untracked() else { return };
+                    muted.set(video.muted());
+                    if muted_by_reader(&video) {
+                        note_muted(&video, video.muted());
+                        set_sound(!video.muted());
+                    }
+                }
                 on:pause=move |_| playing.set(false)
                 on:ended=move |_| playing.set(false)
                 on:error=move |_| {
@@ -395,16 +530,19 @@ pub fn HlsVideo(
                 }
             ></video>
             <Show when=move || !engaged.get()>
-                // While it autoplays muted, the button covers the video without
-                // a play icon (which would make it look paused) and offers sound.
+                // While it autoplays, the button covers the video without a play
+                // icon (which would make it look paused), and a badge turns its
+                // sound on or off.
                 <button
                     class="video-play"
                     type="button"
                     aria-label={
                         let alt = alt.clone();
                         move || {
-                            if previewing.get() && playing.get() {
+                            if previewing.get() && playing.get() && muted.get() {
                                 format!("Play with sound: {alt}")
+                            } else if previewing.get() && playing.get() {
+                                format!("Show controls: {alt}")
                             } else {
                                 format!("Play video: {alt}")
                             }
@@ -413,7 +551,9 @@ pub fn HlsVideo(
                     on:click=engage
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
-                    <span class="video-sound" aria-hidden="true">"Sound off · tap for sound"</span>
+                </button>
+                <button class="video-sound" type="button" on:click=toggle_sound>
+                    {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
                 </button>
             </Show>
             {on_expand.map(|expand| view! {

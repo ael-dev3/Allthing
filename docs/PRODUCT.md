@@ -13,7 +13,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 2. **Honest engagement.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts. Ranking is simple and public: likes + 2 × recasts + replies, weighed against age for **hot**. **new** and **top** are also offered.
 3. **Never hide anyone.** Labels are shown on the profile they describe, and every cast stays visible. A label from the Farcaster app is that app's opinion, attributed to it and dated; Allthing does not filter on it.
 4. **Show where things come from.** Each cast names the app that registered its signing key, and facts like scores and votes name their source. Missing data says so ("not recorded", "not measured", "unavailable") instead of being guessed or hidden.
-5. **Media without leaving.** Images open in an accessible viewer. Videos play muted in place while in view, and third-party players load only when asked.
+5. **Media without leaving.** Images open in an accessible viewer. Videos play in place while in view, muted until the reader turns sound on, which then holds for later videos until they mute one. Third-party players load only when asked.
 6. **Fast and frugal.** Navigation feels instant ([PERFORMANCE.md](PERFORMANCE.md)). The site is static first, makes one API call per page, and caches at the edge. It runs on a free hosting tier without straining the public data sources it reads.
 7. **Accessible by default.** It works with the keyboard throughout, gives images alt text, manages focus in dialogs, respects reduced motion and fits small screens.
 
