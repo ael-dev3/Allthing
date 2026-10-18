@@ -5,6 +5,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
+
 ### Fixed
 
 - Popovers (who liked, recasted, replies) open toward the side with more room, so the replies preview on the first card no longer slides under the sticky header. Their height fits the space available, and the card with an open popover sits above the next card instead of under it.

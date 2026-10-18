@@ -16,6 +16,10 @@ use crate::components::chips::{Avatar, ScoreBadge};
 use crate::components::layout::ErrorPanel;
 use crate::util::{channel_href, set_title, user_href};
 
+/// People and channels shown before "Show all", so casts stay near the top.
+const PEOPLE_SHOWN: usize = 6;
+const CHANNELS_SHOWN: usize = 8;
+
 #[component]
 pub fn SearchPage() -> impl IntoView {
     let query = use_query_map();
@@ -54,16 +58,23 @@ pub fn SearchPage() -> impl IntoView {
                 let payload: Arc<SearchPayload> = data;
                 let notes: Notes = Arc::new(payload.notes.clone());
                 let nothing = payload.users.is_empty() && payload.channels.is_empty() && payload.casts.is_empty();
+                let all_people = RwSignal::new(false);
+                let all_channels = RwSignal::new(false);
+                let people_total = payload.users.len();
+                let channels_total = payload.channels.len();
+                let users = payload.users.clone();
+                let channels = payload.channels.clone();
+                let people_notes = notes.clone();
                 view! {
                     <section class="search-page">
                         <h1 class="page-title">"Results for “"{term}"”"</h1>
                         {nothing.then(|| view! { <p class="empty">"Nothing found. Try another word or a username."</p> })}
                         {(!payload.users.is_empty()).then(|| view! {
                             <section class="results-group" aria-label="People">
-                                <h2>"People"</h2>
+                                <h2>"People" <span class="count">{people_total}</span></h2>
                                 <ul class="people">
-                                    {payload.users.iter().map(|u| {
-                                        let score = notes.scores.get(&u.fid).copied().unwrap_or(0);
+                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| {
+                                        let score = people_notes.scores.get(&u.fid).copied().unwrap_or(0);
                                         view! {
                                             <li class="person">
                                                 <a href=user_href(&u.username)>
@@ -79,13 +90,14 @@ pub fn SearchPage() -> impl IntoView {
                                         }
                                     }).collect_view()}
                                 </ul>
+                                <ShowAll shown=all_people total=people_total limit=PEOPLE_SHOWN noun="people"/>
                             </section>
                         })}
                         {(!payload.channels.is_empty()).then(|| view! {
                             <section class="results-group" aria-label="Channels">
-                                <h2>"Channels"</h2>
+                                <h2>"Channels" <span class="count">{channels_total}</span></h2>
                                 <ul class="channel-results">
-                                    {payload.channels.iter().map(|c| view! {
+                                    {move || channels.iter().take(if all_channels.get() { usize::MAX } else { CHANNELS_SHOWN }).map(|c| view! {
                                         <li>
                                             <a href=channel_href(&c.id)>
                                                 {c.image_url.clone().map(|src| view! { <img src=resized_image_url(&src, ImageSize::Avatar) alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"/> })}
@@ -95,11 +107,12 @@ pub fn SearchPage() -> impl IntoView {
                                         </li>
                                     }).collect_view()}
                                 </ul>
+                                <ShowAll shown=all_channels total=channels_total limit=CHANNELS_SHOWN noun="channels"/>
                             </section>
                         })}
                         {(!payload.casts.is_empty()).then(|| view! {
                             <section class="results-group" aria-label="Casts">
-                                <h2>"Casts"</h2>
+                                <h2>"Casts" <span class="count">{payload.casts.len()}</span></h2>
                                 <CastList casts=payload.casts.clone() notes=notes.clone()/>
                             </section>
                         })}
@@ -109,4 +122,18 @@ pub fn SearchPage() -> impl IntoView {
             }
         }
     }
+}
+
+/// "Show all N people" under a capped group; disappears once pressed.
+#[component]
+fn ShowAll(shown: RwSignal<bool>, total: usize, limit: usize, noun: &'static str) -> impl IntoView {
+    (total > limit).then(|| {
+        view! {
+            <Show when=move || !shown.get()>
+                <button type="button" class="link-button show-all" on:click=move |_| shown.set(true)>
+                    {format!("Show all {total} {noun}")}
+                </button>
+            </Show>
+        }
+    })
 }

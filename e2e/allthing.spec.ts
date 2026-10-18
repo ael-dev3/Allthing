@@ -553,7 +553,19 @@ test.describe("threads and navigation", () => {
     await expect(page.getByRole("region", { name: "Channels" }).locator("li").first()).toBeVisible();
     await expect(page.getByRole("region", { name: "Casts" }).locator(".cast-card").first()).toBeVisible();
     await expect(box).toHaveValue("farcaster");
+    // Long groups are capped so casts stay near the top; "Show all" expands.
+    const people = page.getByRole("region", { name: "People" });
+    expect(await people.locator(".person").count()).toBeLessThanOrEqual(6);
+    const casts = await page.getByRole("region", { name: "Casts" }).boundingBox();
+    expect(casts!.y).toBeLessThan(1400);
     await shoot(page, "search");
+    const showAll = people.getByRole("button", { name: /^Show all \d+ people$/ });
+    if (await showAll.count()) {
+      const total = Number((await showAll.innerText()).match(/\d+/)![0]);
+      await showAll.click();
+      await expect(people.locator(".person")).toHaveCount(total);
+      await expect(showAll).toHaveCount(0);
+    }
   });
 
   test("channels and the directory render", async ({ page }) => {
