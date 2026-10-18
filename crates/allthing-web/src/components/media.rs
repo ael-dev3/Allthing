@@ -3,6 +3,7 @@
 //! lightbox (keyboard, alt text, swipe).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use allthing_core::embeds::{ImageSize, embed_domain, resized_image_url};
 use allthing_core::model::{Cast, Embed};
@@ -45,6 +46,28 @@ pub struct Viewer {
 
 thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
+    /// Natural sizes of the images loaded so far, so a list rendered again
+    /// (Back to a feed) lays each one out at its size before it loads,
+    /// instead of at zero height and then pushing the page down.
+    static IMAGE_SIZES: RefCell<HashMap<String, (u32, u32)>> = RefCell::new(HashMap::new());
+}
+
+fn known_size(src: &str) -> Option<(u32, u32)> {
+    IMAGE_SIZES.with(|sizes| sizes.borrow().get(src).copied())
+}
+
+fn remember_size(src: &str, event: &ev::Event) {
+    let Some(img) = event.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) else { return };
+    let (width, height) = (img.natural_width(), img.natural_height());
+    if width > 0 && height > 0 {
+        IMAGE_SIZES.with(|sizes| {
+            let mut sizes = sizes.borrow_mut();
+            if sizes.len() > 4000 {
+                sizes.clear();
+            }
+            sizes.insert(src.to_owned(), (width, height));
+        });
+    }
 }
 
 impl Viewer {
@@ -158,9 +181,16 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                     .into_any()
                 }
                 MediaKind::Image => {
+                    let src = resized_image_url(&item.url, ImageSize::Inline);
+                    let size = known_size(&src);
+                    let key = src.clone();
                     let img = view! {
                         <img
-                            src=resized_image_url(&item.url, ImageSize::Inline)
+                            src=src
+                            width=size.map(|(w, _)| w)
+                            height=size.map(|(_, h)| h)
+                            style=size.map(|(w, h)| format!("--w: {w}; --h: {h}"))
+                            on:load=move |event| remember_size(&key, &event)
                             alt=item.alt.clone()
                             loading="lazy"
                             decoding="async"
