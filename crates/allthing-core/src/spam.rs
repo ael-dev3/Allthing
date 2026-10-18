@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Spam Allthing leaves out, by the cast's own content: links to apps on
-//! `*.vercel.app`, anything about gig-bot, and DEGEN reward or airdrop bait
-//! (`?degen=1` links, "Just unlocked my DEGEN rewards"). These are the
+//! `*.vercel.app`, anything about gig-bot, DEGEN reward or airdrop bait
+//! (`?degen=1` links, "Just unlocked my DEGEN rewards"), and DEGEN staking
+//! promotions (yeetr.fun, "stake your DEGEN"). These are the
 //! owner's content rules, matched on text, links and mentions, not on any
 //! account label.
 
@@ -9,8 +10,24 @@ use crate::embeds::host_of;
 use crate::text::{Token, tokenize};
 
 /// Bait phrases, matched case-insensitively with any `$` removed.
-const DEGEN_BAIT: &[&str] =
-    &["unlocked my degen", "degen reward", "degen airdrop", "claim your degen", "claim degen", "free degen"];
+const DEGEN_BAIT: &[&str] = &[
+    "unlocked my degen",
+    "degen reward",
+    "degen airdrop",
+    "claim your degen",
+    "claim degen",
+    "free degen",
+    "stake your degen",
+    "yield on your degen",
+];
+
+/// Sites that only promote DEGEN staking, matched in hosts and in text
+/// (they are often written without `https://`).
+const PROMO_SITES: &[&str] = &["yeetr.fun"];
+
+fn names_promo_site(lower: &str) -> bool {
+    PROMO_SITES.iter().any(|site| lower.contains(site))
+}
 
 /// gig-bot as it is written in text, usernames and hosts.
 const GIG_BOT: &[&str] = &["gig-bot", "gigbot", "gig_bot"];
@@ -24,7 +41,7 @@ fn mentions_gig_bot(lower: &str) -> bool {
 pub fn url_is_spam(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     let host = host_of(&lower).unwrap_or_default();
-    if host == "vercel.app" || host.ends_with(".vercel.app") || mentions_gig_bot(&host) {
+    if host == "vercel.app" || host.ends_with(".vercel.app") || mentions_gig_bot(&host) || names_promo_site(&host) {
         return true;
     }
     let query = lower.split_once('?').map_or("", |(_, q)| q);
@@ -47,7 +64,7 @@ pub fn is_spam<'a>(
         return true;
     }
     let lower = text.to_lowercase();
-    if mentions_gig_bot(&lower) {
+    if mentions_gig_bot(&lower) || names_promo_site(&lower) {
         return true;
     }
     let plain = lower.replace('$', "");
@@ -73,6 +90,17 @@ mod tests {
         assert!(text("try https://some-game.vercel.app today"));
         assert!(!is_spam("", ["https://vercel.com/blog/post"], []));
         assert!(!is_spam("", ["https://notvercel.app/"], []));
+    }
+
+    #[test]
+    fn degen_staking_promotions_are_spam() {
+        assert!(text("Stake 100k DEGEN (≈ $97) on yeetr.fun/predict, get $87 USDC instantly."));
+        assert!(text("You can now earn yield on your $DEGEN with this"));
+        assert!(text("Stake your DEGEN → get USDC right away"));
+        assert!(is_spam("New: DEGEN Up or Down", ["https://Yeetr.fun/"], []));
+        // Talking about staking isn't promoting it.
+        assert!(!text("Is this staking? Stake DEGEN to earn USDC? or is it selling your position"));
+        assert!(!text("GM $Degen"));
     }
 
     #[test]
