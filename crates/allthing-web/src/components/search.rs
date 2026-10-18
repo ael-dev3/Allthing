@@ -109,6 +109,9 @@ pub fn SearchBox() -> impl IntoView {
     let active = RwSignal::new(None::<usize>);
     let open = RwSignal::new(false);
     let timer = StoredValue::new(None::<TimeoutHandle>);
+    // Closing or editing invalidates results that are already in flight,
+    // including an earlier lookup for the same words.
+    let revision = StoredValue::new(0u64);
     let cancel = move || {
         timer.update_value(|t| {
             if let Some(handle) = t.take() {
@@ -119,6 +122,7 @@ pub fn SearchBox() -> impl IntoView {
     // Closing also drops a look-up still waiting for typing to pause.
     let close = move || {
         cancel();
+        revision.update_value(|r| *r = r.wrapping_add(1));
         open.set(false);
         active.set(None);
     };
@@ -140,11 +144,11 @@ pub fn SearchBox() -> impl IntoView {
         }
     };
 
-    let look_up = move |q: String| {
+    let look_up = move |q: String, requested: u64| {
         wasm_bindgen_futures::spawn_local(async move {
             let result = api::get::<SearchPayload>(&search_path(&q)).await;
             // Only for what is still typed, while the reader is still here.
-            if found.is_disposed() || typed().trim() != q {
+            if revision.try_get_value() != Some(requested) || typed().trim() != q {
                 return;
             }
             if let Ok(fetched) = result {
@@ -159,18 +163,18 @@ pub fn SearchBox() -> impl IntoView {
             }
         });
     };
-    let on_input = move |ev: ev::Event| {
-        let q = event_target_value(&ev).trim().to_owned();
-        cancel();
-        // A highlight picked for other words must not be what Enter opens.
-        active.set(None);
+    let schedule = move |q: String| {
+        // Previous suggestions stop being actionable as soon as the query
+        // changes, not only after the next response arrives.
+        close();
         if q.chars().count() < 2 {
-            close();
             found.set(Vec::new());
             return;
         }
-        timer.set_value(set_timeout_with_handle(move || look_up(q), DEBOUNCE).ok());
+        let requested = revision.get_value();
+        timer.set_value(set_timeout_with_handle(move || look_up(q, requested), DEBOUNCE).ok());
     };
+    let on_input = move |ev: ev::Event| schedule(event_target_value(&ev).trim().to_owned());
     on_cleanup(move || {
         if let Some(Some(handle)) = timer.try_get_value() {
             handle.clear();
@@ -180,7 +184,7 @@ pub fn SearchBox() -> impl IntoView {
     let on_keydown = {
         let go = go.clone();
         move |ev: ev::KeyboardEvent| {
-            let n = found.with_untracked(Vec::len);
+            let n = if found_for.with_value(|q| *q == typed().trim()) { found.with_untracked(Vec::len) } else { 0 };
             match ev.key().as_str() {
                 "ArrowDown" if n > 0 => {
                     ev.prevent_default();
@@ -192,7 +196,7 @@ pub fn SearchBox() -> impl IntoView {
                     open.set(true);
                     active.update(|a| *a = Some(a.map_or(n - 1, |i| (i + n - 1) % n)));
                 }
-                "Escape" if open.get_untracked() => {
+                "Escape" => {
                     ev.prevent_default();
                     close();
                 }
@@ -308,6 +312,8 @@ pub fn SearchBox() -> impl IntoView {
                     // still answer what is typed.
                     if !found.with_untracked(Vec::is_empty) && found_for.with_value(|q| *q == typed().trim()) {
                         open.set(true);
+                    } else {
+                        schedule(typed().trim().to_owned());
                     }
                 }
                 on:blur=move |_| close()
