@@ -666,7 +666,6 @@ code {
   display: grid;
   gap: 5px;
   margin: 10px 0 4px;
-  max-width: 580px;
   border-radius: 12px;
   overflow: hidden;
 }
@@ -717,20 +716,38 @@ code {
   object-fit: cover;
 }
 
+/* One image: its own shape, as wide as the card allows and at most 70% of
+   the window tall (80% for a portrait image). The tile fits the image, so
+   there are no bars beside it. */
+.media-grid.n1 .tile-image {
+  --max-h: 70vh;
+  justify-self: start;
+  max-width: 100%;
+  background: none;
+}
+
+.media-grid.n1 .tile-image[data-portrait] {
+  --max-h: 80vh;
+}
+
 .media-grid.n1 .tile-image img {
-  --max-h: 460px;
   width: auto;
   max-width: 100%;
   height: auto;
   max-height: var(--max-h);
-  object-fit: contain;
-  margin: 0 auto;
 }
 
-/* Size known from an earlier load (Back to a feed): take the loaded box at
-   once, so the page doesn't grow while the image arrives. */
-.media-grid.n1 .tile-image img[width] {
-  width: min(100%, calc(var(--w) * 1px), calc(var(--max-h) * var(--w) / var(--h)));
+/* Size known (once loaded, or from an earlier load on Back to a feed): the
+   tile takes its final box at once, so the page doesn't grow while the
+   image arrives. Up to the card's width, the height cap, and 1.25 times the
+   image's own width. */
+.media-grid.n1 .tile-image[data-sized] {
+  width: min(100%, calc(var(--max-h) * var(--w) / var(--h)), calc(var(--w) * 1.25px));
+}
+
+.media-grid.n1 .tile-image[data-sized] img {
+  width: 100%;
+  max-height: none;
 }
 
 .link-card {
@@ -784,7 +801,6 @@ code {
 .video,
 .facade {
   position: relative;
-  max-width: 580px;
   border-radius: 12px;
   overflow: hidden;
   background:
@@ -794,7 +810,18 @@ code {
 }
 
 .video {
+  --max-h: 70vh;
   aspect-ratio: 16 / 10;
+}
+
+/* A video's own shape once its size is known, like a single image's. */
+.media-grid.n1 .video[data-sized] {
+  aspect-ratio: var(--w) / var(--h);
+  width: min(100%, calc(var(--max-h) * var(--w) / var(--h)));
+}
+
+.video[data-portrait] {
+  --max-h: 80vh;
 }
 
 .tile-video {
@@ -1264,16 +1291,6 @@ code {
 .mention,
 .channel-ref {
   font-weight: 500;
-}
-
-.post .media-grid,
-.post .video,
-.post .facade {
-  max-width: 100%;
-}
-
-.post .media-grid.n1 .tile-image img {
-  --max-h: 620px;
 }
 
 .post-meta {

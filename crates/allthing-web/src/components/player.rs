@@ -15,8 +15,9 @@ use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{HtmlVideoElement, IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
 
+use crate::components::media::size_style;
 use crate::util::prefers_reduced_motion;
-use crate::video::{MsePlayer, Stream, attach, load_stream, mse_supported, native_hls};
+use crate::video::{MsePlayer, Stream, attach, known_size, load_stream, mse_supported, native_hls, remember_file_size};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Status {
@@ -279,6 +280,9 @@ pub fn HlsVideo(
     })));
     let in_view = RwSignal::new(false);
     let hls = is_hls(&url);
+    // Its width and height, for a box of the right shape: from the
+    // playlist, or a plain file's metadata (the lightbox sizes its own).
+    let size = RwSignal::new(if full { None } else { known_size(&url) });
     let url = StoredValue::new(url);
 
     let load = move |play_at: Option<u32>| {
@@ -308,6 +312,9 @@ pub fn HlsVideo(
             match result {
                 Ok(stream) => {
                     poster.set(stream.poster(if full { 1080 } else { 720 }));
+                    if !full && let Some(known) = stream.size() {
+                        size.set(Some(known));
+                    }
                     playback.with_value(|p| p.borrow_mut().stream = Some(stream));
                     status.set(Status::Ready);
                     // A click while the playlist was loading engaged the
@@ -496,6 +503,9 @@ pub fn HlsVideo(
             class:autoplaying=move || previewing.get() && playing.get() && !engaged.get()
             class:autoplay-pending=move || pending.get() && !playing.get() && !engaged.get()
             class:loading=move || status.get() == Status::Loading
+            style=move || size.get().map(|(w, h)| size_style(w, h))
+            data-sized=move || size.get().map(|_| "")
+            data-portrait=move || size.get().and_then(|(w, h)| (h > w).then_some(""))
             node_ref=container
         >
             <video
@@ -523,6 +533,14 @@ pub fn HlsVideo(
                 }
                 on:pause=move |_| playing.set(false)
                 on:ended=move |_| playing.set(false)
+                on:loadedmetadata=move |_| {
+                    let Some(video) = video_ref.get_untracked() else { return };
+                    let (w, h) = (video.video_width(), video.video_height());
+                    if !hls && !full && w > 0 && h > 0 {
+                        remember_file_size(&url.get_value(), w, h);
+                        size.set(Some((w, h)));
+                    }
+                }
                 on:error=move |_| {
                     if !hls {
                         status.set(Status::Failed("Could not play this video.".into()));

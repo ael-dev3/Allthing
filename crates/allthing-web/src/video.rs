@@ -86,10 +86,40 @@ impl Stream {
     pub fn poster(&self, height: u32) -> Option<String> {
         hls::stream_thumbnail(&self.manifest_url, height)
     }
+
+    /// The width and height of its largest rendition.
+    pub fn size(&self) -> Option<(u32, u32)> {
+        self.master
+            .variants
+            .iter()
+            .filter(|v| v.width > 0 && v.height > 0)
+            .max_by_key(|v| v.height)
+            .map(|v| (v.width, v.height))
+    }
 }
 
 thread_local! {
     static STREAMS: RefCell<HashMap<String, Rc<Stream>>> = RefCell::new(HashMap::new());
+    /// Plain video files' sizes, from their metadata.
+    static FILE_SIZES: RefCell<HashMap<String, (u32, u32)>> = RefCell::new(HashMap::new());
+}
+
+/// A video's width and height, if this page has loaded it before: a list
+/// rendered again (Back to a feed) then lays it out at its size at once.
+pub fn known_size(url: &str) -> Option<(u32, u32)> {
+    STREAMS
+        .with(|s| s.borrow().get(url).and_then(|stream| stream.size()))
+        .or_else(|| FILE_SIZES.with(|s| s.borrow().get(url).copied()))
+}
+
+pub fn remember_file_size(url: &str, width: u32, height: u32) {
+    FILE_SIZES.with(|s| {
+        let mut sizes = s.borrow_mut();
+        if sizes.len() > 1000 {
+            sizes.clear();
+        }
+        sizes.insert(url.to_owned(), (width, height));
+    });
 }
 
 pub async fn load_stream(url: &str) -> Result<Rc<Stream>, String> {
