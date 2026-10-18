@@ -30,7 +30,8 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
 
 /// One cast in a listing: who and where, its whole text, media, and its
 /// engagement. The whole card opens the post (text stays selectable), and
-/// hovering or touching it prefetches the post's data.
+/// hovering or touching it prefetches the post's data. In view, it has who
+/// liked and recasted it preloaded with its neighbours (`crate::preload`).
 #[component]
 pub fn CastCard(
     cast: Cast,
@@ -52,11 +53,13 @@ pub fn CastCard(
     Effect::new(move |_| {
         if let Some(element) = node.get() {
             watch_for_prefetch(&element);
+            crate::preload::watch(&element);
         }
     });
     on_cleanup(move || {
         if let Some(element) = node.get_untracked() {
             unwatch(&element);
+            crate::preload::unwatch(&element);
         }
     });
     view! {
@@ -66,6 +69,8 @@ pub fn CastCard(
             data-hash=cast.hash.clone()
             data-ts=cast.ts
             data-points=allthing_core::ranking::points(&cast)
+            data-likes=cast.likes
+            data-recasts=cast.recasts
             style=format!("--i: {}", index.min(16))
             on:click=click
             on:pointerenter=move |_| warm()

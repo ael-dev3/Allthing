@@ -40,6 +40,25 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
   - the static GitHub Pages copy, which has no shared cache, never prefetches from the viewport.
 - **Cache**: answers stay in a client cache for 5 minutes, up to 200 entries, so back, forward and reopened posts cost nothing.
 
+#### Popover previews
+
+Who liked and who recasted a card show the moment their popover opens: feeds preload them (`crates/allthing-web/src/preload.rs`).
+
+- **Batches follow the list.** A card in view brings its run of eight cards, in list order (cards 1–8, 9–16, …), as one `/api/v1/engagement` request, with a list only for counts above zero. Every reader of a feed asks for the same batches, so the edge cache answers most of them and upstream reads don't grow with readers.
+- **Filed as single answers.** Each list goes into the client cache under its own `/api/v1/reactions?…&limit=10` path, with the batch's arrival time and age, so it expires and reports its age as if it had been asked for alone. An answer already kept that was read upstream later stays. A popover that opens while its batch is on its way waits for it instead of asking again, and a list the batch lacks (its read failed) loads on hover, as before.
+- **No "Loading…" flash.** The preview reads the client cache synchronously, in the frame the popover opens. A resource would resolve a tick later even from the cache.
+- **Replies** come from the post payload that hovering the card prefetched, whose thread holds the direct replies, so they need no request of their own once it is in.
+- **Limits**, per page view:
+  - a batch waits until the cards in view have stayed put for 200 ms;
+  - one batch is on its way at a time, and batches start at least 2 s apart;
+  - at most 3 batches (24 cards); later cards load their previews on hover;
+  - batches share the prefetch cap (2 in flight), and nothing is preloaded on `Save-Data` or `2g`/`slow-2g`, nor in the static copy.
+- **Why these numbers.**
+  - A batch is at most 16 Hypersnap reads (8 cards, likes and recasts), 18 subrequests with the cache read and write, against a budget of 45.
+  - It is also under half of an isolate's Hypersnap bucket (40 tokens, refilling 10 a second). One reader's batches, 2 s apart, ask for at most 8 reads a second, below the refill: even if every batch missed the edge cache and reached the same isolate, a scrolling reader couldn't drain it. That is at most 48 reads per page view.
+  - The Worker adds its own floor: previews never take the bucket below 16 tokens. A batch with less room reads what fits (likes first), is kept for 15 s and rebuilt; the client loads the lists it lacks on hover.
+- **Cost**: one Worker request per batch, so a feed view usually costs one or two more requests, while hovering a preloaded count costs none. See [BUDGET.md](BUDGET.md).
+
 ### 3. Client-side navigation
 
 - Links are handled by the Leptos router, so there are no full reloads.

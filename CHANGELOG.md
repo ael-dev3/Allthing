@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Like and recast popovers on feed cards open with their people already listed, without "Loading…": the cards in view load them ahead, eight cards per request (`/api/v1/engagement`, edge-cached, at most three per page view, none on Save-Data or 2g or in the static copy). A replies popover reuses the post that hovering its card prefetched. Previews also list the newest reactions first across Hypersnap's shards, not just within the last one.
 - The front page has a Reddit-style time filter next to hot and top: All time, Past year, Past month, Past week, Today (the default) and Past hour, kept in the URL as `t`. It picks the window Hypersnap ranks trending casts over: 1 hour, 24 hours or 7 days. Hypersnap goes back 7 days at most, so Past month, Past year and All time show the past week's casts and say so. A link with a time range still costs one API request, started by the inline script.
 - Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
 - Feeds show each cast's whole text, with its paragraphs, line breaks, links and mentions, instead of its first 120 characters as a one-line title. A cast with only media shows just its media, without an "[image]" or "[video]" placeholder.

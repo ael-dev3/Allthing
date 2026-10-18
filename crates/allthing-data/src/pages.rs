@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use allthing_core::api::{
-    self, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, Meta, QuotedCast, ReactionKind, ReactionsPayload,
-    RepliesPayload, SearchPayload, UserPayload,
+    self, CastPayload, ChannelPayload, ChannelsPayload, EngagementPayload, EngagementRequest, HomePayload, Meta,
+    QuotedCast, ReactionKind, ReactionPreview, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_url_for_id, is_channel_id};
 use allthing_core::model::{Cast, Channel, Embed};
@@ -14,12 +14,16 @@ use allthing_core::normalize;
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
 use allthing_core::ranking::TrendingWindow;
-use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, without_hidden};
+use allthing_core::thread::{
+    flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, reply_preview, without_hidden,
+};
 use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
 use futures::future::{join, join_all, join3};
+use futures::stream::{self, StreamExt};
 
 use crate::annotate::{self, Target, annotate, carried};
+use crate::upstream::{self, Upstream, UpstreamError};
 use crate::{Built, Failure, Invocation};
 use crate::{chain, hypersnap, miniapps};
 
@@ -27,6 +31,12 @@ use crate::{chain, hypersnap, miniapps};
 pub const POOL_SIZE: u32 = 100;
 /// Authors whose cast origins may be resolved while building one payload.
 const ORIGIN_AUTHORS: usize = 12;
+/// Preloaded previews never take Hypersnap's per-isolate bucket (40 tokens)
+/// below this, so page builds in the same isolate keep their share.
+pub const PREVIEW_RESERVE: u32 = 16;
+/// A Worker keeps at most six connections open at once; a queued fetch
+/// would spend its timeout waiting.
+const PARALLEL: usize = 6;
 
 fn meta(inv: &Invocation) -> Meta {
     Meta { backend: Backend::Hypersnap, fetched_at: inv.now() as i64, stale: false }
@@ -277,15 +287,58 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
 }
 
+/// Who reacted to a cast, newest first: at most `limit` people, out of the
+/// 100 that Hypersnap lists.
+async fn reactors(
+    inv: &Invocation,
+    hash: &str,
+    kind: ReactionKind,
+    limit: u32,
+) -> Result<ReactionPreview, UpstreamError> {
+    let raw = hypersnap::reactions(inv, hash, kind.as_str(), 100).await?;
+    let (users, more) = normalize::reactors(&raw, limit as usize);
+    Ok(ReactionPreview { users, more })
+}
+
 /// Who liked or recasted a cast: a preview (`limit` 10) or the full list
 /// (100, which is as many as Hypersnap returns).
 pub async fn reactions(inv: Rc<Invocation>, hash: String, kind: ReactionKind, limit: u32) -> Result<Built, Failure> {
-    let raw = hypersnap::reactions(&inv, &hash, kind.as_str(), 100).await.map_err(Failure::upstream)?;
-    let total = raw.len();
-    // Hypersnap lists the oldest first; show the newest.
-    let users: Vec<_> = raw.iter().rev().take(limit as usize).map(normalize::user_summary).collect();
-    let more = total > users.len();
+    let ReactionPreview { users, more } = reactors(&inv, &hash, kind, limit).await.map_err(Failure::upstream)?;
     Built::json(&ReactionsPayload { hash, kind, users, more, meta: meta(&inv) }, api::REACTIONS_CACHE)
+}
+
+/// The like and recast previews of a batch of feed cards, each list as its
+/// own preview shows it ([`reactions`] with a limit of 10), read six at a
+/// time. A list that can't be read is left out without failing the others,
+/// and the batch is then kept only briefly. Lists never take Hypersnap's
+/// bucket below [`PREVIEW_RESERVE`]: with less room, the batch reads what
+/// fits (likes first) and leaves the rest to its rebuild.
+pub async fn engagement(inv: Rc<Invocation>, request: EngagementRequest) -> Result<Built, Failure> {
+    let lists: Vec<(&str, ReactionKind)> = request.lists().collect();
+    // One subrequest stays for the cache write.
+    let room = upstream::spare(&inv, Upstream::Hypersnap, PREVIEW_RESERVE)
+        .min(inv.remaining_subrequests().saturating_sub(1)) as usize;
+    let read: Vec<_> = stream::iter(lists.iter().take(room).map(|&(hash, kind)| {
+        let inv = &inv;
+        async move { (hash, kind, reactors(inv, hash, kind, api::REACTIONS_PREVIEW).await) }
+    }))
+    .buffered(PARALLEL)
+    .collect()
+    .await;
+    let mut payload = EngagementPayload { meta: meta(&inv), ..Default::default() };
+    let mut failure = None;
+    for (hash, kind, result) in read {
+        match result {
+            Ok(preview) => payload.insert(hash.to_owned(), kind, preview),
+            Err(error) => failure = failure.or(Some(error)),
+        }
+    }
+    if payload.is_empty() {
+        // Nothing read: the bucket was at its reserve, or every read failed.
+        return Err(Failure::upstream(failure.unwrap_or(UpstreamError::Busy(1000.0))));
+    }
+    let policy = if payload.len() == lists.len() { api::ENGAGEMENT_CACHE } else { api::ENGAGEMENT_PARTIAL_CACHE };
+    Built::json(&payload, policy)
 }
 
 /// Replies to show when hovering a cast's reply count: the ten most engaged
@@ -296,9 +349,7 @@ pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure
     };
     let mut notes = api::Annotations::default();
     let replies = root.direct_replies.iter().flatten().map(normalize::cast).collect();
-    let mut replies = drop_hidden(&inv, replies, &mut notes).await;
-    replies.sort_by_key(|c| std::cmp::Reverse(allthing_core::ranking::points(c)));
-    replies.truncate(10);
+    let replies = reply_preview(drop_hidden(&inv, replies, &mut notes).await);
     Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)
 }
 
@@ -388,4 +439,164 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
     }
     let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
     Built::json(&activity, api::WALLET_CACHE)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{Endpoint, FetchError, Host, HttpRequest, HttpResponse};
+
+    /// Hypersnap's `reactions/cast`: twelve people per list, a minute apart,
+    /// oldest first; HTTP 500 for the lists in `failing`.
+    struct Reactions {
+        requests: RefCell<Vec<String>>,
+        failing: Vec<(String, &'static str)>,
+    }
+
+    impl Reactions {
+        fn new(failing: Vec<(String, &'static str)>) -> Rc<Reactions> {
+            Rc::new(Reactions { requests: RefCell::new(vec![]), failing })
+        }
+    }
+
+    impl Host for Reactions {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let path = request.url.trim_start_matches(hypersnap::BASE).to_owned();
+            self.requests.borrow_mut().push(path.clone());
+            let param = |key: &str| {
+                path.split(['?', '&'])
+                    .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let (hash, kind) = (param("hash"), param("types"));
+            let status = |status: u16| HttpResponse { status, retry_after: None, body: None };
+            let response = if !path.starts_with("/v2/farcaster/reactions/cast?") || param("limit") != "100" {
+                status(404)
+            } else if self.failing.iter().any(|(h, k)| *h == hash && *k == kind) {
+                status(500)
+            } else {
+                let people: Vec<String> = (1..=12)
+                    .map(|i| {
+                        format!(
+                            r#"{{"reaction_timestamp":"2026-10-17T10:{i:02}:00.000Z","user":{{"fid":{i},"username":"{kind}-{i}","profile":{{"bio":{{"text":"skipped"}}}}}}}}"#
+                        )
+                    })
+                    .collect();
+                let body = format!(r#"{{"reactions":[{}]}}"#, people.join(","));
+                HttpResponse { status: 200, retry_after: None, body: Some(body.into_bytes()) }
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn cards(n: u32) -> Vec<String> {
+        (1..=n).map(|i| format!("0x{i:040x}")).collect()
+    }
+
+    /// Build a batch the way the Worker and the static copy route it.
+    fn build(inv: &Rc<Invocation>, request: &EngagementRequest) -> Result<Built, Failure> {
+        let endpoint = Endpoint::from_path(&request.path()).unwrap();
+        assert_eq!(endpoint, Endpoint::Engagement(request.clone()));
+        endpoint.build(inv.clone(), None).now_or_never().expect("the mock host answers at once")
+    }
+
+    fn payload(built: &Built) -> EngagementPayload {
+        serde_json::from_slice(&built.body).unwrap()
+    }
+
+    #[test]
+    fn a_full_batch_reads_each_list_once_within_the_subrequest_budget() {
+        let host = Reactions::new(vec![]);
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let hashes = cards(8);
+        let request = EngagementRequest::for_casts(hashes.iter().map(|h| (h.as_str(), 3, 1)));
+        assert_eq!(request.len(), api::ENGAGEMENT_MAX_LISTS);
+        // The Worker reads the edge cache first.
+        assert!(inv.take_subrequests(1));
+        let built = build(&inv, &request).unwrap();
+        // One Hypersnap read per list: with the cache read and the cache
+        // write, a full batch takes 18 of the 45 subrequests.
+        assert_eq!(host.requests.borrow().len(), 16);
+        assert_eq!(45 - inv.remaining_subrequests() + 1, 18);
+        assert_eq!((built.status, built.policy), (200, api::ENGAGEMENT_CACHE));
+
+        let batch = payload(&built);
+        assert_eq!((batch.likes.len(), batch.recasts.len()), (8, 8));
+        // Each preview is the single endpoint's: the ten newest, and more.
+        let likes = batch.reactions(&hashes[0], ReactionKind::Likes).unwrap();
+        let fids: Vec<u64> = likes.users.iter().map(|u| u.fid).collect();
+        assert_eq!(fids, [12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
+        assert!(likes.more);
+        assert_eq!(likes.users[0].username, "likes-12");
+        assert_eq!(batch.recasts[&hashes[7]].users[0].username, "recasts-12");
+    }
+
+    #[test]
+    fn a_list_that_fails_leaves_the_others_and_the_batch_is_kept_briefly() {
+        let hashes = cards(3);
+        let host = Reactions::new(vec![(hashes[1].clone(), "likes")]);
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let request = EngagementRequest::for_casts(hashes.iter().map(|h| (h.as_str(), 1, 1)));
+        let built = build(&inv, &request).unwrap();
+        assert_eq!(host.requests.borrow().len(), 6);
+        assert_eq!((built.status, built.policy), (200, api::ENGAGEMENT_PARTIAL_CACHE));
+        let batch = payload(&built);
+        assert!(batch.likes.contains_key(&hashes[0]) && batch.likes.contains_key(&hashes[2]));
+        assert!(!batch.likes.contains_key(&hashes[1]));
+        assert_eq!(batch.recasts.len(), 3);
+
+        // Nothing read at all is an error, served stale or retried later.
+        let host = Reactions::new(vec![(hashes[0].clone(), "likes")]);
+        let inv = Rc::new(Invocation::new(host, 45));
+        let only = EngagementRequest::for_casts([(hashes[0].as_str(), 1, 0)]);
+        assert_eq!(build(&inv, &only).err().map(|f| f.status), Some(502));
+    }
+
+    #[test]
+    fn previews_leave_hypersnaps_reserve_to_page_builds() {
+        // The isolate's bucket holds 40 Hypersnap requests, and the mock's
+        // clock stands still, so it does not refill.
+        let host = Reactions::new(vec![]);
+        let hashes = cards(24);
+        let batch = |range: std::ops::Range<usize>| {
+            EngagementRequest::for_casts(hashes[range].iter().map(|h| (h.as_str(), 1, 1)))
+        };
+        let first = build(&Rc::new(Invocation::new(host.clone(), 45)), &batch(0..8)).unwrap();
+        assert_eq!((host.requests.borrow().len(), first.policy), (16, api::ENGAGEMENT_CACHE));
+
+        // 24 left: 8 above the reserve. The likes come first.
+        let second = build(&Rc::new(Invocation::new(host.clone(), 45)), &batch(8..16)).unwrap();
+        assert_eq!((host.requests.borrow().len(), second.policy), (24, api::ENGAGEMENT_PARTIAL_CACHE));
+        let partial = payload(&second);
+        assert_eq!((partial.likes.len(), partial.recasts.len()), (8, 0));
+
+        // At the reserve: refused without a request, as busy.
+        let third = build(&Rc::new(Invocation::new(host.clone(), 45)), &batch(16..24));
+        assert_eq!(third.err().map(|f| (f.status, f.retry_after)), Some((503, Some(1))));
+        assert_eq!(host.requests.borrow().len(), 24);
+        assert_eq!(upstream::spare(&Invocation::new(host, 45), Upstream::Hypersnap, 0), PREVIEW_RESERVE);
+    }
+
+    #[test]
+    fn single_previews_list_the_newest_first() {
+        let host = Reactions::new(vec![]);
+        let inv = Rc::new(Invocation::new(host, 45));
+        let hash = cards(1).remove(0);
+        let built = reactions(inv, hash.clone(), ReactionKind::Recasts, 10).now_or_never().unwrap().unwrap();
+        let single: ReactionsPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(single.users.len(), 10);
+        assert_eq!(single.users[0].username, "recasts-12");
+        assert!(single.more);
+    }
 }

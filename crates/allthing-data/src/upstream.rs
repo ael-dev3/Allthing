@@ -148,6 +148,19 @@ pub fn guard_status(now: f64) -> Vec<serde_json::Value> {
     })
 }
 
+/// Requests `upstream`'s per-isolate bucket allows now beyond `reserve`,
+/// taking none (0 while its breaker is open). For work that must not crowd
+/// out page builds, such as preloaded previews.
+pub fn spare(inv: &Invocation, upstream: Upstream, reserve: u32) -> u32 {
+    let now = inv.now();
+    with_guard(upstream, now, |guard| {
+        if upstream != Upstream::LinkPage && !guard.breaker.allow(now) {
+            return 0;
+        }
+        guard.bucket.available(now).saturating_sub(reserve)
+    })
+}
+
 /// Check and take: breaker, then bucket, then the invocation's budget.
 fn admit(inv: &Invocation, upstream: Upstream) -> Result<(), UpstreamError> {
     let now = inv.now();

@@ -47,6 +47,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter). Month, year and all time use 7 days, Hypersnap's widest window | `feed/trending` with `time_window` |
 | `/api/v1/search?q=<query>` | `SearchPayload`: casts, people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts), `user/search`, `channel/search` |
 | `/api/v1/reactions?hash=<hash>&type=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
+| `/api/v1/engagement?likes=<hashes>&recasts=<hashes>` | `EngagementPayload`: the like and recast previews of a batch of feed cards (comma-separated hashes, 16 lists in all at most), each exactly what `/reactions?…&limit=10` answers. A list that couldn't be read is left out; the client then loads it on hover | `reactions/cast`, once per list |
 | `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |
 | `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's Farcaster vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
 | `/api/v1/status` | isolate and upstream-guard state | nothing: no upstream calls, no cache |
@@ -72,7 +73,7 @@ Unknown users and casts are cached as 404s for 5 minutes.
 
 **Guards** (`allthing_core::guard`, used in `upstream.rs`):
 
-- per-isolate token buckets for each upstream;
+- per-isolate token buckets for each upstream; preloaded popover previews (`/engagement`) never take Hypersnap's below 16 of its 40 tokens, so page builds keep a share;
 - a circuit breaker per upstream: three consecutive failures open it for 5 s, doubling up to 5 min, and `Retry-After` is honored;
 - 8 s and 5 s timeouts through `AbortController`;
 - a budget of 45 subrequests per invocation (the limit is 50), which counts cache reads and writes too. Work beyond the budget is skipped, not failed.
@@ -97,7 +98,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 - **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`).
 - **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
-Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The rest of the code sees the `allthing_core::model` types only.
+Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, user lookups by ENS-style names need a search fallback, errors come back as HTTP 400, and reaction lists come shard by shard, each oldest first (so they are sorted by reaction time), one kind per call (`types=likes,recasts` answers with the likes alone). The rest of the code sees the `allthing_core::model` types only.
 
 ## The browser app
 
@@ -109,6 +110,8 @@ Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel fee
   - cards prefetch on hover and in idle time, within caps;
   - `nav.rs` restores scroll on back and forward, and makes the whole card open the post.
 - **Popovers.** `popover.rs` is one accessible popover (hover or focus after 280 ms, tap on touch, Escape, outside click). `who.rs` uses it for who liked, recasted and replied. It is also behind the profile's "Wallets" button, which lists every verified address with copy-to-clipboard.
+  - **Preloaded previews.** `preload.rs` loads who liked and recasted the feed cards in view before anyone hovers a count, one `/api/v1/engagement` batch per run of eight cards in list order, and files each list under its own `/reactions?…&limit=10` path in the client cache. A preview whose data is cached renders it in the frame it opens, with no "Loading…" (a resource would resolve a tick later). Budget and limits: [PERFORMANCE.md](PERFORMANCE.md#popover-previews).
+  - **Replies previews** come from the post's own payload when hovering the card prefetched it (its thread holds the direct replies, ranked like `/replies`), and from `/api/v1/replies` otherwise. Putting replies in the batch would have meant a conversation read per cast, 80–140 KB of JSON each, and link checks for mini apps: for eight casts, most of the Worker's 10 ms of CPU.
 - **Media.** `media.rs` turns embeds into a gallery with generated alt text that names the author and quotes the cast. The lightbox is a modal dialog with a focus trap, Escape, arrow keys and pointer swipes, and it returns focus to the tile that opened it.
 - **Video.** `player.rs` and `video.rs`: an IntersectionObserver loads the master playlist 600 px before a video scrolls into view. Safari plays the playlist natively. Videos autoplay when at least 60% visible and pause when scrolled away. They autoplay muted unless the reader turned sound on: playing a video or unmuting one turns it on, and muting one turns it off. The choice is kept in localStorage (`allthing.sound`). Each player notes the muted state it set, so a `volumechange` it didn't cause is the reader's. Before the reader has interacted with the page, browsers refuse sound; the video then plays muted, and its sound comes on at the first tap or key press. Only one plays at a time, and none autoplay with reduced motion, Save-Data or a 2g connection. Elsewhere the Rust player parses master and media playlists (`allthing_core::hls`), picks a rendition by height (720p inline, 1080p in the viewer), and feeds fMP4 segments into separate video and audio `SourceBuffer`s. It keeps 24 s buffered ahead, follows seeks, steps over gaps and ends the stream. Plain `.mp4` and `.webm` files play natively. YouTube, Vimeo, Loom and Streamable links render as facades that load the provider's iframe only on click; YouTube uses `youtube-nocookie.com`.
 - **Threads.** `CommentTree` renders replies recursively. Collapsing animates the row height and marks the hidden subtree `inert`.
@@ -119,6 +122,7 @@ Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel fee
 A static host can't run the Worker, so `cargo xtask pages` builds a second variant of the app:
 
 - compiled with the `static-host` feature, `api.rs` answers `/api/v1/...` paths in-process: `allthing_data::Endpoint::from_path` and `build` run with a browser `Host` (`window.fetch`, `AbortController`, `setTimeout`) and a budget of 30 upstream calls per page;
+- it preloads nothing from the viewport, popover previews included: they load when they open, as before. `/api/v1/engagement` still builds in-process (16 reads fit the budget of 30), and a replies preview still comes from a post that hovering its card built;
 - compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset, label shard and the router live under that prefix;
 - `404.html` is a copy of `index.html`, which is how GitHub Pages serves deep links to a single-page app.
 

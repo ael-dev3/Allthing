@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use allthing_core::api::ApiError;
+use allthing_core::api::{ApiError, EngagementPayload, EngagementRequest, REACTIONS_PREVIEW, reactions_path};
 use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -76,6 +76,9 @@ struct Raw {
 thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
     static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
+    /// Reactions previews an engagement batch on its way will file: asking
+    /// for one waits for the batch instead of sending its own request.
+    static COVERED: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
     /// Casts already shown in a feed, so their post page can render at once.
     static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
 }
@@ -114,30 +117,113 @@ pub fn constrained_network() -> bool {
     save_data || slow
 }
 
+/// What became of a prefetch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prefetch {
+    /// On its way.
+    Started,
+    /// Not needed: already cached or loading, or the network is constrained.
+    Skipped,
+    /// Too many prefetches running; try again later.
+    Full,
+}
+
 /// Fetch `path` into the client cache in the background, so opening it later
 /// is instant. Skipped when already cached or loading, when too many
 /// prefetches are running, and on Save-Data or slow connections.
 pub fn prefetch(path: &str) {
+    start_prefetch(path, |_, _| {});
+}
+
+/// [`prefetch`], running `landed` once the answer (if any) is in, before it
+/// is kept.
+fn start_prefetch(path: &str, landed: impl FnOnce(Option<&Raw>, f64) + 'static) -> Prefetch {
     let now = js_sys::Date::now();
     let cached = CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < CLIENT_TTL_MS && r.status == 200));
     if cached || constrained_network() {
-        return;
+        return Prefetch::Skipped;
     }
     let started = IN_FLIGHT.with(|f| {
         let mut f = f.borrow_mut();
-        if f.len() >= MAX_PREFETCHES || f.contains(path) { false } else { f.insert(path.to_owned()) }
+        if f.contains(path) {
+            Prefetch::Skipped
+        } else if f.len() >= MAX_PREFETCHES {
+            Prefetch::Full
+        } else {
+            f.insert(path.to_owned());
+            Prefetch::Started
+        }
     });
-    if !started {
-        return;
+    if started != Prefetch::Started {
+        return started;
     }
     let path = path.to_owned();
     wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(raw) = fetch_raw(&path).await {
-            let now = js_sys::Date::now();
+        let raw = fetch_raw(&path).await.ok();
+        let now = js_sys::Date::now();
+        landed(raw.as_ref(), now);
+        if let Some(raw) = raw {
             remember(&path, raw, now);
         }
         IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
     });
+    Prefetch::Started
+}
+
+/// Preload the like and recast previews of a batch of feed cards, and file
+/// each one under its own `/reactions` path, as if it had been asked for
+/// alone, so hovering a count shows its people at once. A preview opened
+/// while the batch is on its way waits for it rather than asking again.
+/// When this returns [`Prefetch::Started`], `landed` runs once the batch is
+/// in, whatever came of it.
+pub fn preload_engagement(request: &EngagementRequest, landed: impl FnOnce() + 'static) -> Prefetch {
+    let covered: Vec<String> =
+        request.lists().map(|(hash, kind)| reactions_path(hash, kind, REACTIONS_PREVIEW)).collect();
+    let uncover = covered.clone();
+    let started = start_prefetch(&request.path(), move |raw, now| {
+        if let Some(raw) = raw {
+            seed_engagement(raw, now);
+        }
+        COVERED.with(|c| {
+            let mut c = c.borrow_mut();
+            for path in &uncover {
+                c.remove(path);
+            }
+        });
+        landed();
+    });
+    // The fetch runs from a later task, so this is in place before it lands.
+    if started == Prefetch::Started {
+        COVERED.with(|c| c.borrow_mut().extend(covered));
+    }
+    started
+}
+
+/// File each preview of an engagement batch under its own reactions path,
+/// with the batch's arrival time and age: the client cache then expires and
+/// dates it as if it had been asked for alone when the batch was. An answer
+/// already kept for a path stays when it was read upstream no earlier.
+fn seed_engagement(batch: &Raw, now: f64) {
+    if batch.status != 200 {
+        return;
+    }
+    let Ok(payload) = serde_json::from_str::<EngagementPayload>(&batch.body) else { return };
+    // When an answer was read upstream, on the client's clock.
+    let read_at = |raw: &Raw| raw.at - f64::from(raw.age) * 1000.0;
+    for (path, preview) in payload.previews() {
+        let kept = CACHE.with(|c| {
+            c.borrow()
+                .get(&path)
+                .is_some_and(|old| old.status == 200 && now - old.at < CLIENT_TTL_MS && read_at(old) >= read_at(batch))
+        });
+        if kept {
+            continue;
+        }
+        let Ok(body) = serde_json::to_string(&preview) else { continue };
+        let raw =
+            Raw { at: batch.at, status: 200, body: body.into(), age: batch.age, stale: batch.stale, retry_after: None };
+        keep(&path, raw, now);
+    }
 }
 
 /// The response the inline script in index.html already requested for `path`, if any. It is
@@ -206,14 +292,17 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
 /// busy answers and unreadable bodies are asked for again next time.
 fn remember(path: &str, raw: Raw, now: f64) {
-    let keep = match raw.status {
+    let worth = match raw.status {
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
     };
-    if !keep {
-        return;
+    if worth {
+        keep(path, raw, now);
     }
+}
+
+fn keep(path: &str, raw: Raw, now: f64) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         if c.len() > 200 {
@@ -223,15 +312,35 @@ fn remember(path: &str, raw: Raw, now: f64) {
     });
 }
 
-/// GET an API path, reusing a recent answer for the same path.
-pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
-    // A prefetch of the same path is on its way: wait for it, don't repeat it.
+/// A recent answer for `path`, read at once without waiting or fetching:
+/// a preloaded popover renders its content in the same frame it opens.
+pub fn peek<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T>, Failure>> {
+    cached(path, js_sys::Date::now())
+}
+
+/// Wait while a prefetch or engagement batch that brings `path` is on its
+/// way (up to 10 s).
+async fn arriving(path: &str) {
+    let on_its_way = || IN_FLIGHT.with(|f| f.borrow().contains(path)) || COVERED.with(|c| c.borrow().contains(path));
     for _ in 0..400 {
-        if !IN_FLIGHT.with(|f| f.borrow().contains(path)) {
+        if !on_its_way() {
             break;
         }
         crate::video::sleep(25).await;
     }
+}
+
+/// What a prefetch already brought or is bringing for `path`, without
+/// fetching it otherwise: `None` when nothing is kept or on its way.
+pub async fn settled<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T>, Failure>> {
+    arriving(path).await;
+    peek(path)
+}
+
+/// GET an API path, reusing a recent answer for the same path.
+pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
+    // A prefetch of the same path is on its way: wait for it, don't repeat it.
+    arriving(path).await;
     let now = js_sys::Date::now();
     if let Some(result) = cached(path, now) {
         return result;
@@ -255,6 +364,8 @@ pub async fn get_text(path: &str) -> Option<Rc<str>> {
 
 #[cfg(test)]
 mod tests {
+    use allthing_core::api::{ReactionKind, ReactionsPayload};
+
     use super::*;
 
     fn response(status: u16, body: &str) -> Raw {
@@ -282,5 +393,58 @@ mod tests {
 
         remember("/test/missing", response(404, r#"{"error":"unknown user"}"#), 1000.0);
         assert!(matches!(cached::<serde_json::Value>("/test/missing", 2000.0), Some(Err(Failure::NotFound(_)))));
+    }
+
+    fn batch(at: f64, age: u32, body: &str) -> Raw {
+        Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None }
+    }
+
+    #[test]
+    fn engagement_batches_file_each_preview_under_its_own_path() {
+        let hash = format!("0x{}", "c".repeat(40));
+        let likes = reactions_path(&hash, ReactionKind::Likes, 10);
+        let recasts = reactions_path(&hash, ReactionKind::Recasts, 10);
+        let body = format!(
+            r#"{{"likes":{{"{hash}":{{"users":[{{"fid":2,"username":"reader"}}],"more":true}}}},"meta":{{"backend":"hypersnap","fetched_at":7}}}}"#
+        );
+        seed_engagement(&batch(1000.0, 30, &body), 1000.0);
+        let hit = cached::<ReactionsPayload>(&likes, 3000.0).unwrap().unwrap();
+        assert_eq!((hit.data.hash.as_str(), hit.data.kind), (hash.as_str(), ReactionKind::Likes));
+        assert_eq!(hit.data.users[0].username, "reader");
+        assert!(hit.data.more && hit.data.meta.fetched_at == 7);
+        // Dated as the batch: its age when it came, plus the time since,
+        // and kept as long as the batch.
+        assert_eq!(hit.age, 32);
+        assert!(cached::<ReactionsPayload>(&likes, 1000.0 + CLIENT_TTL_MS).is_none());
+        // A list the batch didn't bring loads when it opens, as before.
+        assert!(cached::<ReactionsPayload>(&recasts, 3000.0).is_none());
+    }
+
+    #[test]
+    fn a_batch_does_not_replace_a_newer_answer() {
+        let hash = format!("0x{}", "d".repeat(40));
+        let path = reactions_path(&hash, ReactionKind::Likes, 10);
+        let single = |name: &str| {
+            let body = format!(
+                r#"{{"hash":"{hash}","kind":"likes","users":[{{"fid":3,"username":"{name}"}}],"meta":{{"backend":"hypersnap","fetched_at":0}}}}"#
+            );
+            Raw { at: 0.0, status: 200, body: body.into(), age: 0, stale: false, retry_after: None }
+        };
+        let body = format!(
+            r#"{{"likes":{{"{hash}":{{"users":[{{"fid":2,"username":"batch"}}]}}}},"meta":{{"backend":"hypersnap","fetched_at":0}}}}"#
+        );
+        let name = |now: f64| cached::<ReactionsPayload>(&path, now).unwrap().unwrap().data.users[0].username.clone();
+        // Read upstream before the batch's data was: replaced.
+        remember(&path, Raw { at: 1000.0, age: 40, ..single("older") }, 1000.0);
+        seed_engagement(&batch(1000.0, 30, &body), 1000.0);
+        assert_eq!(name(1000.0), "batch");
+        // Read upstream after it: kept.
+        remember(&path, Raw { at: 2000.0, ..single("newer") }, 2000.0);
+        seed_engagement(&batch(2000.0, 30, &body), 2000.0);
+        assert_eq!(name(2000.0), "newer");
+        // A failed batch files nothing.
+        let other = format!("0x{}", "e".repeat(40));
+        seed_engagement(&Raw { status: 503, ..batch(1000.0, 0, &body.replace(&hash, &other)) }, 1000.0);
+        assert!(cached::<ReactionsPayload>(&reactions_path(&other, ReactionKind::Likes, 10), 1000.0).is_none());
     }
 }

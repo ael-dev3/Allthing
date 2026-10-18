@@ -17,7 +17,7 @@ use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
 
-use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind, home_page_path};
+use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, EngagementRequest, ReactionKind, home_page_path};
 use allthing_core::params::{
     channel_key_from_decoded, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
@@ -167,6 +167,8 @@ pub enum Endpoint {
     Channels(Option<String>),
     Search(String),
     Reactions(String, ReactionKind, u32),
+    /// The like and recast previews of a batch of feed cards.
+    Engagement(EngagementRequest),
     Replies(String),
     Vote(u64),
 }
@@ -205,6 +207,9 @@ impl Endpoint {
                 };
                 Ok(Endpoint::Reactions(hash, kind, limit))
             }
+            "/engagement" => EngagementRequest::parse(query("likes").as_deref(), query("recasts").as_deref())
+                .map(Endpoint::Engagement)
+                .ok_or(bad("Expected ?likes=<cast hashes>&recasts=<cast hashes>, comma-separated, 16 in all at most")),
             "/vote" => query("fid")
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|f| *f > 0)
@@ -278,6 +283,10 @@ impl Endpoint {
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
+            // Canonical: the same casts in any order share one entry.
+            Endpoint::Engagement(request) => {
+                request.path().trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
+            }
             Endpoint::Replies(hash) => format!("replies?hash={hash}"),
             Endpoint::Vote(fid) => format!("vote?fid={fid}"),
             Endpoint::Channel(id) => format!("channel?id={}", percent_encode(id)),
@@ -296,6 +305,7 @@ impl Endpoint {
         match self.clone() {
             Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
+            Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
@@ -346,6 +356,33 @@ mod tests {
         assert_eq!(Endpoint::from_path("/api/v1/wallets?fid=0").map_err(|e| e.status), Err(400));
         assert_eq!(Endpoint::from_path("/api/v1/nope").map_err(|e| e.status), Err(404));
         assert_eq!(Endpoint::from_path("/api/v2/home").map_err(|e| e.status), Err(404));
+    }
+
+    #[test]
+    fn parses_engagement_batches_into_one_cache_name_per_set() {
+        let (a, b) = (format!("0x{}", "a".repeat(40)), format!("0x{}", "b".repeat(40)));
+        let request = EngagementRequest { likes: vec![a.clone(), b.clone()], recasts: vec![b.clone()] };
+        let endpoint = Endpoint::Engagement(request.clone());
+        // Any order and spelling of the same casts is one cache entry.
+        let messy =
+            format!("/api/v1/engagement?recasts={}&likes={b},{}", b.to_uppercase().replace("0X", "0x"), &a[2..]);
+        assert_eq!(Endpoint::from_path(&messy), Ok(endpoint.clone()));
+        assert_eq!(Endpoint::from_path(&request.path()), Ok(endpoint.clone()));
+        assert_eq!(endpoint.cache_name(), format!("engagement?likes={a},{b}&recasts={b}"));
+        // Commas may arrive escaped.
+        assert_eq!(
+            Endpoint::from_path(&format!("/api/v1/engagement?likes={a}%2C{b}&recasts={b}")),
+            Ok(endpoint.clone())
+        );
+        let too_many: Vec<String> = (0..17).map(|i| format!("0x{i:040x}")).collect();
+        for bad in [
+            "/api/v1/engagement".to_owned(),
+            "/api/v1/engagement?likes=".to_owned(),
+            "/api/v1/engagement?likes=0x12".to_owned(),
+            format!("/api/v1/engagement?likes={}", too_many.join(",")),
+        ] {
+            assert_eq!(Endpoint::from_path(&bad).map_err(|e| e.status), Err(400), "{bad}");
+        }
     }
 
     #[test]

@@ -45,6 +45,12 @@ impl TokenBucket {
         self.refill(now_ms);
         if self.tokens >= 1.0 { 0.0 } else { (1.0 - self.tokens) / self.refill_per_ms }
     }
+
+    /// Whole tokens available now, without taking any.
+    pub fn available(&mut self, now_ms: f64) -> u32 {
+        self.refill(now_ms);
+        self.tokens.floor() as u32
+    }
 }
 
 /// Opens after consecutive failures and stays open for an exponentially
@@ -171,6 +177,21 @@ mod tests {
         // Never refills past capacity.
         assert!(bucket.try_take(100_000.0) && bucket.try_take(100_000.0) && bucket.try_take(100_000.0));
         assert!(!bucket.try_take(100_000.0));
+    }
+
+    #[test]
+    fn bucket_reports_whole_tokens_without_taking_them() {
+        let mut bucket = TokenBucket::new(40, 10.0, 0.0);
+        assert_eq!(bucket.available(0.0), 40);
+        assert_eq!(bucket.available(0.0), 40, "looking takes nothing");
+        for _ in 0..16 {
+            assert!(bucket.try_take(0.0));
+        }
+        assert_eq!(bucket.available(0.0), 24);
+        // 10 a second: 0.5 of a token after 50 ms is not a token yet.
+        assert_eq!(bucket.available(50.0), 24);
+        assert_eq!(bucket.available(1000.0), 34);
+        assert_eq!(bucket.available(60_000.0), 40);
     }
 
     #[test]

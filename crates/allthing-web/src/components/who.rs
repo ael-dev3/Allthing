@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Who liked or recasted a cast (a short list on hover, the full list in a
 //! dialog), and a preview of a cast's replies.
+//!
+//! Previews whose data is already in the client cache render it in the
+//! frame they open, without "Loading…": feeds preload who liked and recasted
+//! the cards in view (`crate::preload`), and hovering a card prefetches its
+//! post, whose thread holds the replies.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
-use allthing_core::api::{ReactionKind, ReactionsPayload, RepliesPayload, reactions_path, replies_path};
+use allthing_core::api::{
+    CastPayload, REACTIONS_PREVIEW, ReactionKind, ReactionsPayload, RepliesPayload, cast_path, reactions_path,
+    replies_path,
+};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::model::Embed;
 use allthing_core::text::truncate_title;
@@ -79,18 +88,24 @@ fn People(payload: std::sync::Arc<ReactionsPayload>) -> impl IntoView {
     }
 }
 
-/// The ten newest likers or recasters, loaded when the popover opens.
+/// The ten newest likers or recasters: at once when the feed preloaded
+/// them, otherwise loaded when the popover opens.
 #[component]
 pub fn WhoPreview(hash: String, kind: ReactionKind) -> impl IntoView {
     let who = use_who_list();
-    let path = reactions_path(&hash, kind, 10);
-    let data = LocalResource::new(move || {
-        let path = path.clone();
-        async move { api::get::<ReactionsPayload>(&path).await }
+    let path = reactions_path(&hash, kind, REACTIONS_PREVIEW);
+    // A resource resolves a tick later even from the cache, which would
+    // flash "Loading…": a preloaded list is read now instead.
+    let ready = api::peek::<ReactionsPayload>(&path);
+    let data = ready.is_none().then(|| {
+        LocalResource::new(move || {
+            let path = path.clone();
+            async move { api::get::<ReactionsPayload>(&path).await }
+        })
     });
     view! {
         <p class="popover-title">{heading(kind)}</p>
-        {move || match data.get() {
+        {move || match ready.clone().or_else(|| data.and_then(|data| data.get())) {
             None => view! { <p class="muted small popover-loading">"Loading…"</p> }.into_any(),
             Some(Err(failure)) => view! { <p class="muted small">{failure.message()}</p> }.into_any(),
             Some(Ok(fetched)) if fetched.data.users.is_empty() => view! { <p class="muted small">"Nobody yet."</p> }.into_any(),
@@ -214,19 +229,36 @@ pub fn WhoDialog() -> impl IntoView {
     }
 }
 
-/// A cast's most engaged direct replies, loaded when the popover opens.
+/// A post payload's replies, as the replies preview lists them.
+fn replies_of(post: api::Fetched<CastPayload>) -> api::Fetched<RepliesPayload> {
+    api::Fetched { data: Arc::new(RepliesPayload::from_post(&post.data)), age: post.age, stale: post.stale }
+}
+
+/// A cast's most engaged direct replies. They come from the post's own
+/// payload when hovering the card prefetched it (at once, or once that
+/// prefetch lands), and are loaded on their own otherwise.
 #[component]
 pub fn RepliesPreview(hash: String) -> impl IntoView {
     let path = replies_path(&hash);
-    let data = LocalResource::new(move || {
-        let path = path.clone();
-        async move { api::get::<RepliesPayload>(&path).await }
+    let post = cast_path(&hash);
+    let ready =
+        api::peek::<RepliesPayload>(&path).or_else(|| api::peek::<CastPayload>(&post).map(|r| r.map(replies_of)));
+    let data = ready.is_none().then(|| {
+        LocalResource::new(move || {
+            let (path, post) = (path.clone(), post.clone());
+            async move {
+                match api::settled::<CastPayload>(&post).await {
+                    Some(found) => found.map(replies_of),
+                    None => api::get::<RepliesPayload>(&path).await,
+                }
+            }
+        })
     });
     let thread = cast_href(&hash);
     view! {
         <p class="popover-title">"Replies"</p>
         <div class="replies-preview">
-            {move || match data.get() {
+            {move || match ready.clone().or_else(|| data.and_then(|data| data.get())) {
                 None => view! { <p class="muted small popover-loading">"Loading…"</p> }.into_any(),
                 Some(Err(failure)) => view! { <p class="muted small">{failure.message()}</p> }.into_any(),
                 Some(Ok(fetched)) if fetched.data.replies.is_empty() => view! { <p class="muted small">"No replies to show."</p> }.into_any(),

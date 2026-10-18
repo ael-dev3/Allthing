@@ -62,6 +62,19 @@ pub fn prune_hidden(mut node: ThreadNode) -> Option<ThreadNode> {
     Some(node)
 }
 
+/// Direct replies a replies preview shows.
+pub const REPLY_PREVIEW_SIZE: usize = 10;
+
+/// The replies preview: the most engaged direct replies, without hidden
+/// ones (an emptied node kept in a thread is hidden too). Ties keep the
+/// order they came in.
+pub fn reply_preview(replies: Vec<Cast>) -> Vec<Cast> {
+    let mut replies = without_hidden(replies);
+    replies.sort_by_key(|c| std::cmp::Reverse(crate::ranking::points(c)));
+    replies.truncate(REPLY_PREVIEW_SIZE);
+    replies
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +155,27 @@ mod tests {
         assert_eq!(count_nodes(&tree.children), 4);
         let order: Vec<&str> = flatten(&tree).iter().map(|c| c.hash.as_str()).collect();
         assert_eq!(order, ["r", "a", "a1", "a2", "b"]);
+    }
+
+    #[test]
+    fn previews_the_most_engaged_visible_replies() {
+        let reply = |hash: &str, likes: u64| {
+            let mut n = node(hash, vec![]);
+            n.cast.likes = likes;
+            n.cast
+        };
+        let mut spam = reply("spam", 99);
+        spam.spam = true;
+        // A hidden reply kept in a thread as an emptied node is still hidden.
+        let mut emptied = reply("emptied", 50);
+        emptied.mini_app = true;
+        emptied.strip_hidden();
+        let mut replies = vec![reply("quiet", 1), spam, reply("tied-first", 5), emptied, reply("tied-second", 5)];
+        replies.extend((0..10).map(|i| reply(&format!("filler-{i}"), 0)));
+        let preview = reply_preview(replies);
+        assert_eq!(preview.len(), REPLY_PREVIEW_SIZE);
+        let hashes: Vec<&str> = preview.iter().take(4).map(|c| c.hash.as_str()).collect();
+        assert_eq!(hashes, ["tied-first", "tied-second", "quiet", "filler-0"]);
+        assert!(preview.iter().all(|c| !c.hidden()));
     }
 }

@@ -9,6 +9,7 @@ mod host;
 mod labels;
 mod nav;
 mod pages;
+mod preload;
 mod util;
 mod video;
 
