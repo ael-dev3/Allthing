@@ -49,7 +49,6 @@ pub struct CastEvents {
 
 #[derive(Deserialize)]
 struct Page {
-    #[serde(default)]
     events: Vec<Event>,
 }
 
@@ -113,7 +112,15 @@ pub fn cast_events(json: &[u8]) -> Option<CastEvents> {
         match data.kind.as_deref() {
             Some("MESSAGE_TYPE_CAST_ADD") if data.add.is_some_and(|a| a.parent.is_none()) => {
                 if let (Some(hash), Some(fid), Some(ts)) = (hash, data.fid, data.timestamp) {
-                    out.added.push(Added { hash: hash.to_ascii_lowercase(), fid, ts: ts + FARCASTER_EPOCH });
+                    // Snapchain timestamps are uint32 seconds from its epoch.
+                    // Malformed values must not overflow or invent old dates.
+                    if let Ok(ts) = u32::try_from(ts) {
+                        out.added.push(Added {
+                            hash: hash.to_ascii_lowercase(),
+                            fid,
+                            ts: i64::from(ts) + FARCASTER_EPOCH,
+                        });
+                    }
                 }
             }
             Some("MESSAGE_TYPE_CAST_REMOVE") => {
@@ -242,6 +249,31 @@ mod tests {
         assert_eq!(events.removed, ["0x3300c2b0d208004d1ee86da05b458bf934140aa4"]);
         assert_eq!(cast_events(b"{\"events\":[]}").unwrap().last_id, None);
         assert_eq!(cast_events(b"not json"), None);
+    }
+
+    #[test]
+    fn error_objects_are_not_empty_event_pages() {
+        assert!(cast_events(br#"{"error":"temporarily unavailable"}"#).is_none());
+        assert!(cast_events(b"{}").is_none());
+        assert_eq!(cast_events(br#"{"events":[]}"#), Some(CastEvents::default()));
+    }
+
+    #[test]
+    fn event_timestamps_stay_within_the_protocol_range() {
+        let page = |timestamp: i64| {
+            format!(
+                r#"{{"events":[{{"id":1,"mergeMessageBody":{{"message":{{"hash":"0xabc","data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":1,"timestamp":{timestamp},"castAddBody":{{}}}}}}}}}}]}}"#
+            )
+        };
+        for timestamp in [i64::MAX, i64::MIN, -1, i64::from(u32::MAX) + 1] {
+            let events = cast_events(page(timestamp).as_bytes()).unwrap();
+            assert!(events.added.is_empty());
+            assert_eq!(events.last_id, Some(1));
+        }
+        for timestamp in [0, i64::from(u32::MAX)] {
+            let events = cast_events(page(timestamp).as_bytes()).unwrap();
+            assert_eq!(events.added[0].ts, timestamp + FARCASTER_EPOCH);
+        }
     }
 
     fn cast(hash: &str, ts: i64, likes: u64) -> Cast {
