@@ -134,6 +134,8 @@ test.describe("front page", () => {
     await expect(page.locator(".backend")).toHaveCount(0);
     await expect(page.locator(".main-nav a")).toHaveText(["Home", "Channels"]);
     await expect(page.getByText("Front page")).toHaveCount(0);
+    // No "Updated N min ago" anywhere.
+    await expect(page.getByText(/Updated (just now|\d+ (min|h) ago)/)).toHaveCount(0);
     await expect(page.getByText(/How ranking works|A quiet, read-only window|Keyboard/)).toHaveCount(0);
     await expect(page.locator(".site-footer")).toContainText(/AGPL-3\.0\s*·\s*Source\s*·\s*v\d+\.\d+\.\d+ \(\w+\)/);
     // Mini apps and frames are filtered out.
@@ -519,6 +521,7 @@ test.describe("profiles", () => {
     await expect(profile.locator(".profile-name")).toHaveText(/\S/);
     await expect(profile.locator(".handle")).toContainText("@0xael.eth");
     await expect(profile.locator(".handle")).toContainText("fid 539854");
+    await expect(page.getByText(/Updated (just now|\d+ (min|h) ago)/)).toHaveCount(0);
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ followers/);
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ following/);
     await expect(profile.locator(".bio")).toHaveText(/\S/);

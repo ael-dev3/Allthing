@@ -8,6 +8,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - The front page's data request starts from a small inline script in `index.html` as soon as the page arrives, alongside the WebAssembly download, instead of after the app starts. It is still one API call.
+- Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
 
 ### Fixed

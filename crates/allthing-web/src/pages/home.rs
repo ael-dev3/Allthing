@@ -12,7 +12,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
-use crate::components::layout::{Columns, ErrorPanel, Freshness, SortTabs};
+use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice};
 use crate::pages::side::ChannelsBox;
 use crate::util::{href, set_title};
 
@@ -100,7 +100,7 @@ pub fn Home() -> impl IntoView {
             }
             .into_any(),
             Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
-            Some(Ok(Fetched { data, age, stale })) => {
+            Some(Ok(Fetched { data, stale, .. })) => {
                 let payload: Arc<HomePayload> = data;
                 let notes = Arc::new(payload.notes.clone());
                 let pool = top_level(&payload.pool);
@@ -114,7 +114,7 @@ pub fn Home() -> impl IntoView {
                 view! {
                     <Columns side=side(payload.channels.clone())>
                         <Heading sort/>
-                        <Freshness age stale/>
+                        <StaleNotice stale/>
                         <CastList casts notes on_end=load_more/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                     </Columns>

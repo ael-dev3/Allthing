@@ -21,7 +21,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
-use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SortTabs};
+use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
 use crate::labels::{LabelState, spam_label};
@@ -68,7 +68,7 @@ pub fn UserPage() -> impl IntoView {
             }
             .into_any(),
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
-            Some(Some(Ok(Fetched { data, age, stale }))) => {
+            Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<UserPayload> = data;
                 let notes: Notes = Arc::new(payload.notes.clone());
                 let user = payload.user.clone();
@@ -91,7 +91,7 @@ pub fn UserPage() -> impl IntoView {
                         {move || (!replies_tab.get()).then(|| view! {
                             <div class="listing-head"><SortTabs path=path.clone() current=sort.get() default_sort=Sort::New/></div>
                         })}
-                        <Freshness age stale/>
+                        <StaleNotice stale/>
                         {move || view! { <CastList casts notes=notes.clone() show_parent=replies_tab.get()/> }}
                     </Columns>
                 }
