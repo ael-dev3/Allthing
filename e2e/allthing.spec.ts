@@ -718,8 +718,23 @@ test.describe("threads and navigation", () => {
     await page.waitForTimeout(300);
     const card = textCards(page).nth(4);
     await card.scrollIntoViewIfNeeded();
-    const y = await page.evaluate(() => window.scrollY);
     const hash = await card.getAttribute("data-hash");
+    // Where the card is on screen. (Not window.scrollY: after Back, cards
+    // above it that are off screen are laid out at an estimated height until
+    // they come into view, so the same place can have another scrollY.)
+    const left = page.locator(`.cast-card[data-hash="${hash}"]`);
+    const top = () => left.evaluate((el) => Math.round(el.getBoundingClientRect().top));
+    // Cards that a jump brings into view are drawn then, and grow from their
+    // estimated height, and images above it load: measure once the card has
+    // stopped moving.
+    await page.waitForLoadState("networkidle").catch(() => {});
+    let before = await top();
+    await expect
+      .poll(async () => {
+        const [was, now] = [before, (before = await top())];
+        return was === now;
+      }, { intervals: [250] })
+      .toBe(true);
     // Measure in the page: from the click to the post's text in the DOM.
     await page.evaluate(() => {
       (window as any).__openedIn = null;
@@ -739,9 +754,12 @@ test.describe("threads and navigation", () => {
     expect(openedIn, "post renders from feed data").toBeLessThan(100);
 
     await page.goBack();
-    await expect(page.locator(`.cast-card[data-hash="${hash}"]`)).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(y - 60);
-    expect(await page.evaluate(() => window.scrollY)).toBeLessThan(y + 60);
+    await expect(left).toBeVisible();
+    await expect.poll(top).toBeGreaterThan(before - 30);
+    expect(await top()).toBeLessThan(before + 30);
+    // And it stays there.
+    await page.waitForTimeout(1500);
+    expect(Math.abs((await top()) - before)).toBeLessThan(30);
   });
 
   test("hovering likes, recasts and replies previews them; clicking opens the full list", async ({ page }) => {
