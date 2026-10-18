@@ -20,6 +20,42 @@ const BUDGET: u32 = 30;
 
 struct BrowserHost;
 
+/// Cancellation also runs when the request timeout drops a pending read.
+struct CappedReader(web_sys::ReadableStreamDefaultReader);
+
+impl Drop for CappedReader {
+    fn drop(&mut self) {
+        let cancelled = self.0.cancel();
+        self.0.release_lock();
+        // An already-errored stream rejects cancellation. Consume that
+        // rejection while still releasing the lock immediately.
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = JsFuture::from(cancelled).await;
+        });
+    }
+}
+
+async fn read_body(response: &web_sys::Response, max: Option<u32>) -> Result<Vec<u8>, JsValue> {
+    let Some(max) = max else {
+        let buffer = JsFuture::from(response.array_buffer()?).await?;
+        return Ok(js_sys::Uint8Array::new(&buffer).to_vec());
+    };
+    let Some(stream) = response.body() else { return Ok(Vec::new()) };
+    let reader = CappedReader(stream.get_reader().dyn_into()?);
+    let max = max as usize;
+    let mut bytes = Vec::new();
+    while bytes.len() < max {
+        let item = JsFuture::from(reader.0.read()).await?;
+        if js_sys::Reflect::get(&item, &JsValue::from_str("done"))?.as_bool() == Some(true) {
+            break;
+        }
+        let chunk = js_sys::Reflect::get(&item, &JsValue::from_str("value"))?.dyn_into::<js_sys::Uint8Array>()?;
+        let take = (max - bytes.len()).min(chunk.length() as usize);
+        bytes.extend_from_slice(&chunk.subarray(0, take as u32).to_vec());
+    }
+    Ok(bytes)
+}
+
 async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     let failed = |_: JsValue| FetchError::Network("request failed".into());
     let window = web_sys::window().ok_or_else(|| FetchError::Network("no window".into()))?;
@@ -44,16 +80,8 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
             JsFuture::from(window.fetch_with_request(&outgoing)).await.map_err(failed)?.dyn_into().map_err(failed)?;
         let status = response.status();
         let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body = if response.ok() {
-            let buffer = JsFuture::from(response.array_buffer().map_err(failed)?).await.map_err(failed)?;
-            let mut bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            if let Some(max) = request.max_bytes {
-                bytes.truncate(max as usize);
-            }
-            Some(bytes)
-        } else {
-            None
-        };
+        let body =
+            if response.ok() { Some(read_body(&response, request.max_bytes).await.map_err(failed)?) } else { None };
         Ok(HttpResponse { status, retry_after, body })
     };
     let timeout = crate::video::sleep(i32::try_from(request.timeout_ms).unwrap_or(i32::MAX));

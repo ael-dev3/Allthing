@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- The static copy reads linked-page metadata only up to its byte limit and cancels the remaining body. A large or stalled tail no longer delays a usable head or requires buffering the full response. CI also checks the static payload builder.
+
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
