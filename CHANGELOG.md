@@ -12,6 +12,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Profiles distinguish unavailable wallet measurements from successfully measured zero activity, and say when there are no verified wallets to measure.
+
 - Card text can be selected: dragging across it selects it instead of dragging a link, and doesn't open the post, while a plain click still does. The post's link for keyboards and screen readers is the timestamp.
 - The YouTube and Vimeo click-to-load thumbnail no longer enlarges or brightens on hover. Media isn't highlighted or enlarged on hover anywhere.
 - Clicking a card outside its links opened the post only after about 4 seconds. It used a view transition whose promise waited for an animation frame, which never comes during a transition, so Chrome's timeout ended it. Cards now open posts directly, in under 100 ms, with a short CSS fade-in.

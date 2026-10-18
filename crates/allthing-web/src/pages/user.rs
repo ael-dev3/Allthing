@@ -228,7 +228,14 @@ fn WalletPanel(user: User) -> impl IntoView {
 fn WalletBreakdown(activity: WalletActivity) -> impl IntoView {
     let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.count > 0).cloned().collect();
     if measured.is_empty() {
-        return view! { <p class="muted small">"No onchain activity from verified wallets."</p> }.into_any();
+        let message = if activity.addresses.is_empty() {
+            "No verified wallets to measure."
+        } else if activity.chains.iter().any(|chain| chain.error.is_none()) {
+            "No transactions sent on the measured chains."
+        } else {
+            "Wallet activity is unavailable right now."
+        };
+        return view! { <p class="muted small">{message}</p> }.into_any();
     }
     let bar_label = measured.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
     view! {
