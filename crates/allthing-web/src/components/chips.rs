@@ -132,7 +132,9 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
         }
         .into_any()
     };
-    view! { <div class="engagement" title=title>{likes}{recasts}{replies}</div> }
+    // The ranking note is for screen readers: a native tooltip on the row
+    // would sit on top of the counts' own popovers.
+    view! { <div class="engagement">{likes}{recasts}{replies}<span class="visually-hidden">{title}</span></div> }
 }
 
 /// "via Farcaster", from the app that requested the cast's signer key.

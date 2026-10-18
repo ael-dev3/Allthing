@@ -30,3 +30,26 @@ test("popovers are solid, so nothing behind them shows through", async ({ page, 
   });
   expect(style).toEqual({ background: "rgb(255, 255, 255)", backdrop: "none" });
 });
+
+test("on a post page the likes popover sits above the replies, with no native tooltip over it", async ({ page, hasTouch }) => {
+  test.skip(hasTouch, "hover popover");
+  const reply = (n: number) => ({ cast: { hash: `0x${String(n).repeat(40)}`, author: { fid: 3, username: "replier" }, text: `Reply ${n} `.repeat(30), ts: 1792235690 } });
+  await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
+    thread: { cast: { hash, author: { fid: 1, username: "fixture" }, text: "Popover fixture", ts: 1792235681, likes: 10, replies: 3 }, children: [reply(1), reply(2), reply(3)] },
+    meta,
+  } }));
+  await page.goto(`/p/${hash}`);
+  await expect(page.locator(".replies .comment").first()).toBeVisible();
+  const foot = page.locator(".post .engagement");
+  expect(await foot.getAttribute("title")).toBeNull();
+  await page.getByRole("button", { name: "10 likes: show who", exact: true }).hover();
+  const panel = page.getByRole("dialog", { name: "Liked by", exact: true });
+  await expect(panel.getByRole("link")).toBeVisible();
+  // Solid, with no blur, so nothing behind shows through.
+  const bg = await panel.evaluate((p) => getComputedStyle(p).backgroundColor);
+  expect(bg).toBe("rgb(255, 255, 255)");
+  // Open below the post's footer, over the replies: the panel is what's on top.
+  const box = (await panel.boundingBox())!;
+  const top = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".popover-panel") !== null, [box.x + box.width / 2, box.y + box.height - 6]);
+  expect(top).toBe(true);
+});

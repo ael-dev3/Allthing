@@ -2532,7 +2532,11 @@ code {
 
 /* A card's animation makes it a stacking context: lift the card whose
    popover is open above its neighbours. */
-.cast-card:has(.popover-panel) {
+.cast-card:has(.popover-panel),
+.post:has(.popover-panel),
+.comment:has(.popover-panel),
+.replies:has(.popover-panel) {
+  position: relative;
   z-index: 30;
 }
 
