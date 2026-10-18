@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Casts in listings.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use allthing_core::model::{Cast, Embed};
 use allthing_core::text::cast_title;
 use leptos::prelude::*;
@@ -14,7 +17,9 @@ use crate::util::{cast_href, channel_href};
 use allthing_core::api::cast_path;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
+use web_sys::{
+    IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit, ResizeObserver, ResizeObserverEntry,
+};
 
 /// The channel line of a cast's meta row.
 #[component]
@@ -51,14 +56,26 @@ pub fn CastCard(
     let warm_touch = warm.clone();
     let click = card_click(href.clone());
     let node = NodeRef::<leptos::html::Article>::new();
+    let height =
+        CARD_HEIGHTS.with(|sizes| sizes.borrow().get(&(cast.hash.clone(), viewport_width())).copied()).unwrap_or(200.0);
     Effect::new(move |_| {
         if let Some(element) = node.get() {
             watch_for_prefetch(&element);
+            CARD_OBSERVER.with(|observer| {
+                if let Some(observer) = observer {
+                    observer.observe(&element);
+                }
+            });
         }
     });
     on_cleanup(move || {
         if let Some(element) = node.get_untracked() {
             unwatch(&element);
+            CARD_OBSERVER.with(|observer| {
+                if let Some(observer) = observer {
+                    observer.unobserve(&element);
+                }
+            });
         }
     });
     view! {
@@ -68,7 +85,7 @@ pub fn CastCard(
             data-hash=cast.hash.clone()
             data-ts=cast.ts
             data-points=allthing_core::ranking::points(&cast)
-            style=format!("--i: {}", index.min(16))
+            style=format!("--i: {}; --card-block-size: {height}px", index.min(16))
             on:click=click
             on:pointerenter=move |_| warm()
             on:touchstart=move |_| warm_touch()
@@ -187,12 +204,48 @@ fn observe_once_visible(element: &web_sys::Element, f: impl Fn() + 'static) {
 }
 
 thread_local! {
+    /// Used content heights, including skipped placeholders. Reusing them
+    /// at the same viewport width preserves a feed's geometry on Back.
+    static CARD_HEIGHTS: RefCell<HashMap<(String, u32), f64>> = RefCell::new(HashMap::new());
+    static CARD_OBSERVER: Option<ResizeObserver> = card_observer();
     /// How many cards each list (by page key) had shown.
     static SHOWN: std::cell::RefCell<std::collections::HashMap<String, usize>> = Default::default();
     /// One observer for every card: posts that stay in view get prefetched.
     static PREFETCH_OBSERVER: Option<IntersectionObserver> = prefetch_observer();
     /// Viewport prefetches allowed: a small token bucket (6 a minute).
     static VIEWPORT_TOKENS: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((6.0, 0.0)) };
+}
+
+fn viewport_width() -> u32 {
+    window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(0.0) as u32
+}
+
+fn card_observer() -> Option<ResizeObserver> {
+    let callback = Closure::<dyn FnMut(js_sys::Array)>::new(|entries: js_sys::Array| {
+        let width = viewport_width();
+        CARD_HEIGHTS.with(|sizes| {
+            let mut sizes = sizes.borrow_mut();
+            for entry in entries.iter().filter_map(|entry| entry.dyn_into::<ResizeObserverEntry>().ok()) {
+                let element = entry.target();
+                let Some(hash) = element.get_attribute("data-hash") else { continue };
+                let height = entry.content_rect().height();
+                if !element.is_connected() || !height.is_finite() || height <= 0.0 {
+                    continue;
+                }
+                let key = (hash, width);
+                if sizes.len() >= 4000 && !sizes.contains_key(&key) {
+                    sizes.clear();
+                }
+                sizes.insert(key, height);
+            }
+        });
+    });
+    let observer = ResizeObserver::new(callback.as_ref().unchecked_ref()).ok();
+    if observer.is_some() {
+        // One shared observer for the page session, like viewport prefetch.
+        callback.forget();
+    }
+    observer
 }
 
 fn prefetch_observer() -> Option<IntersectionObserver> {

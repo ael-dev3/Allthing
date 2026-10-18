@@ -66,6 +66,8 @@ features = [
     "ScrollRestoration",
     "RequestInit",
     "Response",
+    "ResizeObserver",
+    "ResizeObserverEntry",
     "ScrollBehavior",
     "ScrollIntoViewOptions",
     "ScrollLogicalPosition",
