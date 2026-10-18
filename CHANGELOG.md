@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.
+
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
