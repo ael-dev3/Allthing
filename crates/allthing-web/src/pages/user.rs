@@ -270,36 +270,74 @@ fn WalletsButton(addresses: Vec<(&'static str, String)>) -> impl IntoView {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyState {
+    Idle,
+    Pending,
+    Copied,
+    Failed,
+}
+
 #[component]
 fn WalletRow(kind: &'static str, address: String) -> impl IntoView {
-    let copied = RwSignal::new(false);
+    let state = RwSignal::new(CopyState::Idle);
+    let attempt = RwSignal::new(0_u32);
     let full = address.clone();
     let copy = move |_| {
-        copy_text(&full);
-        copied.set(true);
-        set_timeout(move || copied.set(false), std::time::Duration::from_millis(1400));
+        let generation = attempt.get_untracked().wrapping_add(1);
+        attempt.set(generation);
+        state.set(CopyState::Pending);
+        let full = full.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = copy_text(&full).await;
+            let _ = state.try_set(if result.is_ok() { CopyState::Copied } else { CopyState::Failed });
+            if result.is_ok() {
+                set_timeout(
+                    move || {
+                        if attempt.try_get_untracked() == Some(generation) {
+                            let _ = state.try_set(CopyState::Idle);
+                        }
+                    },
+                    std::time::Duration::from_millis(1400),
+                );
+            }
+        });
     };
     view! {
-        <li>
+        <li class:copy-failed=move || state.get() == CopyState::Failed>
             <span class="chain-tag">{kind}</span>
             <code title=address.clone()>{short_address(&address)}</code>
-            <button type="button" class="copy" on:click=copy aria-label=format!("Copy {address}")>
-                {move || if copied.get() { "Copied" } else { "Copy" }}
+            <button type="button" class="copy" on:click=copy aria-label=format!("Copy {address}")
+                disabled=move || state.get() == CopyState::Pending>
+                {move || match state.get() {
+                    CopyState::Pending => "Copying…",
+                    CopyState::Copied => "Copied",
+                    CopyState::Idle | CopyState::Failed => "Copy",
+                }}
             </button>
-            <span class="visually-hidden" aria-live="polite">{move || copied.get().then_some("Copied to clipboard")}</span>
+            <span class="visually-hidden" aria-live="polite">{move || match state.get() {
+                CopyState::Copied => "Copied to clipboard",
+                CopyState::Failed => "Could not copy. Select and copy the address manually.",
+                CopyState::Idle | CopyState::Pending => "",
+            }}</span>
+            <Show when=move || state.get() == CopyState::Failed>
+                <span class="wallet-copy-error muted small">
+                    "Could not copy. Select and copy the address manually. "<code>{address.clone()}</code>
+                </span>
+            </Show>
         </li>
     }
 }
 
-/// Copy `text` with the async Clipboard API (no permission prompt for writes).
-fn copy_text(text: &str) {
+/// Report success only after the browser accepts the clipboard write.
+async fn copy_text(text: &str) -> Result<(), wasm_bindgen::JsValue> {
     use wasm_bindgen::JsValue;
-    let Some(window) = web_sys::window() else { return };
-    let clipboard = js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("clipboard")).ok();
-    let write = clipboard.as_ref().and_then(|c| js_sys::Reflect::get(c, &JsValue::from_str("writeText")).ok());
-    if let (Some(clipboard), Some(write)) = (clipboard, write.and_then(|w| w.dyn_into::<js_sys::Function>().ok())) {
-        let _ = write.call1(&clipboard, &JsValue::from_str(text));
-    }
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let clipboard = js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("clipboard"))?;
+    let write = js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText"))?.dyn_into::<js_sys::Function>()?;
+    let promise = write.call1(&clipboard, &JsValue::from_str(text))?.dyn_into::<js_sys::Promise>()?;
+    wasm_bindgen_futures::JsFuture::from(promise).await?;
+    Ok(())
 }
 
 /// How the account voted when farcaster.xyz asked everyone to stay or leave.
