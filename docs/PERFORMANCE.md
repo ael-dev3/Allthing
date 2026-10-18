@@ -18,8 +18,8 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 
 ### 1. Reuse what the page already has
 
-- Every cast that a list renders goes into a client-side store (`api::remember_casts`, at most 2,000 entries).
-- `/p/<hash>` reads that store first (`api::seen_cast`). If the cast is there, the post renders at once with its text, media, author and counts, and reply skeletons. The full payload (thread, parent, quotes) loads behind it and replaces the skeletons.
+- Every cast that a list renders, and every cast it quotes, goes into a client-side store (`api::remember_casts`, at most 2,000 entries).
+- `/p/<hash>` reads that store first (`api::seen_cast`). If the cast is there, the post renders at once with its text, media, author and counts, the quoted casts the feed carried, and reply skeletons. The full payload (thread, parent, quotes) loads behind it and replaces the skeletons.
 - A direct visit with nothing in the store falls back to the normal one-request load.
 
 - **The front page's data is requested by a one-line inline script** at the top of `index.html`, so it starts while the HTML is still being parsed. `api.rs` (`early_response`) takes that pending response instead of fetching again.
@@ -43,7 +43,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 ### 3. Client-side navigation
 
 - Links are handled by the Leptos router, so there are no full reloads.
-- Clicking anywhere on a card navigates (`nav::card_click`), unless the click lands on a link or button, or text is being selected. Ctrl-, ⌘- and shift-click open a new tab as with any link.
+- Clicking anywhere on a card navigates (`nav::card_click`), unless the click lands on a link or button, or text is being selected. A click on the card of a cast it quotes opens the quoted cast instead. Ctrl-, ⌘- and shift-click open a new tab as with any link.
 - Opening a post from a card goes straight to the router, like a link, and the post rises in with a short CSS animation (off under `prefers-reduced-motion`). There are no view transitions: snapshotting a long feed before each navigation cost about 100 ms.
 - **Scroll**: `history.scrollRestoration` is `manual`, and `nav.rs` (`ScrollMemory`) restores each page's place on back and forward.
   - **What it saves**: the card under the line just below the header and its offset in the viewport, plus the pixel position for pages without cards. It saves on scroll and, in the capture phase, on every click, so that the scrolls a navigation causes don't overwrite it.

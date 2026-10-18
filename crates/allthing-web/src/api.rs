@@ -81,14 +81,14 @@ thread_local! {
     static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
 }
 
-/// Remember the casts a listing shows.
-pub fn remember_casts(casts: &[allthing_core::model::Cast]) {
+/// Remember the casts a listing shows and the casts they quote.
+pub fn remember_casts(casts: &[allthing_core::model::Cast], notes: &allthing_core::api::Annotations) {
     SEEN_CASTS.with(|seen| {
         let mut seen = seen.borrow_mut();
         if seen.len() > 2000 {
             seen.clear();
         }
-        for cast in casts {
+        for cast in casts.iter().chain(notes.quotes.values()) {
             seen.insert(cast.hash.clone(), cast.clone());
         }
     });

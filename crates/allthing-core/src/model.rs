@@ -222,6 +222,14 @@ impl Cast {
     pub fn media(&self) -> impl Iterator<Item = &Embed> {
         self.embeds.iter().filter(|embed| embed.is_media())
     }
+
+    /// The hashes of the casts it quotes, in the order they were attached.
+    pub fn quoted(&self) -> impl Iterator<Item = &str> {
+        self.embeds.iter().filter_map(|embed| match embed {
+            Embed::Cast { hash, .. } => Some(hash.as_str()),
+            _ => None,
+        })
+    }
 }
 
 /// A link a channel's hosts put on it, such as "Join" or "Subscribe".

@@ -6,6 +6,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 - Changing the front-page time range starts that range's pagination immediately. Requests and retry timers from the previous range cannot block it, hide its loading state, or append an obsolete page.
+- Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
 
@@ -20,6 +21,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The front page's data request starts from a small inline script in `index.html` as soon as the page arrives, alongside the WebAssembly download, instead of after the app starts. It is still one API call.
 - Media is bigger. A single image or video takes its own shape, as wide as the card and at most 70% of the window tall (80% when portrait), instead of at most 580 px wide and 460 px tall. Its frame fits it, so a narrow image has no bars beside it, and a portrait video is no longer letterboxed in a 16:10 box. Back to a feed still lays images out at their size at once, and now videos too.
 - Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
+- Feeds show a quoted cast inline, as a small card with its author, text and media, instead of a "↳ quotes a cast" chip. The quoted casts come in the same payload as the feed (one bulk read per page build), so the card is there at once. A click on it opens the quoted cast. A quoted cast that is spam or a mini app says so instead of showing its content, there and on post pages.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
 - The header's Channels button and the front page's Channels sidebar are gone: the feed is one centered column, and the Worker no longer looks up trending channels for it. Channels are still found through search and channel links, and `/channels` still lists them.
 - The README is rewritten, with a wordmark for light and dark themes, CI, license and release badges, the features, the architecture and a quick start. A code of conduct, issue forms for bugs and feature requests and a pull request template join refreshed contributing and security guides, stale screenshots are gone, and `.gitignore` covers what local wrangler and Playwright runs leave behind.
@@ -30,6 +32,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- On post pages, the likes, recasts and replies popovers no longer show under the replies or under a native tooltip: the post lifts above the replies while a popover is open, and the counts row no longer carries a `title` tooltip (its ranking note is read to screen readers instead).
 - DEGEN staking promotions are left out as spam, like DEGEN reward bait: casts linking to or naming yeetr.fun, and "stake your DEGEN" or "yield on your DEGEN" pitches. Casts that just discuss staking stay.
 - "new" on the front page lists the newest casts on Farcaster, seconds to a minute old. It used to re-sort the trending pool, whose newest cast was hours old: Hypersnap ranks trending casts with a lag by design (even its 1-hour window's casts are 1–2 hours old), and Hypersnap's search index was about 8 hours behind. "new" now comes from Snapchain's event stream (`/api/v1/latest`): each build reads only the events since the previous one, adds the new top-level casts and drops removed ones, and the list is rebuilt at the edge every 30 seconds. `/status` reports how old the newest cast in the new and trending lists is, and how old each list is.
 - Muted text (times, handles, counts, the "read-only" pill) is easier to read: its color now has at least 4.5:1 contrast on cards and on the page background (it was 4.0:1 on cards and 3.7:1 on the background). Post pages have a level-one heading for screen readers ("Cast by …"), and the posting app's link in "Posted via" is underlined instead of told apart by color alone.

@@ -21,6 +21,7 @@ pub mod model;
 pub mod normalize;
 pub mod params;
 pub mod provenance;
+pub mod quotes;
 pub mod ranking;
 pub mod spam;
 pub mod text;

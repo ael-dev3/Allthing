@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{CastPayload, cast_path};
+use allthing_core::api::{CastPayload, QuotedCast, cast_path};
 use allthing_core::clients::client_name;
 use allthing_core::format::{full_number, short_address};
 use allthing_core::model::Cast;
@@ -18,9 +18,10 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
-use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo, UserChip};
+use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
 use crate::util::{cast_href, set_title, user_href, with_query};
@@ -60,12 +61,18 @@ pub fn PostPage() -> impl IntoView {
         };
         let loaded = data.get();
         if let (None | Some(None), Some(cast)) = (&loaded, api::seen_cast(&hash)) {
-            // Seen in a feed: show the cast now; replies arrive with the thread.
+            // Seen in a feed: show the cast now, with the quoted casts the
+            // feed carried; replies arrive with the thread.
             let notes = allthing_core::api::Annotations::default();
+            let quotes: Vec<QuotedCast> = cast
+                .quoted()
+                .take(3)
+                .filter_map(|quoted| Some(QuotedCast { hash: quoted.to_owned(), cast: Some(api::seen_cast(quoted)?) }))
+                .collect();
             let payload = Arc::new(CastPayload {
                 thread: allthing_core::model::ThreadNode { cast: cast.clone(), children: Vec::new() },
                 parent: None,
-                quotes: Vec::new(),
+                quotes,
                 channel: None,
                 notes: notes.clone(),
                 meta: allthing_core::api::Meta { backend: Default::default(), fetched_at: 0, stale: false },
@@ -180,7 +187,9 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
             {payload.quotes.iter().map(|quote| match &quote.cast {
-                Some(q) => view! { <QuoteCard cast=q.clone()/> }.into_any(),
+                Some(q) => view! {
+                    <QuoteCard cast=q.clone() open_on_click=true max_chars=POST_QUOTE_CHARS/>
+                }.into_any(),
                 None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
             }).collect_view()}
             <p class="post-meta">
@@ -193,18 +202,6 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                 <Engagement cast=cast.clone()/>
             </footer>
         </article>
-    }
-}
-
-#[component]
-fn QuoteCard(cast: Cast) -> impl IntoView {
-    view! {
-        <blockquote class="quote">
-            <div class="cast-meta"><UserChip user=cast.author.clone()/>" · "<TimeAgo ts=cast.ts/></div>
-            <div class="quote-text"><CastText text=truncate_title(&cast.text, 400) mentions=cast.mentions.clone()/></div>
-            <MediaGrid cast=cast.clone() open_on_click=true/>
-            <a class="quote-link" href=cast_href(&cast.hash)>"open quoted cast →"</a>
-        </blockquote>
     }
 }
 

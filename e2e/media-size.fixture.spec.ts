@@ -93,7 +93,7 @@ test("back to the feed, images take their final box at once", async ({ page }) =
     await expect(tile).toHaveAttribute("data-sized", "");
   }
   const before = await box(card(page, 2).locator(".tile-image"));
-  await card(page, 2).locator("a.when").click();
+  await card(page, 2).locator("header.cast-meta a.when").click();
   await expect(page).toHaveURL(new RegExp(`/p/${hash(2)}$`));
   // Note, for each image tile the feed adds again, whether it already has
   // its size: only a size known from the first visit can set it that early
