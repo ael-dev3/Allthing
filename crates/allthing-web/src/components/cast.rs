@@ -76,12 +76,15 @@ pub fn CastCard(
             <header class="cast-meta">
                 <UserChip user=cast.author.clone() score=score.unwrap_or(0) show_name=true/>
                 <span class="sep" aria-hidden="true">"·"</span>
-                <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
+                // The post's own link: for keyboards and screen readers (the
+                // card's text is plain so it can be selected; a click on it
+                // opens the post through `card_click`).
+                <a class="when" href=href.clone()><span class="visually-hidden">"Open post, "</span><TimeAgo ts=cast.ts/></a>
                 <ChannelLink cast=cast.clone()/>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
             </header>
             {parent.map(|p| view! { <p class="replying-to">"replying to "<a href=cast_href(&p)>"a cast"</a></p> })}
-            <h2 class="cast-title"><a href=href.clone()>{title}</a></h2>
+            <h2 class="cast-title">{title}</h2>
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>

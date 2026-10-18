@@ -464,7 +464,17 @@ test.describe("threads and navigation", () => {
     await page.mouse.move(box.x + Math.min(box.width - 2, 120), box.y + box.height / 2, { steps: 5 });
     await page.mouse.up();
     await page.waitForTimeout(300);
+    // The drag selected text (it did not drag a link), and did not navigate.
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(selected.trim().length).toBeGreaterThan(2);
+    expect((await title.innerText()).includes(selected.trim().slice(0, 3))).toBe(true);
     await expect(page).not.toHaveURL(/\/p\//);
+    // A plain click on the same text (no selection) opens the post.
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await title.click();
+    await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
+    await page.goBack();
+    await expect(firstCard(page)).toBeVisible();
     // A link inside the card goes where it points.
     await card.locator(".user-chip .author").click();
     await expect(page).toHaveURL(/\/u\//);
@@ -497,7 +507,7 @@ test.describe("threads and navigation", () => {
         requestAnimationFrame(check);
       }, { capture: true, once: true });
     });
-    await card.locator(".cast-title a").click();
+    await card.locator(".cast-title").click();
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
     const openedIn = await page.evaluate(() => (window as any).__openedIn as number);

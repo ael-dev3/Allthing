@@ -83,7 +83,7 @@ test.describe("performance budget", () => {
         { capture: true, once: true },
       );
     });
-    await card.locator(".cast-title a").click();
+    await card.locator(".cast-title").click();
     await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
     const opened = await page.evaluate(() => (window as any).__openedIn as number);
     // With prefetched data, the replies are in place too.
