@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Keyless public JSON-RPC reads: the Farcaster vote (onchain on Base) and
+//! Keyless public JSON-RPC reads: the NS vote (onchain on Base) and
 //! EVM and Solana transaction counts.
 
 use allthing_core::vote::{MINT_GENERATION_SELECTOR, MINTED_SELECTOR, OnchainVote, VOTE_CONTRACT, encode_fid_call};

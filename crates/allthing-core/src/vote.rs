@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The October 2026 Farcaster vote: after Neynar sold Farcaster to Network
+//! The October 2026 NS vote: after Neynar sold Farcaster to Network
 //! School, farcaster.xyz asked every account to "vote to stay" (accept the
 //! new client agreement) or "vote to leave". A stay vote is recorded on Base
 //! as an opt-in NFT whose token id is the FID; a leave vote is only recorded

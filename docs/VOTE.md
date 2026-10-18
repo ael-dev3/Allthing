@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# The Farcaster vote
+# The NS vote
 
-Profiles show how an account voted when farcaster.xyz asked everyone to **stay** or **leave**, or that it did not vote. This page describes what the vote was, where each answer is recorded, and how Allthing reads it within the Workers request budget. The research was done on 2026-10-18 against Base mainnet and the farcaster.xyz client API.
+Profiles show an account's NS vote: how it answered when farcaster.xyz asked everyone to **stay** or **leave**, or that it did not vote. This page describes what the vote was, where each answer is recorded, and how Allthing reads it within the Workers request budget. The research was done on 2026-10-18 against Base mainnet and the farcaster.xyz client API.
 
 ## What was voted on
 
