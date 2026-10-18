@@ -415,6 +415,8 @@ code {
 
 .cast-list {
   display: grid;
+  /* minmax(0, …): an image's natural width must not widen the column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -678,7 +680,7 @@ code {
 }
 
 .media-grid.n1 {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .media-grid.n2,

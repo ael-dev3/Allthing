@@ -60,6 +60,7 @@ features = [
     "Navigator",
     "PointerEvent",
     "Request",
+    "Screen",
     "Selection",
     "History",
     "ScrollRestoration",
