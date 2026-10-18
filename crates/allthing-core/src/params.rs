@@ -77,7 +77,14 @@ pub fn fid_username(username: &str) -> Option<u64> {
 /// URL for token and web feeds.
 pub fn channel_key_from_param(param: &str) -> Option<String> {
     let decoded = percent_decode(param)?;
-    let value = decoded.trim();
+    channel_key_from_decoded(&decoded)
+}
+
+/// Validate a channel key after the router or query parser has decoded it.
+/// Escapes inside a parent URL are part of its identity, not another layer
+/// of query encoding.
+pub fn channel_key_from_decoded(value: &str) -> Option<String> {
+    let value = value.trim();
     if value.is_empty() {
         return None;
     }
@@ -140,5 +147,20 @@ mod tests {
         assert_eq!(percent_decode("a%20b").as_deref(), Some("a b"));
         assert_eq!(percent_decode("100%").as_deref(), None);
         assert_eq!(percent_encode("a b/é"), "a%20b%2F%C3%A9");
+    }
+
+    #[test]
+    fn decoded_channel_keys_preserve_parent_url_escapes() {
+        for parent in ["https://example.com/a%2Fb", "https://example.com/100%25?tag=x%26y", "https://example.com/%252F"]
+        {
+            assert_eq!(channel_key_from_decoded(parent).as_deref(), Some(parent));
+            assert_eq!(channel_key_from_param(&percent_encode(parent)).as_deref(), Some(parent));
+        }
+        assert_eq!(channel_key_from_decoded(" GifArt ").as_deref(), Some("gifart"));
+        assert_eq!(
+            channel_key_from_decoded("chain://eip155:8453/erc20:0xabc").as_deref(),
+            Some("eip155:8453/erc20:0xabc")
+        );
+        assert_eq!(channel_key_from_decoded("not a channel"), None);
     }
 }
