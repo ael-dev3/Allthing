@@ -16,6 +16,12 @@ pub fn client_name(app: &UserSummary) -> &str {
     if app.fid == FARCASTER_APP_FID { "Farcaster" } else { app.name() }
 }
 
+/// The profile key (as `/u/<key>` takes it) for the app's account: its fid
+/// for the Farcaster app, whose account still has the old "warpcast" name.
+pub fn client_profile(app: &UserSummary) -> String {
+    if app.fid == FARCASTER_APP_FID { format!("fid:{}", app.fid) } else { app.username.clone() }
+}
+
 /// One app's share of a list's casts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientShare {
@@ -81,6 +87,15 @@ pub fn client_shares(casts: &[Cast], notes: &Annotations, top: usize, min: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_farcaster_app_is_linked_by_fid_not_its_old_name() {
+        let app =
+            UserSummary { fid: 9152, username: "warpcast".into(), display_name: "Warpcast".into(), pfp_url: None };
+        assert_eq!(client_profile(&app), "fid:9152");
+        let other = UserSummary { fid: 309857, username: "baseapp".into(), display_name: String::new(), pfp_url: None };
+        assert_eq!(client_profile(&other), "baseapp");
+    }
     use crate::provenance::Origin;
 
     fn app(fid: u64, username: &str, display_name: &str) -> UserSummary {
