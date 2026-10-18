@@ -72,8 +72,15 @@ test("Back holds the same card after offscreen content resumes layout", async ({
   await card.scrollIntoViewIfNeeded();
   await page.waitForTimeout(400);
   const hash = (await card.getAttribute("data-hash"))!;
-  const y = (await card.boundingBox())!.y;
+  // Focus and scrolling the link into view can move it before the click.
+  // Compare Back with the place saved at navigation, after that movement.
+  await page.evaluate((hash) => {
+    window.addEventListener("click", () => {
+      (window as Window & { returnY?: number }).returnY = document.querySelector(`[data-hash="${hash}"]`)!.getBoundingClientRect().top;
+    }, { once: true, capture: true });
+  }, hash);
   await card.locator("a.when").click();
+  const y = await page.evaluate(() => (window as Window & { returnY: number }).returnY);
   await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
   await expect(page.locator(".post")).toBeVisible();
   await page.goBack();
