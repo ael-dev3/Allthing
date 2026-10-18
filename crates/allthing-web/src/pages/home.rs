@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{HomePayload, home_page_path, home_path};
+use allthing_core::api::{Annotations, HomePayload, home_page_path, home_path};
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
 use allthing_core::ranking::{Sort, sorted};
@@ -25,9 +25,15 @@ const MAX_RETRIES: u32 = 3;
 const KEEP_MS: f64 = 300_000.0;
 
 #[derive(Clone)]
+struct LoadedPage {
+    casts: Vec<Cast>,
+    notes: Annotations,
+}
+
+#[derive(Clone)]
 struct Loaded {
     at: f64,
-    pages: Vec<Vec<Cast>>,
+    pages: Vec<LoadedPage>,
     next_offset: u32,
 }
 
@@ -70,11 +76,12 @@ pub fn Home() -> impl IntoView {
             }
             if let Ok(page) = result {
                 failures.set_value(0);
-                let mut known: std::collections::HashSet<String> =
-                    more.with_untracked(|pages| pages.iter().flatten().map(|c| c.hash.clone()).collect());
+                let mut known: std::collections::HashSet<String> = more.with_untracked(|pages| {
+                    pages.iter().flat_map(|page| &page.casts).map(|c| c.hash.clone()).collect()
+                });
                 let fresh: Vec<Cast> =
                     top_level(&page.data.pool).into_iter().filter(|c| known.insert(c.hash.clone())).collect();
-                more.update(|pages| pages.push(fresh));
+                more.update(|pages| pages.push(LoadedPage { casts: fresh, notes: page.data.notes.clone() }));
                 next_offset.set(offset + 100);
                 LOADED.with(|l| {
                     *l.borrow_mut() = Some(Loaded {
@@ -116,7 +123,16 @@ pub fn Home() -> impl IntoView {
             Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Ok(Fetched { data, age, stale })) => {
                 let payload: Arc<HomePayload> = data;
-                let notes = Arc::new(payload.notes.clone());
+                let first_notes = payload.notes.clone();
+                let notes = Memo::new(move |_| {
+                    let mut notes = first_notes.clone();
+                    more.with(|pages| {
+                        for page in pages {
+                            notes.merge(&page.notes);
+                        }
+                    });
+                    Arc::new(notes)
+                });
                 let pool = top_level(&payload.pool);
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
                 // Re-sorting reorders the list in place instead of rebuilding the page.
@@ -125,7 +141,9 @@ pub fn Home() -> impl IntoView {
                     let mut all = sorted(&pool, order);
                     more.with(|pages| {
                         for page in pages {
-                            all.extend(sorted(page, order).into_iter().filter(|c| !first_hashes.contains(&c.hash)));
+                            all.extend(
+                                sorted(&page.casts, order).into_iter().filter(|c| !first_hashes.contains(&c.hash)),
+                            );
                         }
                     });
                     all

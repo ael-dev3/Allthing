@@ -104,7 +104,7 @@ const STEP: usize = 25;
 #[component]
 pub fn CastList(
     #[prop(into)] casts: Signal<Vec<Cast>>,
-    notes: Notes,
+    #[prop(into)] notes: Signal<Notes>,
     #[prop(optional)] show_parent: bool,
     #[prop(optional)] on_end: Option<Callback<()>>,
 ) -> impl IntoView {
@@ -117,8 +117,10 @@ pub fn CastList(
         SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
-    let remembered = notes.clone();
-    Effect::new(move |_| casts.with(|c| api::remember_casts(c, &remembered)));
+    Effect::new(move |_| {
+        let notes = notes.get();
+        casts.with(|c| api::remember_casts(c, &notes));
+    });
     let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
     let grow = move || {
         let len = casts.with_untracked(Vec::len);
@@ -141,10 +143,7 @@ pub fn CastList(
                 <For
                     each=visible
                     key=|(_, cast)| cast.hash.clone()
-                    children={
-                        let notes = notes.clone();
-                        move |(index, cast)| view! { <CastCard cast notes=notes.clone() index show_parent/> }
-                    }
+                    children=move |(index, cast)| view! { <CastCard cast notes=notes.get_untracked() index show_parent/> }
                 />
             </div>
         </Show>

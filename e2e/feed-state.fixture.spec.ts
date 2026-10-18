@@ -14,6 +14,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home", (route) => route.fulfill({ json: { pool: first, meta } }));
   await page.route("**/api/v1/channels", (route) => route.fulfill({ json: { channels: [], meta } }));
+  await page.route("**/api/v1/search?*", (route) => route.fulfill({ json: { query: "fixture", users: [], channels: [], casts: [], meta } }));
 });
 
 test("sorting reorders every loaded trending page without rebuilding cards or fetching again", async ({ page }) => {
@@ -71,15 +72,41 @@ for (const status of [200, 503]) {
     });
     await page.goto("/");
     await requested;
-    await page.getByRole("banner").getByRole("link", { name: "Channels", exact: true }).click();
-    await expect(page).toHaveURL(/\/channels$/);
+    const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+    await search.fill("fixture");
+    await search.press("Enter");
+    await expect(page).toHaveURL(/\/search\?q=fixture$/);
     const response = page.waitForResponse((response) => response.url().includes("/home?offset=100"));
     release();
     await response;
     // Let the asynchronous fetch continuation and any error event run.
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(errors).toEqual([]);
-    await page.getByRole("banner").getByRole("link", { name: "Home", exact: true }).click();
+    await page.getByRole("link", { name: "Allthing, home", exact: true }).click();
     await expect(page.locator(".cast-card[data-hash]")).not.toHaveCount(0);
   });
 }
+
+test("later-page annotations survive navigation back to the feed", async ({ page }) => {
+  const later = { ...next[0], author: { fid: 2, username: "later" } };
+  await page.route("**/api/v1/home", (route) => route.fulfill({ json: { pool: first, notes: { scores: { "1": 500000 } }, meta } }));
+  await page.route("**/api/v1/home?offset=100", (route) => route.fulfill({ json: {
+    pool: [later], meta, notes: {
+      scores: { "2": 910000 }, origins: { [later.hash]: { signer: "0xabc", app_fid: 99 } },
+      apps: { "99": { fid: 99, username: "posting-app", display_name: "Fixture app" } },
+    },
+  } }));
+  await page.goto("/");
+  const card = page.locator(`.cast-card[data-hash="${later.hash}"]`);
+  await expect(card).toBeVisible();
+  await expect(card.locator(".score")).toHaveText("0.91", { timeout: 1500 });
+  await expect(card.locator(".origin")).toContainText("via Fixture app");
+  await expect(page.locator(`.cast-card[data-hash="${first[0].hash}"] .score`)).toHaveText("0.50");
+  const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+  await search.fill("fixture");
+  await search.press("Enter");
+  await expect(page).toHaveURL(/\/search\?q=fixture$/);
+  await page.goBack();
+  await expect(card.locator(".score")).toHaveText("0.91");
+  await expect(card.locator(".origin")).toContainText("via Fixture app");
+});
