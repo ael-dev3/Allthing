@@ -12,6 +12,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
+- Feeds show each cast's whole text, with its paragraphs, line breaks, links and mentions, instead of its first 120 characters as a one-line title. A cast with only media shows just its media, without an "[image]" or "[video]" placeholder.
 - The front page's data request starts from a small inline script in `index.html` as soon as the page arrives, alongside the WebAssembly download, instead of after the app starts. It is still one API call.
 - Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.

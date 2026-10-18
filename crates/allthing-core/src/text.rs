@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Cast text: mention splicing, titles, and tokenizing into links.
+//! Cast text: mention splicing, excerpts, and tokenizing into links.
 
-use crate::embeds::embed_domain;
-use crate::model::{Embed, Mention};
+use crate::model::Mention;
 
 /// Farcaster stores mentions out of band: the text omits them and
 /// `mentions_positions` give UTF-8 byte offsets where "@username" belongs.
@@ -36,13 +35,12 @@ pub fn splice_mentions(text: &str, mentions: &[Mention], ranges: &[(u32, u32)]) 
     out
 }
 
-pub const TITLE_MAX_CHARS: usize = 120;
-
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// First ~120 characters of a cast, whitespace-collapsed, cut at a word boundary.
+/// The first `max` characters of a cast, whitespace-collapsed, cut at a word
+/// boundary.
 pub fn truncate_title(text: &str, max: usize) -> String {
     let flat = collapse_whitespace(text);
     if flat.chars().count() <= max {
@@ -55,30 +53,6 @@ pub fn truncate_title(text: &str, max: usize) -> String {
     };
     let base = base.trim_end_matches(|c: char| c.is_whitespace() || ".,;:!?…-".contains(c));
     format!("{base}…")
-}
-
-/// The listing title for a cast, with a placeholder for text-less casts.
-pub fn cast_title(text: &str, embeds: &[Embed]) -> String {
-    let title = truncate_title(text, TITLE_MAX_CHARS);
-    if !title.is_empty() {
-        return title;
-    }
-    match embeds.first() {
-        Some(Embed::Image { .. }) => "[image]".into(),
-        Some(Embed::Video { .. }) => "[video]".into(),
-        Some(Embed::Link { url, title, .. }) => {
-            format!("[link] {}", title.clone().unwrap_or_else(|| embed_domain(url)))
-        }
-        Some(Embed::Cast { .. }) => "[quote cast]".into(),
-        None => "[empty cast]".into(),
-    }
-}
-
-/// Whether a post page should repeat the full text below the title.
-pub fn needs_body(text: &str) -> bool {
-    let trimmed = text.trim();
-    !trimmed.is_empty()
-        && (trimmed.contains('\n') || truncate_title(trimmed, TITLE_MAX_CHARS) != collapse_whitespace(trimmed))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,33 +218,14 @@ mod tests {
     }
 
     #[test]
-    fn titles() {
-        assert_eq!(truncate_title("hello\n\n  world", TITLE_MAX_CHARS), "hello world");
+    fn excerpts() {
+        assert_eq!(truncate_title("hello\n\n  world", 120), "hello world");
         let long = format!("{}end", "word ".repeat(40));
-        let title = truncate_title(&long, TITLE_MAX_CHARS);
-        assert!(title.ends_with('…'));
-        assert!(title.chars().count() <= 121);
-        assert!(!title.ends_with(" …"));
-        assert_eq!(truncate_title(&"🎉".repeat(130), TITLE_MAX_CHARS), format!("{}…", "🎉".repeat(120)));
-    }
-
-    #[test]
-    fn placeholder_titles() {
-        let image = Embed::Image { url: "https://i.imgur.com/x.png".into() };
-        assert_eq!(cast_title("", std::slice::from_ref(&image)), "[image]");
-        assert_eq!(cast_title(" ", &[Embed::Cast { hash: "0xabc".into(), fid: Some(1) }]), "[quote cast]");
-        let link = Embed::Link { url: "https://www.example.com/a".into(), image_url: None, title: None };
-        assert_eq!(cast_title("", &[link]), "[link] example.com");
-        assert_eq!(cast_title("", &[]), "[empty cast]");
-        assert_eq!(cast_title("", &[Embed::Video { url: "https://x/v.m3u8".into() }]), "[video]");
-    }
-
-    #[test]
-    fn body_only_when_needed() {
-        assert!(!needs_body("short"));
-        assert!(needs_body("line one\nline two"));
-        assert!(needs_body(&"x ".repeat(100)));
-        assert!(!needs_body(""));
+        let excerpt = truncate_title(&long, 120);
+        assert!(excerpt.ends_with('…'));
+        assert!(excerpt.chars().count() <= 121);
+        assert!(!excerpt.ends_with(" …"));
+        assert_eq!(truncate_title(&"🎉".repeat(130), 120), format!("{}…", "🎉".repeat(120)));
     }
 
     #[test]

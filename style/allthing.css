@@ -473,11 +473,10 @@ code {
   color: var(--line-2);
 }
 
-.cast-title {
+.cast-text {
   color: var(--ink);
   margin: 7px 0 2px;
-  font: 500 16.5px/1.45 var(--font-ui);
-  letter-spacing: -0.006em;
+  font: 400 16px/1.55 var(--font-ui);
   overflow-wrap: anywhere;
 }
 
@@ -1228,6 +1227,7 @@ code {
 }
 
 .post-text p,
+.cast-text p,
 .comment-text p,
 .bio p,
 .quote-text p {
@@ -1235,6 +1235,7 @@ code {
 }
 
 .post-text p:last-child,
+.cast-text p:last-child,
 .comment-text p:last-child,
 .bio p:last-child,
 .quote-text p:last-child {
@@ -1242,6 +1243,7 @@ code {
 }
 
 .post-text a.ext,
+.cast-text a.ext,
 .comment-text a.ext,
 .bio a.ext,
 .prose a {
@@ -2174,7 +2176,7 @@ code {
   z-index: 30;
 }
 
-.cast-card .cast-title,
+.cast-card .cast-text,
 .cast-card p {
   cursor: text;
 }

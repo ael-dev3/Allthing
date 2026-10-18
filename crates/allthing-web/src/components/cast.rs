@@ -2,13 +2,13 @@
 //! Casts in listings.
 
 use allthing_core::model::{Cast, Embed};
-use allthing_core::text::cast_title;
 use leptos::prelude::*;
 
 use crate::Notes;
 use crate::api;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::text::CastText;
 use crate::nav::card_click;
 use crate::util::{cast_href, channel_href};
 use allthing_core::api::cast_path;
@@ -28,7 +28,7 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
     })
 }
 
-/// One cast in a listing: who and where, the text as a title, media, and its
+/// One cast in a listing: who and where, its whole text, media, and its
 /// engagement. The whole card opens the post (text stays selectable), and
 /// hovering or touching it prefetches the post's data.
 #[component]
@@ -39,7 +39,6 @@ pub fn CastCard(
     #[prop(optional)] show_parent: bool,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
-    let title = cast_title(&cast.text, &cast.embeds);
     let score = notes.scores.get(&cast.author.fid).copied();
     let quote = cast.embeds.iter().find_map(|e| match e {
         Embed::Cast { hash, .. } => Some(hash.clone()),
@@ -84,7 +83,9 @@ pub fn CastCard(
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
             </header>
             {parent.map(|p| view! { <p class="replying-to">"replying to "<a href=cast_href(&p)>"a cast"</a></p> })}
-            <h2 class="cast-title">{title}</h2>
+            {(!cast.text.trim().is_empty()).then(|| view! {
+                <div class="cast-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div>
+            })}
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>

@@ -66,6 +66,8 @@ const GALLERY_CAST = "0x4cc5b1c6f925c928694fef95643cd3bb24803b14"; // two images
 const NESTED_THREAD = "0xf454b8d3e5ee2c9252a0b7574ad4942e9ba502d2"; // @balajis.eth, replies four levels deep
 
 const firstCard = (page: Page) => page.locator(".cast-card:not(.skeleton)").first();
+/** Cards whose text has no links, so a click or drag on the text lands on plain text. */
+const textCards = (page: Page) => page.locator(".cast-card:not(.skeleton):has(.cast-text):not(:has(.cast-text a))");
 
 /** Data requests made during `action`: Worker API calls, or Hypersnap reads in the static copy. */
 async function apiRequests(page: Page, action: () => Promise<void>): Promise<string[]> {
@@ -633,12 +635,12 @@ test.describe("threads and navigation", () => {
 
   test("the whole card opens the post, but selecting text or clicking links does not", async ({ page }) => {
     await page.goto(at("/"));
-    const card = firstCard(page);
+    const card = textCards(page).first();
     await expect(card).toBeVisible();
     const hash = await card.getAttribute("data-hash");
     // Select text inside the card: no navigation.
-    const title = card.locator(".cast-title");
-    const box = (await title.boundingBox())!;
+    const text = card.locator(".cast-text");
+    const box = (await text.boundingBox())!;
     await page.mouse.move(box.x + 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + Math.min(box.width - 2, 120), box.y + box.height / 2, { steps: 5 });
@@ -647,11 +649,11 @@ test.describe("threads and navigation", () => {
     // The drag selected text (it did not drag a link), and did not navigate.
     const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
     expect(selected.trim().length).toBeGreaterThan(2);
-    expect((await title.innerText()).includes(selected.trim().slice(0, 3))).toBe(true);
+    expect((await text.innerText()).includes(selected.trim().slice(0, 3))).toBe(true);
     await expect(page).not.toHaveURL(/\/p\//);
     // A plain click on the same text (no selection) opens the post.
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    await title.click();
+    await text.click({ position: { x: 4, y: 8 } });
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await page.goBack();
     await expect(firstCard(page)).toBeVisible();
@@ -678,7 +680,7 @@ test.describe("threads and navigation", () => {
     const height = await image.evaluate((img) => Math.round(img.getBoundingClientRect().height));
     expect(height).toBeGreaterThan(50);
     // Open it inside the app, as a reader does.
-    await page.locator(`.cast-card[data-hash="${hash}"] .cast-title`).click();
+    await page.locator(`.cast-card[data-hash="${hash}"] a.when`).click();
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await expect(page.locator(".post")).toBeVisible();
     // Images now take 3 s to arrive.
@@ -702,7 +704,7 @@ test.describe("threads and navigation", () => {
     await expect(firstCard(page)).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 1600));
     await page.waitForTimeout(300);
-    const card = page.locator(".cast-card").nth(6);
+    const card = textCards(page).nth(4);
     await card.scrollIntoViewIfNeeded();
     const y = await page.evaluate(() => window.scrollY);
     const hash = await card.getAttribute("data-hash");
@@ -717,7 +719,7 @@ test.describe("threads and navigation", () => {
         requestAnimationFrame(check);
       }, { capture: true, once: true });
     });
-    await card.locator(".cast-title").click();
+    await card.locator(".cast-text").click({ position: { x: 4, y: 8 } });
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
     const openedIn = await page.evaluate(() => (window as any).__openedIn as number);

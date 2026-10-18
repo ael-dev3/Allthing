@@ -64,7 +64,8 @@ test.describe("performance budget", () => {
 
   test("opening a post from the feed takes under 100 ms", async ({ page }) => {
     await page.goto("/");
-    const card = page.locator(".cast-card:not(.skeleton)").nth(2);
+    // A card with plain text to click (.cast-title: releases before full text).
+    const card = page.locator(".cast-card:not(.skeleton):has(.cast-text, .cast-title):not(:has(.cast-text a))").nth(2);
     await expect(card).toBeVisible();
     await card.hover(); // prefetches the post's data
     await page.waitForTimeout(600);
@@ -83,7 +84,7 @@ test.describe("performance budget", () => {
         { capture: true, once: true },
       );
     });
-    await card.locator(".cast-title").click();
+    await card.locator(".cast-text, .cast-title").first().click({ position: { x: 4, y: 8 } });
     await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
     const opened = await page.evaluate(() => (window as any).__openedIn as number);
     // With prefetched data, the replies are in place too.
