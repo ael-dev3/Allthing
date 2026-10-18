@@ -5,6 +5,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- The newest feed keeps stale-if-error recovery when both event shards are unavailable, rejects error objects as event pages, and accepts genuinely empty streams. Invalid event timestamps are skipped without overflow.
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
 
 ### Added
