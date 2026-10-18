@@ -78,6 +78,12 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
   - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 
+### Animations that never stop
+
+- An animation that runs all the time moves by `transform` or `opacity`, which the compositor animates without the main thread. The header's line of light slides a strip twice its gradient's width by one gradient (`.portal-line::before`).
+- When it animated `background-position` instead, every frame repainted the header and redid its backdrop blur, and the frame after each tap or keystroke waited behind that work: interactions took 40–64 ms in a headless browser without a GPU, and 16–32 ms after the change.
+- The wordmark's sheen still animates its background, but it holds still for most of its 14 s cycle.
+
 ### 4. Edge
 
 - **Stale-while-revalidate** on every API payload, with request coalescing per isolate and stale-if-error. Policies are in `allthing_core::api` and listed in [BUDGET.md](BUDGET.md#2-edge-cache-one-upstream-fetch-serves-everyone-nearby).

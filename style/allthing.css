@@ -241,13 +241,37 @@ code {
   padding: 3px 9px;
 }
 
-/* A thin line of light drifting along the header: the farcaster portal. */
+/* A thin line of light drifting along the header: the farcaster portal. It
+   never stops, so it moves by transform, which the compositor animates on
+   its own: a strip two gradients wide slides by one. Animating the
+   background's position instead repainted the header in every frame, and
+   each tap or key waited behind that work. */
 .portal-line {
+  position: relative;
   height: 1.5px;
-  background: linear-gradient(90deg, transparent 0%, var(--cyan) 22%, var(--accent) 50%, var(--gold) 78%, transparent 100%);
-  background-size: 220% 100%;
+  overflow: hidden;
   opacity: 0.55;
-  animation: drift 11s linear infinite;
+}
+
+.portal-line::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 440%;
+  background: linear-gradient(90deg, transparent 0%, var(--cyan) 22%, var(--accent) 50%, var(--gold) 78%, transparent 100%) 0 0 / 50% 100% repeat-x;
+  animation: portal-drift 9s linear infinite;
+  will-change: transform;
+}
+
+@keyframes portal-drift {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 @keyframes drift {
