@@ -10,7 +10,7 @@ Navigation should feel instant: a post opens as soon as it is clicked, the feed 
 | Opening a post from the feed (click → post text on screen) | **< 100 ms** | `e2e/perf.spec.ts` |
 | Largest Contentful Paint, home, cold load | **< 1.5 s** (median of 3) | `e2e/perf.spec.ts` (the later of the LCP entry and the first cast card) |
 | Interaction to Next Paint (slowest interaction) | **< 100 ms** | `e2e/perf.spec.ts` (Event Timing entries with an `interactionId`) |
-| API response from the edge cache | < 50 ms server time | `x-allthing-cache: fresh` responses |
+| API response from the edge cache | < 50 ms server time | the `Server-Timing` header of `x-allthing-cache: fresh` responses |
 
 The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after every push to `main` (and on demand through `workflow_dispatch`), so a regression in production shows up as a red check.
 
@@ -81,6 +81,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 ### 4. Edge
 
 - **Stale-while-revalidate** on every API payload, with request coalescing per isolate and stale-if-error. Policies are in `allthing_core::api` and listed in [BUDGET.md](BUDGET.md#2-edge-cache-one-upstream-fetch-serves-everyone-nearby).
+- **Server time**: every API answer says how long the Worker spent on it in a `Server-Timing` header, named after how it was served (`fresh;dur=3`, or `miss;dur=1840` for a build the request waited for). Browsers show it in their network panel and in `PerformanceResourceTiming.serverTiming`. Clocks in a Worker only advance across I/O, so it measures waiting on the cache and upstream, not CPU time.
 - **Compact JSON**: payloads skip empty and default fields (`skip_serializing_if`). Cloudflare compresses responses with Brotli for clients that accept it.
 - **Immutable assets**: the app's `.wasm`, `.js` and `.css` are fingerprinted and served with `Cache-Control: public, max-age=31536000, immutable` (`web/_headers`).
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
