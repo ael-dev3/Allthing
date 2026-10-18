@@ -18,6 +18,8 @@ use crate::util::{href, set_title};
 
 /// The trending list ends after this many casts.
 const LAST_OFFSET: u32 = 900;
+/// How many times a page that failed to load is tried again.
+const MAX_RETRIES: u32 = 3;
 /// How long the later pages are kept for a return to the front page
 /// (as long as the client cache keeps the first page).
 const KEEP_MS: f64 = 300_000.0;
@@ -42,6 +44,10 @@ pub fn Home() -> impl IntoView {
     let next_offset = RwSignal::new(kept_offset);
     let loading = RwSignal::new(false);
     Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
+    // A failed page is tried again a few times, a little later each time:
+    // the end of the list stays where the reader is waiting for it.
+    let failures = StoredValue::new(0u32);
+    let retry = StoredValue::new(None::<Callback<()>>);
     let load_more = Callback::new(move |()| {
         let offset = next_offset.get_untracked();
         if loading.get_untracked() || offset > LAST_OFFSET {
@@ -49,7 +55,9 @@ pub fn Home() -> impl IntoView {
         }
         loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(page) = api::get::<HomePayload>(&home_page_path(offset)).await {
+            let result = api::get::<HomePayload>(&home_page_path(offset)).await;
+            if let Ok(page) = result {
+                failures.set_value(0);
                 let known: std::collections::HashSet<String> =
                     more.with_untracked(|m| m.iter().map(|c| c.hash.clone()).collect());
                 let fresh: Vec<Cast> = sorted(&top_level(&page.data.pool), sort.get_untracked())
@@ -61,12 +69,25 @@ pub fn Home() -> impl IntoView {
                 LOADED.with(|l| {
                     *l.borrow_mut() = Some((js_sys::Date::now(), more.get_untracked(), offset + 100));
                 });
-            } else {
+            } else if matches!(result, Err(api::Failure::NotFound(_))) || failures.get_value() >= MAX_RETRIES {
                 next_offset.set(LAST_OFFSET + 100);
+            } else {
+                failures.update_value(|f| *f += 1);
+                let wait = std::time::Duration::from_secs(1 << failures.get_value());
+                // Nothing to do if the reader has left the page meanwhile.
+                set_timeout(
+                    move || {
+                        if let Some(Some(again)) = retry.try_get_value() {
+                            again.run(());
+                        }
+                    },
+                    wait,
+                );
             }
             loading.set(false);
         });
     });
+    retry.set_value(Some(load_more));
 
     move || {
         let side = |channels: Vec<allthing_core::model::Channel>| view! { <ChannelsBox channels/> }.into_any();
