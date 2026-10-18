@@ -61,6 +61,11 @@ fn anchor_card() -> Option<(String, f64)> {
     })
 }
 
+/// Whether Back or Forward is putting the reader's place back right now.
+pub fn restoring() -> bool {
+    RESTORING.with(Cell::get)
+}
+
 /// The current page's key: pathname plus query.
 pub fn location_key() -> String {
     let location = window().location();
