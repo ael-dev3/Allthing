@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use allthing_core::embeds::{host_of, is_hls};
 use allthing_core::video::VideoLink;
@@ -62,6 +63,9 @@ fn claim(video: &HtmlVideoElement) {
 fn autoplay_allowed() -> bool {
     !prefers_reduced_motion() && !crate::api::constrained_network()
 }
+
+/// How long the play icon stays hidden while autoplay is pending.
+const AUTOPLAY_PENDING: Duration = Duration::from_millis(2500);
 
 /// Share of a video that must be on screen for it to autoplay.
 const AUTOPLAY_RATIO: f64 = 0.6;
@@ -229,6 +233,38 @@ pub fn HlsVideo(
         });
     });
 
+    // From the moment a video is due to autoplay until its first frame plays,
+    // the play icon would flash over the poster: hide it while autoplay is
+    // pending, and bring it back if playback hasn't started after a while
+    // (autoplay refused, or a stream this browser can't decode).
+    let pending = RwSignal::new(false);
+    let pending_generation = StoredValue::new(0u32);
+    Effect::new(move |_| {
+        let due = !full
+            && in_view.get()
+            && !engaged.get()
+            && !matches!(status.get(), Status::Failed(_))
+            && autoplay_allowed();
+        if !due {
+            pending.set(false);
+            return;
+        }
+        if playing.get_untracked() {
+            return;
+        }
+        pending.set(true);
+        let generation = pending_generation.get_value().wrapping_add(1);
+        pending_generation.set_value(generation);
+        set_timeout(
+            move || {
+                if pending_generation.get_value() == generation && !playing.get_untracked() {
+                    pending.set(false);
+                }
+            },
+            AUTOPLAY_PENDING,
+        );
+    });
+
     // Autoplay muted while mostly on screen; pause when scrolled away.
     let start_autoplay = move || {
         if engaged.get_untracked() || status.get_untracked() != Status::Ready || !autoplay_allowed() {
@@ -305,6 +341,7 @@ pub fn HlsVideo(
             class:engaged=move || engaged.get()
             class:previewing=move || previewing.get()
             class:autoplaying=move || previewing.get() && playing.get() && !engaged.get()
+            class:autoplay-pending=move || pending.get() && !playing.get() && !engaged.get()
             class:loading=move || status.get() == Status::Loading
             node_ref=container
         >
