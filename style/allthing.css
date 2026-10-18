@@ -2486,19 +2486,24 @@ code {
   border-radius: 999px;
 }
 
-.vote-stay {
+.vote-yes {
   color: #19704f;
   background: rgba(32, 160, 110, 0.12);
 }
 
-.vote-leave {
+.vote-no {
   color: #9a3d22;
   background: rgba(214, 96, 54, 0.12);
 }
 
-.vote-revoked {
-  color: #7a5a12;
-  background: rgba(185, 130, 42, 0.14);
+/* While the vote loads: an empty pill, no words. */
+.vote-loading {
+  width: 76px;
+  height: 22px;
+  vertical-align: middle;
+  background: linear-gradient(90deg, var(--paper-2), #ecebe4, var(--paper-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
 }
 
 .vote-none {
