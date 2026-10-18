@@ -59,7 +59,7 @@ test("muted text is readable on every surface it sits on", async ({ page }) => {
 
 test("the posting app's link is underlined, not told apart by color alone", async ({ page }) => {
   await page.goto(`/p/${hash}`);
-  const link = page.locator(".provenance dd a").first();
+  const link = page.locator(".post-via a").first();
   await expect(link).toBeVisible();
   expect(await link.evaluate((a) => getComputedStyle(a).textDecorationLine)).toContain("underline");
 });

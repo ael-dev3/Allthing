@@ -3115,3 +3115,17 @@ code {
     background-position: 100% 0;
   }
 }
+
+/* The posting app, quiet in the post's meta line. */
+.post-via {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* A link in a line of text is underlined, not told apart by color alone. */
+.post-via a {
+  color: var(--ink-3);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}

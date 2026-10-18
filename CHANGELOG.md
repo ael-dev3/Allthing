@@ -6,8 +6,12 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 - Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
-
+- Leaving or replacing an MSE video cancels its rendition playlists and segments, pending source/buffer event waits, and idle buffering timer. Removed players no longer keep those operations alive.
+- Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.
+- The newest feed keeps stale-if-error recovery when both event shards are unavailable, rejects error objects as event pages, and accepts genuinely empty streams. Invalid event timestamps are skipped without overflow.
+- Changing the front-page time range starts that range's pagination immediately. Requests and retry timers from the previous range cannot block it, hide its loading state, or append an obsolete page.
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
+- An API answer with valid JSON but missing or invalid payload fields is requested again on the next visit. Malformed prefetched payloads are discarded instead of keeping the page in an error state for five minutes.
 
 ### Added
 
@@ -15,6 +19,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Post pages drop the "Posted via" box. The posting app is a quiet line in the post's meta ("via Farcaster"), and its signing key and app fid show on hover.
 - Profiles say when the account joined. Accounts registered before the ID registry moved to OP Mainnet in November 2023 showed "before Nov 2023", the earliest date onchain data has for them; they now show when they got their first username (dwr: 17 Jun 2021), read from the fname server's public transfer log, which the old sign-up registered along with the account. If that read fails, the profile keeps the date its previous copy had and is rebuilt within a minute. Newer accounts show their onchain registration, as before.
 - The front page has a Reddit-style time filter next to hot and top: All time, Past year, Past month, Past week, Today (the default) and Past hour, kept in the URL as `t`. It picks the window Hypersnap ranks trending casts over: 1 hour, 24 hours or 7 days. Hypersnap goes back 7 days at most, so Past month, Past year and All time show the past week's casts and say so. A link with a time range still costs one API request, started by the inline script.
 - Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
@@ -33,6 +38,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- The Farcaster app is no longer called @warpcast anywhere: the "via" tooltip says "requested by Farcaster (app fid 9152)", and the "via Farcaster" links go to the app's account by fid instead of its old @warpcast name.
 - On post pages, the likes, recasts and replies popovers no longer show under the replies or under a native tooltip: the post lifts above the replies while a popover is open, and the counts row no longer carries a `title` tooltip (its ranking note is read to screen readers instead).
 - DEGEN staking promotions are left out as spam, like DEGEN reward bait: casts linking to or naming yeetr.fun, and "stake your DEGEN" or "yield on your DEGEN" pitches. Casts that just discuss staking stay.
 - "new" on the front page lists the newest casts on Farcaster, seconds to a minute old. It used to re-sort the trending pool, whose newest cast was hours old: Hypersnap ranks trending casts with a lag by design (even its 1-hour window's casts are 1–2 hours old), and Hypersnap's search index was about 8 hours behind. "new" now comes from Snapchain's event stream (`/api/v1/latest`): each build reads only the events since the previous one, adds the new top-level casts and drops removed ones, and the list is rebuilt at the edge every 30 seconds. `/status` reports how old the newest cast in the new and trending lists is, and how old each list is.

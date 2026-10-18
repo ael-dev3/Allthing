@@ -176,9 +176,11 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
     let pages = join_all(latest::SHARDS.map(|shard| hypersnap::events(&inv, shard, cursor(shard), EVENTS_PAGE))).await;
     let (mut added, mut removed, mut next) = (Vec::new(), Vec::new(), Vec::new());
     let mut failure = None;
+    let mut readable = 0;
     for (shard, page) in latest::SHARDS.into_iter().zip(pages) {
         match page.map(|body| latest::cast_events(&body)) {
             Ok(Some(events)) => {
+                readable += 1;
                 if let Some(event_id) = events.last_id.or(cursor(shard)) {
                     next.push(Cursor { shard, event_id });
                 }
@@ -187,12 +189,16 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
             }
             // Unreadable: this shard continues from where it was next time.
             other => {
-                failure = other.err().or(failure);
+                failure = Some(
+                    other
+                        .err()
+                        .unwrap_or_else(|| crate::upstream::UpstreamError::Parse("unreadable event stream".into())),
+                );
                 next.extend(cursor(shard).map(|event_id| Cursor { shard, event_id }));
             }
         }
     }
-    if next.is_empty() {
+    if readable == 0 {
         return Err(failure.map(Failure::upstream).unwrap_or_else(|| Failure::internal("unreadable event stream")));
     }
     let hashes = latest::to_hydrate(&added, &listed, &removed, 100);
@@ -651,6 +657,42 @@ mod tests {
         hub.events.insert(("2".into(), "newest".into()), page(&[]));
         // The build fails, so the previous copy stays (with its cursors).
         assert!(build(Rc::new(hub), None).is_err());
+    }
+
+    fn previous_latest() -> Vec<u8> {
+        serde_json::to_vec(&LatestPayload {
+            pool: Vec::new(),
+            notes: Annotations::default(),
+            cursors: vec![Cursor { shard: 1, event_id: 12 }, Cursor { shard: 2, event_id: 22 }],
+            meta: Meta { backend: Backend::Hypersnap, fetched_at: 1_800_000_000_000 - 30_000, stale: false },
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn unavailable_shards_do_not_turn_a_cached_list_into_a_fresh_success() {
+        let hub = Rc::new(Hub::default());
+        assert!(build(hub.clone(), Some(previous_latest())).is_err());
+        assert_eq!(hub.requests.borrow().iter().filter(|u| u.contains("/v1/events?")).count(), 2);
+        assert!(!hub.requests.borrow().iter().any(|u| u.contains("/v2/farcaster/casts?")));
+    }
+
+    #[test]
+    fn empty_readable_shards_are_a_valid_empty_list() {
+        let mut hub = Hub::default();
+        for shard in ["1", "2"] {
+            hub.events.insert((shard.into(), "newest".into()), page(&[]));
+        }
+        let payload = build(Rc::new(hub), None).unwrap();
+        assert!(payload.pool.is_empty() && payload.cursors.is_empty());
+    }
+
+    #[test]
+    fn a_readable_shard_advances_while_the_failed_shard_keeps_its_cursor() {
+        let mut hub = Hub::default();
+        hub.events.insert(("1".into(), "13".into()), page(&[r#"{"id":13}"#.into()]));
+        let payload = build(Rc::new(hub), Some(previous_latest())).unwrap();
+        assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 13 }, Cursor { shard: 2, event_id: 22 }]);
     }
 }
 

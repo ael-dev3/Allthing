@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use allthing_core::api::{CastPayload, QuotedCast, cast_path};
-use allthing_core::clients::client_name;
+use allthing_core::clients::{client_name, client_profile};
 use allthing_core::format::{full_number, short_address};
 use allthing_core::model::Cast;
 use allthing_core::params::hash_from_param;
@@ -19,7 +19,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
 use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo};
-use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, StaleNotice};
+use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::text::CastText;
@@ -104,19 +104,9 @@ pub fn PostPage() -> impl IntoView {
                 let mut replies = payload.thread.children.clone();
                 sort_thread(&mut replies, sort.get());
                 let shown = count_nodes(&replies);
-                let side = view! {
-                    <ProvenanceBox cast=cast.clone() notes=notes.clone()/>
-                    {payload.channel.clone().map(|channel| view! {
-                        <SideBox title=format!("/{}", channel.name)>
-                            {channel.description.clone().map(|d| view! { <p>{d}</p> })}
-                            {channel.counts().first().map(|count| view! { <p class="muted" title=count.describe()>{count.label()}</p> })}
-                        </SideBox>
-                    })}
-                }
-                .into_any();
                 let path = cast_href(&hash);
                 view! {
-                    <Columns side>
+                    <Columns>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
                         <MainCast cast=cast.clone() notes=notes.clone() payload=payload.clone()/>
                         <StaleNotice stale/>
@@ -197,6 +187,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                 " · "<TimeAgo ts=cast.ts/>
                 <ChannelLink cast=cast.clone()/>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
+                <PostedVia cast=cast.clone() notes=notes.clone()/>
             </p>
             <footer class="cast-foot">
                 <Engagement cast=cast.clone()/>
@@ -205,31 +196,29 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     }
 }
 
-/// Which app signed the cast.
+/// Which app signed the cast, as a quiet line in the post's meta: the
+/// signing key and the app's fid on hover.
 #[component]
-fn ProvenanceBox(cast: Cast, notes: Notes) -> impl IntoView {
+fn PostedVia(cast: Cast, notes: Notes) -> impl IntoView {
     let origin = notes.origins.get(&cast.hash).cloned();
     let app = notes.app_for(&cast.hash).cloned();
-    view! {
-        <SideBox title="Posted via">
-            <dl class="provenance">
-                <dt>"App"</dt>
-                <dd>{match (&origin, &app) {
-                    (Some(_), Some(app)) => view! {
-                        <a href=user_href(&app.username)>{client_name(app).to_owned()}</a>
-                        <span class="muted">{format!(" · app fid {}", app.fid)}</span>
-                    }.into_any(),
-                    (Some(o), None) => match o.app_fid {
-                        Some(fid) => view! { <span>{format!("app fid {fid}")}</span> }.into_any(),
-                        None => view! { <span class="muted">"a key registered without app attribution"</span> }.into_any(),
-                    },
-                    (None, _) => view! { <span class="muted">"still being resolved"</span> }.into_any(),
-                }}</dd>
-                {origin.map(|o| view! {
-                    <dt>"Signer key"</dt>
-                    <dd><code title=o.signer.clone()>{short_address(&o.signer)}</code></dd>
-                })}
-            </dl>
-        </SideBox>
+    let title = match (&origin, &app) {
+        (Some(o), Some(app)) => format!(
+            "Signed with key {}, requested by {} (app fid {}).",
+            short_address(&o.signer),
+            client_name(app),
+            app.fid
+        ),
+        (Some(o), None) => format!("Signed with key {}.", short_address(&o.signer)),
+        (None, _) => "Which app posted this is still being resolved.".to_owned(),
+    };
+    match app {
+        Some(app) => view! {
+            <span class="post-via muted" title=title>
+                "via "<a href=user_href(&client_profile(&app))>{client_name(&app).to_owned()}</a>
+            </span>
+        }
+        .into_any(),
+        None => ().into_any(),
     }
 }
