@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "xtask"
-description = "Build tasks for Allthing: bundle the browser app and compact the spam-label dataset"
+description = "Build tasks for Allthing: bundle the browser app and its static copy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,3 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 publish = false
-
-[dependencies]
-allthing-core.workspace = true
-serde_json.workspace = true

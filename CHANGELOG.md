@@ -15,6 +15,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A profile opened from a feed shows its header at once: the picture, names and fid from the casts the page showed, and the start of the bio, the follower counts and the join date from the profile card its payload carried. The casts load behind it, as a post's replies do. Where nothing was known about the account's bio and counts, they show placeholders, and a join date the profile would correct (an account from before November 2023) waits for the profile. Before, the page stayed a grey placeholder until the whole profile arrived, which took seconds when it wasn't cached.
 - Sort tabs answer at once, and scrolling stays smooth as cards are added. A list rendered anew (a sort tab, another page) draws a screenful of cards in the task that asked for it and the rest a screenful at a time after each paint; a re-sort starts again from the top, and infinite scroll adds its 25 cards the same way. Before, the 25 cards were built inside the click (13–39 ms of WebAssembly on a fast desktop CPU). Back and forward still draw the whole list at once while they restore the reader's place.
 
+### Removed
+
+- Profiles and profile cards no longer show the Farcaster app's spam label for an account ("Labeled likely spam", "Not labeled spam", "Nerfed", "no label") or the note that came with it. The label shards the build compacted from that app's public dataset are gone too, with the `cargo xtask labels` task, and builds no longer download the 125 MB dataset. Leaving out spam by a cast's content is unchanged.
+
 ### Fixed
 
 - Taps, clicks and keystrokes show their result sooner on every page: about 16–32 ms instead of 40–64 ms after the input in a headless browser without a GPU. The line of light drifting along the header animated its background, which repainted the header in every frame while it ran (always), and the next frame after an input waited behind that work. It now slides by transform, which the compositor animates without repainting; it looks the same and still stops under reduced motion.

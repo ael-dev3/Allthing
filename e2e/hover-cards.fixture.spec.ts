@@ -32,12 +32,9 @@ const wallets = {
   ],
   total: 40, sources: [], fetched_at: Date.now(),
 };
-// The Farcaster app's label dataset: fid 42 is labeled likely spam ('0').
-const labels = { source: "fixture", built_at: ts, newest_label: ts, shard_size: 32768, shards: 1,
-  counts: { likely_spam: 1, not_spam: 0, nerfed: 0 } };
 
 async function serve(page: Page) {
-  const requests = { vote: 0, wallets: 0, user: 0 };
+  const requests = { vote: 0, wallets: 0, user: 0, labels: 0 };
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => {
     // Later pages are empty, so the feed stops asking.
@@ -63,9 +60,11 @@ async function serve(page: Page) {
     requests.user += 1;
     return route.fulfill({ json: { user: { ...alice, follower_count: 1221547 }, pool: [], meta } });
   });
-  await page.route("**/data/labels/spam/meta.json", (route) => route.fulfill({ json: labels }));
-  await page.route("**/data/labels/spam/0000.txt", (route) =>
-    route.fulfill({ contentType: "text/plain", body: `${"-".repeat(42)}0` }));
+  // The Farcaster app's spam labels are gone: nothing may ask for them.
+  await page.route("**/data/labels/**", (route) => {
+    requests.labels += 1;
+    return route.fulfill({ status: 404, body: "" });
+  });
   return requests;
 }
 
@@ -108,8 +107,11 @@ test("cards in view preload their authors' vote and wallets, so a hovered card o
   await expect(profile.locator(".share-list li")).toHaveText([/Base\s*75%/, /Ethereum\s*25%/]);
   // Opening it read nothing more.
   expect(requests.vote + requests.wallets).toBe(6);
-  // The Farcaster app's label shows, and the cast stays listed.
-  await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText("Labeled likely spam");
+  // No account label: the card shows when it joined, the vote and the
+  // wallets, and the cast stays listed.
+  await expect(profile.locator(".fact dt")).toHaveText(["Joined", /NS vote/]);
+  await expect(profile).not.toContainText(/label|spam|nerfed/i);
+  expect(requests.labels).toBe(0);
   await expect(feedCard(page).locator(".cast-text")).toHaveText("Hover card fixture");
   // No scores, and no read of the profile's own payload.
   await expect(profile).not.toContainText(/score/i);

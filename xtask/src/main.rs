@@ -7,17 +7,10 @@
 //! - `pages [base]`: the same site for static hosting under `base` (default
 //!   `/Allthing`, for GitHub Pages) in `dist-pages/`, built with the
 //!   `static-host` feature so the browser builds payloads itself.
-//! - `labels <spam.jsonl> [version]`: compact the Farcaster app's spam-label
-//!   dataset into the per-fid shards under `dist/data/labels/spam/`.
 
-use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use allthing_core::labels::{LabelsMeta, SHARD_SIZE, ShardBuilder};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -26,13 +19,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("dist") => site(&Site::workers()),
         Some("pages") => site(&Site::pages(args.get(1).map_or("/Allthing", String::as_str))),
-        Some("labels") => match args.get(1) {
-            Some(input) => labels(Path::new(input), args.get(2).cloned()),
-            None => Err("usage: cargo xtask labels <spam.jsonl> [version]".into()),
-        },
-        _ => {
-            Err("usage: cargo xtask dist | cargo xtask pages [base] | cargo xtask labels <spam.jsonl> [version]".into())
-        }
+        _ => Err("usage: cargo xtask dist | cargo xtask pages [base]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -173,27 +160,8 @@ fn site(site: &Site) -> Result<()> {
         eprintln!("xtask: wasm-opt not found; shipping the unoptimized module");
     }
 
-    if site.static_host {
-        // Everything is rebuilt; label shards come from the Workers build's dist/.
-        let _ = fs::remove_dir_all(&dist);
-        let shards = root.join("dist/data/labels/spam");
-        if shards.is_dir() {
-            for shard in fs::read_dir(&shards).map_err(|e| e.to_string())? {
-                let shard = shard.map_err(|e| e.to_string())?.path();
-                if let Some(name) = shard.file_name() {
-                    write(&dist.join("data/labels/spam").join(name), read(&shard)?)?;
-                }
-            }
-        } else {
-            eprintln!("xtask: no label shards in dist/data; profiles will say labels are unavailable");
-        }
-    } else {
-        // Start from a clean assets directory; label shards under dist/data stay.
-        let _ = fs::remove_dir_all(&assets);
-        for stale in ["index.html", "_headers", "favicon.svg", "robots.txt", "ns-icon.png"] {
-            let _ = fs::remove_file(dist.join(stale));
-        }
-    }
+    // Everything is rebuilt.
+    let _ = fs::remove_dir_all(&dist);
 
     let wasm = read(&wasm_path)?;
     let wasm_name = format!("allthing-{}.wasm", fingerprint(&wasm));
@@ -248,43 +216,6 @@ fn site(site: &Site) -> Result<()> {
         kb(js.len()),
         kb(css.len())
     );
-    Ok(())
-}
-
-fn labels(input: &Path, version: Option<String>) -> Result<()> {
-    let file = fs::File::open(input).map_err(|e| format!("{}: {e}", input.display()))?;
-    let mut builder = ShardBuilder::default();
-    let (mut lines, mut used) = (0u64, 0u64);
-    for line in BufReader::new(file).lines() {
-        let line = line.map_err(|e| e.to_string())?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        lines += 1;
-        if builder.add_line(&line) {
-            used += 1;
-        }
-    }
-    if used == 0 {
-        return Err(format!("no spam labels found in {} ({lines} lines)", input.display()));
-    }
-    let shards: BTreeMap<u64, String> = builder.shards();
-    let out = root().join("dist/data/labels/spam");
-    let _ = fs::remove_dir_all(&out);
-    for (shard, contents) in &shards {
-        write(&out.join(format!("{shard:04}.txt")), contents)?;
-    }
-    let meta = LabelsMeta {
-        source: "https://github.com/warpcast/labels (spam.jsonl), published by the Farcaster app".into(),
-        version,
-        newest_label: builder.newest(),
-        built_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64),
-        shard_size: SHARD_SIZE,
-        shards: shards.len() as u64,
-        counts: builder.counts(),
-    };
-    write(&out.join("meta.json"), serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)?;
-    eprintln!("xtask: {used} of {lines} lines used; {} shards; counts {:?}", shards.len(), meta.counts);
     Ok(())
 }
 

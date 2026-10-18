@@ -32,8 +32,7 @@ Pushing to `main` then builds and deploys. The first deploy also:
 1. rustup and the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1 with the `wasm32-unknown-unknown` target);
 2. `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
 3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`;
-4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly, JS glue, CSS, fonts, `index.html`, `_headers`);
-5. the spam-label shards: `dist/data/labels/spam/`. If the live site already serves shards for the current upstream dataset, they are copied from it; otherwise the dataset (about 125 MB) is downloaded from [warpcast/labels](https://github.com/warpcast/labels), checked against its Git LFS hash, and compacted by `cargo xtask labels`. If that fails, the build still succeeds and profiles say the label data is unavailable. Set the build variable `SKIP_LABELS=1` to skip this step.
+4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly, JS glue, CSS, fonts, `index.html`, `_headers`).
 
 A clean build on 2 CPUs takes about 5 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
 
@@ -47,7 +46,6 @@ A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty 
 | Install `worker-build` (`cargo install`) | 2 min 34 s |
 | Worker (`worker-build --release`) | 31 s |
 | Browser app (`cargo build`, `wasm-bindgen`, `wasm-opt`) | 1 min 10 s |
-| Label shards, only when the upstream dataset changed | about 1 min more |
 
 ## After the first deploy
 
@@ -67,7 +65,7 @@ In the dashboard, **Workers & Pages → allthing → Deployments** lists every v
 The static build of the app still works and can be published from the `gh-pages` branch again, without GitHub Actions. That build runs the payload builders in the browser (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)). To update it:
 
 ```sh
-bash scripts/build.sh             # toolchain, label shards (dist/data), Cloudflare build
+bash scripts/build.sh             # toolchain and the Cloudflare build
 bash scripts/build-pages.sh       # dist-pages/, served under /Allthing
 E2E_PAGES=1 npx playwright test   # check it locally
 # then commit the contents of dist-pages/ to the gh-pages branch and push it
@@ -79,7 +77,7 @@ With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.soci
 
 ```sh
 npm ci                                 # wrangler and Playwright
-SKIP_LABELS=1 bash scripts/build.sh    # or without SKIP_LABELS to build the label shards
+bash scripts/build.sh                  # the pinned toolchain, the Worker and the app
 npx wrangler dev                       # http://127.0.0.1:8787, with a local Cache API
 ```
 

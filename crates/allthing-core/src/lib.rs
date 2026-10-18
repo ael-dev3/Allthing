@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared, IO-free logic for Allthing: the normalized Farcaster model, the
 //! Neynar-shaped JSON it is normalized from, ranking, text and media
-//! handling, provenance decoding, wallet shares, spam-label shards, profile
-//! cards, and the budget primitives the Worker uses to stay inside
+//! handling, provenance decoding, wallet shares, the content spam filter,
+//! profile cards, and the budget primitives the Worker uses to stay inside
 //! Cloudflare's limits.
 //!
 //! Everything here compiles both for the browser app and for the Worker, so it
@@ -16,7 +16,6 @@ pub mod format;
 pub mod guard;
 pub mod hls;
 pub mod index;
-pub mod labels;
 pub mod latest;
 pub mod listing;
 pub mod model;

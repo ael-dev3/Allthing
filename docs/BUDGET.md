@@ -8,7 +8,7 @@ The relevant Free plan limits, as of October 2026:
 | Limit | Value | Allthing's design |
 |---|---|---|
 | Worker requests | 100,000/day (resets 00:00 UTC) | Only `/api/*` and `/version` run the Worker; everything else is a static asset |
-| Static asset requests | free and unlimited | The app, styles, fonts and label shards are all static |
+| Static asset requests | free and unlimited | The app, styles and fonts are all static |
 | CPU time | 10 ms per invocation | Payloads are parsed once per refresh and cached; cache hits copy bytes |
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
@@ -22,14 +22,14 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Front page `/` | 1 (`/api/v1/home`) | index.html, boot.js, app JS + WASM, CSS, font (first visit only: hashed, immutable) |
 | Channel `/c/<id>` | 1 (`/api/v1/channel`) | none after the first visit |
 | Cast `/p/<hash>` | 1 (`/api/v1/cast`) | none |
-| Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`) | 1 label shard and `meta.json`, about 32 KB raw |
+| Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`) | none |
 | Channel directory | 1 (`/api/v1/channels`) | none |
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
 | Feed cards coming into view, with a mouse | 1 per run of six cards in view (`/api/v1/engagement`: who liked and recasted them), one at a time, at least 2 s apart, at most 4 per page view; none on touch screens, with Save-Data or on 2g | none |
 | Feed cards coming into view, with a mouse | up to 2 per new author (`/api/v1/vote`, `/api/v1/wallets`, edge-cached 1 h and 6 h), two at a time, at most 12 authors per 5 minutes; none on touch screens, Save-Data or 2g | none |
 | Hovering likes or recasts | **0** on a card whose batch is in; otherwise 1 per popover (`/api/v1/reactions`), after a 280 ms delay, then cached | none |
 | Hovering replies | **0** once hovering the card has prefetched its post; otherwise 1 (`/api/v1/replies`), then cached | none |
-| Opening a profile card (hovering a picture or name for 100 ms, keyboard focus resting on it, or a tap) | **0** when its author was preloaded; otherwise up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | the label shard and `meta.json`, as on profiles |
+| Opening a profile card (hovering a picture or name for 100 ms, keyboard focus resting on it, or a tap) | **0** when its author was preloaded; otherwise up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | none |
 | Typing in the search box | 1 per distinct query, after typing pauses for 250 ms (`/api/v1/search`, the same payload the results page uses, so pressing Enter then costs nothing) | none |
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
@@ -151,7 +151,6 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Circuit breakers** (one per upstream, per isolate, except link pages, which are many unrelated sites): three consecutive failures (timeouts, 5xx, 429) open the breaker for 5 s, doubling up to 5 minutes. An upstream's `Retry-After` is honored, up to the same cap. While open, nothing is sent and cached copies are served.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
-- **Static, built at deploy time**: the Farcaster app's 125 MB spam-label dataset becomes 35 shards of 32 KB, one character per fid (about 1.1 MB in all). Profiles read one shard as a free static asset, with zero Worker or upstream requests. Deploys reuse the live shards unless the upstream dataset changed (`scripts/build.sh`).
 - **Profile cards read votes and wallets more often** than profile views alone would: the first card opened for an account in a data center builds its `/vote` (fresh for an hour) and `/wallets` (fresh for 6 hours). The chain buckets above still cap the wallet reads. A chain refused while its bucket is empty is left out of that copy of the account's shares, as it would be on a profile.
 - **Solana activity** is one `getSignaturesForAddress` call per verified address (at most 2, up to 1,000 signatures each) to Solana's public RPC, under its own bucket (burst 4, two calls every 5 s). The RPC refuses browsers (any `Origin`), so the static copy reports Solana as not measured.
 

@@ -6,7 +6,6 @@ mod api;
 mod components;
 #[cfg(feature = "static-host")]
 mod host;
-mod labels;
 mod nav;
 mod pages;
 mod preload;

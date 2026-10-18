@@ -8,7 +8,7 @@ Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT
 ## Ground rules
 
 - **Read-only.** Don't add sign-in, signing, wallet connections or anything else that writes to Farcaster unless that scope has been agreed in an issue first.
-- **Never hide content** because of a third-party label. Show labels where they belong, with their source. Casts with mini apps or frames, and spam by the fixed rules in `allthing-core/src/spam.rs`, are left out server-side (`Cast::hidden`, `thread::without_hidden`, `thread::prune_hidden`), and new list endpoints must do the same.
+- **Never hide content** because of who posted it: Allthing shows no account labels. Casts with mini apps or frames, and spam by the fixed rules in `allthing-core/src/spam.rs`, are left out server-side (`Cast::hidden`, `thread::without_hidden`, `thread::prune_hidden`), and new list endpoints must do the same.
 - **Stay within the Free plan.** Each page view makes one API call. The Worker has a 10 ms CPU limit and at most 45 subrequests per invocation, cache calls included. New upstream calls go through `allthing-data/src/upstream.rs` (token buckets, breaker, timeouts) and payloads through `cache::serve`. Update [docs/BUDGET.md](docs/BUDGET.md) when the costs change.
 - **Put code where it belongs.** Pure logic and data types go in `allthing-core`, with unit tests. Provider quirks stay in `allthing-data/src/hypersnap.rs` and `allthing-core/src/normalize.rs`. The page builders in `allthing-data` also run in the browser for the static copy, so they reach the network only through the `Host` trait. UI goes in `allthing-web`, and its links are built with the helpers in `allthing-web/src/util.rs`, because the static copy lives under `/Allthing`.
 - **Keep it fast.** Stay within the budget in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and send prefetches through `api::prefetch`.
@@ -17,7 +17,7 @@ Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT
 
 1. Install [rustup](https://rustup.rs) and Node.js 22.12 or later, then run `npm ci`. `rust-toolchain.toml` pins Rust and the wasm32 target.
 2. Branch from `main` with a short-lived branch named for the change: `feat/…`, `fix/…`, `perf/…`, `docs/…` or `chore/…`.
-3. Build with `SKIP_LABELS=1 bash scripts/build.sh` and run with `npx wrangler dev` (http://127.0.0.1:8787). Rebuild after changing Rust code.
+3. Build with `bash scripts/build.sh` and run with `npx wrangler dev` (http://127.0.0.1:8787). Rebuild after changing Rust code.
 4. Test the change as described below.
 5. Write commits as [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `feat`, `fix`, `perf`, `refactor`, `docs`, `test` or `chore`, with an optional scope, as in `fix(player): …`. [docs/RELEASING.md](docs/RELEASING.md) says which types bump the version.
 6. Add a line to [CHANGELOG.md](CHANGELOG.md) under `[Unreleased]`, in the section it belongs to (Added, Changed, Removed or Fixed), for anything a reader or operator would notice.

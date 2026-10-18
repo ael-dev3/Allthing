@@ -6,8 +6,8 @@
 //!
 //! The bio, counts and join date come with the page's payload, or from what
 //! this visit has already shown of the account: a card never asks for the
-//! profile itself. Its vote, its Farcaster app label and its wallet activity
-//! load when it opens, as on the profile, and from the same sources.
+//! profile itself. Its vote and its wallet activity load when it opens, as
+//! on the profile, and from the same sources.
 
 use allthing_core::model::UserSummary;
 use allthing_core::profile::UserCard;
@@ -15,10 +15,9 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::chips::{Avatar, Count};
-use crate::components::facts::{JoinedFact, LabelFact, VoteFact, WalletShares};
+use crate::components::facts::{JoinedFact, VoteFact, WalletShares};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
-use crate::labels::spam_label;
 use crate::util::user_href;
 
 /// A card is at most this tall, room permitting; a taller one scrolls.
@@ -75,7 +74,6 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
         None => seen,
     };
     let joined = card.as_ref().and_then(UserCard::joined);
-    let label = LocalResource::new(move || spam_label(fid));
     view! {
         <div class="profile-card-head">
             <a class="profile-card-picture" href=href.clone() tabindex="-1" aria-hidden="true">
@@ -104,7 +102,6 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
         <dl class="facts">
             {joined.map(|joined| view! { <JoinedFact joined/> })}
             <VoteFact fid/>
-            <LabelFact label/>
         </dl>
         <div class="profile-card-wallets">
             <p class="profile-card-label">"Wallet activity"</p>

@@ -4,8 +4,7 @@
 # Builds the static copy of Allthing for GitHub Pages into dist-pages/: the
 # same Rust app, compiled with the `static-host` feature so the browser builds
 # each page's payload itself (there is no Worker behind a static host).
-# Run scripts/build.sh first: it installs the toolchain and wasm-bindgen, and
-# builds the spam-label shards that this copy reuses.
+# Run scripts/build.sh first: it installs the toolchain and wasm-bindgen.
 #
 #   bash scripts/build-pages.sh [base]   # base path, default /Allthing
 set -euo pipefail

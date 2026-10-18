@@ -2,7 +2,7 @@
 //! Allthing's Cloudflare Worker: a read-only, edge-cached API over Hypersnap
 //! and keyless public chain RPCs, built for the Workers Free plan.
 //!
-//! Static assets (the WebAssembly app, styles, label shards) are served by
+//! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; only `/api/*` runs here.
 //! Every page costs one API call, every payload is edge-cached with
 //! stale-while-revalidate, and every upstream call goes through a per-isolate

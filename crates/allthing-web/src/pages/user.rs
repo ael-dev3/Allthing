@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A profile: who the account is, how others label it, where its wallets
-//! are active, and its casts. Labels inform; they never hide content.
+//! A profile: who the account is, how it voted, where its wallets are
+//! active, and its casts.
 
 use std::sync::Arc;
 
@@ -18,11 +18,10 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
-use crate::components::facts::{JoinedFact, LabelFact, VoteFact, WalletShares};
+use crate::components::facts::{JoinedFact, VoteFact, WalletShares};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
-use crate::labels::{LabelState, spam_label};
 use crate::util::{set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
 
@@ -133,10 +132,6 @@ fn ProfileTabs(path: String, replies_tab: Memo<bool>, sort: Memo<Sort>) -> impl 
 /// know the picture and names, and shows placeholders for the rest.
 #[component]
 fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl IntoView {
-    let label = LocalResource::new({
-        let fid = user.fid;
-        move || spam_label(fid)
-    });
     view! {
         <section class="profile" aria-label="Profile" aria-busy=(!has_card).then_some("true")>
             <div class="profile-top">
@@ -168,16 +163,7 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid=user.fid/>
-                <LabelFact label/>
             </dl>
-            {move || match label.get() {
-                Some(LabelState::Labeled(l, _)) if l.is_flag() => Some(view! {
-                    <p class="label-note" role="note">
-                        {format!("The Farcaster app labels this account: “{}” Allthing shows the label for context and never hides anyone's casts.", l.description())}
-                    </p>
-                }),
-                _ => None,
-            }}
         </section>
     }
 }
