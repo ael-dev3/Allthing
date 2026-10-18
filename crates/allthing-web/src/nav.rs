@@ -10,10 +10,7 @@ use leptos::ev;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
-
-use crate::util::prefers_reduced_motion;
 
 thread_local! {
     /// Last scroll position of each visited page (pathname + query).
@@ -69,36 +66,6 @@ fn restore(target: f64, attempt: u32) {
     request_animation_frame(move || restore(target, attempt + 1));
 }
 
-/// Run a DOM update inside a view transition where supported and wanted.
-pub fn with_view_transition(update: impl FnOnce() + 'static) {
-    let doc = document();
-    let start = js_sys::Reflect::get(&doc, &JsValue::from_str("startViewTransition"))
-        .ok()
-        .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
-    let Some(start) = start.filter(|_| !prefers_reduced_motion()) else {
-        update();
-        return;
-    };
-    let update = RefCell::new(Some(update));
-    // The callback updates the DOM and resolves once the new page has painted.
-    let callback = Closure::once_into_js(move || {
-        if let Some(update) = update.borrow_mut().take() {
-            update();
-        }
-        js_sys::Promise::new(&mut |resolve, _| {
-            let resolve = resolve.clone();
-            request_animation_frame(move || {
-                request_animation_frame(move || {
-                    let _ = resolve.call0(&JsValue::NULL);
-                })
-            });
-        })
-    });
-    if start.call1(&doc, &callback).is_err() {
-        // Fall back silently; the update already ran or will not.
-    }
-}
-
 /// Elements whose clicks belong to themselves, not to the card.
 const INTERACTIVE: &str =
     "a, button, input, textarea, select, summary, label, video, iframe, img, .popover, .media-grid, [role=dialog]";
@@ -125,8 +92,8 @@ pub fn card_click(href: String) -> impl Fn(ev::MouseEvent) + Clone + 'static {
             let _ = window().open_with_url_and_target(&href, "_blank");
             return;
         }
-        let navigate = navigate.clone();
-        let href = href.clone();
-        with_view_transition(move || navigate(&href, NavigateOptions::default()));
+        // Straight to the router, like a link: a view transition here would
+        // first snapshot the whole feed, which costs about 100 ms.
+        navigate(&href, NavigateOptions::default());
     }
 }
