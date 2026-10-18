@@ -55,6 +55,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [0.2.0] - 2026-10-17
 
+Released before tagging began; the link points to its last commit, `90ce332`.
+
 ### Added
 
 - Allthing rebuilt in Rust:
@@ -70,11 +72,13 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [0.1.0] - 2026-10-17
 
+Released before tagging began; the link points to its last commit, `e521cd1`.
+
 ### Added
 
 - A read-only Next.js prototype with live Hypersnap data, on GitHub Pages.
 
 [Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/ael-dev3/Allthing/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/ael-dev3/Allthing/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/ael-dev3/Allthing/releases/tag/v0.1.0
+[0.3.0]: https://github.com/ael-dev3/Allthing/releases/tag/v0.3.0
+[0.2.0]: https://github.com/ael-dev3/Allthing/tree/90ce332
+[0.1.0]: https://github.com/ael-dev3/Allthing/tree/e521cd1
