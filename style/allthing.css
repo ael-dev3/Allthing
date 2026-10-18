@@ -2170,15 +2170,6 @@ code {
   height: 1px;
 }
 
-@view-transition {
-  navigation: auto;
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 0.18s;
-}
-
 /* Popovers: who liked, recasted, replies, wallets. */
 .popover {
   position: relative;

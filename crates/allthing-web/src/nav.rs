@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Navigation that feels instant: scroll positions restored on back and
-//! forward, view transitions between pages, and cards that open anywhere
-//! they are clicked (except on links, controls, media, or selected text).
+//! forward, and cards that open anywhere they are clicked (except on links,
+//! controls, media, or selected text).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -213,8 +213,7 @@ pub fn card_click(href: String) -> impl Fn(ev::MouseEvent) + Clone + 'static {
             let _ = window().open_with_url_and_target(&href, "_blank");
             return;
         }
-        // Straight to the router, like a link: a view transition here would
-        // first snapshot the whole feed, which costs about 100 ms.
+        // Straight to the router, like a link.
         navigate(&href, NavigateOptions::default());
     }
 }
