@@ -99,11 +99,14 @@ pub fn Home() -> impl IntoView {
                 set_timeout(
                     move || {
                         if let Some(Some(again)) = retry.try_get_value() {
+                            loading.set(false);
                             again.run(());
                         }
                     },
                     wait,
                 );
+                // Keep further observer callbacks from bypassing backoff.
+                return;
             }
             loading.set(false);
         });
@@ -136,7 +139,7 @@ pub fn Home() -> impl IntoView {
                 let pool = top_level(&payload.pool);
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
                 // Re-sorting reorders the list in place instead of rebuilding the page.
-                let casts = Signal::derive(move || {
+                let casts = Memo::new(move |_| {
                     let order = sort.get();
                     let mut all = sorted(&pool, order);
                     more.with(|pages| {
@@ -152,7 +155,7 @@ pub fn Home() -> impl IntoView {
                     <Columns side=side(payload.channels.clone())>
                         <Heading sort/>
                         <StaleNotice stale/>
-                        <CastList casts notes on_end=load_more/>
+                        <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                     </Columns>
                 }
