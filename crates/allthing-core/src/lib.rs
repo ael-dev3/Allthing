@@ -20,6 +20,7 @@ pub mod normalize;
 pub mod params;
 pub mod provenance;
 pub mod ranking;
+pub mod spam;
 pub mod text;
 pub mod thread;
 pub mod time;

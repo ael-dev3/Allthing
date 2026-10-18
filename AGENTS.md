@@ -30,5 +30,5 @@ Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly a
   - short-lived `feat/*` or `fix/*` branches, squash-merged by PR with green CI;
   - releases tagged `vX.Y.Z` with a GitHub release.
 - **Speed.** Keep within `docs/PERFORMANCE.md`. Prefetches go through `api::prefetch`, which caps and dedupes them.
-- **Mini apps.** Casts with mini app or frame links are filtered out server-side (`Cast.mini_app`, `thread::without_mini_apps`). Keep new list endpoints doing the same.
+- **Mini apps and spam.** Casts with mini app or frame links, and spam by the rules in `allthing-core/src/spam.rs`, are filtered out server-side (`Cast::hidden`, `thread::without_hidden`, `thread::prune_hidden`). Keep new list endpoints doing the same.
 - **Deploying.** Cloudflare Workers Builds deploys `main` with `bash scripts/build.sh` and `npx wrangler deploy`; see `docs/DEPLOY.md`.

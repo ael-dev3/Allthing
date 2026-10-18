@@ -94,8 +94,9 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 **Mini apps and frames are filtered out server-side.** Allthing doesn't run them, so a cast whose embeds or text link to a mini app or frame is dropped:
 - **Detection by URL.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it.
 - **Detection by page.** Hypersnap returns no embed metadata, so mini apps on their own domains are found by reading the linked page's meta tags (`fc:miniapp`, `fc:frame`, `fc:frame:*`, `of:*`). The Worker reads a few unknown links per build, remembers each verdict per URL, and carries the verdicts in the payload (`Annotations.links`); `thread::mark_mini_apps` then flags the casts. See [BUDGET.md](BUDGET.md#3-subrequests-per-invocation).
-- **Lists.** The builders drop flagged casts from home, channels, profiles, search and reply previews (`thread::without_mini_apps`).
-- **Threads.** `thread::prune_mini_apps` drops a flagged reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden".
+- **Spam.** `spam.rs` flags casts by the owner's content rules: links or embeds on `*.vercel.app`, anything mentioning or linking gig-bot, and DEGEN reward or airdrop bait ("Just unlocked my DEGEN rewards", `?degen=1` links). `normalize.rs` sets `Cast.spam`, and spam goes wherever mini apps go. The rules read only the cast's own text, links and mentions, never an account label.
+- **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`).
+- **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
 Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The rest of the code sees the `allthing_core::model` types only.
 

@@ -43,21 +43,21 @@ pub fn mark_mini_apps_in_tree(node: &mut ThreadNode, links: &BTreeMap<String, bo
     }
 }
 
-/// Listings leave mini app casts out entirely.
-pub fn without_mini_apps(casts: Vec<Cast>) -> Vec<Cast> {
-    casts.into_iter().filter(|c| !c.mini_app).collect()
+/// Listings leave hidden casts (mini apps, spam) out entirely.
+pub fn without_hidden(casts: Vec<Cast>) -> Vec<Cast> {
+    casts.into_iter().filter(|c| !c.hidden()).collect()
 }
 
-/// Threads keep their shape: a mini app reply with no replies of its own is
-/// dropped, and one with replies stays as an emptied node so the replies
-/// below it still make sense.
-pub fn prune_mini_apps(mut node: ThreadNode) -> Option<ThreadNode> {
-    node.children = node.children.into_iter().filter_map(prune_mini_apps).collect();
-    if node.cast.mini_app {
+/// Threads keep their shape: a hidden reply (mini app, spam) with no
+/// replies of its own is dropped, and one with replies stays as an emptied
+/// node so the replies below it still make sense.
+pub fn prune_hidden(mut node: ThreadNode) -> Option<ThreadNode> {
+    node.children = node.children.into_iter().filter_map(prune_hidden).collect();
+    if node.cast.hidden() {
         if node.children.is_empty() {
             return None;
         }
-        node.cast.strip_mini_app();
+        node.cast.strip_hidden();
     }
     Some(node)
 }
@@ -83,6 +83,7 @@ mod tests {
                 recasts: 0,
                 replies: 0,
                 mini_app: false,
+                spam: false,
             },
             children,
         }
@@ -124,13 +125,13 @@ mod tests {
         };
         let tree =
             node("r", vec![mini("lone", vec![]), mini("parent", vec![node("child", vec![])]), node("ok", vec![])]);
-        let pruned = prune_mini_apps(tree).unwrap();
+        let pruned = prune_hidden(tree).unwrap();
         let hashes: Vec<&str> = pruned.children.iter().map(|c| c.cast.hash.as_str()).collect();
         assert_eq!(hashes, ["parent", "ok"]);
         assert!(pruned.children[0].cast.text.is_empty() && pruned.children[0].cast.mini_app);
         assert_eq!(pruned.children[0].children[0].cast.hash, "child");
-        assert!(prune_mini_apps(mini("root", vec![])).is_none());
-        let listing = without_mini_apps(vec![mini("m", vec![]).cast, node("n", vec![]).cast]);
+        assert!(prune_hidden(mini("root", vec![])).is_none());
+        let listing = without_hidden(vec![mini("m", vec![]).cast, node("n", vec![]).cast]);
         assert_eq!(listing.len(), 1);
     }
 

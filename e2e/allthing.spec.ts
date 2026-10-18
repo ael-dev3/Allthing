@@ -838,6 +838,32 @@ test.describe("threads and navigation", () => {
     expect(held - (await topOf(before.hash)), "still where the reader scrolled").toBeGreaterThan(300);
   });
 
+  test("spam is left out of the feed and search", async ({ page }) => {
+    // Links to vercel.app apps, gig-bot, and DEGEN reward or airdrop bait.
+    const spammy = (root: Locator) =>
+      root.evaluateAll((cards) =>
+        cards
+          .filter((card) => {
+            const text = (card.textContent ?? "").toLowerCase().replace(/\$/g, "");
+            const links = [...card.querySelectorAll("a[href]")].map((a) => (a as HTMLAnchorElement).href.toLowerCase());
+            return (
+              /gig-?bot|unlocked my degen|degen (reward|airdrop)/.test(text) ||
+              links.some((h) => /\.vercel\.app|gig-?bot|[?&]degen=1/.test(h))
+            );
+          })
+          .map((card) => card.getAttribute("data-hash")),
+      );
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    expect(await spammy(page.locator(".cast-card"))).toEqual([]);
+    for (const q of ["gig-bot", "DEGEN rewards", "vercel.app"]) {
+      await page.goto(at(`/search?q=${encodeURIComponent(q)}`));
+      const casts = page.getByRole("region", { name: "Casts" });
+      await expect(page.getByRole("region", { name: "People" }).or(casts).or(page.locator(".empty")).first()).toBeVisible();
+      expect(await spammy(casts.locator(".cast-card")), `search ${q}`).toEqual([]);
+    }
+  });
+
   test("one search box finds posts, people and channels", async ({ page }) => {
     await page.goto(at("/"));
     const box = page.getByRole("searchbox", { name: /Search casts, people and channels/ });

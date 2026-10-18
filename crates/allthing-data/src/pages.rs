@@ -13,7 +13,7 @@ use allthing_core::model::{Cast, Channel, Embed};
 use allthing_core::normalize;
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
-use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_mini_apps, without_mini_apps};
+use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, without_hidden};
 use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
 use futures::future::{join, join_all, join3};
@@ -71,11 +71,11 @@ fn with_defaults(mut channels: Vec<Channel>, limit: usize) -> Vec<Channel> {
 }
 
 /// Check the casts' links for mini app pages (within the build's budget),
-/// then leave out every cast that is a mini app.
-async fn drop_mini_apps(inv: &Invocation, mut casts: Vec<Cast>, notes: &mut api::Annotations) -> Vec<Cast> {
+/// then leave out every cast that is a mini app or spam.
+async fn drop_hidden(inv: &Invocation, mut casts: Vec<Cast>, notes: &mut api::Annotations) -> Vec<Cast> {
     notes.links = miniapps::check(inv, &casts, &notes.links).await;
     mark_mini_apps(&mut casts, &notes.links);
-    without_mini_apps(casts)
+    without_hidden(casts)
 }
 
 fn newest_unique(mut casts: Vec<Cast>, limit: usize) -> Vec<Cast> {
@@ -119,7 +119,7 @@ pub async fn home(inv: Rc<Invocation>, offset: u32, previous: Option<Rc<Vec<u8>>
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let channels = if offset == 0 { with_defaults(channels, 12) } else { channels };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
-    let pool = drop_mini_apps(&inv, casts, &mut notes).await;
+    let pool = drop_hidden(&inv, casts, &mut notes).await;
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&HomePayload { pool, channels, notes, meta: meta(&inv) }, api::HOME_CACHE)
@@ -141,7 +141,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     // Hypersnap merges several shards per page, so order isn't guaranteed.
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let casts = raw.iter().map(normalize::cast).collect();
-    let pool = newest_unique(drop_mini_apps(&inv, casts, &mut notes).await, POOL_SIZE as usize);
+    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
@@ -155,9 +155,9 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     let mut thread = normalize::thread(&root);
     notes.links = miniapps::check(&inv, flatten(&thread), &notes.links).await;
     mark_mini_apps_in_tree(&mut thread, &notes.links);
-    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_mini_apps).collect();
-    if thread.cast.mini_app {
-        thread.cast.strip_mini_app();
+    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_hidden).collect();
+    if thread.cast.hidden() {
+        thread.cast.strip_hidden();
     }
     let first = &thread.cast;
     let quote_hashes: Vec<String> = first
@@ -228,7 +228,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     .await;
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
-    let pool = newest_unique(drop_mini_apps(&inv, casts, &mut notes).await, POOL_SIZE as usize);
+    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
     if let Some(score) = raw.score_micros() {
         notes.scores.insert(fid, score);
     }
@@ -277,7 +277,7 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
         casts.unwrap_or_default().iter().map(|c| allthing_core::params::normalize_hash(&c.hash)).collect();
     let hydrated = hypersnap::casts_bulk(&inv, &hashes).await.unwrap_or_default();
     let mut notes = api::Annotations::default();
-    let casts = drop_mini_apps(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
+    let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
     let refs: Vec<&Cast> = casts.iter().collect();
@@ -308,7 +308,7 @@ pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure
     };
     let mut notes = api::Annotations::default();
     let replies = root.direct_replies.iter().flatten().map(normalize::cast).collect();
-    let mut replies = drop_mini_apps(&inv, replies, &mut notes).await;
+    let mut replies = drop_hidden(&inv, replies, &mut notes).await;
     replies.sort_by_key(|c| std::cmp::Reverse(allthing_core::ranking::points(c)));
     replies.truncate(10);
     let refs: Vec<&Cast> = replies.iter().collect();

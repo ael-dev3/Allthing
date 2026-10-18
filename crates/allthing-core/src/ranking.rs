@@ -150,6 +150,7 @@ mod tests {
             recasts,
             replies,
             mini_app: false,
+            spam: false,
         }
     }
 
