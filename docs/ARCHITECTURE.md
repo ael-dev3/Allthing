@@ -18,6 +18,11 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
                                                                                          ──▶  farcaster.xyz (votes, channel records)
 
  images, video, posters     ── direct ──▶  imagedelivery.net, Cloudflare Stream, …  (never proxied)
+
+                                           cron, every minute: the indexer
+                                             one page of casts             ──────────────────▶  Hypersnap /v2
+                                             → D1 allthing-index (casts, rankings); the front page
+                                               reads one ranking row for Past month, Past year and All time
 ```
 
 ## Crates
@@ -26,7 +31,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 |---|---|---|
 | `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, spam-label shards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
 | `allthing-data` | native + wasm32 | The page builders that assemble each payload, and the Hypersnap and RPC clients behind guards. The runtime is abstracted as a `Host` (clock, HTTP with a timeout, background work), so the same code runs in the Worker and in the browser. |
-| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController` and `waitUntil`. |
+| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController`, `waitUntil` and D1. Its cron handler runs the indexer. |
 | `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, prefetching and scroll restoration. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
 | `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`; `cargo xtask labels` turns the spam-label dataset into shards. |
 
@@ -45,13 +50,14 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
 | `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
-| `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter). Month, year and all time use 7 days, Hypersnap's widest window | `feed/trending` with `time_window` |
+| `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter) | `feed/trending` with `time_window` |
+| `/api/v1/home?window=30d\|365d\|all` | the top casts of the past month, the past year or all time, ranked from [Allthing's index](#allthings-index-past-month-past-year-all-time), with `index` saying how many casts it was ranked from and how far back they go. Until the index can rank the range, the past week's trending pool, without `index` | the span's ranking row in D1, then `casts?casts=…` for the page's 100 casts, fresh |
 | `/api/v1/latest` | `LatestPayload`: the newest ~100 top-level casts, for the front page's "new", with each shard's event cursor | `/v1/events` on shards 1 and 2 (only the events since the previous build's cursors; the newest 1,000 per shard when the previous copy is over 10 minutes old), then `casts?casts=…` once for the new casts and the listed ones' counts, and once more for the casts they quote |
 | `/api/v1/search?q=<query>` | `SearchPayload`: casts (with the casts they quote), people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts, and once more for quoted casts), `user/search`, `channel/search` |
 | `/api/v1/reactions?hash=<hash>&type=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
 | `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |
 | `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's Farcaster vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
-| `/api/v1/status` | isolate and upstream-guard state | nothing: no upstream calls, no cache |
+| `/api/v1/status` | isolate and upstream-guard state, how fresh the cached "new" and trending lists are, and the index's rankings and progress | two cache reads and the indexer's state in D1; no upstream calls |
 | `/version` (and `/api/v1/version`) | `{"name","version","commit"}` | nothing |
 
 Paths are relative to `https://haatz.quilibrium.com/v2/farcaster/` (Hypersnap's Neynar-compatible API). Payloads carry `Meta` (backend, fetch time, staleness) and `Annotations`, shared by every cast on the page:
@@ -103,6 +109,16 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 - **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
 Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, a channel's `member_count` is its number of distinct casters (`Channel.casters`), user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The Farcaster app's channel record is merged in by `normalize::enrich_channel`. The rest of the code sees the `allthing_core::model` types only.
+
+## Allthing's index (Past month, Past year, All time)
+
+Hypersnap ranks trending casts over 7 days at most, and its search ignores dates, so the longer ranges come from Allthing's own index of notable casts, in the D1 database `allthing-index` (the `INDEX` binding; schema in `migrations/`). The logic is in `allthing_core::index`, the run in `allthing_data::indexer`, and the SQL in `crates/allthing-worker/src/index.rs`.
+
+- **The indexer** is the Worker's cron handler, run every minute. Each run reads one page of 100 casts: every fourth run, a page of the past week's trending casts (the ten pages in turn, so each is refreshed about every 40 minutes); the others, the next page back in time of one feed, in turn. Feeds start with seven big channels (`SEED_CHANNELS`), and every author of a cast with 250 points or more joins the queue (at most 120 feeds; feeds read to their start are remembered and not read again). It keeps the top-level casts that are not spam or mini apps and whose points could rank: at least 20, and once a ranking is full, at least its last cast's points. Only those are normalized, which keeps a run's CPU to about one page's parse.
+- **Storage.** `casts` holds each kept cast's hash, time and points; storing it again updates its points, and writes nothing if they haven't changed. `rankings` holds each span's top 1,000 casts as one JSON row, recomputed inside D1 by one statement, so the Worker never reads more than a page of casts. A ranking is due again a minute per 50 indexed casts after it was computed, between 5 minutes and 6 hours. `state` holds where each feed is, and the day's D1 usage.
+- **Limits.** The indexer estimates its D1 rows read and written and stops reading for the day at 50,000 rows written or 2,000,000 read, half of the free plan's 100,000 and 5,000,000 or less, leaving the rest to the front page. See [BUDGET.md](BUDGET.md#9-the-index-cron-and-d1).
+- **Reading.** `/api/v1/home?window=30d|365d|all` reads the span's ranking row, then the page's 100 casts in one bulk `casts?casts=…` call, so counts, text and media are fresh; deleted casts drop out, and spam and mini apps are filtered again. The payload's `index` (`IndexCoverage`) says how many casts the span was ranked from and the oldest one's date, and the page shows it under the time filter. Until a span has a ranking (a new index, or D1 not answering), the payload is the past week's trending pool without `index`, and the page says so. The static copy has no index: its menu leaves these ranges out.
+- **Coverage** grows as the feeds are read back: Past month and Past year fill within hours, and All time keeps deepening for days as the queued authors' histories are read. The ranking reflects what has been indexed, which the note under the filter states.
 
 ## The browser app
 

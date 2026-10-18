@@ -9,6 +9,7 @@
 pub mod annotate;
 pub mod chain;
 pub mod hypersnap;
+pub mod indexer;
 pub mod miniapps;
 pub mod pages;
 pub mod upstream;
@@ -24,6 +25,7 @@ use allthing_core::params::{
 use allthing_core::ranking::TrendingWindow;
 use futures::future::LocalBoxFuture;
 
+use crate::indexer::Index;
 use crate::upstream::UpstreamError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +70,10 @@ pub trait Host {
     /// Run `future` in the background. In a Worker this keeps the invocation
     /// alive until it finishes (`waitUntil`).
     fn spawn(&self, future: LocalBoxFuture<'static, ()>);
+    /// Allthing's index of notable casts, where the runtime has one.
+    fn index(&self) -> Option<Rc<dyn Index>> {
+        None
+    }
 }
 
 /// One request's view of the runtime: its host and its subrequest budget.
@@ -106,6 +112,10 @@ impl Invocation {
         let taken = wanted.min(self.link_checks.get());
         self.link_checks.set(self.link_checks.get() - taken);
         taken
+    }
+
+    pub fn index(&self) -> Option<Rc<dyn Index>> {
+        self.host.index()
     }
 
     pub fn wait_until(&self, future: impl Future<Output = ()> + 'static) {
@@ -196,7 +206,7 @@ impl Endpoint {
             "/home" => {
                 let window = match query("window") {
                     None => TrendingWindow::Day,
-                    Some(w) => TrendingWindow::parse(&w).ok_or(bad("Expected ?window=1h|24h|7d"))?,
+                    Some(w) => TrendingWindow::parse(&w).ok_or(bad("Expected ?window=1h|24h|7d|30d|365d|all"))?,
                 };
                 match query("offset").map(|o| o.parse::<u32>()) {
                     None => Ok(Endpoint::Home(0, window)),
@@ -334,7 +344,13 @@ mod tests {
             Endpoint::from_path("/api/v1/home?window=7d&offset=100"),
             Ok(Endpoint::Home(100, TrendingWindow::Week))
         );
-        assert_eq!(Endpoint::from_path("/api/v1/home?window=30d").map_err(|e| e.status), Err(400));
+        assert_eq!(Endpoint::from_path("/api/v1/home?window=30d"), Ok(Endpoint::Home(0, TrendingWindow::Month)));
+        assert_eq!(
+            Endpoint::from_path("/api/v1/home?window=all&offset=900"),
+            Ok(Endpoint::Home(900, TrendingWindow::All))
+        );
+        assert_eq!(Endpoint::Home(100, TrendingWindow::Year).cache_name(), "home?window=365d&offset=100");
+        assert_eq!(Endpoint::from_path("/api/v1/home?window=90d").map_err(|e| e.status), Err(400));
         // An explicit default window is cached with the plain front page.
         assert_eq!(Endpoint::from_path("/api/v1/home?window=24h").unwrap().cache_name(), "home");
         assert_eq!(Endpoint::Home(200, TrendingWindow::Day).cache_name(), "home?offset=200");

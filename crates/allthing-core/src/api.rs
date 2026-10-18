@@ -83,6 +83,23 @@ pub struct HomePayload {
     #[serde(default)]
     pub notes: Annotations,
     pub meta: Meta,
+    /// For Past month, Past year and All time: how much of Farcaster
+    /// Allthing's index covers. Absent while the index can't rank them, and
+    /// the pool is then the past week's trending casts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<IndexCoverage>,
+}
+
+/// What a ranking from Allthing's index was ranked from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexCoverage {
+    /// Casts indexed in the range.
+    pub casts: u64,
+    /// The oldest of them, Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+    /// When the ranking was computed, Unix milliseconds.
+    pub ranked_at: i64,
 }
 
 /// The newest casts on Farcaster, from Snapchain's event stream: the front
@@ -287,6 +304,8 @@ pub struct CachePolicy {
 }
 
 pub const HOME_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 30 };
+/// Rankings from Allthing's index are recomputed every 5 minutes at most.
+pub const INDEXED_HOME_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 /// New casts arrive every few seconds: fresh for 30 s, then refreshed in the
 /// background for a minute, then rebuilt while the reader waits.
 pub const LATEST_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 60, keep: 86_400, browser: 15 };
@@ -429,6 +448,7 @@ mod tests {
     fn policies_are_ordered() {
         for policy in [
             HOME_CACHE,
+            INDEXED_HOME_CACHE,
             LATEST_CACHE,
             CHANNEL_CACHE,
             CAST_CACHE,

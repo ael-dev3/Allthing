@@ -10,19 +10,27 @@
 
 mod cache;
 mod host;
+mod index;
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError};
+use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::ranking::TrendingWindow;
+use allthing_core::time::iso_utc;
+use allthing_data::indexer;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
 use futures::future::FutureExt;
-use worker::{Context, Env, Headers, Method, Request, Response, Result, Url, event};
+use worker::{
+    Context, Env, Headers, Method, Request, Response, Result, ScheduleContext, ScheduledEvent, Url, console_error,
+    console_log, event,
+};
 
 use crate::cache::Served;
-use crate::host::WorkerHost;
+use crate::host::{Lifetime, WorkerHost};
+use crate::index::D1Index;
 
 /// The workspace version and the short commit this Worker was built from.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -63,7 +71,8 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return Ok(limited);
     }
 
-    let inv = Rc::new(Invocation::new(Rc::new(WorkerHost::new(ctx)), SUBREQUEST_BUDGET));
+    let index = D1Index::new(&env).map(Rc::new);
+    let inv = Rc::new(Invocation::new(Rc::new(WorkerHost::new(Lifetime::Request(ctx), index)), SUBREQUEST_BUDGET));
     STARTED.with(|s| {
         if s.get() == 0.0 {
             s.set(inv.now());
@@ -71,6 +80,22 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     });
     REQUESTS.with(|r| r.set(r.get() + 1));
     route(&inv, &url).await
+}
+
+/// The indexer, run every minute by the cron trigger in wrangler.toml: one
+/// page of casts into Allthing's index (see `allthing_core::index`).
+#[event(scheduled)]
+pub async fn scheduled(_event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
+    let Some(index) = D1Index::new(&env).map(Rc::new) else {
+        console_error!("indexer: no INDEX binding");
+        return;
+    };
+    let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()));
+    let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
+    match indexer::run(&inv, index.as_ref()).await {
+        Ok(report) => console_log!("indexer: {report:?}"),
+        Err(error) => console_error!("indexer: {error}"),
+    }
 }
 
 /// Per-client limit from the `API_LIMITER` binding, when configured: a
@@ -165,6 +190,7 @@ async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
             "new": freshness(new),
             "trending": freshness(trending),
         },
+        "index": index_status(inv).await,
         "ok": true,
         "isolate": {
             "up_seconds": ((now - STARTED.with(Cell::get)) / 1000.0).round(),
@@ -177,4 +203,35 @@ async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
     headers.set("content-type", "application/json; charset=utf-8")?;
     headers.set("cache-control", "no-store")?;
     Ok(Response::from_json(&body)?.with_headers(headers))
+}
+
+/// The index's rankings and the indexer's progress, or why there are none.
+async fn index_status(inv: &Invocation) -> serde_json::Value {
+    let Some(index) = inv.index() else { return serde_json::json!({ "available": false }) };
+    match index.load().await {
+        Ok(saved) => {
+            let state = IndexerState::load(saved.state.as_deref());
+            let rankings: serde_json::Map<String, serde_json::Value> = saved
+                .rankings
+                .iter()
+                .map(|m| {
+                    let ranked = serde_json::json!({
+                        "ranked_at": iso_utc(m.built / 1000),
+                        "casts": m.total,
+                        "floor": m.floor,
+                    });
+                    (m.span.name().to_owned(), ranked)
+                })
+                .collect();
+            serde_json::json!({
+                "available": true,
+                "rankings": rankings,
+                "runs": state.runs,
+                "feeds": state.feeds.len(),
+                "finished": state.finished.len(),
+                "today": { "rows_read": state.read, "rows_written": state.written },
+            })
+        }
+        Err(error) => serde_json::json!({ "available": false, "error": error.to_string() }),
+    }
 }

@@ -22,7 +22,8 @@ Optional: turn off **builds for non-production branches** to save build minutes,
 Pushing to `main` then builds and deploys. The first deploy also:
 
 - attaches the custom domains `allthing.social` and `www.allthing.social` from `routes` in `wrangler.toml`. Cloudflare creates their DNS records and certificates, which can take a few minutes; the zone's DNS should not already have CNAME records for them;
-- makes the `API_LIMITER` rate-limiting binding live (no setup; its counters are per Cloudflare location).
+- makes the `API_LIMITER` rate-limiting binding live (no setup; its counters are per Cloudflare location);
+- binds the D1 database `allthing-index` (created by the owner in the same account; its id is in `wrangler.toml`) as `INDEX`, and starts the cron trigger that runs the indexer every minute. The Worker creates the index's tables itself on its first run (`migrations/0001_index.sql`, every statement `IF NOT EXISTS`). Applying the migrations with wrangler is optional, and records them as applied: `npx wrangler d1 migrations apply allthing-index --remote`. If the deploy fails because the Workers Builds token can't bind D1, give that token the **D1: Edit** permission (**My Profile → API Tokens**).
 
 ### What the build does
 
@@ -82,7 +83,7 @@ SKIP_LABELS=1 bash scripts/build.sh    # or without SKIP_LABELS to build the lab
 npx wrangler dev                       # http://127.0.0.1:8787, with a local Cache API
 ```
 
-`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
+`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. It gives the `INDEX` binding a local D1 database (in `.wrangler/state`), which starts empty. To run the indexer by hand, call `curl 'http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=*+*+*+*+*'` once per run (`/__scheduled` would reach the static assets); `/api/v1/status` shows its progress. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
 
 ## Limits to keep in mind
 
