@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { activateVisible } from "./helpers/pointer";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -52,7 +53,7 @@ test("once the reader turns sound on, later videos autoplay with sound until the
   expect(await sound(page)).toBeNull();
 
   // The badge turns this video's sound on, in place.
-  await first.getByRole("button", { name: "Sound off · tap for sound", exact: true }).click();
+  await activateVisible(first.getByRole("button", { name: "Sound off · tap for sound", exact: true }));
   await expect.poll(() => first.locator("video").evaluate(playingWithSound)).toBe(true);
   await expect(first.getByRole("button", { name: "Sound on · tap to mute", exact: true })).toBeVisible();
   await expect(first.getByRole("button", { name: /^Show controls:/ })).toBeVisible();
@@ -64,7 +65,7 @@ test("once the reader turns sound on, later videos autoplay with sound until the
   await expect.poll(() => second.locator("video").evaluate(playingWithSound), { timeout: 15_000 }).toBe(true);
 
   // Muting it turns sound off for the videos after it.
-  await second.getByRole("button", { name: "Sound on · tap to mute", exact: true }).click();
+  await activateVisible(second.getByRole("button", { name: "Sound on · tap to mute", exact: true }));
   await expect.poll(() => second.locator("video").evaluate(playingMuted)).toBe(true);
   expect(await sound(page)).toBeNull();
   await first.scrollIntoViewIfNeeded();

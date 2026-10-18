@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { activateVisible } from "./helpers/pointer";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -53,8 +54,7 @@ for (const width of [1280, 390]) {
       await expect(sound).toBeVisible();
       const before = await page.evaluate(() => window.scrollY);
       const source = await video.getAttribute("src");
-      if (hasTouch) await sound.tap();
-      else await sound.click();
+      await activateVisible(sound, hasTouch);
       try {
         await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 2000 }).toBe(before);
         const enabled = player.getByRole("button", { name: "Sound on · tap to mute", exact: true });

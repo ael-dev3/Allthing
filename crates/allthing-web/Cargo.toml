@@ -42,7 +42,6 @@ features = [
     "DomTokenList",
     "Element",
     "EventTarget",
-    "FocusOptions",
     "Headers",
     "HtmlElement",
     "HtmlImageElement",
