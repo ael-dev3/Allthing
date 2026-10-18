@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
+
 - A rate limit or unreadable upstream page no longer marks an indexed backfill feed as finished. The indexer keeps its cursor and retries it on a later turn; genuinely missing feeds still finish.
 - Video sound controls use native focus behavior. Browser tests activate already visible controls without automatically scrolling them first, preserving the viewport while checking sound, focus and keyboard activation.
 
