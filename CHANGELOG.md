@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The newest feed keeps stale-if-error recovery when both event shards are unavailable, rejects error objects as event pages, and accepts genuinely empty streams. Invalid event timestamps are skipped without overflow.
 - Changing the front-page time range starts that range's pagination immediately. Requests and retry timers from the previous range cannot block it, hide its loading state, or append an obsolete page.
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
+- An API answer with valid JSON but missing or invalid payload fields is requested again on the next visit. Malformed prefetched payloads are discarded instead of keeping the page in an error state for five minutes.
 
 ### Added
 
