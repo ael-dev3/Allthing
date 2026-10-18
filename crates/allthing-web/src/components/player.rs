@@ -180,9 +180,14 @@ pub fn HlsVideo(
             return;
         }
         status.set(Status::Loading);
+        let src = url.get_value();
         wasm_bindgen_futures::spawn_local(async move {
-            let src = url.get_value();
-            match load_stream(&src).await {
+            let result = load_stream(&src).await;
+            // The playlist can finish after navigation removed this video.
+            if status.is_disposed() {
+                return;
+            }
+            match result {
                 Ok(stream) => {
                     poster.set(stream.poster(if full { 1080 } else { 720 }));
                     playback.with_value(|p| p.borrow_mut().stream = Some(stream));
@@ -251,8 +256,17 @@ pub fn HlsVideo(
     // pending, and bring it back if playback hasn't started after a while
     // (autoplay refused, or a stream this browser can't decode).
     let pending = RwSignal::new(false);
-    let pending_generation = StoredValue::new(0u32);
+    let pending_timer = StoredValue::new(None::<TimeoutHandle>);
+    let cancel_pending = move || {
+        pending_timer.update_value(|timer| {
+            if let Some(handle) = timer.take() {
+                handle.clear();
+            }
+        });
+    };
+    on_cleanup(cancel_pending);
     Effect::new(move |_| {
+        cancel_pending();
         let due = !full
             && in_view.get()
             && !engaged.get()
@@ -266,15 +280,16 @@ pub fn HlsVideo(
             return;
         }
         pending.set(true);
-        let generation = pending_generation.get_value().wrapping_add(1);
-        pending_generation.set_value(generation);
-        set_timeout(
-            move || {
-                if pending_generation.get_value() == generation && !playing.get_untracked() {
-                    pending.set(false);
-                }
-            },
-            AUTOPLAY_PENDING,
+        pending_timer.set_value(
+            set_timeout_with_handle(
+                move || {
+                    if !playing.get_untracked() {
+                        pending.set(false);
+                    }
+                },
+                AUTOPLAY_PENDING,
+            )
+            .ok(),
         );
     });
 
