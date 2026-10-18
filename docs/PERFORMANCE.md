@@ -38,7 +38,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
   - a page request that matches an in-flight prefetch waits for it instead of fetching twice;
   - nothing is prefetched with `Save-Data` or on `2g`/`slow-2g` connections;
   - the static GitHub Pages copy, which has no shared cache, never prefetches from the viewport.
-- **Cache**: answers stay in a client cache for 5 minutes, up to 200 entries, so back, forward and reopened posts cost nothing.
+- **Cache**: answers stay in a client cache for 5 minutes, up to 200 entries shared with static text. On reaching capacity, expired entries go first, then the oldest remaining answer. Back, forward and reopened posts reuse retained answers; an evicted page is requested again.
 
 ### 3. Client-side navigation
 

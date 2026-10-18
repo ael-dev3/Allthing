@@ -17,6 +17,8 @@ use wasm_bindgen_futures::JsFuture;
 /// Long enough that going back to a feed or post is instant.
 const CLIENT_TTL_MS: f64 = 300_000.0;
 const LATEST_TTL_MS: f64 = 30_000.0;
+/// Payloads and static text share this session-cache capacity.
+const CLIENT_CAPACITY: usize = 200;
 /// At most this many prefetches in flight.
 const MAX_PREFETCHES: usize = 2;
 
@@ -229,10 +231,19 @@ fn remember(path: &str, raw: Raw, now: f64) {
     if !keep {
         return;
     }
+    cache_response(path, raw, now);
+}
+
+fn cache_response(path: &str, raw: Raw, now: f64) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() > 200 {
-            c.retain(|_, r| now - r.at < CLIENT_TTL_MS);
+        if !c.contains_key(path) && c.len() >= CLIENT_CAPACITY {
+            c.retain(|key, r| now - r.at < ttl(key));
+            if c.len() >= CLIENT_CAPACITY
+                && let Some(oldest) = c.iter().min_by(|a, b| a.1.at.total_cmp(&b.1.at)).map(|(key, _)| key.clone())
+            {
+                c.remove(&oldest);
+            }
         }
         c.insert(path.to_owned(), raw);
     });
@@ -272,7 +283,9 @@ pub async fn get_text(path: &str) -> Option<Rc<str>> {
     }
     let raw = fetch_raw(path).await.ok()?;
     let body = (raw.status == 200).then(|| raw.body.clone());
-    CACHE.with(|c| c.borrow_mut().insert(path.to_owned(), raw));
+    if body.is_some() {
+        cache_response(path, raw, js_sys::Date::now());
+    }
     body
 }
 
@@ -315,5 +328,33 @@ mod tests {
 
         remember("/test/missing", response(404, r#"{"error":"unknown user"}"#), 1000.0);
         assert!(matches!(cached::<serde_json::Value>("/test/missing", 2000.0), Some(Err(Failure::NotFound(_)))));
+    }
+
+    #[test]
+    fn fresh_responses_cannot_exceed_the_documented_cache_capacity() {
+        CACHE.with(|c| c.borrow_mut().clear());
+        for n in 0..225 {
+            let at = 1000.0 + f64::from(n);
+            let mut raw = response(200, "{}");
+            raw.at = at;
+            remember(&format!("/test/capacity/{n}"), raw, at);
+        }
+        assert_eq!(CACHE.with(|c| c.borrow().len()), 200);
+        assert!(cached::<serde_json::Value>("/test/capacity/0", 2000.0).is_none());
+        assert!(cached::<serde_json::Value>("/test/capacity/224", 2000.0).unwrap().is_ok());
+
+        // Refreshing an existing entry doesn't evict another fresh answer.
+        let mut refreshed = response(200, "{}");
+        refreshed.at = 2000.0;
+        remember("/test/capacity/224", refreshed, 2000.0);
+        assert_eq!(CACHE.with(|c| c.borrow().len()), 200);
+        assert!(cached::<serde_json::Value>("/test/capacity/25", 2000.0).unwrap().is_ok());
+
+        // At capacity, expired answers go before the still-fresh refresh.
+        let mut next = response(200, "{}");
+        next.at = 301_500.0;
+        remember("/test/capacity/next", next, 301_500.0);
+        assert_eq!(CACHE.with(|c| c.borrow().len()), 2);
+        assert!(cached::<serde_json::Value>("/test/capacity/224", 301_500.0).unwrap().is_ok());
     }
 }
