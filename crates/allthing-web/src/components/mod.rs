@@ -3,6 +3,7 @@
 
 pub mod cast;
 pub mod chips;
+pub mod clients;
 pub mod layout;
 pub mod media;
 pub mod player;

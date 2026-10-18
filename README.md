@@ -27,7 +27,7 @@ The client and the API are written in Rust: a [Leptos](https://leptos.dev) app c
   - **Wallet activity by chain**: the share of transactions sent from the account's verified EVM addresses on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad. A **Wallets** button lists every verified address, with copy to clipboard.
   - **The Farcaster vote**: whether the account voted to stay or to leave when farcaster.xyz asked, or did not vote. Stay votes are read onchain; see [docs/VOTE.md](docs/VOTE.md).
 - **Leaves out mini apps.** Casts that embed mini apps or frames, which Allthing doesn't run, are filtered out by the Worker.
-- **Shows provenance.** Each cast names the app that registered its signing key (for example *via Warpcast*). [docs/PROVENANCE.md](docs/PROVENANCE.md) studies Snapchain and Hypersnap and proposes how a chain could record client and ingress at the protocol level.
+- **Shows provenance.** Each cast names the app that registered its signing key (for example *via Farcaster*). [docs/PROVENANCE.md](docs/PROVENANCE.md) studies Snapchain and Hypersnap and proposes how a chain could record client and ingress at the protocol level.
 
 ## How it is built
 
