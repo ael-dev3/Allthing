@@ -7,6 +7,8 @@ import { expect, test, type Page } from "@playwright/test";
  *   - LCP of the home page, cold: < 1.5 s (median of 3 loads)
  *   - opening a post from the feed: < 100 ms from click to the post's text
  *   - INP-style interaction latency (Event Timing): < 100 ms
+ *   - the cron's stored copy of the newest casts: built < 150 s ago, with no
+ *     reader needed to refresh it
  *
  * CI runs this file against https://allthing.social after each push to main:
  *   E2E_BASE_URL=https://allthing.social npx playwright test e2e/perf.spec.ts
@@ -15,6 +17,8 @@ import { expect, test, type Page } from "@playwright/test";
 const LCP_BUDGET = 1500;
 const OPEN_BUDGET = 100;
 const INP_BUDGET = 100;
+
+const STORED_NEW_BUDGET_S = 150;
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
@@ -115,4 +119,17 @@ test.describe("performance budget", () => {
     console.log(`slowest interaction ${worst.toFixed(0)} ms`);
     expect(worst).toBeLessThan(INP_BUDGET);
   });
+});
+
+// The cron rebuilds and stores "new" every minute, so a data center with no
+// recent list of its own serves a copy at most about a minute old. /status
+// reads that copy and makes no upstream call, so this doesn't refresh it.
+test("the cron keeps the stored copy of the newest casts fresh", async ({ request }) => {
+  const response = await request.get("/api/v1/status");
+  expect(response.ok()).toBe(true);
+  const { freshness } = await response.json();
+  test.skip(!("new_stored" in freshness), "the release live now stores no copy (deploys race this check)");
+  expect(freshness.new_stored, "the cron has stored a copy").not.toBeNull();
+  expect(freshness.new_stored.built_age_s).toBeLessThan(STORED_NEW_BUDGET_S);
+  expect(freshness.new_stored.casts).toBeGreaterThan(0);
 });

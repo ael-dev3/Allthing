@@ -42,9 +42,11 @@ database_name = "allthing-index"
 database_id = "184a345b-13ba-4db9-b1a6-4ea3a9c60f8c"
 migrations_dir = "migrations"
 
-# The indexer: one page of casts a minute, within the Free plan's limits.
+# Every minute, each in an invocation of its own: the indexer (one page of
+# casts), and the stored copy of the newest casts that a data center with
+# none of its own serves ("*/1", so the Worker can tell the two apart).
 [triggers]
-crons = ["* * * * *"]
+crons = ["* * * * *", "*/1 * * * *"]
 
 [observability]
 enabled = true

@@ -26,6 +26,14 @@ impl std::fmt::Display for IndexError {
     }
 }
 
+/// A payload the cron keeps fresh for every data center, as served, with
+/// when it was built (Unix milliseconds).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Snapshot {
+    pub built: f64,
+    pub body: String,
+}
+
 /// What a run starts from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Saved {
@@ -50,6 +58,18 @@ pub trait Index {
         state: String,
         now_ms: f64,
     ) -> LocalBoxFuture<'static, Result<(), IndexError>>;
+    /// The stored copy of payload `name`, if the cron has stored one.
+    fn snapshot(&self, _name: &'static str) -> LocalBoxFuture<'static, Result<Option<Snapshot>, IndexError>> {
+        Box::pin(async { Ok(None) })
+    }
+    /// Store a copy of payload `name`, replacing the previous one.
+    fn save_snapshot(
+        &self,
+        _name: &'static str,
+        _snapshot: Snapshot,
+    ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+        Box::pin(async { Err(IndexError("this index stores no copies".into())) })
+    }
 }
 
 /// What a run did, for the Worker's log.
