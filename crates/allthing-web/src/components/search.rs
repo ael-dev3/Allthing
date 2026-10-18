@@ -32,7 +32,7 @@ pub fn SearchBox() -> impl IntoView {
                 node_ref=input
                 type="search"
                 name="q"
-                placeholder="Search casts, people, channels"
+                placeholder="Search"
                 aria-label="Search casts, people and channels"
                 autocomplete="off"
                 enterkeyhint="search"
