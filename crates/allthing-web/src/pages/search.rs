@@ -7,14 +7,13 @@ use allthing_core::api::{SearchPayload, search_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, plural};
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, ScoreBadge};
 use crate::components::layout::ErrorPanel;
-use crate::util::{channel_href, set_title, user_href};
+use crate::util::{channel_href, set_title, use_query_param, user_href};
 
 /// People and channels shown before "Show all", so casts stay near the top.
 const PEOPLE_SHOWN: usize = 6;
@@ -22,8 +21,8 @@ const CHANNELS_SHOWN: usize = 8;
 
 #[component]
 pub fn SearchPage() -> impl IntoView {
-    let query = use_query_map();
-    let q = Memo::new(move |_| query.read().get("q").map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
+    let query = use_query_param("q");
+    let q = Memo::new(move |_| query.get().map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
     let data = LocalResource::new(move || {
         let q = q.get();
         async move {

@@ -5,16 +5,15 @@ use allthing_core::api::{ChannelsPayload, channels_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::full_number;
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use crate::api;
 use crate::components::layout::ErrorPanel;
-use crate::util::{channel_href, href, set_title};
+use crate::util::{channel_href, href, set_title, use_query_param};
 
 #[component]
 pub fn ChannelsPage() -> impl IntoView {
-    let query = use_query_map();
-    let q = Memo::new(move |_| query.read().get("q").map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
+    let query = use_query_param("q");
+    let q = Memo::new(move |_| query.get().map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
     let data = LocalResource::new(move || {
         let q = q.get();
         async move { api::get::<ChannelsPayload>(&channels_path(q.as_deref())).await }

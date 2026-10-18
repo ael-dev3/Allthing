@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{HomePayload, home_page_path, home_path};
+use allthing_core::api::{Annotations, HomePayload, home_page_path, home_path};
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
 use allthing_core::ranking::{Sort, sorted};
@@ -24,9 +24,22 @@ const MAX_RETRIES: u32 = 3;
 /// (as long as the client cache keeps the first page).
 const KEEP_MS: f64 = 300_000.0;
 
+#[derive(Clone)]
+struct LoadedPage {
+    casts: Vec<Cast>,
+    notes: Annotations,
+}
+
+#[derive(Clone)]
+struct Loaded {
+    at: f64,
+    pages: Vec<LoadedPage>,
+    next_offset: u32,
+}
+
 thread_local! {
-    /// Later trending pages already loaded, kept for Back: (when, casts, next offset).
-    static LOADED: std::cell::RefCell<Option<(f64, Vec<Cast>, u32)>> = const { std::cell::RefCell::new(None) };
+    /// Later trending pages already loaded, kept for Back.
+    static LOADED: std::cell::RefCell<Option<Loaded>> = const { std::cell::RefCell::new(None) };
 }
 
 #[component]
@@ -34,11 +47,12 @@ pub fn Home() -> impl IntoView {
     let query = use_query_map();
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let data = LocalResource::new(|| async { api::get::<HomePayload>(&home_path()).await });
-    // Later trending pages, appended by infinite scroll (each ranked on its own).
+    // Keep page boundaries so appending a page does not move earlier cards.
+    // Each page is ranked using the currently selected sort.
     let (kept, kept_offset) = LOADED
         .with(|l| l.borrow().clone())
-        .filter(|(at, _, _)| js_sys::Date::now() - at < KEEP_MS)
-        .map(|(_, casts, offset)| (casts, offset))
+        .filter(|loaded| js_sys::Date::now() - loaded.at < KEEP_MS)
+        .map(|loaded| (loaded.pages, loaded.next_offset))
         .unwrap_or((Vec::new(), 100));
     let more = RwSignal::new(kept);
     let next_offset = RwSignal::new(kept_offset);
@@ -56,18 +70,25 @@ pub fn Home() -> impl IntoView {
         loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let result = api::get::<HomePayload>(&home_page_path(offset)).await;
+            // The request can finish after navigation disposed this page.
+            if next_offset.is_disposed() {
+                return;
+            }
             if let Ok(page) = result {
                 failures.set_value(0);
-                let known: std::collections::HashSet<String> =
-                    more.with_untracked(|m| m.iter().map(|c| c.hash.clone()).collect());
-                let fresh: Vec<Cast> = sorted(&top_level(&page.data.pool), sort.get_untracked())
-                    .into_iter()
-                    .filter(|c| !known.contains(&c.hash))
-                    .collect();
-                more.update(|m| m.extend(fresh));
+                let mut known: std::collections::HashSet<String> = more.with_untracked(|pages| {
+                    pages.iter().flat_map(|page| &page.casts).map(|c| c.hash.clone()).collect()
+                });
+                let fresh: Vec<Cast> =
+                    top_level(&page.data.pool).into_iter().filter(|c| known.insert(c.hash.clone())).collect();
+                more.update(|pages| pages.push(LoadedPage { casts: fresh, notes: page.data.notes.clone() }));
                 next_offset.set(offset + 100);
                 LOADED.with(|l| {
-                    *l.borrow_mut() = Some((js_sys::Date::now(), more.get_untracked(), offset + 100));
+                    *l.borrow_mut() = Some(Loaded {
+                        at: js_sys::Date::now(),
+                        pages: more.get_untracked(),
+                        next_offset: offset + 100,
+                    });
                 });
             } else if matches!(result, Err(api::Failure::NotFound(_))) || failures.get_value() >= MAX_RETRIES {
                 next_offset.set(LAST_OFFSET + 100);
@@ -102,13 +123,29 @@ pub fn Home() -> impl IntoView {
             Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Ok(Fetched { data, stale, .. })) => {
                 let payload: Arc<HomePayload> = data;
-                let notes = Arc::new(payload.notes.clone());
+                let first_notes = payload.notes.clone();
+                let notes = Memo::new(move |_| {
+                    let mut notes = first_notes.clone();
+                    more.with(|pages| {
+                        for page in pages {
+                            notes.merge(&page.notes);
+                        }
+                    });
+                    Arc::new(notes)
+                });
                 let pool = top_level(&payload.pool);
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
                 // Re-sorting reorders the list in place instead of rebuilding the page.
                 let casts = Signal::derive(move || {
-                    let mut all = sorted(&pool, sort.get());
-                    more.with(|m| all.extend(m.iter().filter(|c| !first_hashes.contains(&c.hash)).cloned()));
+                    let order = sort.get();
+                    let mut all = sorted(&pool, order);
+                    more.with(|pages| {
+                        for page in pages {
+                            all.extend(
+                                sorted(&page.casts, order).into_iter().filter(|c| !first_hashes.contains(&c.hash)),
+                            );
+                        }
+                    });
                     all
                 });
                 view! {

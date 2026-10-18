@@ -7,6 +7,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Pull requests run deterministic browser regressions against the local build, alongside the Rust checks. Browser failure reports are retained for 7 days; live production performance checks keep their separate job.
 - The front page's data request starts from a small inline script in `index.html` as soon as the page arrives, alongside the WebAssembly download, instead of after the app starts. It is still one API call.
 - Pages no longer say "Updated N min ago". The notice that a cached copy is shown because the data source isn't answering stays.
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
@@ -32,8 +33,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A cast whose posting app couldn't be looked up (Hypersnap failed, or the request's budget ran out) is looked up again on a later view. Before, it was remembered as having no app for as long as the Worker stayed warm.
 - The header search box says "Search", so its placeholder no longer gets cut off on phones. Its accessible name still says what it searches.
 - When the next page of the front page fails to load, it is tried again after 2, 4 and 8 seconds. Before, one failed page ended the feed for the rest of the visit.
+- Changing the front-page sort reorders each loaded trending page, including later pages, while keeping page boundaries stable as more arrives. Later pages retain their scores and posting-app metadata, including when returning to the feed. A request that finishes after navigating away no longer accesses disposed feed state.
 - Popovers (who liked, recasted, replies) open toward the side with more room, so the replies preview on the first card no longer slides under the sticky header. Their height fits the space available, and the card with an open popover sits above the next card instead of under it.
 - Timestamps with impossible dates (30 February, 31 April), out-of-range time zone offsets or trailing text are rejected instead of being rolled over into a different date.
+- Channel parent URLs and search terms retain literal percent escapes instead of being decoded again. The static API parser treats form-encoded spaces and literal plus signs the same way as the Worker.
 - On touch screens, tapping a likes, recasts or replies count opens its popover. Before, the tap's focus opened it and the tap itself closed it again. On narrow screens, popovers are nudged to stay on screen.
 - Escape closes a keyboard popover without reopening it on the returning focus. Preview links stay in the app, and leaving an open preview removes its outside-click listener.
 - On phones, a cast with a wide image no longer makes its list wider than the screen.
@@ -42,6 +45,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A profile no longer shows its Neynar score as "unavailable" when the onchain score read fails once. The score already known from Hypersnap or from the page's previous copy was thrown away whenever that read failed, and the page was then cached that way for up to 35 minutes; it is now kept.
 - Casts that embed mini apps hosted on their own domains (for example a `*.vercel.app` app) are left out of every feed, search and reply list, like those on Farcaster's hosts. Hypersnap gives no embed metadata, so the Worker reads the linked page's `fc:miniapp`, `fc:frame` or `of:` meta tags: a few links per build, with each verdict remembered per URL.
 - Clicking play on a video while its playlist is still loading plays it, with sound, once it has loaded. Before, the click was lost and the video stayed still.
+- Leaving a loading video no longer lets a late playlist or autoplay timeout access disposed state and panic the app. Autoplay timers are cleared when replaced or when the video is removed.
 
 ## [0.3.0] - 2026-10-18
 
