@@ -6,16 +6,17 @@
 //! the video element, so no third-party player script is needed. Segments are
 //! fetched straight from the video host, never through Allthing's Worker.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use allthing_core::hls::{self, MasterPlaylist, MediaPlaylist};
-use js_sys::{ArrayBuffer, Promise};
+use js_sys::{ArrayBuffer, Function, Promise};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    AddEventListenerOptions, EventTarget, HtmlVideoElement, MediaSource, MediaSourceReadyState, Response, SourceBuffer,
+    AbortController, AbortSignal, EventTarget, HtmlVideoElement, MediaSource, MediaSourceReadyState, Response,
+    SourceBuffer,
 };
 
 /// Keep this many seconds buffered ahead of the playhead.
@@ -32,18 +33,77 @@ pub async fn sleep(ms: i32) {
     let _ = JsFuture::from(promise).await;
 }
 
-async fn next_event(target: &EventTarget, name: &str) {
-    let promise = Promise::new(&mut |resolve, _| {
-        let options = AddEventListenerOptions::new();
-        options.set_once(true);
-        let _ = target.add_event_listener_with_callback_and_add_event_listener_options(name, &resolve, &options);
-    });
-    let _ = JsFuture::from(promise).await;
+struct Listener {
+    target: EventTarget,
+    name: &'static str,
+    callback: Function,
 }
 
-async fn fetch(url: &str) -> Result<Response, String> {
+impl Listener {
+    fn new(target: &EventTarget, name: &'static str, callback: &Function) -> Result<Self, JsValue> {
+        target.add_event_listener_with_callback(name, callback)?;
+        Ok(Self { target: target.clone(), name, callback: callback.clone() })
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        let _ = self.target.remove_event_listener_with_callback(self.name, &self.callback);
+    }
+}
+
+async fn next_event(target: &EventTarget, name: &'static str, signal: &AbortSignal) -> Result<(), String> {
+    if signal.aborted() {
+        return Err("playback stopped".into());
+    }
+    let mut listeners = Vec::new();
+    let promise = Promise::new(&mut |resolve, reject| {
+        for (target, name, callback) in [
+            (target, name, &resolve),
+            (target, "error", &reject),
+            (target, "abort", &reject),
+            (signal.as_ref(), "abort", &reject),
+        ] {
+            match Listener::new(target, name, callback) {
+                Ok(listener) => listeners.push(listener),
+                Err(error) => {
+                    let _ = reject.call1(&JsValue::UNDEFINED, &error);
+                }
+            }
+        }
+    });
+    let result = JsFuture::from(promise).await;
+    drop(listeners);
+    result.map(|_| ()).map_err(|_| "video loading interrupted".into())
+}
+
+/// Wake the idle buffering loop on cancellation as well as its next tick.
+async fn pause(ms: i32, signal: &AbortSignal) {
+    if signal.aborted() {
+        return;
+    }
+    let Some(window) = web_sys::window() else { return };
+    let mut listener = None;
+    let mut timer = None;
+    let promise = Promise::new(&mut |resolve, _| {
+        listener = Listener::new(signal.as_ref(), "abort", &resolve).ok();
+        timer = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms).ok();
+        if timer.is_none() {
+            let _ = resolve.call0(&JsValue::UNDEFINED);
+        }
+    });
+    let _ = JsFuture::from(promise).await;
+    if let Some(timer) = timer {
+        window.clear_timeout_with_handle(timer);
+    }
+    drop(listener);
+}
+
+async fn fetch(url: &str, signal: Option<&AbortSignal>) -> Result<Response, String> {
     let window = web_sys::window().ok_or("no window")?;
-    let response: Response = JsFuture::from(window.fetch_with_str(url))
+    let init = web_sys::RequestInit::new();
+    init.set_signal(signal);
+    let response: Response = JsFuture::from(window.fetch_with_str_and_init(url, &init))
         .await
         .map_err(|_| "network error".to_owned())?
         .dyn_into()
@@ -51,8 +111,8 @@ async fn fetch(url: &str) -> Result<Response, String> {
     if response.ok() { Ok(response) } else { Err(format!("HTTP {}", response.status())) }
 }
 
-async fn fetch_text(url: &str) -> Result<(String, String), String> {
-    let response = fetch(url).await?;
+async fn fetch_text(url: &str, signal: Option<&AbortSignal>) -> Result<(String, String), String> {
+    let response = fetch(url, signal).await?;
     let final_url = response.url();
     let text = JsFuture::from(response.text().map_err(|_| "unreadable")?)
         .await
@@ -62,8 +122,8 @@ async fn fetch_text(url: &str) -> Result<(String, String), String> {
     Ok((final_url, text))
 }
 
-async fn fetch_buffer(url: &str) -> Result<ArrayBuffer, String> {
-    let response = fetch(url).await?;
+async fn fetch_buffer(url: &str, signal: &AbortSignal) -> Result<ArrayBuffer, String> {
+    let response = fetch(url, Some(signal)).await?;
     JsFuture::from(response.array_buffer().map_err(|_| "unreadable")?)
         .await
         .map_err(|_| "unreadable".to_owned())?
@@ -126,7 +186,7 @@ pub async fn load_stream(url: &str) -> Result<Rc<Stream>, String> {
     if let Some(stream) = STREAMS.with(|s| s.borrow().get(url).cloned()) {
         return Ok(stream);
     }
-    let (manifest_url, text) = fetch_text(url).await?;
+    let (manifest_url, text) = fetch_text(url, None).await?;
     let master = hls::parse_master(&text).ok_or("not an HLS master playlist")?;
     let stream = Rc::new(Stream { manifest_url, master });
     STREAMS.with(|s| s.borrow_mut().insert(url.to_owned(), stream.clone()));
@@ -159,30 +219,33 @@ impl Track {
         })
     }
 
-    async fn append(&self, data: &ArrayBuffer, playhead: f64) -> Result<(), String> {
+    async fn append(&self, data: &ArrayBuffer, playhead: f64, signal: &AbortSignal) -> Result<(), String> {
+        if signal.aborted() {
+            return Err("playback stopped".into());
+        }
         let target: &EventTarget = self.buffer.as_ref();
         if self.buffer.append_buffer_with_array_buffer(data).is_err() {
             // Usually QuotaExceededError: free what is behind the playhead, retry once.
             if playhead > KEEP_BEHIND_SECS && self.buffer.remove(0.0, playhead - KEEP_BEHIND_SECS).is_ok() {
-                next_event(target, "updateend").await;
+                next_event(target, "updateend", signal).await?;
             }
             self.buffer.append_buffer_with_array_buffer(data).map_err(|_| "could not buffer video".to_owned())?;
         }
-        next_event(target, "updateend").await;
+        next_event(target, "updateend", signal).await?;
         Ok(())
     }
 }
 
 /// Plays a stream through Media Source Extensions until dropped.
 pub struct MsePlayer {
-    stopped: Rc<Cell<bool>>,
+    controller: AbortController,
     object_url: String,
     pub height: u32,
 }
 
 impl Drop for MsePlayer {
     fn drop(&mut self) {
-        self.stopped.set(true);
+        self.controller.abort();
         let _ = web_sys::Url::revoke_object_url(&self.object_url);
     }
 }
@@ -210,12 +273,13 @@ pub fn attach(video: &HtmlVideoElement, stream: Rc<Stream>, target_height: u32) 
         return Err("This browser cannot decode this video's format (H.264).".into());
     }
     let media_source = MediaSource::new().map_err(|_| "Media Source Extensions unavailable")?;
+    let controller = AbortController::new().map_err(|_| "could not create a player")?;
     let object_url =
         web_sys::Url::create_object_url_with_source(&media_source).map_err(|_| "could not create a player")?;
     video.set_src(&object_url);
 
-    let stopped = Rc::new(Cell::new(false));
-    let player = MsePlayer { stopped: stopped.clone(), object_url, height: variant.height };
+    let signal = controller.signal();
+    let player = MsePlayer { controller, object_url, height: variant.height };
     let video = video.clone();
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(error) = run(
@@ -226,10 +290,10 @@ pub fn attach(video: &HtmlVideoElement, stream: Rc<Stream>, target_height: u32) 
             audio_uri.as_deref(),
             &video_type,
             audio_type.as_deref(),
-            &stopped,
+            &signal,
         )
         .await
-            && !stopped.get()
+            && !signal.aborted()
         {
             web_sys::console::warn_1(&JsValue::from_str(&format!("video: {error}")));
             let _ = video.set_attribute("data-error", &error);
@@ -247,20 +311,20 @@ async fn run(
     audio_uri: Option<&str>,
     video_type: &str,
     audio_type: Option<&str>,
-    stopped: &Cell<bool>,
+    signal: &AbortSignal,
 ) -> Result<(), String> {
     if media_source.ready_state() != MediaSourceReadyState::Open {
-        next_event(media_source.as_ref(), "sourceopen").await;
+        next_event(media_source.as_ref(), "sourceopen", signal).await?;
     }
     let mut tracks = Vec::new();
     for (uri, mime) in std::iter::once((video_uri, video_type)).chain(audio_uri.zip(audio_type)) {
         let url = resolve_url(uri, &stream.manifest_url);
-        let (base, text) = fetch_text(&url).await?;
+        let (base, text) = fetch_text(&url, Some(signal)).await?;
         let playlist = hls::parse_media(&text).ok_or("bad media playlist")?;
         let buffer = media_source.add_source_buffer(mime).map_err(|_| "unsupported codec")?;
         tracks.push(Track { playlist, base, buffer, last: None });
     }
-    if stopped.get() {
+    if signal.aborted() {
         return Ok(());
     }
     let duration = tracks.iter().map(|t| t.playlist.duration()).fold(0.0, f64::max);
@@ -269,14 +333,14 @@ async fn run(
     }
     for track in &tracks {
         if let Some(init) = &track.playlist.init_uri {
-            let data = fetch_buffer(&resolve_url(init, &track.base)).await?;
-            track.append(&data, 0.0).await?;
+            let data = fetch_buffer(&resolve_url(init, &track.base), signal).await?;
+            track.append(&data, 0.0, signal).await?;
         }
     }
 
     // Buffer from wherever the playhead is (seeks included), a little ahead.
     let mut ended = false;
-    while !stopped.get() {
+    while !signal.aborted() {
         let playhead = video.current_time();
         let mut worked = false;
         let mut complete = true;
@@ -303,11 +367,11 @@ async fn run(
                 index += 1;
             }
             let segment = &track.playlist.segments[index];
-            let data = fetch_buffer(&resolve_url(&segment.uri, &track.base)).await?;
-            if stopped.get() {
+            let data = fetch_buffer(&resolve_url(&segment.uri, &track.base), signal).await?;
+            if signal.aborted() {
                 return Ok(());
             }
-            track.append(&data, playhead).await?;
+            track.append(&data, playhead, signal).await?;
             track.last = Some(index);
             worked = true;
             ended = false;
@@ -319,7 +383,7 @@ async fn run(
             ended = true;
         }
         if !worked {
-            sleep(if video.paused() { 600 } else { 250 }).await;
+            pause(if video.paused() { 600 } else { 250 }, signal).await;
         }
     }
     Ok(())
