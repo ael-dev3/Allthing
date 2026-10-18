@@ -592,6 +592,22 @@ test.describe("threads and navigation", () => {
     }
   });
 
+  test("pages load without Content Security Policy violations", async ({ page }) => {
+    const violations: string[] = [];
+    await page.exposeFunction("__reportCsp", (v: string) => violations.push(v));
+    await page.addInitScript(() => {
+      document.addEventListener("securitypolicyviolation", (e) =>
+        (window as any).__reportCsp(`${e.violatedDirective} ${e.blockedURI}`),
+      );
+    });
+    for (const path of ["/", `/p/${VIDEO_CAST}`, "/u/0xael.eth"]) {
+      await page.goto(at(path));
+      await expect(page.locator("main .cast-card, main .post").first()).toBeVisible();
+      await page.waitForTimeout(1500);
+    }
+    expect(violations).toEqual([]);
+  });
+
   test("/version names the release and commit", async ({ request }) => {
     test.skip(PAGES, "the static copy has no Worker");
     const response = await request.get("/version");
