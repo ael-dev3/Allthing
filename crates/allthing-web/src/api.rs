@@ -80,6 +80,11 @@ struct Raw {
 thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
     static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
+    /// Profile-card reads waiting for a free prefetch slot, oldest first.
+    static CARD_QUEUE: RefCell<std::collections::VecDeque<String>> = const { RefCell::new(std::collections::VecDeque::new()) };
+    /// Accounts whose card facts were queued this visit, and when the count
+    /// last started over.
+    static CARD_ACCOUNTS: RefCell<(f64, std::collections::HashSet<u64>)> = RefCell::new((0.0, std::collections::HashSet::new()));
     /// Casts already shown in a feed, so their post page can render at once.
     static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
     /// Profile cards of the accounts pages have shown (fid -> card), for
@@ -166,7 +171,53 @@ pub fn prefetch(path: &str) {
             remember(&path, raw, now);
         }
         IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
+        pump_cards();
     });
+}
+
+/// A cached answer for `path`, if there is a fresh one: read synchronously,
+/// so what was prefetched shows in the same frame, without a loading state.
+pub fn ready<T: DeserializeOwned>(path: &str) -> Option<Fetched<T>> {
+    cached::<T>(path, js_sys::Date::now()).and_then(Result::ok)
+}
+
+/// Profile cards' facts (vote, wallets) prefetched per 5 minutes, at most.
+const CARD_ACCOUNTS_PER_WINDOW: usize = 12;
+const CARD_WINDOW_MS: f64 = 300_000.0;
+
+/// Load an account's vote and wallet activity ahead of its profile card,
+/// when it shows in view: queued behind other prefetches, two in flight,
+/// at most [`CARD_ACCOUNTS_PER_WINDOW`] accounts per five minutes, only where
+/// a pointer hovers (touch screens open cards with a tap), and never on
+/// Save-Data or 2g. Both endpoints are edge-cached for an hour or more.
+pub fn prefetch_card_facts(fid: u64) {
+    if fid == 0 || !crate::util::can_hover() || constrained_network() {
+        return;
+    }
+    let now = js_sys::Date::now();
+    let fresh = CARD_ACCOUNTS.with(|a| {
+        let mut a = a.borrow_mut();
+        if now - a.0 > CARD_WINDOW_MS {
+            *a = (now, std::collections::HashSet::new());
+        }
+        a.1.len() < CARD_ACCOUNTS_PER_WINDOW && a.1.insert(fid)
+    });
+    if fresh {
+        CARD_QUEUE.with(|q| {
+            let mut q = q.borrow_mut();
+            q.push_back(allthing_core::api::vote_path(fid));
+            q.push_back(allthing_core::api::wallets_path(fid));
+        });
+        pump_cards();
+    }
+}
+
+/// Start queued card reads while prefetch slots are free.
+fn pump_cards() {
+    while IN_FLIGHT.with(|f| f.borrow().len()) < MAX_PREFETCHES {
+        let Some(path) = CARD_QUEUE.with(|q| q.borrow_mut().pop_front()) else { return };
+        prefetch(&path);
+    }
 }
 
 /// The response the inline script in index.html already requested for `path`, if any. It is

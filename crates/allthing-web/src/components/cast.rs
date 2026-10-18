@@ -73,6 +73,7 @@ pub fn CastCard(
             class="cast-card"
             node_ref=node
             data-hash=cast.hash.clone()
+            data-fid=cast.author.fid
             data-ts=cast.ts
             data-points=allthing_core::ranking::points(&cast)
             style=format!("--i: {}", index.min(16))
@@ -218,6 +219,10 @@ fn prefetch_observer() -> Option<IntersectionObserver> {
             }
             let Some(hash) = entry.target().get_attribute("data-hash") else { continue };
             let target = entry.target();
+            // The author's card facts, so hovering their name shows them at once.
+            if let Some(fid) = target.get_attribute("data-fid").and_then(|f| f.parse::<u64>().ok()) {
+                idle(move || api::prefetch_card_facts(fid));
+            }
             // Only cards that stay in view for a moment, and only when idle.
             set_timeout(
                 move || {

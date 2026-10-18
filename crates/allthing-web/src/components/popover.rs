@@ -19,9 +19,9 @@ use wasm_bindgen::prelude::Closure;
 use crate::util::can_hover;
 
 const OPEN_DELAY: Duration = Duration::from_millis(280);
-/// Links are everywhere (each name in a feed), so they wait a little longer
-/// for the reader's intent before opening.
-const LINKS_OPEN_DELAY: Duration = Duration::from_millis(350);
+/// Profile cards (on links) open almost at once: their data is preloaded,
+/// and 100 ms still skips a pointer just passing over a name.
+const LINKS_OPEN_DELAY: Duration = Duration::from_millis(100);
 const CLOSE_DELAY: Duration = Duration::from_millis(180);
 const CLOSE_ANIMATION: Duration = Duration::from_millis(120);
 /// The sticky header covers this much of the top of the viewport.
