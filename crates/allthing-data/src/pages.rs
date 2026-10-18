@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One payload per page, assembled from upstream reads.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use allthing_core::api::{
@@ -10,8 +10,9 @@ use allthing_core::api::{
 };
 use allthing_core::channels::{channel_url_for_id, is_channel_id};
 use allthing_core::model::{Cast, Channel, Embed};
-use allthing_core::normalize;
+use allthing_core::normalize::{self, RawCast};
 use allthing_core::params::fid_username;
+use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, without_hidden};
@@ -34,6 +35,12 @@ fn meta(inv: &Invocation) -> Meta {
 
 fn targets(casts: &[&Cast]) -> Vec<Target> {
     casts.iter().map(|c| (c.author.fid, c.hash.clone())).collect()
+}
+
+/// Profile cards for the authors of the casts a listing kept, from the raw
+/// casts it was built from (no request).
+fn author_cards(raw: &[RawCast], kept: &[Cast]) -> BTreeMap<u64, UserCard> {
+    normalize::author_cards(raw, kept.iter().map(|c| c.author.fid))
 }
 
 /// Trending channels worth showing: named, and not near-empty.
@@ -113,10 +120,11 @@ pub async fn home(
     window: TrendingWindow,
     previous: Option<Rc<Vec<u8>>>,
 ) -> Result<Built, Failure> {
-    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
-    let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
+    let raw = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await.map_err(Failure::upstream)?;
+    let casts = raw.iter().map(normalize::cast).collect();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let pool = drop_hidden(&inv, casts, &mut notes).await;
+    notes.users = author_cards(&raw, &pool);
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
@@ -139,6 +147,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let casts = raw.iter().map(normalize::cast).collect();
     let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
+    notes.users = author_cards(&raw, &pool);
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
@@ -170,7 +179,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     // Context around the cast is best-effort; the thread is what matters.
     let channel_key = first.channel.as_ref().map(|c| c.id.clone());
     let parent_hash = first.parent_hash.clone();
-    let (channel, parent, quotes) = join3(
+    let (channel, raw_parent, raw_quotes) = join3(
         async {
             match &channel_key {
                 Some(key) => hypersnap::channel(&inv, key).await.ok().flatten(),
@@ -179,27 +188,28 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         },
         async {
             match &parent_hash {
-                Some(hash) => hypersnap::cast(&inv, hash).await.ok().flatten().map(|c| normalize::cast(&c)),
+                Some(hash) => hypersnap::cast(&inv, hash).await.ok().flatten(),
                 None => None,
             }
         },
-        join_all(quote_hashes.iter().map(|hash| {
-            let inv = &inv;
-            async move {
-                QuotedCast {
-                    hash: hash.clone(),
-                    cast: hypersnap::cast(inv, hash).await.ok().flatten().map(|c| normalize::cast(&c)),
-                }
-            }
-        })),
+        join_all(quote_hashes.iter().map(|hash| hypersnap::cast(&inv, hash))),
     )
     .await;
+    let parent = raw_parent.as_ref().map(normalize::cast);
+    let raw_quotes: Vec<Option<RawCast>> = raw_quotes.into_iter().map(|q| q.ok().flatten()).collect();
+    let quotes: Vec<QuotedCast> = quote_hashes
+        .iter()
+        .zip(&raw_quotes)
+        .map(|(hash, raw)| QuotedCast { hash: hash.clone(), cast: raw.as_ref().map(normalize::cast) })
+        .collect();
 
     // Attribute the cast itself first, then its context, then the replies.
     let mut refs: Vec<&Cast> = vec![first];
     refs.extend(parent.iter());
     refs.extend(quotes.iter().filter_map(|q| q.cast.as_ref()));
     refs.extend(flatten(&thread).into_iter().skip(1));
+    let raw_context = std::iter::once(&root).chain(raw_parent.iter()).chain(raw_quotes.iter().flatten());
+    notes.users = normalize::author_cards(raw_context, refs.iter().map(|c| c.author.fid));
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&CastPayload { thread, parent, quotes, channel, notes, meta: meta(&inv) }, api::CAST_CACHE)
 }
@@ -272,6 +282,7 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     let hydrated = hypersnap::casts_bulk(&inv, &hashes).await.unwrap_or_default();
     let mut notes = api::Annotations::default();
     let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
+    notes.users = author_cards(&hydrated, &casts);
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)

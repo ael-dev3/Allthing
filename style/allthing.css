@@ -1229,6 +1229,11 @@ code {
   gap: 12px;
 }
 
+.post-author-links {
+  align-items: center;
+  gap: 12px;
+}
+
 .post-author .avatar {
   box-shadow: 0 0 0 3px #fff, 0 0 0 4px var(--line);
 }
@@ -1490,9 +1495,16 @@ code {
 }
 
 .comment-inner {
-  overflow: hidden;
   min-height: 0;
+  min-width: 0;
   padding-left: 29px;
+}
+
+/* Clipped while it collapses, expands or stays collapsed. At rest it isn't,
+   so popovers (likes, profile cards) can reach past a reply's edges. */
+.comment.collapsed > .comment-body > .comment-inner,
+.comment.animating > .comment-body > .comment-inner {
+  overflow: hidden;
 }
 
 .comment-text {
@@ -2143,13 +2155,18 @@ code {
   border-radius: var(--radius-sm);
 }
 
-.person > a,
+.person-link,
 .channel-results a {
   display: flex;
   align-items: center;
   gap: 10px;
   color: var(--ink);
   text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.person-links {
   flex: 1;
   min-width: 0;
 }
@@ -2183,6 +2200,12 @@ code {
    popover is open above its neighbours. */
 .cast-card:has(.popover-panel) {
   z-index: 30;
+}
+
+/* The same for a post, whose author's card can reach over the replies. */
+.post:has(.popover-panel) {
+  position: relative;
+  z-index: 1;
 }
 
 .cast-card .cast-text,
@@ -2295,6 +2318,110 @@ code {
   text-decoration: none;
 }
 
+/* Profile cards: hovering or tapping a profile picture or name. */
+.popover-panel.profile-card {
+  width: min(300px, 86vw);
+  padding: 14px 14px 10px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* Placed against the viewport (in a dialog's list): it fades in, since a
+   moving panel can't be measured where it lands. */
+.popover-panel.fixed:not(.closing) {
+  animation-name: fade-in;
+}
+
+.profile-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-card .avatar {
+  box-shadow: none;
+}
+
+.profile-card-picture {
+  display: flex;
+  flex: none;
+}
+
+.profile-card-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--ink);
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+.profile-card-name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.profile-card-handle {
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.profile-card-id:hover .profile-card-name {
+  color: var(--accent);
+}
+
+.profile-card-bio {
+  margin: 10px 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.profile-card-bio p {
+  margin: 0;
+}
+
+.profile-card-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 8px 0 0;
+  color: var(--ink-2);
+}
+
+.profile-card-more {
+  margin: 10px 0 0;
+}
+
+.profile-card .facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 10px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-card .fact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.profile-card .fact dd {
+  margin: 0;
+  font-size: 13px;
+  text-align: right;
+}
+
+.profile-card .spam-label {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
 .who-list,
 .reply-items,
 .wallet-list {
@@ -2310,7 +2437,12 @@ code {
   padding: 5px 0;
 }
 
-.who-list a {
+.who-links {
+  flex: 1;
+  min-width: 0;
+}
+
+.who-link {
   display: flex;
   align-items: center;
   gap: 7px;

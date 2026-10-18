@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::percent_encode;
+use crate::profile::UserCard;
 use crate::provenance::{Backend, Origin};
 use crate::ranking::TrendingWindow;
 
@@ -45,6 +46,10 @@ pub struct Annotations {
     /// Worker, and carried to the next build of the same payload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub links: BTreeMap<String, bool>,
+    /// Author fid -> what the author's profile card shows (bio, counts,
+    /// registration), from the author objects that come with the casts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub users: BTreeMap<u64, UserCard>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -59,6 +64,7 @@ impl Annotations {
         self.origins.extend(newer.origins.clone());
         self.apps.extend(newer.apps.clone());
         self.links.extend(newer.links.clone());
+        self.users.extend(newer.users.clone());
         self.pending = self.pending.saturating_add(newer.pending);
     }
 
@@ -292,10 +298,15 @@ mod tests {
                 UserSummary { fid: 99, username: "app".into(), display_name: String::new(), pfp_url: None },
             )]),
             links: BTreeMap::from([("https://later.example".into(), true), ("https://both.example".into(), true)]),
+            users: BTreeMap::from([(7, UserCard { followers: 12, ..Default::default() })]),
             pending: 1,
         };
+        notes.users.insert(7, UserCard { followers: 10, ..Default::default() });
+        notes.users.insert(8, UserCard { bio: "gm".into(), ..Default::default() });
         notes.merge(&newer);
         assert_eq!(notes.origins.len(), 2);
+        assert_eq!(notes.users[&7].followers, 12);
+        assert_eq!(notes.users[&8].bio, "gm");
         assert_eq!(notes.app_for("later").map(|app| app.username.as_str()), Some("app"));
         assert_eq!(
             notes.links,
@@ -340,6 +351,31 @@ mod tests {
         assert_eq!(back.app_for("0xab").map(|a| a.username.as_str()), Some("warpcast"));
         assert_eq!(back.app_for("0xcd"), None);
         assert_eq!(serde_json::to_string(&Annotations::default()).unwrap(), "{}");
+    }
+
+    #[test]
+    fn payloads_cached_before_profile_cards_still_parse() {
+        // Cached before `notes.users` existed: no cards, nothing else lost.
+        let home: HomePayload = serde_json::from_str(
+            r#"{"pool":[{"hash":"0xab","author":{"fid":3,"username":"dwr"},"text":"gm","ts":1}],
+                "notes":{"origins":{"0xab":{"signer":"0x01","app_fid":9152}},"pending":1},
+                "meta":{"backend":"hypersnap","fetched_at":0}}"#,
+        )
+        .unwrap();
+        assert!(home.notes.users.is_empty());
+        assert_eq!(home.notes.pending, 1);
+        assert_eq!(home.notes.origins["0xab"].app_fid, Some(9152));
+
+        // Cards round-trip, keyed by fid, and an empty map is left out.
+        let mut notes = Annotations::default();
+        notes.users.insert(
+            3,
+            UserCard { bio: "Interested in technology.".into(), followers: 1, following: 0, registered_at: Some(9) },
+        );
+        let json = serde_json::to_string(&notes).unwrap();
+        assert_eq!(json, r#"{"users":{"3":{"bio":"Interested in technology.","followers":1,"registered_at":9}}}"#);
+        assert_eq!(serde_json::from_str::<Annotations>(&json).unwrap(), notes);
+        assert!(!serde_json::to_string(&Annotations::default()).unwrap().contains("users"));
     }
 
     #[test]

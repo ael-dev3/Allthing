@@ -5,6 +5,8 @@
 //! Only the fields Allthing reads are declared; serde skips the rest, which
 //! keeps parsing cheap inside the Worker's CPU budget.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -14,6 +16,7 @@ use crate::channels::{
 use crate::embeds::{MediaKind, classify_url};
 use crate::model::{Cast, Channel, ChannelRef, Embed, Mention, ThreadNode, User, UserSummary};
 use crate::params::normalize_hash;
+use crate::profile::{CARD_BIO_CHARS, UserCard, bio_excerpt};
 use crate::text::splice_mentions;
 use crate::time::parse_rfc3339;
 
@@ -263,6 +266,44 @@ pub fn user(raw: &RawUser) -> User {
     }
 }
 
+/// A profile card's facts from a provider user object, such as the author
+/// object that comes with each cast; `None` when it carries none of them.
+pub fn user_card(raw: &RawUser) -> Option<UserCard> {
+    let bio = raw.profile.as_ref().and_then(|p| p.bio.as_ref()).and_then(|b| b.text.as_deref());
+    if bio.is_none() && raw.follower_count.is_none() && raw.following_count.is_none() && raw.registered_at.is_none() {
+        return None;
+    }
+    Some(UserCard {
+        bio: bio.map(|b| bio_excerpt(b, CARD_BIO_CHARS)).unwrap_or_default(),
+        followers: raw.follower_count.unwrap_or(0),
+        following: raw.following_count.unwrap_or(0),
+        registered_at: raw.registered_at.as_deref().and_then(parse_rfc3339),
+    })
+}
+
+/// Profile cards for the authors of `casts` and of the replies under them,
+/// kept to the fids in `shown`. They come from the author objects sent with
+/// the casts, so they cost no request.
+pub fn author_cards<'a>(
+    casts: impl IntoIterator<Item = &'a RawCast>,
+    shown: impl IntoIterator<Item = u64>,
+) -> BTreeMap<u64, UserCard> {
+    let wanted: BTreeSet<u64> = shown.into_iter().collect();
+    let mut cards = BTreeMap::new();
+    let mut pending: Vec<&RawCast> = casts.into_iter().collect();
+    while let Some(cast) = pending.pop() {
+        if let Some(author) = &cast.author
+            && wanted.contains(&author.fid)
+            && !cards.contains_key(&author.fid)
+            && let Some(card) = user_card(author)
+        {
+            cards.insert(author.fid, card);
+        }
+        pending.extend(cast.direct_replies.iter().flatten());
+    }
+    cards
+}
+
 pub fn embed(raw: &RawEmbed) -> Option<Embed> {
     let quoted = raw.cast_id.as_ref().and_then(|id| Some((id.hash.as_deref()?, id.fid))).or_else(|| {
         let cast = raw.cast.as_ref()?;
@@ -434,6 +475,51 @@ mod tests {
         assert_eq!(dwr.primary_eth.as_deref(), Some("0x187c7b0393ebe86378128f2653d0930e33218899"));
         assert!(dwr.follower_count > 1_000_000);
         assert_eq!(user(&raw.users[1]).username, "balajis.eth");
+    }
+
+    #[test]
+    fn reads_profile_cards_from_cast_authors() {
+        let raw: RawFeed = serde_json::from_str(&fixture("hypersnap-feed-trending.json")).unwrap();
+        let author = raw.casts[0].author.as_ref().unwrap();
+        assert_eq!(
+            user_card(author),
+            Some(UserCard {
+                bio: "The swarm that wears the hood".into(),
+                followers: 449,
+                following: 0,
+                registered_at: parse_rfc3339("2026-09-30T09:02:01.000Z"),
+            })
+        );
+        // An author object without any of the facts gives no card, rather
+        // than a card claiming zero followers.
+        let bare: RawUser = serde_json::from_str(r#"{"fid":1,"username":"x"}"#).unwrap();
+        assert_eq!(user_card(&bare), None);
+        let bio_only: RawUser = serde_json::from_str(r#"{"fid":1,"profile":{"bio":{"text":"  gm\n gm "}}}"#).unwrap();
+        assert_eq!(user_card(&bio_only).map(|c| c.bio), Some("gm gm".into()));
+
+        // One card per author shown, none for authors left out.
+        let shown: Vec<u64> = raw.casts.iter().skip(1).filter_map(|c| c.author.as_ref()).map(|a| a.fid).collect();
+        let cards = author_cards(&raw.casts, shown.iter().copied());
+        assert!(!cards.is_empty());
+        assert!(cards.keys().all(|fid| shown.contains(fid)));
+        let first = author.fid;
+        assert_eq!(cards.contains_key(&first), shown.contains(&first));
+        assert!(cards.values().all(|c| c.bio.chars().count() <= CARD_BIO_CHARS + 1));
+    }
+
+    #[test]
+    fn reads_profile_cards_through_a_conversation() {
+        let value: Value = serde_json::from_str(&fixture("hypersnap-conversation.json")).unwrap();
+        let root: RawCast = serde_json::from_value(value["conversation"]["cast"].clone()).unwrap();
+        let tree = thread(&root);
+        let fids: BTreeSet<u64> = crate::thread::flatten(&tree).iter().map(|c| c.author.fid).collect();
+        let cards = author_cards([&root], fids.iter().copied());
+        assert_eq!(cards.keys().copied().collect::<BTreeSet<_>>(), fids);
+        // balajis.eth, registered before the ID registry's migration.
+        let balajis = &cards[&37];
+        assert!(balajis.bio.starts_with("Author of the Network State. Founder"));
+        assert!(balajis.followers > 500_000);
+        assert!(crate::profile::ID_REGISTRY_MIGRATION_DAY.contains(&balajis.registered_at.unwrap()));
     }
 
     #[test]

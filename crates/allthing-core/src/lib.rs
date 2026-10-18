@@ -18,6 +18,7 @@ pub mod listing;
 pub mod model;
 pub mod normalize;
 pub mod params;
+pub mod profile;
 pub mod provenance;
 pub mod ranking;
 pub mod spam;

@@ -5,11 +5,13 @@ use crate::Notes;
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, full_number, short_address};
 use allthing_core::model::{Cast, UserSummary};
+use allthing_core::profile::UserCard;
 use allthing_core::ranking::points;
 use allthing_core::time::{format_date_time, iso_utc, time_ago};
 use leptos::prelude::*;
 
 use crate::components::popover::Popover;
+use crate::components::profile_card::ProfileHover;
 use crate::components::who::{RepliesPreview, WhoPreview, use_who_list};
 use crate::util::{cast_href, now, user_href};
 use allthing_core::api::ReactionKind;
@@ -41,20 +43,28 @@ pub fn Avatar(url: Option<String>, #[prop(default = 24)] size: u32, #[prop(optio
     }
 }
 
-/// Profile picture, name and handle, linking to the profile.
+/// Profile picture, name and handle, linking to the profile. They show the
+/// account's profile card on hover, keyboard focus or a tap.
 #[component]
-pub fn UserChip(user: UserSummary, #[prop(optional)] show_name: bool) -> impl IntoView {
+pub fn UserChip(
+    user: UserSummary,
+    #[prop(optional)] show_name: bool,
+    /// The card's facts, from the page's payload.
+    #[prop(optional_no_strip)]
+    card: Option<UserCard>,
+) -> impl IntoView {
     let href = user_href(&user.username);
     let display = (show_name && !user.display_name.is_empty() && user.display_name != user.username)
         .then(|| user.display_name.clone());
+    let (pfp, username) = (user.pfp_url.clone(), user.username.clone());
     view! {
-        <span class="user-chip">
+        <ProfileHover user card class="user-chip">
             <a class="user-link" href=href.clone() tabindex="-1" aria-hidden="true">
-                <Avatar url=user.pfp_url.clone() size=22/>
+                <Avatar url=pfp.clone() size=22/>
             </a>
-            {display.map(|name| view! { <a class="display-name" href=href.clone()>{name}</a> })}
-            <a class="author" href=href>"@"{user.username.clone()}</a>
-        </span>
+            {display.clone().map(|name| view! { <a class="display-name" href=href.clone()>{name}</a> })}
+            <a class="author" href=href.clone()>"@"{username.clone()}</a>
+        </ProfileHover>
     }
 }
 

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use allthing_core::api::{SearchPayload, search_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, plural};
+use allthing_core::profile::UserCard;
 use leptos::prelude::*;
 
 use crate::Notes;
@@ -13,6 +14,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::Avatar;
 use crate::components::layout::ErrorPanel;
+use crate::components::profile_card::ProfileHover;
 use crate::util::{channel_href, set_title, use_query_param, user_href};
 
 /// People and channels shown before "Show all", so casts stay near the top.
@@ -71,17 +73,23 @@ pub fn SearchPage() -> impl IntoView {
                             <section class="results-group" aria-label="People">
                                 <h2>"People" <span class="count">{people_total}</span></h2>
                                 <ul class="people">
-                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| view! {
-                                        <li class="person">
-                                            <a href=user_href(&u.username)>
-                                                <Avatar url=u.pfp_url.clone() size=40 large=true/>
-                                                <span class="person-text">
-                                                    <strong>{u.name().to_owned()}</strong>
-                                                    <span class="muted">"@"{u.username.clone()}</span>
-                                                </span>
-                                            </a>
-                                            <span class="muted small">{format!("{} followers", compact_number(u.follower_count))}</span>
-                                        </li>
+                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| {
+                                        let href = user_href(&u.username);
+                                        let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
+                                        view! {
+                                            <li class="person">
+                                                <ProfileHover user=u.summary() card=Some(UserCard::of(u)) class="person-links">
+                                                    <a class="person-link" href=href.clone()>
+                                                        <Avatar url=pfp.clone() size=40 large=true/>
+                                                        <span class="person-text">
+                                                            <strong>{name.clone()}</strong>
+                                                            <span class="muted">"@"{username.clone()}</span>
+                                                        </span>
+                                                    </a>
+                                                </ProfileHover>
+                                                <span class="muted small">{format!("{} followers", compact_number(u.follower_count))}</span>
+                                            </li>
+                                        }
                                     }).collect_view()}
                                 </ul>
                                 <ShowAll shown=all_people total=people_total limit=PEOPLE_SHOWN noun="people"/>

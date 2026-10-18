@@ -72,7 +72,7 @@ pub fn CastCard(
             on:touchstart=move |_| warm_touch()
         >
             <header class="cast-meta">
-                <UserChip user=cast.author.clone() show_name=true/>
+                <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
                 <span class="sep" aria-hidden="true">"·"</span>
                 // The post's own link: for keyboards and screen readers (the
                 // card's text is plain so it can be selected; a click on it
@@ -122,6 +122,7 @@ pub fn CastList(
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
     Effect::new(move |_| casts.with(|c| api::remember_casts(c)));
+    Effect::new(move |_| notes.with(|n| api::remember_cards(&n.users)));
     let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
     let grow = move || {
         let len = casts.with_untracked(Vec::len);

@@ -20,6 +20,24 @@ pub fn CommentTree(nodes: Vec<ThreadNode>, notes: Notes, op_fid: u64) -> AnyView
 #[component]
 fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
     let collapsed = RwSignal::new(false);
+    // The reply is clipped while it collapses or expands; at rest it isn't,
+    // so its popovers (likes, profile cards) can reach past its edges.
+    let animating = RwSignal::new(false);
+    let toggles = StoredValue::new(0_u32);
+    let toggle = move |_| {
+        collapsed.update(|c| *c = !*c);
+        let generation = toggles.get_value().wrapping_add(1);
+        toggles.set_value(generation);
+        animating.set(true);
+        set_timeout(
+            move || {
+                if toggles.try_get_value() == Some(generation) {
+                    let _ = animating.try_set(false);
+                }
+            },
+            std::time::Duration::from_millis(400),
+        );
+    };
     let cast = node.cast.clone();
     let hidden = count_descendants(&node);
     let shown_children = node.children.len() as u64;
@@ -37,18 +55,23 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
         }
     };
     view! {
-        <div class="comment" class:collapsed=move || collapsed.get() id=format!("c-{}", &cast.hash[2..10])>
+        <div
+            class="comment"
+            class:collapsed=move || collapsed.get()
+            class:animating=move || animating.get()
+            id=format!("c-{}", &cast.hash[2..10])
+        >
             <div class="comment-head">
                 <button
                     class="toggle"
                     type="button"
                     aria-expanded=move || (!collapsed.get()).to_string()
                     aria-label=toggle_label
-                    on:click=move |_| collapsed.update(|c| *c = !*c)
+                    on:click=toggle
                 >
                     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
                 </button>
-                <UserChip user=cast.author.clone()/>
+                <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
                 {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" title="Original poster">"OP"</span> })}
                 <span class="sep" aria-hidden="true">"·"</span>
                 <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
