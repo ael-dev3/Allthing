@@ -46,7 +46,7 @@ impl Upstream {
         match self {
             Upstream::Hypersnap => (40, 10.0),
             Upstream::BaseRpc => (10, 2.0),
-            Upstream::Chain("solana") => (2, 0.2),
+            Upstream::Chain("solana") => (4, 0.4),
             Upstream::FarcasterApp => (6, 1.0),
             Upstream::Fnames => (6, 1.0),
             Upstream::LinkPage => (12, 2.0),

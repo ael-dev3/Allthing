@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Keyless public JSON-RPC reads: the Farcaster vote (onchain on Base) and
-//! EVM transaction counts.
+//! EVM and Solana transaction counts.
 
 use allthing_core::vote::{MINT_GENERATION_SELECTOR, MINTED_SELECTOR, OnchainVote, VOTE_CONTRACT, encode_fid_call};
 use allthing_core::wallet::{ChainInfo, parse_quantity};
@@ -77,4 +77,86 @@ pub async fn evm_sent_count(inv: &Invocation, chain: &ChainInfo, addresses: &[St
         }
     }
     Err(last_error)
+}
+
+/// Signatures one Solana history read returns at most.
+pub const SOLANA_PAGE: u64 = 1000;
+
+#[derive(Deserialize)]
+struct SignaturesResponse {
+    result: Option<Vec<serde::de::IgnoredAny>>,
+}
+
+/// Transactions involving `addresses` on Solana: their signatures, up to
+/// [`SOLANA_PAGE`] each, one request per address (the public RPC refuses
+/// batches). `true` when an address hit the cap, so the real count is higher.
+pub async fn solana_tx_count(
+    inv: &Invocation,
+    chain: &ChainInfo,
+    addresses: &[String],
+) -> Result<(u64, bool), UpstreamError> {
+    let (mut total, mut capped) = (0, false);
+    for address in addresses {
+        let body = json!({ "jsonrpc": "2.0", "id": 0, "method": "getSignaturesForAddress",
+                           "params": [address, { "limit": SOLANA_PAGE }] })
+        .to_string();
+        let mut answer = Err(UpstreamError::Budget);
+        for endpoint in chain.rpcs {
+            answer = rpc::<SignaturesResponse>(inv, Upstream::Chain(chain.slug), endpoint, &body).await;
+            if answer.is_ok() || matches!(answer, Err(UpstreamError::Budget)) {
+                break;
+            }
+        }
+        let count =
+            answer?.result.ok_or_else(|| UpstreamError::Parse("getSignaturesForAddress failed".into()))?.len() as u64;
+        total += count;
+        capped |= count >= SOLANA_PAGE;
+    }
+    Ok((total, capped))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use allthing_core::wallet::chain;
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// Solana's RPC with `per_address` signatures for every address.
+    struct Solana {
+        per_address: usize,
+    }
+
+    impl Host for Solana {
+        fn now(&self) -> f64 {
+            0.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let call: Value = serde_json::from_str(request.body.as_deref().unwrap()).unwrap();
+            assert_eq!(call["method"], "getSignaturesForAddress");
+            let signatures = vec![json!({ "signature": "s", "slot": 1 }); self.per_address];
+            let answer = json!({ "jsonrpc": "2.0", "id": 0, "result": signatures });
+            let body = Some(serde_json::to_vec(&answer).unwrap());
+            async move { Ok(HttpResponse { status: 200, retry_after: None, body }) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn count(per_address: usize, addresses: usize) -> (u64, bool) {
+        let inv = Invocation::new(Rc::new(Solana { per_address }), 45);
+        let addresses: Vec<String> = (0..addresses).map(|i| format!("addr{i}")).collect();
+        solana_tx_count(&inv, chain("solana").unwrap(), &addresses).now_or_never().unwrap().unwrap()
+    }
+
+    #[test]
+    fn solana_counts_each_addresses_signatures_and_says_when_one_hits_the_cap() {
+        assert_eq!(count(7, 2), (14, false));
+        assert_eq!(count(SOLANA_PAGE as usize, 1), (SOLANA_PAGE, true));
+        assert_eq!(count(3, 0), (0, false));
+    }
 }
