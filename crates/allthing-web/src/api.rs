@@ -9,7 +9,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use allthing_core::api::{ApiError, EngagementPayload, EngagementRequest};
-use allthing_core::profile::UserCard;
+use allthing_core::model::UserSummary;
+use allthing_core::profile::{ProfilePreview, UserCard};
 use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -94,6 +95,9 @@ thread_local! {
     /// cards of the same accounts where a payload has none: who liked a
     /// cast, or a post opened from a feed before its thread arrives.
     static SEEN_CARDS: RefCell<HashMap<u64, UserCard>> = RefCell::new(HashMap::new());
+    /// The authors of the casts pages have shown, by lowercase username, so
+    /// their profile can show its header before its payload arrives.
+    static SEEN_PEOPLE: RefCell<HashMap<String, UserSummary>> = RefCell::new(HashMap::new());
 }
 
 /// Remember the profile cards a page's payload carried. A card keeps what
@@ -117,7 +121,8 @@ pub fn seen_card(fid: u64) -> Option<UserCard> {
     SEEN_CARDS.with(|seen| seen.borrow().get(&fid).cloned())
 }
 
-/// Remember the casts a listing shows and the casts they quote.
+/// Remember the casts a listing shows and the casts they quote, and their
+/// authors.
 pub fn remember_casts(casts: &[allthing_core::model::Cast], notes: &allthing_core::api::Annotations) {
     SEEN_CASTS.with(|seen| {
         let mut seen = seen.borrow_mut();
@@ -128,11 +133,31 @@ pub fn remember_casts(casts: &[allthing_core::model::Cast], notes: &allthing_cor
             seen.insert(cast.hash.clone(), cast.clone());
         }
     });
+    SEEN_PEOPLE.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.len() > 2000 {
+            seen.clear();
+        }
+        for author in casts.iter().chain(notes.quotes.values()).map(|c| &c.author) {
+            let key = author.username.to_lowercase();
+            if seen.get(&key).is_none_or(|known| known != author) {
+                seen.insert(key, author.clone());
+            }
+        }
+    });
 }
 
 /// A cast seen in a listing, for rendering its post before the thread loads.
 pub fn seen_cast(hash: &str) -> Option<allthing_core::model::Cast> {
     SEEN_CASTS.with(|seen| seen.borrow().get(hash).cloned())
+}
+
+/// What this visit has seen of the account named `username` (as a profile
+/// URL names it, lowercase): the author of a cast a page showed, and its
+/// profile card, if a payload carried one.
+pub fn seen_person(username: &str) -> Option<ProfilePreview> {
+    let author = SEEN_PEOPLE.with(|seen| seen.borrow().get(username).cloned())?;
+    Some(ProfilePreview::new(&author, seen_card(author.fid).as_ref()))
 }
 
 /// Whether the reader asked to save data or is on a slow connection.

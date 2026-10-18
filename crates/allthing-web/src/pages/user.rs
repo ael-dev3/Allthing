@@ -7,7 +7,7 @@ use std::sync::Arc;
 use allthing_core::api::{UserPayload, user_path};
 use allthing_core::format::short_address;
 use allthing_core::listing::{replies_only, top_level};
-use allthing_core::model::User;
+use allthing_core::model::{Joined, User};
 use allthing_core::params::username_from_param;
 use allthing_core::profile::UserCard;
 use allthing_core::ranking::{Sort, sorted};
@@ -45,22 +45,43 @@ pub fn UserPage() -> impl IntoView {
         }
     });
     Effect::new(move |_| {
-        if let Some(Some(Ok(fetched))) = data.get() {
-            let user = &fetched.data.user;
-            set_title(&format!("{} (@{})", user.name(), user.username));
-        }
+        let user = match data.get() {
+            Some(Some(Ok(fetched))) => fetched.data.user.clone(),
+            None | Some(None) => match name.get().and_then(|name| api::seen_person(&name)) {
+                Some(preview) => preview.user,
+                None => return,
+            },
+            Some(Some(Err(_))) => return,
+        };
+        set_title(&format!("{} (@{})", user.name(), user.username));
     });
 
     move || {
-        if name.get().is_none() {
+        let Some(username) = name.get() else {
             return view! { <NotFound/> }.into_any();
-        }
+        };
         match data.get() {
-            None | Some(None) => view! {
-                <div class="profile skeleton" aria-busy="true"><span class="sk sk-avatar"></span><span class="sk sk-title"></span><span class="sk sk-title short"></span></div>
-                <CastSkeletons count=3/>
-            }
-            .into_any(),
+            None | Some(None) => match api::seen_person(&username) {
+                // An account a page showed: its header at once, from what the
+                // visit knows; its casts once the payload arrives.
+                Some(preview) => {
+                    let side = view! { <WalletPanel user=preview.user.clone()/> }.into_any();
+                    let path = user_href(&preview.user.username);
+                    view! {
+                        <Columns side class="profile-columns">
+                            <ProfileHeader user=preview.user has_card=preview.has_card joined=preview.joined/>
+                            <ProfileTabs path replies_tab sort/>
+                            <CastSkeletons count=3/>
+                        </Columns>
+                    }
+                    .into_any()
+                }
+                None => view! {
+                    <div class="profile skeleton" aria-busy="true"><span class="sk sk-avatar"></span><span class="sk sk-title"></span><span class="sk sk-title short"></span></div>
+                    <CastSkeletons count=3/>
+                }
+                .into_any(),
+            },
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<UserPayload> = data;
@@ -77,18 +98,10 @@ pub fn UserPage() -> impl IntoView {
                     if replies_tab.get() { replies_only(&pool) } else { sorted(&top_level(&pool), sort.get()) }
                 });
                 let side = view! { <WalletPanel user=user.clone()/> }.into_any();
-                let casts_link = path.clone();
-                let replies_link = with_query(&path, &[("tab", Some("replies".to_owned()))]);
                 view! {
                     <Columns side class="profile-columns">
-                        <ProfileHeader user=user.clone()/>
-                        <nav class="tabs" aria-label="Profile sections">
-                            <a href=casts_link data-noscroll="" class:selected=move || !replies_tab.get() aria-current=move || (!replies_tab.get()).then_some("page")>"Casts"</a>
-                            <a href=replies_link data-noscroll="" class:selected=move || replies_tab.get() aria-current=move || replies_tab.get().then_some("page")>"Replies"</a>
-                        </nav>
-                        {move || (!replies_tab.get()).then(|| view! {
-                            <div class="listing-head"><SortTabs path=path.clone() current=sort.get() default_sort=Sort::New/></div>
-                        })}
+                        <ProfileHeader user=user.clone() has_card=true joined=user.joined()/>
+                        <ProfileTabs path replies_tab sort/>
                         <StaleNotice stale/>
                         {move || view! { <CastList casts notes=notes.clone() show_parent=replies_tab.get()/> }}
                     </Columns>
@@ -99,33 +112,61 @@ pub fn UserPage() -> impl IntoView {
     }
 }
 
+/// The profile's Casts and Replies tabs, and the casts' sort.
 #[component]
-fn ProfileHeader(user: User) -> impl IntoView {
+fn ProfileTabs(path: String, replies_tab: Memo<bool>, sort: Memo<Sort>) -> impl IntoView {
+    let casts_link = path.clone();
+    let replies_link = with_query(&path, &[("tab", Some("replies".to_owned()))]);
+    view! {
+        <nav class="tabs" aria-label="Profile sections">
+            <a href=casts_link data-noscroll="" class:selected=move || !replies_tab.get() aria-current=move || (!replies_tab.get()).then_some("page")>"Casts"</a>
+            <a href=replies_link data-noscroll="" class:selected=move || replies_tab.get() aria-current=move || replies_tab.get().then_some("page")>"Replies"</a>
+        </nav>
+        {move || (!replies_tab.get()).then(|| view! {
+            <div class="listing-head"><SortTabs path=path.clone() current=sort.get() default_sort=Sort::New/></div>
+        })}
+    }
+}
+
+/// Who the account is. `has_card` says whether the bio and counts are
+/// known: a profile previewed from a feed, before its payload, may only
+/// know the picture and names, and shows placeholders for the rest.
+#[component]
+fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl IntoView {
     let label = LocalResource::new({
         let fid = user.fid;
         move || spam_label(fid)
     });
     view! {
-        <section class="profile" aria-label="Profile">
+        <section class="profile" aria-label="Profile" aria-busy=(!has_card).then_some("true")>
             <div class="profile-top">
                 <Avatar url=user.pfp_url.clone() size=88 large=true/>
                 <div class="profile-id">
                     <h1 class="profile-name">{user.name().to_owned()}</h1>
                     <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" · fid {}", user.fid)}</span></p>
-                    <p class="counts">
-                        <Count n=user.follower_count label="followers"/>
-                        <span class="sep" aria-hidden="true">"·"</span>
-                        <Count n=user.following_count label="following"/>
-                    </p>
+                    {if has_card {
+                        view! {
+                            <p class="counts">
+                                <Count n=user.follower_count label="followers"/>
+                                <span class="sep" aria-hidden="true">"·"</span>
+                                <Count n=user.following_count label="following"/>
+                            </p>
+                        }
+                        .into_any()
+                    } else {
+                        view! { <p class="counts"><span class="sk sk-meta"></span></p> }.into_any()
+                    }}
                 </div>
             </div>
-            {if user.bio.trim().is_empty() {
+            {if !has_card {
+                view! { <div class="bio"><span class="sk sk-title"></span></div> }.into_any()
+            } else if user.bio.trim().is_empty() {
                 view! { <p class="bio muted">"No bio."</p> }.into_any()
             } else {
                 view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> }.into_any()
             }}
             <dl class="facts">
-                {user.joined().map(|joined| view! { <JoinedFact joined/> })}
+                {joined.map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid=user.fid/>
                 <LabelFact label/>
             </dl>
