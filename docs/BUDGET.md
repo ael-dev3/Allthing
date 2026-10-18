@@ -79,7 +79,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | home | cache read 1 + trending casts 1 + link pages ≤12 + Neynar scores ≤2 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
 | channel | as home, plus channel lookup 1 and a possible feed refetch 1 |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + scores ≤2 + origins (budget-limited) + apps ≤1 + cache write 1 |
-| user | cache read 1 + lookup 1–2 + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + scores ≤2 + apps ≤1 + cache write 1 (≤ 24) |
+| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + scores ≤2 + apps ≤1 + cache write 1 (≤ 25) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
 | search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + scores ≤2 + cache write 1 (≤ 20) |
