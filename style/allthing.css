@@ -842,9 +842,9 @@ code {
   transform: scale(0.82);
 }
 
-/* Muted autoplay: no play icon over a playing video. The button becomes a
-   clear layer over the whole video (a click turns sound on) with a small
-   "sound off" badge. */
+/* Autoplay: no play icon over a playing video. The button becomes a clear
+   layer over the whole video (a click plays it with sound and controls), and
+   a small badge turns its sound on or off. */
 .video.autoplaying .video-play {
   inset: 0;
   width: 100%;
@@ -874,15 +874,24 @@ code {
 
 .video.autoplaying .video-sound {
   display: inline-flex;
+  align-items: center;
   position: absolute;
   left: 10px;
   bottom: 10px;
-  padding: 5px 10px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 0;
   border-radius: 999px;
   background: rgba(17, 20, 28, 0.62);
   color: #fff;
   font: 600 12px/1 var(--font-ui);
   letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.video.autoplaying .video-sound:hover {
+  background: rgba(17, 20, 28, 0.82);
 }
 
 .video.loading::after {
