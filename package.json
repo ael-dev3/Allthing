@@ -19,5 +19,10 @@
   "devDependencies": {
     "@playwright/test": "1.56.1",
     "wrangler": "4.147.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "sharp": "0.35.5"
+    }
   }
 }

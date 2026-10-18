@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Wrangler's development image decoder uses Sharp 0.35.5, which includes the patched librsvg for GHSA-wq5f-xc86-pv6w. A scoped override keeps the existing Wrangler and Miniflare versions; browser CI rejects high-severity npm advisories.
+
 - Playing an autoplaying HLS video reuses its buffered source when it is already the best rendition the stream can supply. Low-resolution videos no longer restart the same rendition to satisfy an unavailable higher resolution; genuine upgrades still work.
 - Leaving or replacing an MSE video cancels its rendition playlists and segments, pending source/buffer event waits, and idle buffering timer. Removed players no longer keep those operations alive.
 - Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.

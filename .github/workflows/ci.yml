@@ -82,6 +82,7 @@ jobs:
             ~/.cache/worker-build
           key: browser-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run test:tools
       - run: npx playwright install --with-deps chromium
       - run: bash scripts/build.sh
