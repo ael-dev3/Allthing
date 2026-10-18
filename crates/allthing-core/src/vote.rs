@@ -82,16 +82,25 @@ impl VotePayload {
     pub fn summary(&self) -> (&'static str, &'static str) {
         match (self.onchain, self.app) {
             (Some(OnchainVote::Stay), _) => ("Voted to stay", "Recorded onchain on Base (opt-in NFT for this FID)."),
-            (Some(OnchainVote::Revoked), _) | (_, Some(AppVote::ModeratedOut)) => {
+            (Some(OnchainVote::Revoked), _) => {
                 ("Stay vote revoked", "Voted to stay; the opt-in was later revoked onchain.")
+            }
+            (_, Some(AppVote::ModeratedOut)) => {
+                ("Stay vote revoked", "Per farcaster.xyz; its client opt-in was moderated out.")
             }
             (_, Some(AppVote::OptedOut)) => {
                 ("Voted to leave", "Per farcaster.xyz; leave votes are not recorded onchain.")
             }
-            (_, Some(AppVote::OptedIn)) => {
+            (Some(OnchainVote::NoVote), Some(AppVote::OptedIn)) => {
+                ("Unknown", "Base reports no current stay vote, but farcaster.xyz reports opted in.")
+            }
+            (None, Some(AppVote::OptedIn)) => {
                 ("Voted to stay", "Per farcaster.xyz; the onchain record could not be read.")
             }
-            (Some(OnchainVote::NoVote), _) => {
+            (Some(OnchainVote::NoVote), None) => {
+                ("Unknown", "No stay vote onchain; farcaster.xyz could not be read to check for a leave vote.")
+            }
+            (Some(OnchainVote::NoVote), Some(AppVote::Pending)) => {
                 ("Did not vote", "No stay vote onchain, and farcaster.xyz reports no leave vote.")
             }
             (None, _) => ("Unknown", "The vote could not be read just now."),
@@ -109,6 +118,19 @@ mod tests {
     }
 
     #[test]
+    fn missing_and_conflicting_sources_do_not_invent_vote_results() {
+        assert_eq!(payload(Some(OnchainVote::NoVote), None).summary().0, "Unknown");
+        assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::OptedIn)).summary().0, "Unknown");
+        let (_, detail) = payload(None, Some(AppVote::ModeratedOut)).summary();
+        assert!(detail.contains("farcaster.xyz"));
+        assert!(!detail.contains("revoked onchain"));
+        assert_eq!(payload(None, Some(AppVote::OptedOut)).summary().0, "Voted to leave");
+        assert_eq!(payload(None, Some(AppVote::OptedIn)).summary().0, "Voted to stay");
+        assert_eq!(payload(Some(OnchainVote::Stay), Some(AppVote::OptedOut)).summary().0, "Voted to stay");
+        assert_eq!(payload(Some(OnchainVote::Revoked), None).summary().0, "Stay vote revoked");
+    }
+
+    #[test]
     fn encodes_and_summarises() {
         assert_eq!(
             encode_fid_call(MINTED_SELECTOR, 539_854),
@@ -121,7 +143,7 @@ mod tests {
         assert_eq!(payload(Some(OnchainVote::Stay), Some(AppVote::OptedIn)).summary().0, "Voted to stay");
         assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::OptedOut)).summary().0, "Voted to leave");
         assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::Pending)).summary().0, "Did not vote");
-        assert_eq!(payload(Some(OnchainVote::NoVote), None).summary().0, "Did not vote");
+        assert_eq!(payload(Some(OnchainVote::NoVote), None).summary().0, "Unknown");
         assert_eq!(payload(Some(OnchainVote::Revoked), None).summary().0, "Stay vote revoked");
         assert_eq!(payload(None, None).summary().0, "Unknown");
     }
