@@ -23,7 +23,9 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 - A direct visit with nothing in the store falls back to the normal one-request load.
 - **Profile cards** open with what the page's payload already says about the account (`notes.users`: the start of its bio, its counts, when it joined), or what an earlier page of the visit showed (`api::seen_card`), so they show at once. Only the vote and wallet activity load once the card is open, reused for 5 minutes like any answer, and the label shard, read once per visit.
 
-- **The front page's data is requested by a one-line inline script** at the top of `index.html`, so it starts while the HTML is still being parsed. `api.rs` (`early_response`) takes that pending response instead of fetching again.
+- **A page's data is requested by a one-line inline script** at the top of `index.html`, so it starts while the HTML is still being parsed, alongside the WebAssembly download. `api.rs` (`early_response`) takes that pending response instead of fetching again.
+  - It covers the pages people arrive on: the front page (its sort and time range), `/p/<hash>`, `/u/<name>` and `/c/<id>`. It normalizes the hash, name or id as the app does (lowercase; an `0x` or `@` prefix), so the paths match; anything it doesn't recognize, such as a name with other characters, is left to the app.
+  - On production the post, profile and channel requests used to start only once the app had booted, about 450 ms in (the front page's always started at once). The response is still the page's one API call.
   - The script is allowed by its hash in the CSP (`web/_headers`), and `scripts/check.sh` fails if the two disagree.
   - Starting the request from `boot.js` was tried first, but a module script has to download before it runs, so the request still began about when the app's own JS arrived (700–990 ms on production).
   - The static copy, served under `/Allthing/`, skips it.

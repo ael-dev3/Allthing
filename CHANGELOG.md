@@ -5,6 +5,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- Opening a post, a profile or a channel directly (from a link elsewhere, or a reload) starts its data request as soon as the page arrives, alongside the app's download, as the front page already did. Before, it waited for the app to boot, about 450 ms on production. It is still one API call.
+
 ## [0.4.0] - 2026-10-18
 
 - Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
