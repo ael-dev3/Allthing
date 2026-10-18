@@ -15,6 +15,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Card text can be selected: dragging across it selects it instead of dragging a link, and doesn't open the post, while a plain click still does. The post's link for keyboards and screen readers is the timestamp.
 - The YouTube and Vimeo click-to-load thumbnail no longer enlarges or brightens on hover. Media isn't highlighted or enlarged on hover anywhere.
 - Clicking a card outside its links opened the post only after about 4 seconds. It used a view transition whose promise waited for an animation frame, which never comes during a transition, so Chrome's timeout ended it. Cards now open posts directly, in under 100 ms, with a short CSS fade-in.
+- The changelog's 0.1.0 and 0.2.0 entries link to their release tags (`v0.1.0`, `v0.2.0`) and compare views instead of bare commits. `scripts/check.sh` checks every release links to its tag.
 - Revisiting a page after an API error (a timeout, a 500, "busy") asks the API again instead of showing the same error for up to 5 minutes. Prefetches no longer store errors, and a garbled answer is never reused as data.
 - Back to the front page deep in the feed returns to the same card and stays there. Before, the list came back shorter (25 cards, without the later pages), and a position saved by pixels could not be reached or was moved by images loading, so it could jump to the top a few seconds later. The place is now saved as the card at the top of the viewport, lists come back as long as they were, and the place is held for 6 s unless the reader scrolls.
 - Back to a feed no longer moves the page after the reader's place has been restored. Images above that place came back at zero height and grew as they loaded, pushing the page by hundreds of pixels at a time, sometimes after the 6 s hold had ended. Images seen before are now drawn at their size straight away.
@@ -109,6 +110,6 @@ Released before tagging began; the link points to its last commit, `e521cd1`.
 - A read-only Next.js prototype with live Hypersnap data, on GitHub Pages.
 
 [Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/ael-dev3/Allthing/releases/tag/v0.3.0
-[0.2.0]: https://github.com/ael-dev3/Allthing/tree/90ce332
-[0.1.0]: https://github.com/ael-dev3/Allthing/tree/e521cd1
+[0.3.0]: https://github.com/ael-dev3/Allthing/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ael-dev3/Allthing/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/ael-dev3/Allthing/releases/tag/v0.1.0
