@@ -26,6 +26,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- DEGEN staking promotions are left out as spam, like DEGEN reward bait: casts linking to or naming yeetr.fun, and "stake your DEGEN" or "yield on your DEGEN" pitches. Casts that just discuss staking stay.
 - "new" on the front page lists the newest casts on Farcaster, seconds to a minute old. It used to re-sort the trending pool, whose newest cast was hours old: Hypersnap ranks trending casts with a lag by design (even its 1-hour window's casts are 1–2 hours old), and Hypersnap's search index was about 8 hours behind. "new" now comes from Snapchain's event stream (`/api/v1/latest`): each build reads only the events since the previous one, adds the new top-level casts and drops removed ones, and the list is rebuilt at the edge every 30 seconds. `/status` reports how old the newest cast in the new and trending lists is, and how old each list is.
 - Muted text (times, handles, counts, the "read-only" pill) is easier to read: its color now has at least 4.5:1 contrast on cards and on the page background (it was 4.0:1 on cards and 3.7:1 on the background). Post pages have a level-one heading for screen readers ("Cast by …"), and the posting app's link in "Posted via" is underlined instead of told apart by color alone.
 - The static test server answers malformed paths with 400 instead of crashing, and rejects paths into sibling directories whose names share its root prefix.

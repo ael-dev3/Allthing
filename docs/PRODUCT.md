@@ -27,4 +27,4 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 
 ## Out of scope for now
 
-Sign-in, posting, reacting, direct messages, wallet transactions, notifications and mini apps are out of scope, as are personal recommendations. Casts that consist of mini apps or frames are left out, since Allthing can't show them, and so is spam by a few fixed content rules: links to `*.vercel.app` apps, anything about gig-bot, and DEGEN reward or airdrop bait. Allthing cannot show content that its data sources don't serve. When a source is down, Allthing serves the last good copy and says so.
+Sign-in, posting, reacting, direct messages, wallet transactions, notifications and mini apps are out of scope, as are personal recommendations. Casts that consist of mini apps or frames are left out, since Allthing can't show them, and so is spam by a few fixed content rules: links to `*.vercel.app` apps, anything about gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions (yeetr.fun). Allthing cannot show content that its data sources don't serve. When a source is down, Allthing serves the last good copy and says so.
