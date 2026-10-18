@@ -35,7 +35,7 @@ for (const query of ["literal%2Fpath", "100%25", "C++ & Rust"]) {
       } });
     });
     await page.goto("/search");
-    const input = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+    const input = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
     await input.fill(query);
     await input.press("Enter");
     await expect(page).toHaveURL(/\/search\?q=/);

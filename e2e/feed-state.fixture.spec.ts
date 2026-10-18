@@ -78,7 +78,7 @@ for (const status of [200, 503]) {
     });
     await page.goto("/");
     await requested;
-    const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+    const search = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
     await search.fill("fixture");
     await search.press("Enter");
     await expect(page).toHaveURL(/\/search\?q=fixture$/);
@@ -110,7 +110,7 @@ test("later-page annotations survive navigation back to the feed", async ({ page
   await expect(card).toBeVisible();
   await expect(card.locator(".origin")).toContainText("via Fixture app", { timeout: 1500 });
   await expect(page.locator(`.cast-card[data-hash="${first[0].hash}"] .origin`)).toContainText("via First app");
-  const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
+  const search = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
   await search.fill("fixture");
   await search.press("Enter");
   await expect(page).toHaveURL(/\/search\?q=fixture$/);

@@ -901,7 +901,7 @@ test.describe("threads and navigation", () => {
 
   test("one search box finds posts, people and channels", async ({ page }) => {
     await page.goto(at("/"));
-    const box = page.getByRole("searchbox", { name: /Search casts, people and channels/ });
+    const box = page.getByRole("combobox", { name: /Search casts, people and channels/ });
     await box.fill("farcaster");
     await box.press("Enter");
     await expect(page).toHaveURL(/\/search\?q=farcaster/);
