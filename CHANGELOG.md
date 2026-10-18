@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- If the app module or WebAssembly fails to load, the loading glow gives way to an accessible error message and Reload button. Reload preserves the requested page and query.
+
 - Leaving or replacing an MSE video cancels its rendition playlists and segments, pending source/buffer event waits, and idle buffering timer. Removed players no longer keep those operations alive.
 - Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.
 
