@@ -32,7 +32,10 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
 /// One cast in a listing: who and where, its whole text, media, the casts
 /// it quotes, and its engagement. The whole card opens the post (text stays
 /// selectable), except a quoted cast's card, which opens the quoted cast.
-/// Hovering or touching the card prefetches the post's data.
+/// Hovering or touching the card prefetches the post's data, and in view it
+/// has who liked and recasted it preloaded with its neighbours
+/// (`crate::preload`), from the counts it carries in `data-likes` and
+/// `data-recasts`.
 #[component]
 pub fn CastCard(
     cast: Cast,
@@ -75,6 +78,8 @@ pub fn CastCard(
             data-hash=cast.hash.clone()
             data-ts=cast.ts
             data-points=allthing_core::ranking::points(&cast)
+            data-likes=cast.likes
+            data-recasts=cast.recasts
             style=format!("--i: {}", index.min(16))
             on:click=click
             on:pointerenter=move |_| warm()
@@ -124,6 +129,8 @@ pub fn CastList(
     // Back to a list shows as many cards as before, so the reader's place
     // exists before the scroll position is restored.
     let key = crate::nav::location_key();
+    // A list rendered anew is a new page view for preloaded previews.
+    crate::preload::new_view();
     let shown = RwSignal::new(SHOWN.with(|s| s.borrow().get(&key).copied()).unwrap_or(STEP).max(STEP));
     Effect::new(move |_| {
         let count = shown.get();
@@ -199,7 +206,8 @@ fn observe_once_visible(element: &web_sys::Element, f: impl Fn() + 'static) {
 thread_local! {
     /// How many cards each list (by page key) had shown.
     static SHOWN: std::cell::RefCell<std::collections::HashMap<String, usize>> = Default::default();
-    /// One observer for every card: posts that stay in view get prefetched.
+    /// One observer for every card: posts that stay in view get prefetched,
+    /// and who liked and recasted the cards in view is preloaded.
     static PREFETCH_OBSERVER: Option<IntersectionObserver> = prefetch_observer();
     /// Viewport prefetches allowed: a small token bucket (6 a minute).
     static VIEWPORT_TOKENS: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((6.0, 0.0)) };
@@ -207,12 +215,16 @@ thread_local! {
 
 fn prefetch_observer() -> Option<IntersectionObserver> {
     // The static build runs payload builders in the browser; prefetching
-    // everything in view would be too heavy there.
+    // everything in view would be too heavy there. Its popovers load their
+    // lists when they open.
     if cfg!(feature = "static-host") {
         return None;
     }
     let callback = Closure::<dyn FnMut(js_sys::Array)>::new(|entries: js_sys::Array| {
         for entry in entries.iter().filter_map(|e| e.dyn_into::<IntersectionObserverEntry>().ok()) {
+            // Any part in view counts here: the observer also reports a card
+            // coming into view and leaving it, whatever its threshold.
+            crate::preload::noticed(entry.target(), entry.is_intersecting());
             if !entry.is_intersecting() {
                 continue;
             }
@@ -288,6 +300,7 @@ fn unwatch(element: &web_sys::Element) {
             observer.unobserve(element);
         }
     });
+    crate::preload::forget(element);
 }
 
 /// Placeholder cards while a listing loads.

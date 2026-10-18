@@ -13,8 +13,8 @@ use allthing_core::channels::{
 use allthing_core::index::Source;
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
-    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawTransfers, RawUser, RawUserList,
-    RawUserSearch,
+    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawReaction, RawReactionList,
+    RawTransfers, RawUser, RawUserList, RawUserSearch,
 };
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
@@ -89,28 +89,25 @@ pub async fn casts_bulk(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCa
     Ok(found.map(|l| l.casts).unwrap_or_default())
 }
 
-#[derive(Deserialize)]
-struct Reactions {
-    #[serde(default)]
-    reactions: Vec<Reaction>,
-}
-
-#[derive(Deserialize)]
-struct Reaction {
-    user: Option<RawUser>,
-}
-
-/// The users who liked (`likes`) or recasted (`recasts`) a cast: hydrated,
-/// oldest first, and at most 100 (Hypersnap does not page further).
-pub async fn reactions(inv: &Invocation, hash: &str, kind: &str, limit: u32) -> Result<Vec<RawUser>, UpstreamError> {
-    let found: Option<Reactions> = get_json(
+/// Who liked (`likes`) or recasted (`recasts`) a cast, at most 100
+/// (Hypersnap does not page further), as Hypersnap lists them: each shard's
+/// reactions oldest first, one shard after another ([`normalize::reactors`]
+/// puts them in time order). One kind per call: asked for `likes,recasts`,
+/// Hypersnap answers with the likes alone.
+pub async fn reactions(
+    inv: &Invocation,
+    hash: &str,
+    kind: &str,
+    limit: u32,
+) -> Result<Vec<RawReaction>, UpstreamError> {
+    let found: Option<RawReactionList> = get_json(
         inv,
         Upstream::Hypersnap,
         &v2("reactions/cast", &[("hash", hash), ("types", kind), ("limit", &limit.to_string())]),
         true,
     )
     .await?;
-    Ok(found.map(|r| r.reactions.into_iter().filter_map(|r| r.user).collect()).unwrap_or_default())
+    Ok(found.map(|r| r.reactions).unwrap_or_default())
 }
 
 pub async fn trending_channels(inv: &Invocation, limit: u32) -> Result<Vec<RawChannel>, UpstreamError> {

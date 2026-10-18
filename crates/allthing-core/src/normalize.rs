@@ -325,24 +325,82 @@ impl RawUserSearch {
     }
 }
 
-fn username_for(raw: &RawUser) -> String {
-    match raw.username.as_deref().map(str::trim) {
+/// Only the fields a [`UserSummary`] shows. A reaction list holds up to 100
+/// full user objects (about 1.2 KB each, with bios and addresses), and a
+/// batch of previews reads up to 16 lists: declaring just these keeps
+/// parsing them cheap.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawUserSummary {
+    pub fid: u64,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub pfp_url: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawReaction {
+    pub reaction_timestamp: Option<String>,
+    pub user: Option<RawUserSummary>,
+}
+
+/// `reactions/cast`: who liked or recasted a cast.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawReactionList {
+    #[serde(default)]
+    pub reactions: Vec<RawReaction>,
+}
+
+fn username_or_fid(fid: u64, username: Option<&str>) -> String {
+    match username.map(str::trim) {
         Some(name) if !name.is_empty() => name.to_owned(),
-        _ => format!("fid:{}", raw.fid),
+        _ => format!("fid:{fid}"),
     }
+}
+
+fn username_for(raw: &RawUser) -> String {
+    username_or_fid(raw.fid, raw.username.as_deref())
 }
 
 fn non_empty(value: Option<&str>) -> Option<String> {
     value.map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
 }
 
-pub fn user_summary(raw: &RawUser) -> UserSummary {
+fn summary(fid: u64, username: Option<&str>, display_name: Option<&str>, pfp_url: Option<&str>) -> UserSummary {
     UserSummary {
-        fid: raw.fid,
-        username: username_for(raw),
-        display_name: raw.display_name.as_deref().map(str::trim).unwrap_or_default().to_owned(),
-        pfp_url: non_empty(raw.pfp_url.as_deref()),
+        fid,
+        username: username_or_fid(fid, username),
+        display_name: display_name.map(str::trim).unwrap_or_default().to_owned(),
+        pfp_url: non_empty(pfp_url),
     }
+}
+
+pub fn user_summary(raw: &RawUser) -> UserSummary {
+    summary(raw.fid, raw.username.as_deref(), raw.display_name.as_deref(), raw.pfp_url.as_deref())
+}
+
+/// Who reacted, newest first: at most `limit` people, and whether more
+/// reacted. Hypersnap lists each shard's reactions oldest first, one shard
+/// after another, so they are put in time order here: reversing the list
+/// would rank the last shard's oldest above the first shard's newest.
+pub fn reactors(raw: &[RawReaction], limit: usize) -> (Vec<UserSummary>, bool) {
+    let mut timed: Vec<(i64, &RawUserSummary)> = raw
+        .iter()
+        .filter_map(|r| {
+            let at = r.reaction_timestamp.as_deref().and_then(parse_rfc3339).unwrap_or(i64::MIN);
+            Some((at, r.user.as_ref()?))
+        })
+        .collect();
+    // Stable, so reactions in the same second keep the provider's order,
+    // and the later one in that order counts as the newer.
+    timed.sort_by_key(|(at, _)| *at);
+    let users: Vec<UserSummary> = timed
+        .iter()
+        .rev()
+        .take(limit)
+        .map(|(_, u)| summary(u.fid, u.username.as_deref(), u.display_name.as_deref(), u.pfp_url.as_deref()))
+        .collect();
+    let more = timed.len() > users.len();
+    (users, more)
 }
 
 pub fn user(raw: &RawUser) -> User {
@@ -716,6 +774,48 @@ mod tests {
     fn blank_usernames_fall_back_to_the_fid() {
         let raw: RawUser = serde_json::from_str(r#"{"fid":1,"username":"  "}"#).unwrap();
         assert_eq!(user_summary(&raw).username, "fid:1");
+        let reaction =
+            RawReaction { reaction_timestamp: None, user: Some(RawUserSummary { fid: 2, ..Default::default() }) };
+        assert_eq!(reactors(&[reaction], 10).0[0].username, "fid:2");
+    }
+
+    #[test]
+    fn lists_reactors_newest_first_across_shards() {
+        // Recorded from Hypersnap: two shards' likes, each oldest first.
+        let raw: RawReactionList = serde_json::from_str(&fixture("hypersnap-reactions-likes.json")).unwrap();
+        assert_eq!(raw.reactions.len(), 13);
+        let (newest, more) = reactors(&raw.reactions, 5);
+        let names: Vec<&str> = newest.iter().map(|u| u.username.as_str()).collect();
+        // Reversing the list would put the second shard's 08:10 and 07:42
+        // ahead of the first shard's 08:18.
+        assert_eq!(names, ["fid:1051393", "chiilla", "manaminnn", "meromeron", "shakil4"]);
+        assert!(more);
+        assert_eq!(newest[1].display_name, "chii_chiilla");
+        assert!(newest[1].pfp_url.as_deref().is_some_and(|url| url.starts_with("https://")));
+
+        let (all, more) = reactors(&raw.reactions, 100);
+        assert_eq!((all.len(), more), (13, false));
+        assert_eq!(all.last().map(|u| u.username.as_str()), Some("shiory"));
+    }
+
+    #[test]
+    fn reactions_without_a_user_are_left_out() {
+        let raw: RawReactionList = serde_json::from_str(
+            r#"{"reactions":[
+                {"reaction_timestamp":"2026-10-17T10:00:00.000Z","user":{"fid":1,"username":"a"}},
+                {"reaction_timestamp":"2026-10-17T11:00:00.000Z"},
+                {"reaction_timestamp":"2026-10-17T10:00:00.000Z","user":{"fid":2,"username":"b"}}
+            ]}"#,
+        )
+        .unwrap();
+        let (users, more) = reactors(&raw.reactions, 1);
+        // Same second: the later-listed one is the newer.
+        assert_eq!(users.iter().map(|u| u.fid).collect::<Vec<_>>(), [2]);
+        assert!(more);
+        let (both, more) = reactors(&raw.reactions, 2);
+        assert_eq!(both.iter().map(|u| u.username.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        assert!(!more);
+        assert_eq!(reactors(&[], 10), (vec![], false));
     }
 
     #[test]
