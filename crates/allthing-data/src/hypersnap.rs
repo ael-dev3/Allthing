@@ -173,6 +173,14 @@ pub async fn channel_casts(inv: &Invocation, parent_url: &str, limit: u32) -> Re
     Ok(feed.map(|f| f.casts).unwrap_or_default())
 }
 
+/// A backfill may finish only after a readable casts array, not an error
+/// object that omits the field.
+#[derive(Deserialize)]
+struct BackfillPage {
+    casts: Vec<RawCast>,
+    next: Option<normalize::RawNext>,
+}
+
 /// A page of about `limit` of a feed's casts, newest first, starting at
 /// `cursor` (the newest without one), and the cursor of the next, older
 /// page. A channel is read by its main parent URL only; channel feeds come
@@ -201,7 +209,7 @@ pub async fn feed_page(
     if let Some(cursor) = cursor {
         query.push(("cursor", cursor));
     }
-    let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2(path, &query), true).await?;
+    let feed: Option<BackfillPage> = get_json(inv, Upstream::Hypersnap, &v2(path, &query), true).await?;
     Ok(feed.map(|f| (f.casts, f.next.and_then(|n| n.cursor).filter(|c| !c.is_empty()))).unwrap_or_default())
 }
 

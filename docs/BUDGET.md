@@ -173,4 +173,4 @@ Past month, Past year and All time are ranked from Allthing's own index in D1 ([
 | D1 rows read | 5,000,000/day | The indexer stops at an estimated 2,000,000 a day. Recomputing a ranking reads its span's casts two or three times, and waits longer the bigger the index is (a minute per 50 casts, 5 minutes to 6 hours), which keeps recomputes near 650,000 rows a day at any size. Each indexed front-page build reads 1 row |
 | D1 storage | 5 GB | About 100 bytes per indexed cast, plus three ranking rows of about 70 KB: megabytes |
 
-**Load on Hypersnap**: 1,440 page reads a day (one a minute), through the same token bucket and breaker as page builds. A failed read is not retried: the run moves on, and that feed tries the same page again on its next turn.
+**Load on Hypersnap**: at most 1,440 page reads a day (one a minute), through the same token bucket and breaker as page builds. Each run makes one attempt. A rate limit, unreadable page or other failed read keeps the backfill cursor for the feed's next turn; a successful empty or missing page completes the feed.

@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- A rate limit or unreadable upstream page no longer marks an indexed backfill feed as finished. The indexer keeps its cursor and retries it on a later turn; genuinely missing feeds still finish.
+
 - Clicking or tapping a video’s sound button keeps the page in place and the button focused, so the video continues playing in view.
 
 - Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
