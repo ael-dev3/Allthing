@@ -136,5 +136,6 @@ Annotations memoized in the page (scores, origins, apps) carry over between page
 
 - **Unit tests**: `cargo test` covers the core against recorded Hypersnap responses, the Worker's ABI decoding of onchain scores, link shortening in the app, and the xtask's CSS minifier and fingerprinting.
 - **Lints**: `scripts/check.sh` runs rustfmt and Clippy with `-D warnings` for the native and wasm32 targets, and the `cargo deny` license audit.
+- **Browser regressions**: `npx playwright test '\.fixture\.spec\.ts$'` runs deterministic browser tests against the local build, with API and media responses supplied by fixtures. CI runs these on pull requests and pushes to `main`; new deterministic suites should use the `.fixture.spec.ts` suffix. They exercise the code under review without depending on live data. Failure reports are uploaded for 7 days.
 - **Performance**: `e2e/perf.spec.ts` checks the budget in [PERFORMANCE.md](PERFORMANCE.md); CI runs it against production after each push to `main`.
 - **End to end**: `e2e/allthing.spec.ts` runs Playwright against `wrangler dev`, or against production with `E2E_BASE_URL`, using live data. Video playback runs against a small VP9/Opus HLS fixture (`e2e/fixtures/hls`), because Playwright's Chromium cannot decode H.264.
