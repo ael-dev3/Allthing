@@ -55,6 +55,17 @@ fn is_zero(n: &u32) -> bool {
 }
 
 impl Annotations {
+    /// Add a page's facts without losing facts from earlier pages. A value
+    /// present in the newer page replaces the old one; an absent value does
+    /// not erase an already known fact.
+    pub fn merge(&mut self, newer: &Annotations) {
+        self.scores.extend(newer.scores.clone());
+        self.origins.extend(newer.origins.clone());
+        self.apps.extend(newer.apps.clone());
+        self.links.extend(newer.links.clone());
+        self.pending = self.pending.saturating_add(newer.pending);
+    }
+
     /// Take `fresh` scores for `fids`, keeping the ones already known for
     /// those fids (from Hypersnap or the page's previous copy) wherever no
     /// fresh score came back, as when the onchain read fails.
@@ -273,6 +284,33 @@ pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merging_pages_keeps_known_facts_and_prefers_newer_values() {
+        let mut notes = Annotations {
+            scores: BTreeMap::from([(1, 800_000), (2, 600_000)]),
+            origins: BTreeMap::from([("first".into(), Origin { signer: "old".into(), app_fid: None })]),
+            links: BTreeMap::from([("https://first.example".into(), false)]),
+            pending: 2,
+            ..Default::default()
+        };
+        let newer = Annotations {
+            scores: BTreeMap::from([(2, 900_000), (3, 0)]),
+            origins: BTreeMap::from([("later".into(), Origin { signer: "new".into(), app_fid: Some(99) })]),
+            apps: BTreeMap::from([(
+                99,
+                UserSummary { fid: 99, username: "app".into(), display_name: String::new(), pfp_url: None },
+            )]),
+            links: BTreeMap::from([("https://later.example".into(), true)]),
+            pending: 1,
+        };
+        notes.merge(&newer);
+        assert_eq!(notes.scores, BTreeMap::from([(1, 800_000), (2, 900_000), (3, 0)]));
+        assert_eq!(notes.origins.len(), 2);
+        assert_eq!(notes.app_for("later").map(|app| app.username.as_str()), Some("app"));
+        assert_eq!(notes.links.len(), 2);
+        assert_eq!(notes.pending, 3);
+    }
 
     #[test]
     fn scores_survive_a_failed_read() {
