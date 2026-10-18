@@ -306,17 +306,31 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     let Some(raw) = raw else {
         return Ok(Built::not_found("No such user"));
     };
-    let user = normalize::user(&raw);
+    let mut user = normalize::user(&raw);
     let fid = user.fid;
 
     // The casts, the account's signers and its casts' signers in parallel:
-    // two requests attribute every cast on the page.
-    let (casts, signers, recent) = join3(
-        hypersnap::user_casts(&inv, fid, POOL_SIZE),
-        hypersnap::active_signers(&inv, fid),
-        hypersnap::recent_cast_signers(&inv, fid, POOL_SIZE),
+    // two requests attribute every cast on the page. Alongside, for an
+    // account registered before the ID registry's migration (which reports
+    // the migration's day), when it got its first username.
+    let before_migration = user.registered_before_migration();
+    let ((casts, signers, recent), first_username_at) = join(
+        join3(
+            hypersnap::user_casts(&inv, fid, POOL_SIZE),
+            hypersnap::active_signers(&inv, fid),
+            hypersnap::recent_cast_signers(&inv, fid, POOL_SIZE),
+        ),
+        async { if before_migration { Some(hypersnap::first_username_at(&inv, fid).await) } else { None } },
     )
     .await;
+    // A failed read keeps what the previous copy knew, and this copy is
+    // refreshed soon instead of in five minutes.
+    let retry = matches!(first_username_at, Some(Err(_)));
+    user.first_username_at = match first_username_at {
+        Some(Ok(ts)) => ts,
+        Some(Err(_)) => previous.as_deref().and_then(|p| api::first_username_at_in(p, fid)),
+        None => None,
+    };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
@@ -330,7 +344,8 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     }
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &targets(&refs), 2).await;
-    Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, api::USER_CACHE)
+    let policy = if retry { api::USER_RETRY_CACHE } else { api::USER_CACHE };
+    Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, policy)
 }
 
 pub async fn channels(inv: Rc<Invocation>, query: Option<String>) -> Result<Built, Failure> {

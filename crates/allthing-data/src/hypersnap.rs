@@ -11,7 +11,8 @@ use allthing_core::channels::{
 };
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
-    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawUser, RawUserList, RawUserSearch,
+    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawTransfers, RawUser, RawUserList,
+    RawUserSearch,
 };
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
@@ -246,6 +247,14 @@ pub async fn app_channel(inv: &Invocation, id: &str) -> Result<Option<RawAppChan
     let url = url("https://api.farcaster.xyz", "v1/channel", &[("channelId", id)]);
     let found: Option<RawAppChannelResponse> = get_json(inv, Upstream::FarcasterApp, &url, true).await?;
     Ok(found.and_then(|r| r.result).and_then(|r| r.channel))
+}
+
+/// When `fid` first got a username, from the fname server's public transfer
+/// log (which browsers can read too). `Ok(None)` when it never had one.
+pub async fn first_username_at(inv: &Invocation, fid: u64) -> Result<Option<i64>, UpstreamError> {
+    let url = url("https://fnames.farcaster.xyz", "transfers", &[("fid", &fid.to_string())]);
+    let found: Option<RawTransfers> = get_json(inv, Upstream::Fnames, &url, true).await?;
+    Ok(found.and_then(|t| normalize::first_username_at(&t, fid)))
 }
 
 /// Search runs a Tantivy query; keep user input to plain words.

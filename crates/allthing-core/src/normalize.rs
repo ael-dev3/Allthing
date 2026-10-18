@@ -287,6 +287,27 @@ pub struct RawSearchResult {
     pub users: Vec<RawUser>,
 }
 
+/// The fname server's transfer log for an account (`/transfers?fid=`):
+/// each username it was given or gave up, with Unix seconds.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawTransfers {
+    #[serde(default)]
+    pub transfers: Vec<RawTransfer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawTransfer {
+    pub timestamp: i64,
+    /// The FID the username went to (0 when it was given up).
+    #[serde(default)]
+    pub to: u64,
+}
+
+/// When `fid` first got a username.
+pub fn first_username_at(raw: &RawTransfers, fid: u64) -> Option<i64> {
+    raw.transfers.iter().filter(|t| t.to == fid && t.timestamp > 0).map(|t| t.timestamp).min()
+}
+
 /// `user/search`: Hypersnap answers `{ users }`, Neynar `{ result: { users } }`.
 #[derive(Debug, Default, Deserialize)]
 pub struct RawUserSearch {
@@ -333,6 +354,7 @@ pub fn user(raw: &RawUser) -> User {
         follower_count: raw.follower_count.unwrap_or(0),
         following_count: raw.following_count.unwrap_or(0),
         registered_at: raw.registered_at.as_deref().and_then(parse_rfc3339),
+        first_username_at: None,
         custody_address: non_empty(raw.custody_address.as_deref()).map(|a| a.to_ascii_lowercase()),
         eth_addresses: verified
             .map(|v| v.eth_addresses.iter().map(|a| a.to_ascii_lowercase()).collect())
@@ -531,6 +553,21 @@ pub fn enrich_channel(channel: &mut Channel, app: &RawAppChannel, users: &[RawUs
 mod tests {
     use super::*;
     use crate::model::ChannelCount;
+
+    #[test]
+    fn the_first_username_is_the_earliest_given_to_the_account() {
+        let raw: RawTransfers = serde_json::from_str(
+            r#"{"transfers":[
+                {"id":9,"timestamp":1718064000,"username":"300000","owner":"0x1","from":0,"to":300000},
+                {"id":8,"timestamp":1718063000,"username":"gemagentana","owner":"0x1","from":300000,"to":0},
+                {"id":7,"timestamp":1707177600,"username":"gemagentana","owner":"0x1","from":0,"to":300000}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(first_username_at(&raw, 300_000), Some(1_707_177_600));
+        assert_eq!(first_username_at(&raw, 3), None);
+        assert_eq!(first_username_at(&RawTransfers::default(), 3), None);
+    }
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()

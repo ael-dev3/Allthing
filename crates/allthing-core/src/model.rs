@@ -40,6 +40,10 @@ pub struct User {
     /// Unix seconds of the onchain ID registration the provider reports.
     #[serde(default)]
     pub registered_at: Option<i64>,
+    /// Unix seconds at which the account got its first username (fname),
+    /// read only when `registered_at` is the ID registry's migration day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_username_at: Option<i64>,
     #[serde(default)]
     pub custody_address: Option<String>,
     #[serde(default)]
@@ -65,6 +69,41 @@ impl User {
     pub fn name(&self) -> &str {
         if self.display_name.is_empty() { &self.username } else { &self.display_name }
     }
+
+    /// Whether the reported registration is the ID registry's move to OP
+    /// Mainnet, which every account registered before it reports.
+    pub fn registered_before_migration(&self) -> bool {
+        self.registered_at.is_some_and(|ts| ID_REGISTRY_MIGRATION_DAY.contains(&ts))
+    }
+
+    /// When the account joined Farcaster, as well as it is known.
+    pub fn joined(&self) -> Option<Joined> {
+        let registered = self.registered_at?;
+        if !self.registered_before_migration() {
+            return Some(Joined::Registered(registered));
+        }
+        Some(match self.first_username_at {
+            Some(ts) if ts < ID_REGISTRY_MIGRATION_DAY.start => Joined::FirstUsername(ts),
+            _ => Joined::BeforeMigration,
+        })
+    }
+}
+
+/// The day (UTC) the ID registry moved to OP Mainnet, 7 Nov 2023. Accounts
+/// registered before it report that day as their registration: it is the
+/// earliest date onchain data has for them.
+pub const ID_REGISTRY_MIGRATION_DAY: std::ops::Range<i64> = 1_699_315_200..1_699_401_600;
+
+/// When an account joined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Joined {
+    /// Its onchain ID registration.
+    Registered(i64),
+    /// Registered before the ID registry's migration: the date of its first
+    /// username, which the old sign-up registered along with the ID.
+    FirstUsername(i64),
+    /// Registered before the migration, with no earlier date known.
+    BeforeMigration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,6 +383,25 @@ mod tests {
         }
     }
 
+    fn user(registered_at: Option<i64>, first_username_at: Option<i64>) -> User {
+        User {
+            fid: 3,
+            username: "dwr".into(),
+            display_name: String::new(),
+            pfp_url: None,
+            bio: String::new(),
+            follower_count: 0,
+            following_count: 0,
+            registered_at,
+            first_username_at,
+            custody_address: None,
+            eth_addresses: Vec::new(),
+            sol_addresses: Vec::new(),
+            primary_eth: None,
+            primary_sol: None,
+        }
+    }
+
     #[test]
     fn counts_never_call_casters_members() {
         // Hypersnap alone: its number counts casters, and says so.
@@ -386,5 +444,20 @@ mod tests {
         // Empty rich fields stay out of the JSON.
         let json = serde_json::to_string(&channel("dev", "dev")).unwrap();
         assert!(!json.contains("moderators") && !json.contains("pinned") && !json.contains("casters"), "{json}");
+    }
+
+    #[test]
+    fn accounts_from_before_the_migration_join_with_their_first_username() {
+        // 2023-11-07T19:42:51Z, the migration, and dwr's first fname on 2021-06-17.
+        let migrated = 1_699_386_171;
+        assert_eq!(user(Some(migrated), Some(1_623_888_000)).joined(), Some(Joined::FirstUsername(1_623_888_000)));
+        assert_eq!(user(Some(migrated), None).joined(), Some(Joined::BeforeMigration));
+        // A username newer than the migration says nothing about when it joined.
+        assert_eq!(user(Some(migrated), Some(1_700_000_000)).joined(), Some(Joined::BeforeMigration));
+        // Registered since: the onchain date stands, whatever the username's.
+        assert_eq!(user(Some(1_715_817_600), Some(1_715_900_000)).joined(), Some(Joined::Registered(1_715_817_600)));
+        assert_eq!(user(None, Some(1_623_888_000)).joined(), None);
+        assert!(user(Some(migrated), None).registered_before_migration());
+        assert!(!user(Some(1_699_401_600), None).registered_before_migration());
     }
 }
