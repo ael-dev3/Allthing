@@ -338,13 +338,16 @@ pub fn cast(raw: &RawCast) -> Cast {
         Some(id) => Some(ChannelRef { label: id.clone(), id }),
         None => channel_ref_from_url(channel_url.as_deref()),
     };
+    let text = splice_mentions(raw.text.as_deref().unwrap_or(""), &mentions, &ranges);
+    let embed_urls: Vec<&str> = raw.embeds.iter().flatten().filter_map(|e| e.url.as_deref()).collect();
+    let spam = crate::spam::is_spam(&text, embed_urls, mentions.iter().map(|m| m.username.as_str()));
     Cast {
         hash: normalize_hash(&raw.hash),
         author: raw.author.as_ref().map_or_else(
             || UserSummary { fid: 0, username: "fid:0".into(), display_name: String::new(), pfp_url: None },
             user_summary,
         ),
-        text: splice_mentions(raw.text.as_deref().unwrap_or(""), &mentions, &ranges),
+        text,
         mentions,
         ts: raw.timestamp.as_deref().and_then(parse_rfc3339).unwrap_or(0),
         parent_hash: non_empty(raw.parent_hash.as_deref()).map(|h| normalize_hash(&h)),
@@ -356,6 +359,7 @@ pub fn cast(raw: &RawCast) -> Cast {
         replies: raw.replies.as_ref().and_then(|r| r.count).unwrap_or(0),
         mini_app: raw.embeds.iter().flatten().any(embed_is_mini_app)
             || text_has_mini_app(raw.text.as_deref().unwrap_or("")),
+        spam,
     }
 }
 
@@ -397,6 +401,22 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    #[test]
+    fn flags_spam_casts_and_listings_leave_them_out() {
+        let parse = |json: &str| cast(&serde_json::from_str::<RawCast>(json).unwrap());
+        let vercel = parse(r#"{"hash":"a1","text":"gm","embeds":[{"url":"https://gig-bot-2-0.vercel.app/?degen=1"}]}"#);
+        let degen = parse(r#"{"hash":"a2","text":"Just unlocked my DEGEN rewards 🎩 https://example.com/x?degen=1"}"#);
+        let mention = parse(
+            r#"{"hash":"a3","text":"thanks  for the gig","mentioned_profiles":[{"fid":9,"username":"gig-bot"}],"mentioned_profiles_ranges":[{"start":7,"end":8}]}"#,
+        );
+        let fine =
+            parse(r#"{"hash":"a4","text":"I tipped 100 $DEGEN today","embeds":[{"url":"https://paragraph.xyz/p"}]}"#);
+        assert!(vercel.spam && degen.spam && mention.spam);
+        assert!(!fine.spam && !fine.hidden());
+        let kept = crate::thread::without_hidden(vec![vercel, degen, mention, fine]);
+        assert_eq!(kept.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0xa4"]);
     }
 
     #[test]

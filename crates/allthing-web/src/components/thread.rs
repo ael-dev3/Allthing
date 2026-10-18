@@ -60,8 +60,9 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             </div>
             <div class="comment-body" prop:inert=move || collapsed.get()>
                 <div class="comment-inner">
-                    {if cast.mini_app {
-                        view! { <p class="mini-app-note">"Mini app post hidden"</p> }.into_any()
+                    {if cast.hidden() {
+                        let note = if cast.spam { "Spam post hidden" } else { "Mini app post hidden" };
+                        view! { <p class="mini-app-note">{note}</p> }.into_any()
                     } else {
                         view! { <div class="comment-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
                     }}

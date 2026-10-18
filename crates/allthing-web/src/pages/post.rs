@@ -169,8 +169,13 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                     </span>
                 </div>
             </header>
-            {if cast.mini_app {
-                view! { <p class="mini-app-note">"Mini app post hidden: Allthing does not run mini apps or frames."</p> }.into_any()
+            {if cast.hidden() {
+                let note = if cast.spam {
+                    "Hidden as spam: Allthing leaves out links to vercel.app apps, gig-bot, and DEGEN reward or airdrop bait."
+                } else {
+                    "Mini app post hidden: Allthing does not run mini apps or frames."
+                };
+                view! { <p class="mini-app-note">{note}</p> }.into_any()
             } else {
                 view! { <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
             }}
