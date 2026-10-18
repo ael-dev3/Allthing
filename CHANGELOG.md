@@ -5,11 +5,11 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-- Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
+## [0.4.0] - 2026-10-18
 
+- Frame-like metadata inside fallback raw-text elements, including `noframes`, no longer hides an ordinary linked post. Actual metadata following the fallback element is still detected.
 - A rate limit or unreadable upstream page no longer marks an indexed backfill feed as finished. The indexer keeps its cursor and retries it on a later turn; genuinely missing feeds still finish.
 - Video sound controls use native focus behavior. Browser tests activate already visible controls without automatically scrolling them first, preserving the viewport while checking sound, focus and keyboard activation.
-
 - Queued video events now respect the element's current playback state. An old pause event cannot hide sound controls after playback resumes, and an old playing event cannot show them for a paused video.
 - The static copy reads linked-page metadata only up to its byte limit and cancels the remaining body. A large or stalled tail no longer delays a usable head or requires buffering the full response. CI also checks the static payload builder.
 - If the app module or WebAssembly fails to load, the loading glow gives way to an accessible error message and Reload button. Reload preserves the requested page and query.
@@ -176,7 +176,8 @@ Released before tagging began; the link points to its last commit, `e521cd1`.
 
 - A read-only Next.js prototype with live Hypersnap data, on GitHub Pages.
 
-[Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ael-dev3/Allthing/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ael-dev3/Allthing/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ael-dev3/Allthing/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ael-dev3/Allthing/releases/tag/v0.1.0
