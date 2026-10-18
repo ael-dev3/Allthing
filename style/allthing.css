@@ -470,22 +470,11 @@ code {
 }
 
 .cast-title {
+  color: var(--ink);
   margin: 7px 0 2px;
   font: 500 16.5px/1.45 var(--font-ui);
   letter-spacing: -0.006em;
   overflow-wrap: anywhere;
-}
-
-.cast-title a {
-  color: var(--ink);
-}
-
-.cast-title a:hover {
-  color: var(--accent);
-}
-
-.cast-title a:visited {
-  color: var(--visited);
 }
 
 .replying-to {
@@ -1171,6 +1160,7 @@ code {
 /* ---------- Post page ---------- */
 
 .post {
+  animation: rise 0.3s var(--ease) both;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;

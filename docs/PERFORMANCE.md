@@ -44,7 +44,9 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 
 - Links are handled by the Leptos router, so there are no full reloads.
 - Clicking anywhere on a card navigates (`nav::card_click`), unless the click lands on a link or button, or text is being selected. Ctrl-, ⌘- and shift-click open a new tab as with any link.
-- Opening a post from a card runs inside `document.startViewTransition` where the browser supports it, so the change cross-fades. It is skipped under `prefers-reduced-motion`.
+- Opening a post from a card goes straight to the router, like a link, and the post rises in with a short CSS animation (off under `prefers-reduced-motion`).
+  - A view transition (`document.startViewTransition`) was used at first. It cost about 100 ms on a long feed, to snapshot the page first. A bug also made it wait for Chrome's 4 s timeout: its promise waited for an animation frame, and rendering is paused during the transition.
+  - Full-page navigations still cross-fade (`@view-transition { navigation: auto }`).
 - **Scroll**: `history.scrollRestoration` is `manual`, and `nav::ScrollMemory` saves each entry's position. Back and forward restore it once the content is tall enough (it retries for up to 90 animation frames). Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 

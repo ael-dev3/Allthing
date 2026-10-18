@@ -12,6 +12,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Card text can be selected: dragging across it selects it instead of dragging a link, and doesn't open the post, while a plain click still does. The post's link for keyboards and screen readers is the timestamp.
+- Clicking a card outside its links opened the post only after about 4 seconds. It used a view transition whose promise waited for an animation frame, which never comes during a transition, so Chrome's timeout ended it. Cards now open posts directly, in under 100 ms, with a short CSS fade-in.
 - A video autoplaying muted no longer has the play button drawn over it, so it no longer looks paused. A small "Sound off · tap for sound" badge shows instead, and a click anywhere plays it with sound. Videos are muted and inline in their markup, and muted again before every autoplay, as iOS Safari requires.
 - The Content Security Policy allows Cloudflare Web Analytics' script (`static.cloudflareinsights.com`). Cloudflare injects it when Web Analytics is on, and before, the browser blocked it on every page and logged an error.
 - The header search box says "Search", so its placeholder no longer gets cut off on phones. Its accessible name still says what it searches.
