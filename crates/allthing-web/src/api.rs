@@ -77,24 +77,24 @@ thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
     static IN_FLIGHT: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
     /// Casts already shown in a feed, so their post page can render at once.
-    static SEEN_CASTS: RefCell<HashMap<String, (allthing_core::model::Cast, Option<u32>)>> = RefCell::new(HashMap::new());
+    static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
 }
 
-/// Remember the casts a listing shows (with their authors' scores).
-pub fn remember_casts(casts: &[allthing_core::model::Cast], notes: &allthing_core::api::Annotations) {
+/// Remember the casts a listing shows.
+pub fn remember_casts(casts: &[allthing_core::model::Cast]) {
     SEEN_CASTS.with(|seen| {
         let mut seen = seen.borrow_mut();
         if seen.len() > 2000 {
             seen.clear();
         }
         for cast in casts {
-            seen.insert(cast.hash.clone(), (cast.clone(), notes.scores.get(&cast.author.fid).copied()));
+            seen.insert(cast.hash.clone(), cast.clone());
         }
     });
 }
 
 /// A cast seen in a listing, for rendering its post before the thread loads.
-pub fn seen_cast(hash: &str) -> Option<(allthing_core::model::Cast, Option<u32>)> {
+pub fn seen_cast(hash: &str) -> Option<allthing_core::model::Cast> {
     SEEN_CASTS.with(|seen| seen.borrow().get(hash).cloned())
 }
 

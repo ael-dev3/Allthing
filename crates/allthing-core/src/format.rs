@@ -47,11 +47,6 @@ pub fn short_address(address: &str) -> String {
     format!("{start}…{end}")
 }
 
-/// A Neynar score in millionths as "0.87".
-pub fn score(micros: u32) -> String {
-    format!("{:.2}", f64::from(micros.min(1_000_000)) / 1_000_000.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,12 +67,9 @@ mod tests {
     }
 
     #[test]
-    fn addresses_and_scores() {
+    fn short_addresses() {
         assert_eq!(short_address("0x187c7b0393ebe86378128f2653d0930e33218899"), "0x187c…8899");
         assert_eq!(short_address("ExAqci8uUVKtqHqFW58fmwgMMY9PATfRGGyv6837j9Lx"), "ExAq…j9Lx");
         assert_eq!(short_address("0xabc"), "0xabc");
-        assert_eq!(score(1_000_000), "1.00");
-        assert_eq!(score(873_400), "0.87");
-        assert_eq!(score(0), "0.00");
     }
 }

@@ -17,7 +17,7 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
-use crate::components::chips::{Avatar, Engagement, OriginChip, ScoreBadge, TimeAgo, UserChip};
+use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::text::CastText;
@@ -58,12 +58,9 @@ pub fn PostPage() -> impl IntoView {
             return view! { <NotFound/> }.into_any();
         };
         let loaded = data.get();
-        if let (None | Some(None), Some((cast, score))) = (&loaded, api::seen_cast(&hash)) {
+        if let (None | Some(None), Some(cast)) = (&loaded, api::seen_cast(&hash)) {
             // Seen in a feed: show the cast now; replies arrive with the thread.
-            let mut notes = allthing_core::api::Annotations::default();
-            if let Some(score) = score {
-                notes.scores.insert(cast.author.fid, score);
-            }
+            let notes = allthing_core::api::Annotations::default();
             let payload = Arc::new(CastPayload {
                 thread: allthing_core::model::ThreadNode { cast: cast.clone(), children: Vec::new() },
                 parent: None,
@@ -155,7 +152,6 @@ fn ParentContext(parent: Cast) -> impl IntoView {
 
 #[component]
 fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
-    let score = notes.scores.get(&cast.author.fid).copied().unwrap_or(0);
     let author = cast.author.clone();
     view! {
         <article class="post">
@@ -165,7 +161,6 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                     <a class="display-name" href=user_href(&author.username)>{author.name().to_owned()}</a>
                     <span class="handle">
                         <a href=user_href(&author.username)>"@"{author.username.clone()}</a>
-                        <ScoreBadge micros=score/>
                     </span>
                 </div>
             </header>
@@ -183,7 +178,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
             {payload.quotes.iter().map(|quote| match &quote.cast {
-                Some(q) => view! { <QuoteCard cast=q.clone() notes=notes.clone()/> }.into_any(),
+                Some(q) => view! { <QuoteCard cast=q.clone()/> }.into_any(),
                 None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
             }).collect_view()}
             <p class="post-meta">
@@ -200,11 +195,10 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
 }
 
 #[component]
-fn QuoteCard(cast: Cast, notes: Notes) -> impl IntoView {
-    let score = notes.scores.get(&cast.author.fid).copied().unwrap_or(0);
+fn QuoteCard(cast: Cast) -> impl IntoView {
     view! {
         <blockquote class="quote">
-            <div class="cast-meta"><UserChip user=cast.author.clone() score/>" · "<TimeAgo ts=cast.ts/></div>
+            <div class="cast-meta"><UserChip user=cast.author.clone()/>" · "<TimeAgo ts=cast.ts/></div>
             <div class="quote-text"><CastText text=truncate_title(&cast.text, 400) mentions=cast.mentions.clone()/></div>
             <MediaGrid cast=cast.clone() open_on_click=true/>
             <a class="quote-link" href=cast_href(&cast.hash)>"open quoted cast →"</a>

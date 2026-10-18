@@ -35,11 +35,6 @@ fn targets(casts: &[&Cast]) -> Vec<Target> {
     casts.iter().map(|c| (c.author.fid, c.hash.clone())).collect()
 }
 
-fn author_fids(casts: &[&Cast]) -> Vec<u64> {
-    let mut seen = HashSet::new();
-    casts.iter().map(|c| c.author.fid).filter(|fid| *fid > 0 && seen.insert(*fid)).collect()
-}
-
 /// Trending channels worth showing: named, and not near-empty.
 fn named_channels(raw: Vec<normalize::RawChannel>) -> Vec<Channel> {
     raw.iter()
@@ -117,7 +112,7 @@ pub async fn home(inv: Rc<Invocation>, offset: u32, previous: Option<Rc<Vec<u8>>
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let pool = drop_hidden(&inv, casts, &mut notes).await;
     let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
+    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
 }
 
@@ -139,7 +134,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let casts = raw.iter().map(normalize::cast).collect();
     let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
     let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
+    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
 
@@ -199,7 +194,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     refs.extend(parent.iter());
     refs.extend(quotes.iter().filter_map(|q| q.cast.as_ref()));
     refs.extend(flatten(&thread).into_iter().skip(1));
-    annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
+    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&CastPayload { thread, parent, quotes, channel, notes, meta: meta(&inv) }, api::CAST_CACHE)
 }
 
@@ -225,9 +220,6 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
-    if let Some(score) = raw.score_micros() {
-        notes.scores.insert(fid, score);
-    }
     let active = signers.ok().map(|apps| annotate::remember_signers(&inv, fid, apps));
     if let Ok(recent) = recent {
         let cast_signers: Vec<(String, String)> =
@@ -237,7 +229,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         }
     }
     let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &[fid], &targets(&refs), 2).await;
+    annotate(&inv, &mut notes, &targets(&refs), 2).await;
     Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, api::USER_CACHE)
 }
 
@@ -276,10 +268,6 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
-    let refs: Vec<&Cast> = casts.iter().collect();
-    let mut fids = author_fids(&refs);
-    fids.extend(users.iter().map(|u| u.fid));
-    notes.scores = annotate::scores(&inv, &fids).await;
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
 }
 
@@ -290,10 +278,8 @@ pub async fn reactions(inv: Rc<Invocation>, hash: String, kind: ReactionKind, li
     let total = raw.len();
     // Hypersnap lists the oldest first; show the newest.
     let users: Vec<_> = raw.iter().rev().take(limit as usize).map(normalize::user_summary).collect();
-    let fids: Vec<u64> = users.iter().map(|u| u.fid).collect();
-    let scores = annotate::scores(&inv, &fids).await;
     let more = total > users.len();
-    Built::json(&ReactionsPayload { hash, kind, users, more, scores, meta: meta(&inv) }, api::REACTIONS_CACHE)
+    Built::json(&ReactionsPayload { hash, kind, users, more, meta: meta(&inv) }, api::REACTIONS_CACHE)
 }
 
 /// Replies to show when hovering a cast's reply count: the ten most engaged
@@ -307,8 +293,6 @@ pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure
     let mut replies = drop_hidden(&inv, replies, &mut notes).await;
     replies.sort_by_key(|c| std::cmp::Reverse(allthing_core::ranking::points(c)));
     replies.truncate(10);
-    let refs: Vec<&Cast> = replies.iter().collect();
-    notes.scores = annotate::scores(&inv, &author_fids(&refs)).await;
     Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)
 }
 

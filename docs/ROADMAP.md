@@ -13,7 +13,7 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
   - [x] Honest engagement (likes, recasts, replies; no downvotes) and engagement-based hot, new and top ranking
   - [x] Inline images, hover preview and an accessible media viewer
   - [x] Inline HLS video (native on Safari, a Rust Media Source Extensions player elsewhere) and click-to-load YouTube, Vimeo, Loom and Streamable players
-  - [x] Profile pictures and Neynar scores beside names; profiles with registration date, counts and bio
+  - [x] Profile pictures beside names; profiles with registration date, counts and bio
   - [x] Spam labels from the Farcaster app's public dataset, shown and never used to hide
   - [x] Wallet activity by chain for verified EVM addresses
   - [x] Provenance per cast (signing app and backend) and the protocol design in [PROVENANCE.md](PROVENANCE.md)

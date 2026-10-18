@@ -92,25 +92,26 @@ for (const status of [200, 503]) {
 
 test("later-page annotations survive navigation back to the feed", async ({ page }) => {
   const later = { ...next[0], author: { fid: 2, username: "later" } };
-  await page.route("**/api/v1/home", (route) => route.fulfill({ json: { pool: first, notes: { scores: { "1": 500000 } }, meta } }));
+  await page.route("**/api/v1/home", (route) => route.fulfill({ json: { pool: first, notes: {
+    origins: { [first[0].hash]: { signer: "0xdef", app_fid: 98 } },
+    apps: { "98": { fid: 98, username: "first-app", display_name: "First app" } },
+  }, meta } }));
   await page.route("**/api/v1/home?offset=100", (route) => route.fulfill({ json: {
     pool: [later], meta, notes: {
-      scores: { "2": 910000 }, origins: { [later.hash]: { signer: "0xabc", app_fid: 99 } },
+      origins: { [later.hash]: { signer: "0xabc", app_fid: 99 } },
       apps: { "99": { fid: 99, username: "posting-app", display_name: "Fixture app" } },
     },
   } }));
   await page.goto("/");
   const card = page.locator(`.cast-card[data-hash="${later.hash}"]`);
   await expect(card).toBeVisible();
-  await expect(card.locator(".score")).toHaveText("0.91", { timeout: 1500 });
-  await expect(card.locator(".origin")).toContainText("via Fixture app");
-  await expect(page.locator(`.cast-card[data-hash="${first[0].hash}"] .score`)).toHaveText("0.50");
+  await expect(card.locator(".origin")).toContainText("via Fixture app", { timeout: 1500 });
+  await expect(page.locator(`.cast-card[data-hash="${first[0].hash}"] .origin`)).toContainText("via First app");
   const search = page.getByRole("searchbox", { name: "Search casts, people and channels", exact: true });
   await search.fill("fixture");
   await search.press("Enter");
   await expect(page).toHaveURL(/\/search\?q=fixture$/);
   await page.goBack();
-  await expect(card.locator(".score")).toHaveText("0.91");
   await expect(card.locator(".origin")).toContainText("via Fixture app");
 });
 

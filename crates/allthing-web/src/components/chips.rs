@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Small inline pieces: times, avatars, user chips, scores, engagement and
-//! provenance.
+//! Small inline pieces: times, avatars, user chips, engagement and provenance.
 
 use crate::Notes;
 use allthing_core::embeds::{ImageSize, resized_image_url};
-use allthing_core::format::{compact_number, full_number, score, short_address};
+use allthing_core::format::{compact_number, full_number, short_address};
 use allthing_core::model::{Cast, UserSummary};
 use allthing_core::ranking::points;
 use allthing_core::time::{format_date_time, iso_utc, time_ago};
@@ -42,40 +41,9 @@ pub fn Avatar(url: Option<String>, #[prop(default = 24)] size: u32, #[prop(optio
     }
 }
 
-pub fn score_tier(micros: u32) -> &'static str {
-    match micros {
-        900_000.. => "high",
-        500_000..900_000 => "mid",
-        _ => "low",
-    }
-}
-
-/// A Neynar user score, read onchain. Zero means Neynar has no score.
-#[component]
-pub fn ScoreBadge(micros: u32) -> impl IntoView {
-    if micros == 0 {
-        return ().into_any();
-    }
-    let value = score(micros);
-    let title = format!(
-        "Neynar user score {value} (0–1, higher means more likely a quality account). Read onchain from Neynar's score contract on Base; updated weekly."
-    );
-    let label = format!("Neynar score {value}");
-    view! {
-        <span class=format!("score score-{}", score_tier(micros)) title=title aria-label=label>
-            {value}
-        </span>
-    }
-    .into_any()
-}
-
 /// Profile picture, name and handle, linking to the profile.
 #[component]
-pub fn UserChip(
-    user: UserSummary,
-    #[prop(optional)] score: Option<u32>,
-    #[prop(optional)] show_name: bool,
-) -> impl IntoView {
+pub fn UserChip(user: UserSummary, #[prop(optional)] show_name: bool) -> impl IntoView {
     let href = user_href(&user.username);
     let display = (show_name && !user.display_name.is_empty() && user.display_name != user.username)
         .then(|| user.display_name.clone());
@@ -86,7 +54,6 @@ pub fn UserChip(
             </a>
             {display.map(|name| view! { <a class="display-name" href=href.clone()>{name}</a> })}
             <a class="author" href=href>"@"{user.username.clone()}</a>
-            {score.map(|micros| view! { <ScoreBadge micros/> })}
         </span>
     }
 }

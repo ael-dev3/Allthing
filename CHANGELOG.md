@@ -19,6 +19,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Search results stay compact: the first 6 people and 8 channels, laid out in columns with a count on each group, and "Show all" to see the rest. Casts start above the fold, and their text no longer takes the group headings' display font.
 - The header's Channels button and the front page's Channels sidebar are gone: the feed is one centered column, and the Worker no longer looks up trending channels for it. Channels are still found through search and channel links, and `/channels` still lists them.
 
+### Removed
+
+- Neynar scores are gone: no score badges beside names in feeds, posts, replies, popovers and search, and no Neynar score on profiles. The Worker no longer reads scores from Neynar's contract on Base, which saves up to 2 subrequests per page build.
+
 ### Fixed
 
 - The static test server answers malformed paths with 400 instead of crashing, and rejects paths into sibling directories whose names share its root prefix.
@@ -43,7 +47,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The header search box says "Search", so its placeholder no longer gets cut off on phones. Its accessible name still says what it searches.
 - When the next page of the front page fails to load, it is tried again after 2, 4 and 8 seconds. Before, one failed page ended the feed for the rest of the visit.
 - A short or empty filtered page no longer stops infinite scrolling while later casts remain. Lists recheck their end after a page arrives, respect retry backoff and the 1,000-cast request limit, and release their observer callbacks when unmounted. Ranked front-page batches are cached between reactive reads.
-- Changing the front-page sort reorders each loaded trending page, including later pages, while keeping page boundaries stable as more arrives. Later pages retain their scores and posting-app metadata, including when returning to the feed. A request that finishes after navigating away no longer accesses disposed feed state.
+- Changing the front-page sort reorders each loaded trending page, including later pages, while keeping page boundaries stable as more arrives. Later pages retain their posting-app metadata, including when returning to the feed. A request that finishes after navigating away no longer accesses disposed feed state.
 - Popovers (who liked, recasted, replies) open toward the side with more room, so the replies preview on the first card no longer slides under the sticky header. Their height fits the space available, and the card with an open popover sits above the next card instead of under it.
 - Popovers (who liked, recasted, replied, and the Wallets list) have a solid background. In Chrome, a photo in the card above could show through them: their see-through, blurred background was drawn beneath images on their own compositing layer.
 - Timestamps with impossible dates (30 February, 31 April), out-of-range time zone offsets or trailing text are rejected instead of being rolled over into a different date.
@@ -51,10 +55,9 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - On touch screens, tapping a likes, recasts or replies count opens its popover. Before, the tap's focus opened it and the tap itself closed it again. On narrow screens, popovers are nudged to stay on screen.
 - Escape closes a keyboard popover without reopening it on the returning focus. Preview links stay in the app, and leaving an open preview removes its outside-click listener.
 - On phones, a cast with a wide image no longer makes its list wider than the screen.
-- A cast whose channel URL holds a non-ASCII character where an address would start no longer crashes the page that lists it, and a malformed answer from the score contract is ignored instead of crashing the request.
+- A cast whose channel URL holds a non-ASCII character where an address would start no longer crashes the page that lists it.
 - On phones, profiles show the wallet activity panel and its Wallets button right after the profile header, instead of below every cast. The Wallets popover opens toward the side with more room, like the others.
 - Profiles open by any name the account holds. `/u/dwr.eth` said "No such user": Hypersnap looks names up by each account's current fname only, and fid 3 is now `dwr`. Other names, ENS names among them, are now looked up by the hub's username proof, which names the account's FID.
-- A profile no longer shows its Neynar score as "unavailable" when the onchain score read fails once. The score already known from Hypersnap or from the page's previous copy was thrown away whenever that read failed, and the page was then cached that way for up to 35 minutes; it is now kept.
 - Casts that embed mini apps hosted on their own domains (for example a `*.vercel.app` app) are left out of every feed, search and reply list, like those on Farcaster's hosts. Hypersnap gives no embed metadata, so the Worker reads the linked page's `fc:miniapp`, `fc:frame` or `of:` meta tags: a few links per build, with each verdict remembered per URL.
 - Spam is left out of every feed, search and reply list, like mini apps: casts linking to `*.vercel.app` apps, anything mentioning or linking gig-bot, and DEGEN reward or airdrop bait ("Just unlocked my DEGEN rewards", `?degen=1` links). A spam reply that has replies of its own stays as "Spam post hidden" so the thread still reads.
 - Clicking play on a video while its playlist is still loading plays it, with sound, once it has loaded. Before, the click was lost and the video stayed still.
@@ -84,7 +87,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The whole post card is clickable, while text stays selectable and links inside it still work.
 - **Release process**: Semantic Versioning from the workspace `Cargo.toml`, Conventional Commits, this changelog, tagged GitHub releases, and short-lived branches merged by squash ([docs/RELEASING.md](docs/RELEASING.md)).
 - The version and short commit appear in the footer, and the Worker answers `/version` (also `/api/v1/version`).
-- A test of Neynar scores for known FIDs, and [docs/SCORE.md](docs/SCORE.md) on why the score is read onchain.
+- A test of Neynar scores for known FIDs, and [docs/SCORE.md](https://github.com/ael-dev3/Allthing/blob/v0.3.0/docs/SCORE.md) on why the score is read onchain.
 
 ### Changed
 

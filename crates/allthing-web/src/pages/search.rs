@@ -11,7 +11,7 @@ use leptos::prelude::*;
 use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
-use crate::components::chips::{Avatar, ScoreBadge};
+use crate::components::chips::Avatar;
 use crate::components::layout::ErrorPanel;
 use crate::util::{channel_href, set_title, use_query_param, user_href};
 
@@ -63,7 +63,6 @@ pub fn SearchPage() -> impl IntoView {
                 let channels_total = payload.channels.len();
                 let users = payload.users.clone();
                 let channels = payload.channels.clone();
-                let people_notes = notes.clone();
                 view! {
                     <section class="search-page">
                         <h1 class="page-title">"Results for “"{term}"”"</h1>
@@ -72,21 +71,17 @@ pub fn SearchPage() -> impl IntoView {
                             <section class="results-group" aria-label="People">
                                 <h2>"People" <span class="count">{people_total}</span></h2>
                                 <ul class="people">
-                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| {
-                                        let score = people_notes.scores.get(&u.fid).copied().unwrap_or(0);
-                                        view! {
-                                            <li class="person">
-                                                <a href=user_href(&u.username)>
-                                                    <Avatar url=u.pfp_url.clone() size=40 large=true/>
-                                                    <span class="person-text">
-                                                        <strong>{u.name().to_owned()}</strong>
-                                                        <span class="muted">"@"{u.username.clone()}</span>
-                                                    </span>
-                                                </a>
-                                                <ScoreBadge micros=score/>
-                                                <span class="muted small">{format!("{} followers", compact_number(u.follower_count))}</span>
-                                            </li>
-                                        }
+                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| view! {
+                                        <li class="person">
+                                            <a href=user_href(&u.username)>
+                                                <Avatar url=u.pfp_url.clone() size=40 large=true/>
+                                                <span class="person-text">
+                                                    <strong>{u.name().to_owned()}</strong>
+                                                    <span class="muted">"@"{u.username.clone()}</span>
+                                                </span>
+                                            </a>
+                                            <span class="muted small">{format!("{} followers", compact_number(u.follower_count))}</span>
+                                        </li>
                                     }).collect_view()}
                                 </ul>
                                 <ShowAll shown=all_people total=people_total limit=PEOPLE_SHOWN noun="people"/>

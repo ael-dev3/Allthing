@@ -30,10 +30,6 @@ pub struct Meta {
 /// Per-account and per-cast facts gathered alongside a page's casts.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Annotations {
-    /// fid -> Neynar user score in millionths, read onchain on Base.
-    /// Absent: unknown. Zero: Neynar has no score for the account.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub scores: BTreeMap<u64, u32>,
     /// cast hash -> the signer that signed it and the app that requested it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub origins: BTreeMap<String, Origin>,
@@ -59,19 +55,10 @@ impl Annotations {
     /// present in the newer page replaces the old one; an absent value does
     /// not erase an already known fact.
     pub fn merge(&mut self, newer: &Annotations) {
-        self.scores.extend(newer.scores.clone());
         self.origins.extend(newer.origins.clone());
         self.apps.extend(newer.apps.clone());
         self.links.extend(newer.links.clone());
         self.pending = self.pending.saturating_add(newer.pending);
-    }
-
-    /// Take `fresh` scores for `fids`, keeping the ones already known for
-    /// those fids (from Hypersnap or the page's previous copy) wherever no
-    /// fresh score came back, as when the onchain read fails.
-    pub fn merge_scores(&mut self, fresh: BTreeMap<u64, u32>, fids: &[u64]) {
-        self.scores.retain(|fid, _| fids.contains(fid));
-        self.scores.extend(fresh);
     }
 
     /// The app a cast was posted from, if known.
@@ -180,8 +167,6 @@ pub struct ReactionsPayload {
     /// More reactors exist than are listed.
     #[serde(default)]
     pub more: bool,
-    #[serde(default)]
-    pub scores: BTreeMap<u64, u32>,
     pub meta: Meta,
 }
 
@@ -286,40 +271,32 @@ mod tests {
     #[test]
     fn merging_pages_keeps_known_facts_and_prefers_newer_values() {
         let mut notes = Annotations {
-            scores: BTreeMap::from([(1, 800_000), (2, 600_000)]),
             origins: BTreeMap::from([("first".into(), Origin { signer: "old".into(), app_fid: None })]),
-            links: BTreeMap::from([("https://first.example".into(), false)]),
+            links: BTreeMap::from([("https://first.example".into(), false), ("https://both.example".into(), false)]),
             pending: 2,
             ..Default::default()
         };
         let newer = Annotations {
-            scores: BTreeMap::from([(2, 900_000), (3, 0)]),
             origins: BTreeMap::from([("later".into(), Origin { signer: "new".into(), app_fid: Some(99) })]),
             apps: BTreeMap::from([(
                 99,
                 UserSummary { fid: 99, username: "app".into(), display_name: String::new(), pfp_url: None },
             )]),
-            links: BTreeMap::from([("https://later.example".into(), true)]),
+            links: BTreeMap::from([("https://later.example".into(), true), ("https://both.example".into(), true)]),
             pending: 1,
         };
         notes.merge(&newer);
-        assert_eq!(notes.scores, BTreeMap::from([(1, 800_000), (2, 900_000), (3, 0)]));
         assert_eq!(notes.origins.len(), 2);
         assert_eq!(notes.app_for("later").map(|app| app.username.as_str()), Some("app"));
-        assert_eq!(notes.links.len(), 2);
+        assert_eq!(
+            notes.links,
+            BTreeMap::from([
+                ("https://both.example".into(), true),
+                ("https://first.example".into(), false),
+                ("https://later.example".into(), true),
+            ])
+        );
         assert_eq!(notes.pending, 3);
-    }
-
-    #[test]
-    fn scores_survive_a_failed_read() {
-        let mut notes = Annotations::default();
-        notes.scores.extend([(1, 740_000), (2, 500_000), (9, 100_000)]);
-        // The onchain read failed: what was known for the page's fids stays.
-        notes.merge_scores(BTreeMap::new(), &[1, 2, 3]);
-        assert_eq!(notes.scores, BTreeMap::from([(1, 740_000), (2, 500_000)]));
-        // A fresh read wins over what was known.
-        notes.merge_scores(BTreeMap::from([(1, 750_000), (3, 900_000)]), &[1, 2, 3]);
-        assert_eq!(notes.scores, BTreeMap::from([(1, 750_000), (2, 500_000), (3, 900_000)]));
     }
 
     #[test]
@@ -339,7 +316,6 @@ mod tests {
     #[test]
     fn annotations_round_trip_and_resolve_apps() {
         let mut notes = Annotations::default();
-        notes.scores.insert(3, 1_000_000);
         notes.origins.insert("0xab".into(), Origin { signer: "0x01".into(), app_fid: Some(9152) });
         notes.apps.insert(
             9152,
@@ -351,6 +327,18 @@ mod tests {
         assert_eq!(back.app_for("0xab").map(|a| a.username.as_str()), Some("warpcast"));
         assert_eq!(back.app_for("0xcd"), None);
         assert_eq!(serde_json::to_string(&Annotations::default()).unwrap(), "{}");
+    }
+
+    #[test]
+    fn payloads_cached_with_scores_still_parse() {
+        // Payloads cached before scores were removed still carry them.
+        let notes: Annotations = serde_json::from_str(r#"{"scores":{"3":1000000},"pending":2}"#).unwrap();
+        assert_eq!(notes, Annotations { pending: 2, ..Default::default() });
+        let who: ReactionsPayload = serde_json::from_str(
+            r#"{"hash":"0xab","kind":"likes","users":[],"scores":{"3":1000000},"meta":{"backend":"hypersnap","fetched_at":0}}"#,
+        )
+        .unwrap();
+        assert_eq!(who.kind, ReactionKind::Likes);
     }
 
     #[test]
