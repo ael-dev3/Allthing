@@ -143,17 +143,28 @@ pub async fn attribute(
     active: Option<SignerApps>,
 ) -> Vec<(String, Origin)> {
     let mut apps = active.map(|a| a.as_ref().clone()).unwrap_or_default();
+    // Whether every key the account ever registered is in `apps`.
+    let mut complete = false;
     if cast_signers.iter().any(|(_, signer)| !apps.contains_key(signer))
         && let Ok(history) = hypersnap::all_onchain_signers(inv, fid).await
     {
         for (key, app) in history {
             apps.entry(key).or_insert(app);
         }
+        complete = true;
     }
     let out: Vec<(String, Origin)> = cast_signers
         .iter()
-        .map(|(hash, signer)| {
-            (hash.clone(), Origin { signer: signer.clone(), app_fid: apps.get(signer).copied().flatten() })
+        .filter_map(|(hash, signer)| {
+            // A key missing because the history couldn't be read (an error,
+            // or no budget left) is not known yet: leave the cast to retry
+            // instead of recording "no app" for good.
+            let app_fid = match apps.get(signer) {
+                Some(app) => *app,
+                None if complete => None,
+                None => return None,
+            };
+            Some((hash.clone(), Origin { signer: signer.clone(), app_fid }))
         })
         .collect();
     ORIGINS.with(|o| {
@@ -275,4 +286,55 @@ pub async fn annotate(inv: &Invocation, notes: &mut Annotations, fids: &[u64], t
     notes.merge_scores(scores, fids);
     notes.pending = pending;
     apps(inv, notes).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    /// A host that must not be reached: the invocation has no budget left.
+    struct NoNetwork;
+
+    impl Host for NoNetwork {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, _: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            panic!("an exhausted invocation must not send requests")
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {
+            panic!("no background tasks expected")
+        }
+    }
+
+    #[test]
+    fn casts_whose_signer_history_could_not_be_read_stay_retryable() {
+        let inv = Invocation::new(Rc::new(NoNetwork), 0);
+        let targets = vec![("0xretry".to_owned(), "unknown-key".to_owned())];
+        let first = attribute(&inv, 1, &targets, None).now_or_never().unwrap();
+        assert!(first.is_empty());
+        ORIGINS.with(|o| assert!(o.borrow().get(&"0xretry".to_owned()).is_none()));
+
+        // Next time the key is known, and the cast is attributed.
+        let known = Rc::new(HashMap::from([("unknown-key".to_owned(), Some(77))]));
+        let retry = attribute(&inv, 1, &targets, Some(known)).now_or_never().unwrap();
+        assert_eq!(retry[0].1.app_fid, Some(77));
+        ORIGINS.with(|o| assert_eq!(o.borrow().get(&"0xretry".to_owned()).unwrap().app_fid, Some(77)));
+    }
+
+    #[test]
+    fn a_key_known_to_have_no_app_is_recorded() {
+        let inv = Invocation::new(Rc::new(NoNetwork), 0);
+        let known = Rc::new(HashMap::from([("bare-key".to_owned(), None)]));
+        let targets =
+            vec![("0xbare".to_owned(), "bare-key".to_owned()), ("0xmissing".to_owned(), "missing-key".to_owned())];
+        let resolved = attribute(&inv, 1, &targets, Some(known)).now_or_never().unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0, "0xbare");
+        assert_eq!(resolved[0].1.app_fid, None);
+    }
 }
