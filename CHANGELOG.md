@@ -37,6 +37,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A profile no longer shows its Neynar score as "unavailable" when the onchain score read fails once. The score already known from Hypersnap or from the page's previous copy was thrown away whenever that read failed, and the page was then cached that way for up to 35 minutes; it is now kept.
 - Casts that embed mini apps hosted on their own domains (for example a `*.vercel.app` app) are left out of every feed, search and reply list, like those on Farcaster's hosts. Hypersnap gives no embed metadata, so the Worker reads the linked page's `fc:miniapp`, `fc:frame` or `of:` meta tags: a few links per build, with each verdict remembered per URL.
 - Clicking play on a video while its playlist is still loading plays it, with sound, once it has loaded. Before, the click was lost and the video stayed still.
+- Leaving a loading video no longer lets a late playlist or autoplay timeout access disposed state and panic the app. Autoplay timers are cleared when replaced or when the video is removed.
 
 ## [0.3.0] - 2026-10-18
 
