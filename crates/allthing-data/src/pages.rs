@@ -12,8 +12,9 @@ use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
-use allthing_core::normalize::{self, RawAppChannel};
+use allthing_core::normalize::{self, RawAppChannel, RawCast};
 use allthing_core::params::fid_username;
+use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
 use allthing_core::quotes;
 use allthing_core::ranking::TrendingWindow;
@@ -84,19 +85,23 @@ async fn drop_hidden(
 /// the `known` ones (carried from the previous payload) still quoted, and
 /// the rest from one bulk read, made only while the build's budget keeps
 /// [`QUOTES_RESERVE`]. A skipped or failed read leaves those quotes out, and
-/// their cards link to them instead.
-async fn quoted_casts(inv: &Invocation, casts: &[Cast], mut known: BTreeMap<String, Cast>) -> BTreeMap<String, Cast> {
+/// their cards link to them instead. Alongside: the profile cards of the
+/// authors of the quotes read, from the same response.
+async fn quoted_casts(
+    inv: &Invocation,
+    casts: &[Cast],
+    mut known: BTreeMap<String, Cast>,
+) -> (BTreeMap<String, Cast>, BTreeMap<u64, UserCard>) {
     quotes::retain_quoted(&mut known, casts);
     let missing = quotes::missing(casts, &known, hypersnap::MAX_BULK_CASTS);
     if missing.is_empty() || inv.remaining_subrequests() <= QUOTES_RESERVE {
-        return known;
+        return (known, BTreeMap::new());
     }
-    if let Ok(found) = hypersnap::casts_bulk(inv, &missing).await {
-        for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
-            known.insert(cast.hash.clone(), quotes::as_quote(cast));
-        }
+    let Ok(found) = hypersnap::casts_bulk(inv, &missing).await else { return (known, BTreeMap::new()) };
+    for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
+        known.insert(cast.hash.clone(), quotes::as_quote(cast));
     }
-    known
+    (known, normalize::author_cards(&found))
 }
 
 /// Check a quote's own links before stripping hidden content. The outer
@@ -119,27 +124,46 @@ async fn check_quotes<'a>(
 
 /// Origins and app names for a listing's casts, with the casts they quote
 /// read meanwhile. The quotes read starts first, so its one subrequest is
-/// taken before origins size their batch to the budget that is left.
+/// taken before origins size their batch to the budget that is left. Returns
+/// the profile cards of the authors of the quotes it read.
 async fn annotate_listing(
     inv: &Invocation,
     notes: &mut api::Annotations,
     pool: &[Cast],
     max_authors: usize,
     known_links: &BTreeMap<String, bool>,
-) {
+) -> BTreeMap<u64, UserCard> {
     let refs: Vec<&Cast> = pool.iter().collect();
     let known = std::mem::take(&mut notes.quotes);
-    let ((quotes, links), ()) = join(
+    let ((quotes, links, cards), ()) = join(
         async {
-            let mut quotes = quoted_casts(inv, pool, known).await;
+            let (mut quotes, cards) = quoted_casts(inv, pool, known).await;
             let links = check_quotes(inv, quotes.values_mut(), known_links).await;
-            (quotes, links)
+            (quotes, links, cards)
         },
         annotate(inv, notes, &targets(&refs), max_authors),
     )
     .await;
     notes.quotes = quotes;
     notes.links.extend(links);
+    cards
+}
+
+/// The accounts a listing shows by name: the authors of its casts and of
+/// the casts they quote.
+fn listed_accounts<'a>(casts: impl IntoIterator<Item = &'a Cast>, quotes: &'a BTreeMap<String, Cast>) -> Vec<u64> {
+    casts.into_iter().chain(quotes.values()).map(|c| c.author.fid).collect()
+}
+
+/// Profile cards from the casts a build read, with those of the quotes'
+/// authors (`quoted`). The user objects come with the casts: no request.
+fn read_cards<'a>(
+    raw: impl IntoIterator<Item = &'a RawCast>,
+    quoted: BTreeMap<u64, UserCard>,
+) -> BTreeMap<u64, UserCard> {
+    let mut cards = normalize::author_cards(raw);
+    cards.extend(quoted);
+    cards
 }
 
 fn newest_unique(mut casts: Vec<Cast>, limit: usize) -> Vec<Cast> {
@@ -190,18 +214,20 @@ pub async fn home(
         && let Some(ranking) = ranking(&inv, span).await
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
-        let casts = ranked_casts(&inv, &hashes).await?;
+        let (raw, casts) = ranked_casts(&inv, &hashes).await?;
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
-        annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+        let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+        notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
         let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
         let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index) };
         return Built::json(&payload, api::INDEXED_HOME_CACHE);
     }
     let window = if window.is_indexed() { TrendingWindow::Week } else { window };
-    let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
-    let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
+    let raw = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await.map_err(Failure::upstream)?;
+    let casts = raw.iter().map(normalize::cast).collect();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
-    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None }, api::HOME_CACHE)
 }
 
@@ -216,15 +242,16 @@ async fn ranking(inv: &Invocation, span: Span) -> Option<Ranking> {
 }
 
 /// Ranked casts, freshly read in one bulk call, in rank order. Casts deleted
-/// since they were indexed are left out.
-async fn ranked_casts(inv: &Invocation, hashes: &[String]) -> Result<Vec<Cast>, Failure> {
+/// since they were indexed are left out. With them, the raw casts read.
+async fn ranked_casts(inv: &Invocation, hashes: &[String]) -> Result<(Vec<RawCast>, Vec<Cast>), Failure> {
     if hashes.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let found = hypersnap::casts_bulk(inv, hashes).await.map_err(Failure::upstream)?;
     let mut by_hash: std::collections::HashMap<String, Cast> =
         found.iter().map(normalize::cast).map(|c| (c.hash.clone(), c)).collect();
-    Ok(hashes.iter().filter_map(|hash| by_hash.remove(hash)).collect())
+    let ranked = hashes.iter().filter_map(|hash| by_hash.remove(hash)).collect();
+    Ok((found, ranked))
 }
 
 /// Events read per shard in one build: about 14 minutes of Farcaster, most
@@ -279,15 +306,17 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
         return Err(failure.map(Failure::upstream).unwrap_or_else(|| Failure::internal("unreadable event stream")));
     }
     let hashes = latest::to_hydrate(&added, &listed, &removed, 100);
-    let fresh: Vec<Cast> = match hypersnap::casts_bulk(&inv, &hashes).await {
-        Ok(raw) => raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect(),
+    let raw = match hypersnap::casts_bulk(&inv, &hashes).await {
+        Ok(raw) => raw,
         Err(e) if !added.is_empty() => return Err(Failure::upstream(e)),
         Err(_) => Vec::new(),
     };
+    let fresh = raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect();
     let known_links = std::mem::take(&mut notes.links);
     let fresh = drop_hidden(&inv, fresh, &mut notes, &known_links).await;
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
-    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
 }
 
@@ -341,16 +370,22 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
     let mut casts: Vec<Cast> = raw.iter().map(normalize::cast).collect();
-    let mut pinned: Vec<Cast> = pinned.iter().map(normalize::cast).collect();
+    let mut pinned_cast: Vec<Cast> = pinned.iter().map(normalize::cast).collect();
     // The pinned cast's links are checked first, with the feed's, and it is
     // left out like any listed cast if it is a mini app or spam.
-    notes.links = miniapps::check(&inv, pinned.iter().chain(&casts), &known_links).await;
-    mark_mini_apps(&mut pinned, &notes.links);
+    notes.links = miniapps::check(&inv, pinned_cast.iter().chain(&casts), &known_links).await;
+    mark_mini_apps(&mut pinned_cast, &notes.links);
     mark_mini_apps(&mut casts, &notes.links);
-    channel.pinned = without_hidden(pinned).pop();
+    channel.pinned = without_hidden(pinned_cast).pop();
     let pool = newest_unique(without_hidden(casts), POOL_SIZE as usize);
     let listed: Vec<Cast> = channel.pinned.iter().chain(&pool).cloned().collect();
-    annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS, &known_links).await;
+    let quoted = annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS, &known_links).await;
+    // Cards for the casts' authors and for the hosts, whose user objects
+    // came with the app's record.
+    let mut cards = read_cards(raw.iter().chain(&pinned), quoted);
+    cards.extend(normalize::user_cards(&users));
+    let hosts = channel.lead.iter().chain(&channel.moderators).map(|host| host.fid);
+    notes.keep_users(cards, listed_accounts(&listed, &notes.quotes).into_iter().chain(hosts));
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
 
@@ -373,7 +408,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     // Context around the cast is best-effort; the thread is what matters.
     let channel_key = first.channel.as_ref().map(|c| c.id.clone());
     let parent_hash = first.parent_hash.clone();
-    let (channel, parent, mut quotes) = join3(
+    let (channel, parent, raw_quotes) = join3(
         async {
             match &channel_key {
                 Some(key) => hypersnap::channel(&inv, key).await.ok().flatten(),
@@ -388,19 +423,18 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         },
         join_all(quote_hashes.iter().map(|hash| {
             let inv = &inv;
-            async move {
-                QuotedCast {
-                    hash: hash.clone(),
-                    cast: hypersnap::cast(inv, hash)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|c| quotes::as_quote(normalize::cast(&c))),
-                }
-            }
+            async move { hypersnap::cast(inv, hash).await.ok().flatten() }
         })),
     )
     .await;
+    let mut quotes: Vec<QuotedCast> = quote_hashes
+        .iter()
+        .zip(&raw_quotes)
+        .map(|(hash, raw)| QuotedCast {
+            hash: hash.clone(),
+            cast: raw.as_ref().map(|c| quotes::as_quote(normalize::cast(c))),
+        })
+        .collect();
     notes.links.extend(check_quotes(&inv, quotes.iter_mut().filter_map(|q| q.cast.as_mut()), &known_links).await);
 
     // Attribute the cast itself first, then its context, then the replies.
@@ -409,6 +443,14 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     refs.extend(quotes.iter().filter_map(|q| q.cast.as_ref()));
     refs.extend(flatten(&thread).into_iter().skip(1));
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
+    // Cards for the accounts the page names: the thread's and the quotes'
+    // authors (the parent shows as a link, without one).
+    let named: Vec<u64> = flatten(&thread)
+        .into_iter()
+        .chain(quotes.iter().filter_map(|q| q.cast.as_ref()))
+        .map(|c| c.author.fid)
+        .collect();
+    notes.keep_users(normalize::author_cards(std::iter::once(&root).chain(raw_quotes.iter().flatten())), named);
     Built::json(&CastPayload { thread, parent, quotes, channel, notes, meta: meta(&inv) }, api::CAST_CACHE)
 }
 
@@ -457,7 +499,11 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
             notes.origins.insert(hash, origin);
         }
     }
-    annotate_listing(&inv, &mut notes, &pool, 2, &known_links).await;
+    let quoted = annotate_listing(&inv, &mut notes, &pool, 2, &known_links).await;
+    // The casts are the account's own, whose card is the payload's `user`:
+    // the notes carry cards for the authors of the casts they quote.
+    let quoting: Vec<u64> = notes.quotes.values().map(|c| c.author.fid).collect();
+    notes.keep_users(quoted, quoting);
     let policy = if retry { api::USER_RETRY_CACHE } else { api::USER_CACHE };
     Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, policy)
 }
@@ -497,8 +543,11 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes, &BTreeMap::new()).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
-    notes.quotes = quoted_casts(&inv, &casts, BTreeMap::new()).await;
+    let (quotes, quoted) = quoted_casts(&inv, &casts, BTreeMap::new()).await;
+    notes.quotes = quotes;
     notes.links.extend(check_quotes(&inv, notes.quotes.values_mut(), &BTreeMap::new()).await);
+    // The people found are whole profiles already; the casts' authors get cards.
+    notes.keep_users(read_cards(&hydrated, quoted), listed_accounts(&casts, &notes.quotes));
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
 }
 
@@ -828,12 +877,12 @@ mod channel_tests {
             } else if v2("channel?") {
                 json(include_str!("../../allthing-core/tests/fixtures/hypersnap-channel-legacy.json").into())
             } else if v2("feed/parent_urls?") {
-                json(r#"{"casts":[{"hash":"0x01","text":"gm","timestamp":"2026-10-18T10:00:00Z","author":{"fid":2,"username":"v"}}]}"#.into())
+                json(r#"{"casts":[{"hash":"0x01","text":"gm","timestamp":"2026-10-18T10:00:00Z","author":{"fid":2,"username":"v","profile":{"bio":{"text":"gm"}},"follower_count":5}}]}"#.into())
             } else if v2("user/bulk?fids=1") {
-                json(r#"{"users":[{"fid":1,"username":"farcaster","display_name":"Farcaster"}]}"#.into())
+                json(r#"{"users":[{"fid":1,"username":"farcaster","display_name":"Farcaster","follower_count":445632,"registered_at":"2023-11-07T19:42:51.000Z"}]}"#.into())
             } else if v2(&format!("cast?identifier={PINNED}")) {
                 json(format!(
-                    r#"{{"cast":{{"hash":"{}","text":"{}","timestamp":"2026-10-01T00:00:00Z","author":{{"fid":37,"username":"balajis.eth"}}}}}}"#,
+                    r#"{{"cast":{{"hash":"{}","text":"{}","timestamp":"2026-10-01T00:00:00Z","author":{{"fid":37,"username":"balajis.eth","follower_count":575918}}}}}}"#,
                     &PINNED[2..],
                     self.pinned_text
                 ))
@@ -873,6 +922,13 @@ mod channel_tests {
         assert_eq!(host.sent(&format!("{}/v2/farcaster/user/bulk", hypersnap::BASE)), 1);
         assert_eq!(host.sent(&format!("{}/v2/farcaster/cast?", hypersnap::BASE)), 1);
         assert_eq!(spent as usize, host.requests.borrow().len());
+        // Profile cards for the feed's author, the pinned cast's and the lead,
+        // from the user objects those reads brought: no read of their own.
+        let users = &payload.notes.users;
+        assert_eq!(users.keys().copied().collect::<Vec<_>>(), [1, 2, 37]);
+        assert_eq!((users[&1].followers, users[&1].joined()), (445_632, Some(allthing_core::Joined::BeforeMigration)));
+        assert_eq!((users[&2].bio.as_str(), users[&2].followers), ("gm", 5));
+        assert_eq!(users[&37].followers, 575_918);
     }
 
     #[test]
@@ -888,6 +944,7 @@ mod channel_tests {
         // Nothing else is read for it.
         assert_eq!(host.sent(&format!("{}/v2/farcaster/user/bulk", hypersnap::BASE)), 0);
         assert_eq!(host.sent(&format!("{}/v2/farcaster/cast?", hypersnap::BASE)), 0);
+        assert_eq!(payload.notes.users.keys().copied().collect::<Vec<_>>(), [2]);
     }
 
     #[test]
@@ -896,6 +953,8 @@ mod channel_tests {
         let (payload, _) = build(&host);
         assert!(payload.channel.pinned.is_none());
         assert_eq!(payload.channel.member_count, Some(1));
+        // So is its author's card.
+        assert!(!payload.notes.users.contains_key(&37));
     }
 }
 
@@ -953,7 +1012,7 @@ mod quote_tests {
                             "hash": hash,
                             "text": if hash == SPAM { "Just unlocked my DEGEN rewards" } else { "quoted words" },
                             "timestamp": "2026-10-17T00:00:00Z",
-                            "author": { "fid": 2, "username": "quoted" },
+                            "author": { "fid": 2, "username": "quoted", "follower_count": 9 },
                         })
                     })
                     .collect();
@@ -992,16 +1051,18 @@ mod quote_tests {
         let pool = [cast("0x01", &["0xb1", SPAM]), cast("0x02", &["0xb1", "0xb3"]), cast("0x03", &[])];
         let carried =
             BTreeMap::from([("0xb3".to_owned(), cast("0xb3", &[])), ("0xold".to_owned(), cast("0xold", &[]))]);
-        let quotes = quoted_casts(&inv, &pool, carried).now_or_never().unwrap();
+        let (quotes, cards) = quoted_casts(&inv, &pool, carried).now_or_never().unwrap();
         assert_eq!(host.asked(), [["0xb1", SPAM]]);
         assert_eq!(inv.remaining_subrequests(), 44);
         assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", SPAM, "0xb3"]);
         assert_eq!((quotes["0xb1"].text.as_str(), quotes["0xb1"].author.username.as_str()), ("quoted words", "quoted"));
         assert!(quotes[SPAM].spam && quotes[SPAM].text.is_empty());
+        // The quoted author's profile card comes with the same read.
+        assert_eq!(cards, BTreeMap::from([(2, UserCard { followers: 9, ..Default::default() })]));
 
         // The next build carries them all and reads nothing.
-        let again = quoted_casts(&inv, &pool, quotes.clone()).now_or_never().unwrap();
-        assert_eq!(again, quotes);
+        let (again, cards) = quoted_casts(&inv, &pool, quotes.clone()).now_or_never().unwrap();
+        assert_eq!((again, cards), (quotes, BTreeMap::new()));
         assert_eq!(host.requests.borrow().len(), 1);
     }
 
@@ -1012,12 +1073,15 @@ mod quote_tests {
 
         let host = Bulk::new(false);
         let tight = Invocation::new(host.clone(), QUOTES_RESERVE);
-        assert_eq!(quoted_casts(&tight, &pool, carried.clone()).now_or_never().unwrap(), carried);
+        assert_eq!(
+            quoted_casts(&tight, &pool, carried.clone()).now_or_never().unwrap(),
+            (carried.clone(), BTreeMap::new())
+        );
         assert!(host.requests.borrow().is_empty());
 
         let host = Bulk::new(true);
         let inv = Invocation::new(host.clone(), 45);
-        assert_eq!(quoted_casts(&inv, &pool, carried.clone()).now_or_never().unwrap(), carried);
+        assert_eq!(quoted_casts(&inv, &pool, carried.clone()).now_or_never().unwrap(), (carried, BTreeMap::new()));
         assert_eq!(host.requests.borrow().len(), 1);
     }
 
@@ -1031,7 +1095,7 @@ mod quote_tests {
             .enumerate()
             .map(|(i, pair)| cast(&format!("0xc{i}"), &pair.iter().map(String::as_str).collect::<Vec<_>>()))
             .collect();
-        let quotes = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
+        let (quotes, _) = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
         assert_eq!(host.asked()[0], hashes[..hypersnap::MAX_BULK_CASTS]);
         assert_eq!(quotes.len(), hypersnap::MAX_BULK_CASTS);
     }

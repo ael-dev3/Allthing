@@ -21,6 +21,7 @@ use crate::components::cast::{CastSkeletons, ChannelLink};
 use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
@@ -100,6 +101,7 @@ pub fn PostPage() -> impl IntoView {
             Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<CastPayload> = data;
                 let notes: Notes = Arc::new(payload.notes.clone());
+                api::remember_cards(&notes.users);
                 let cast = payload.thread.cast.clone();
                 let mut replies = payload.thread.children.clone();
                 sort_thread(&mut replies, sort.get());
@@ -151,17 +153,21 @@ fn ParentContext(parent: Cast) -> impl IntoView {
 #[component]
 fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
     let author = cast.author.clone();
+    let href = user_href(&author.username);
+    let (pfp, name, username) = (author.pfp_url.clone(), author.name().to_owned(), author.username.clone());
     view! {
         <article class="post">
             <h1 class="visually-hidden">{format!("Cast by {}", author.name())}</h1>
             <header class="post-author">
-                <a href=user_href(&author.username) tabindex="-1" aria-hidden="true"><Avatar url=author.pfp_url.clone() size=44 large=true/></a>
-                <div class="post-author-text">
-                    <a class="display-name" href=user_href(&author.username)>{author.name().to_owned()}</a>
-                    <span class="handle">
-                        <a href=user_href(&author.username)>"@"{author.username.clone()}</a>
-                    </span>
-                </div>
+                <ProfileHover user=author.clone() card=notes.users.get(&author.fid).cloned() class="post-author-links">
+                    <a href=href.clone() tabindex="-1" aria-hidden="true"><Avatar url=pfp.clone() size=44 large=true/></a>
+                    <div class="post-author-text">
+                        <a class="display-name" href=href.clone()>{name.clone()}</a>
+                        <span class="handle">
+                            <a href=href.clone()>"@"{username.clone()}</a>
+                        </span>
+                    </div>
+                </ProfileHover>
             </header>
             {if cast.hidden() {
                 let note = if cast.spam {
@@ -178,7 +184,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             <LinkCards cast=cast.clone()/>
             {payload.quotes.iter().map(|quote| match &quote.cast {
                 Some(q) => view! {
-                    <QuoteCard cast=q.clone() open_on_click=true max_chars=POST_QUOTE_CHARS/>
+                    <QuoteCard cast=q.clone() open_on_click=true max_chars=POST_QUOTE_CHARS author_card=notes.users.get(&q.author.fid).cloned()/>
                 }.into_any(),
                 None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
             }).collect_view()}

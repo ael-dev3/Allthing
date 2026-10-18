@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::time::{duration_since, format_date};
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub fid: u64,
@@ -78,14 +80,7 @@ impl User {
 
     /// When the account joined Farcaster, as well as it is known.
     pub fn joined(&self) -> Option<Joined> {
-        let registered = self.registered_at?;
-        if !self.registered_before_migration() {
-            return Some(Joined::Registered(registered));
-        }
-        Some(match self.first_username_at {
-            Some(ts) if ts < ID_REGISTRY_MIGRATION_DAY.start => Joined::FirstUsername(ts),
-            _ => Joined::BeforeMigration,
-        })
+        Joined::from_dates(self.registered_at, self.first_username_at)
     }
 }
 
@@ -104,6 +99,44 @@ pub enum Joined {
     FirstUsername(i64),
     /// Registered before the migration, with no earlier date known.
     BeforeMigration,
+}
+
+impl Joined {
+    /// When an account joined, from the onchain registration its provider
+    /// reports and, for one registered before the ID registry's migration,
+    /// when it got its first username, if that is known.
+    pub fn from_dates(registered_at: Option<i64>, first_username_at: Option<i64>) -> Option<Joined> {
+        let registered = registered_at?;
+        if !ID_REGISTRY_MIGRATION_DAY.contains(&registered) {
+            return Some(Joined::Registered(registered));
+        }
+        Some(match first_username_at {
+            Some(ts) if ts < ID_REGISTRY_MIGRATION_DAY.start => Joined::FirstUsername(ts),
+            _ => Joined::BeforeMigration,
+        })
+    }
+
+    /// The date profiles show: "17 Jun 2021", or "before Nov 2023".
+    pub fn date(self) -> String {
+        match self {
+            Joined::Registered(ts) | Joined::FirstUsername(ts) => format_date(ts),
+            Joined::BeforeMigration => "before Nov 2023".to_owned(),
+        }
+    }
+
+    /// Where the date comes from, for its tooltip (`now` in Unix seconds).
+    pub fn note(self, now: i64) -> String {
+        const MIGRATION: &str =
+            "the ID registry moved to OP Mainnet on 7 Nov 2023, which is the earliest date onchain data has for it";
+        match self {
+            Joined::Registered(ts) => format!("Registered onchain {} ago.", duration_since(ts, now)),
+            Joined::FirstUsername(ts) => format!(
+                "Got its first username {} ago. The account was registered before {MIGRATION}.",
+                duration_since(ts, now)
+            ),
+            Joined::BeforeMigration => format!("Registered before {MIGRATION}."),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -467,5 +500,36 @@ mod tests {
         assert_eq!(user(None, Some(1_623_888_000)).joined(), None);
         assert!(user(Some(migrated), None).registered_before_migration());
         assert!(!user(Some(1_699_401_600), None).registered_before_migration());
+        // The same reading for anything that knows the two dates.
+        assert_eq!(Joined::from_dates(Some(migrated), Some(1_623_888_000)), Some(Joined::FirstUsername(1_623_888_000)));
+        assert_eq!(Joined::from_dates(Some(ID_REGISTRY_MIGRATION_DAY.start), None), Some(Joined::BeforeMigration));
+        assert_eq!(
+            Joined::from_dates(Some(ID_REGISTRY_MIGRATION_DAY.end), None),
+            Some(Joined::Registered(1_699_401_600))
+        );
+        assert_eq!(Joined::from_dates(None, None), None);
+    }
+
+    #[test]
+    fn join_dates_read_as_profiles_say_them() {
+        let now = 1_792_235_681;
+        let first = Joined::FirstUsername(1_623_888_000);
+        assert_eq!(first.date(), "17 Jun 2021");
+        assert_eq!(
+            first.note(now),
+            "Got its first username 5 years ago. The account was registered before the ID registry moved to OP \
+             Mainnet on 7 Nov 2023, which is the earliest date onchain data has for it."
+        );
+        assert_eq!(Joined::BeforeMigration.date(), "before Nov 2023");
+        assert_eq!(
+            Joined::BeforeMigration.note(now),
+            "Registered before the ID registry moved to OP Mainnet on 7 Nov 2023, which is the earliest date onchain \
+             data has for it."
+        );
+        let registered = Joined::Registered(1_715_817_600);
+        assert_eq!(
+            (registered.date(), registered.note(now)),
+            ("16 May 2024".into(), "Registered onchain 2 years ago.".into())
+        );
     }
 }

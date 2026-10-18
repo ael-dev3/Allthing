@@ -6,13 +6,14 @@
 //! page shows into one payload, and the browser sorts and pages it locally,
 //! so switching sort or page costs no request at all.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::latest::Cursor;
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::percent_encode;
+use crate::profile::UserCard;
 use crate::provenance::{Backend, Origin};
 use crate::ranking::TrendingWindow;
 
@@ -52,6 +53,12 @@ pub struct Annotations {
     /// of the same payload while still quoted.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub quotes: BTreeMap<String, Cast>,
+    /// Account fid -> what its profile card shows beyond its picture and
+    /// names (see [`crate::profile`]), for the accounts the page shows. Read
+    /// from the user objects that come with the page's casts, at no extra
+    /// request, and carried to the next build while the account is shown.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub users: BTreeMap<u64, UserCard>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -67,7 +74,18 @@ impl Annotations {
         self.apps.extend(newer.apps.clone());
         self.links.extend(newer.links.clone());
         self.quotes.extend(newer.quotes.clone());
+        self.users.extend(newer.users.clone());
         self.pending = self.pending.saturating_add(newer.pending);
+    }
+
+    /// Keep the profile cards of the accounts in `shown`: the `fresh` ones,
+    /// read with this build's casts, in place of those carried from the
+    /// previous build, which stay only while their account is still shown
+    /// (the author of a quote carried forward, say).
+    pub fn keep_users(&mut self, fresh: BTreeMap<u64, UserCard>, shown: impl IntoIterator<Item = u64>) {
+        let shown: HashSet<u64> = shown.into_iter().collect();
+        self.users.extend(fresh);
+        self.users.retain(|fid, _| shown.contains(fid));
     }
 
     /// The app a cast was posted from, if known.
@@ -353,12 +371,17 @@ mod tests {
         .unwrap()
     }
 
+    fn card(bio: &str, followers: u64) -> UserCard {
+        UserCard { bio: bio.into(), followers, ..Default::default() }
+    }
+
     #[test]
     fn merging_pages_keeps_known_facts_and_prefers_newer_values() {
         let mut notes = Annotations {
             origins: BTreeMap::from([("first".into(), Origin { signer: "old".into(), app_fid: None })]),
             links: BTreeMap::from([("https://first.example".into(), false), ("https://both.example".into(), false)]),
             quotes: BTreeMap::from([("0xq1".into(), quoted("0xq1"))]),
+            users: BTreeMap::from([(7, card("", 10)), (8, card("gm", 1))]),
             pending: 2,
             ..Default::default()
         };
@@ -370,10 +393,12 @@ mod tests {
             )]),
             links: BTreeMap::from([("https://later.example".into(), true), ("https://both.example".into(), true)]),
             quotes: BTreeMap::from([("0xq2".into(), quoted("0xq2"))]),
+            users: BTreeMap::from([(7, card("", 12))]),
             pending: 1,
         };
         notes.merge(&newer);
         assert_eq!(notes.origins.len(), 2);
+        assert_eq!(notes.users, BTreeMap::from([(7, card("", 12)), (8, card("gm", 1))]));
         assert_eq!(notes.app_for("later").map(|app| app.username.as_str()), Some("app"));
         assert_eq!(
             notes.links,
@@ -421,6 +446,55 @@ mod tests {
         assert_eq!(back.app_for("0xab").map(|a| a.username.as_str()), Some("warpcast"));
         assert_eq!(back.app_for("0xcd"), None);
         assert_eq!(serde_json::to_string(&Annotations::default()).unwrap(), "{}");
+    }
+
+    #[test]
+    fn profile_cards_stay_for_the_accounts_still_shown() {
+        let mut notes = Annotations {
+            users: BTreeMap::from([(1, card("carried", 1)), (2, card("old", 2)), (3, card("gone", 3))]),
+            ..Default::default()
+        };
+        let fresh = BTreeMap::from([(2, card("new", 20)), (4, card("new", 4)), (5, card("not shown", 5))]);
+        notes.keep_users(fresh, [1, 2, 4, 6]);
+        assert_eq!(notes.users, BTreeMap::from([(1, card("carried", 1)), (2, card("new", 20)), (4, card("new", 4))]));
+        notes.keep_users(BTreeMap::new(), []);
+        assert!(notes.users.is_empty());
+    }
+
+    #[test]
+    fn payloads_cached_before_profile_cards_still_parse() {
+        // Cached before `notes.users` existed: no cards, nothing else lost.
+        let home: HomePayload = serde_json::from_str(
+            r#"{"pool":[{"hash":"0xab","author":{"fid":3,"username":"dwr"},"text":"gm","ts":1}],
+                "notes":{"origins":{"0xab":{"signer":"0x01","app_fid":9152}},"pending":1},
+                "meta":{"backend":"hypersnap","fetched_at":0}}"#,
+        )
+        .unwrap();
+        assert!(home.notes.users.is_empty());
+        assert_eq!(home.notes.pending, 1);
+        assert_eq!(home.notes.origins["0xab"].app_fid, Some(9152));
+        let post: CastPayload = serde_json::from_str(
+            r#"{"thread":{"cast":{"hash":"0xab","author":{"fid":3,"username":"dwr"},"text":"gm","ts":1}},
+                "meta":{"backend":"hypersnap","fetched_at":0}}"#,
+        )
+        .unwrap();
+        assert!(post.notes.users.is_empty());
+
+        // Cards round-trip keyed by fid, and an empty map is left out.
+        let mut notes = Annotations::default();
+        notes.users.insert(
+            3,
+            UserCard {
+                bio: "Interested in technology.".into(),
+                followers: 1,
+                registered_at: Some(9),
+                ..Default::default()
+            },
+        );
+        let json = serde_json::to_string(&notes).unwrap();
+        assert_eq!(json, r#"{"users":{"3":{"bio":"Interested in technology.","followers":1,"registered_at":9}}}"#);
+        assert_eq!(serde_json::from_str::<Annotations>(&json).unwrap(), notes);
+        assert!(!serde_json::to_string(&Annotations::default()).unwrap().contains("users"));
     }
 
     #[test]

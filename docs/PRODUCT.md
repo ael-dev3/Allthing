@@ -23,6 +23,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 - **Search**: one box for casts, people and channels.
 - **Channels**: a channel's feed with the same sorting, and a directory with search.
 - **Post**: the cast with its media, the parent it replies to, quoted casts, a provenance panel, and threaded replies that collapse and expand.
+- **Profile cards**: hovering or tapping a name or profile picture anywhere shows a small card with the start of the bio, followers and following, when the account joined, its Farcaster vote, the Farcaster app's label and wallet activity, and a link to the profile.
 - **Profile**: the profile picture, name, bio, followers and following, registration date and Farcaster vote. It also shows the Farcaster app's spam label (or that there is none, or that the data is unavailable), and wallet activity by chain from verified addresses, with a Wallets popover listing the addresses.
 
 ## Out of scope for now

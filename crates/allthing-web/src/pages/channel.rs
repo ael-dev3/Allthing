@@ -20,6 +20,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastCard, CastList, CastSkeletons};
 use crate::components::chips::Avatar;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, SortTabs, StaleNotice};
+use crate::components::profile_card::ProfileHover;
 use crate::components::text::CastText;
 use crate::util::{channel_href, set_title, use_query_param, user_href};
 
@@ -102,7 +103,7 @@ pub fn ChannelPage() -> impl IntoView {
                 .into_any();
                 view! {
                     <Columns side>
-                        <ChannelHeader channel=channel.clone()/>
+                        <ChannelHeader channel=channel.clone() notes=notes.clone()/>
                         {pinned.map(|cast| {
                             api::remember_casts(std::slice::from_ref(&cast), &notes);
                             view! {
@@ -128,9 +129,10 @@ pub fn ChannelPage() -> impl IntoView {
 
 /// The banner, picture, names, description, counts, link and hosts. Each part
 /// shows only when known: without the Farcaster app's details (in the static
-/// copy, say) this is the name and Hypersnap's count of casters.
+/// copy, say) this is the name and Hypersnap's count of casters. `notes`
+/// carry the hosts' profile cards.
 #[component]
-fn ChannelHeader(channel: Channel) -> impl IntoView {
+fn ChannelHeader(channel: Channel, notes: Notes) -> impl IntoView {
     let title = channel.heading();
     let subtitle = channel.subheading();
     let picture_alt = format!("Picture of {title}");
@@ -174,7 +176,7 @@ fn ChannelHeader(channel: Channel) -> impl IntoView {
                         {external_link.map(|link| view! { <ChannelLink link/> })}
                     </div>
                 })}
-                {has_hosts.then(|| view! { <Hosts lead moderators/> })}
+                {has_hosts.then(|| view! { <Hosts lead moderators notes/> })}
             </div>
         </header>
     }
@@ -194,30 +196,39 @@ fn ChannelLink(link: ExternalLink) -> impl IntoView {
     }
 }
 
-/// One host: picture and name, linking to the profile.
+/// One host: picture and name, linking to the profile, with the account's
+/// profile card (which shows the handle).
 #[component]
-fn Host(user: UserSummary) -> impl IntoView {
+fn Host(user: UserSummary, notes: Notes) -> impl IntoView {
+    let href = user_href(&user.username);
+    let (pfp, name) = (user.pfp_url.clone(), user.name().to_owned());
+    let card = notes.users.get(&user.fid).cloned();
+    // The header clips what overflows it: the card is placed against the
+    // viewport instead.
     view! {
-        <a class="host" href=user_href(&user.username) title=format!("@{}", user.username)>
-            <Avatar url=user.pfp_url.clone() size=24/>
-            <span class="host-name">{user.name().to_owned()}</span>
-        </a>
+        <ProfileHover user card fixed=true class="host-links">
+            <a class="host" href=href.clone()>
+                <Avatar url=pfp.clone() size=24/>
+                <span class="host-name">{name.clone()}</span>
+            </a>
+        </ProfileHover>
     }
 }
 
 /// "Lead" and "Moderators", the moderators capped at [`MODERATORS_SHOWN`]
 /// until "+N" is pressed.
 #[component]
-fn Hosts(lead: Option<UserSummary>, moderators: Vec<UserSummary>) -> impl IntoView {
+fn Hosts(lead: Option<UserSummary>, moderators: Vec<UserSummary>, notes: Notes) -> impl IntoView {
     let all = RwSignal::new(false);
     let hidden = moderators.len().saturating_sub(MODERATORS_SHOWN);
     let more = move || hidden != 0 && !all.get();
+    let lead_notes = notes.clone();
     view! {
         <dl class="channel-hosts">
             {lead.map(|user| view! {
                 <div class="host-group">
                     <dt>"Lead"</dt>
-                    <dd><Host user/></dd>
+                    <dd><Host user notes=lead_notes/></dd>
                 </div>
             })}
             {(!moderators.is_empty()).then(|| view! {
@@ -227,7 +238,11 @@ fn Hosts(lead: Option<UserSummary>, moderators: Vec<UserSummary>) -> impl IntoVi
                         <ul class="host-list">
                             {move || {
                                 let shown = if all.get() { moderators.len() } else { MODERATORS_SHOWN };
-                                moderators.iter().take(shown).map(|user| view! { <li><Host user=user.clone()/></li> }).collect_view()
+                                moderators
+                                    .iter()
+                                    .take(shown)
+                                    .map(|user| view! { <li><Host user=user.clone() notes=notes.clone()/></li> })
+                                    .collect_view()
                             }}
                             <Show when=more>
                                 <li>
