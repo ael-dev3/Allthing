@@ -162,6 +162,14 @@ impl Cast {
         self.parent_hash.is_some()
     }
 
+    /// The URLs of its link embeds (not media, not quoted casts).
+    pub fn link_urls(&self) -> impl Iterator<Item = &str> {
+        self.embeds.iter().filter_map(|embed| match embed {
+            Embed::Link { url, .. } => Some(url.as_str()),
+            _ => None,
+        })
+    }
+
     /// Images and videos, in the order they were attached.
     pub fn media(&self) -> impl Iterator<Item = &Embed> {
         self.embeds.iter().filter(|embed| embed.is_media())
