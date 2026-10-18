@@ -5,9 +5,9 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Playing an autoplaying HLS video reuses its buffered source when it is already the best rendition the stream can supply. Low-resolution videos no longer restart the same rendition to satisfy an unavailable higher resolution; genuine upgrades still work.
 - Leaving or replacing an MSE video cancels its rendition playlists and segments, pending source/buffer event waits, and idle buffering timer. Removed players no longer keep those operations alive.
 - Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.
-
 - The newest feed keeps stale-if-error recovery when both event shards are unavailable, rejects error objects as event pages, and accepts genuinely empty streams. Invalid event timestamps are skipped without overflow.
 - Changing the front-page time range starts that range's pagination immediately. Requests and retry timers from the previous range cannot block it, hide its loading state, or append an obsolete page.
 - Editing the header search immediately hides suggestions for the previous words, and Escape also dismisses a lookup that is still loading. Arrow keys and Enter cannot open a result from an older query.
