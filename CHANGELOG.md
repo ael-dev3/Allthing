@@ -14,6 +14,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- The static test server answers malformed paths with 400 instead of crashing, and rejects paths into sibling directories whose names share its root prefix.
 - Copying a verified wallet waits for the clipboard write before showing success, and reports failures with a retry instead of falsely saying “Copied”.
 - Profiles preserve unknown vote states when the leave-vote source is unavailable or records disagree, and identify app-reported revocations without claiming they were confirmed onchain.
 - Reaction dialogs keep keyboard focus inside, restore it when dismissed, and lock background scrolling. Their profile links use the app router, and navigating or going Back closes the dialog.
