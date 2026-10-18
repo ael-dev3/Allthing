@@ -541,6 +541,61 @@ code {
   background: var(--accent-soft);
 }
 
+/* A quoted cast: a small inset card in the cast that quotes it, in feeds
+   and on the post page. A click on it opens the quoted cast, and it lifts
+   on hover like a feed card. */
+.quote {
+  margin: 10px 0 2px;
+  padding: 9px 12px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  transition: transform 0.28s var(--ease), box-shadow 0.28s var(--ease), border-color 0.28s var(--ease);
+}
+
+.quote:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+  border-color: rgba(79, 67, 212, 0.2);
+}
+
+.cast-card .quote {
+  max-width: 580px;
+}
+
+.quote-text {
+  margin-top: 5px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.quote p {
+  cursor: text;
+}
+
+.quote-hidden {
+  margin: 5px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+.quote .media-grid {
+  margin: 8px 0 0;
+}
+
+/* A quoted cast's single image or video stays small in feeds. */
+.cast-card .quote .media-grid.n1 .tile-image,
+.cast-card .quote .video {
+  --max-h: 320px;
+}
+
+.quote .quote-chip {
+  margin-top: 6px;
+}
+
 /* Avatars and user chips */
 
 .avatar {
@@ -1345,25 +1400,6 @@ code {
   display: block;
   color: var(--ink-3);
   margin-top: 2px;
-}
-
-.quote {
-  margin: 12px 0 2px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--paper-2);
-}
-
-.quote-text {
-  margin-top: 6px;
-  font-size: 14.5px;
-}
-
-.quote-link {
-  display: inline-block;
-  margin-top: 6px;
-  font-size: 12.5px;
 }
 
 .replies {

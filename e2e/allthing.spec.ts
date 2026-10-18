@@ -127,7 +127,7 @@ test.describe("front page", () => {
 
     // Who, when, where, and via which app; no scores beside names.
     await expect(card.locator(".user-chip .avatar").first()).toBeVisible();
-    await expect(card.locator("time")).toHaveAttribute("datetime", /^\d{4}-\d\d-\d\dT/);
+    await expect(card.locator("header.cast-meta time")).toHaveAttribute("datetime", /^\d{4}-\d\d-\d\dT/);
     await expect(page.locator(".cast-card .origin").first()).toContainText("via ");
     await expect(page.locator(".score")).toHaveCount(0);
 
@@ -595,7 +595,7 @@ test.describe("profiles", () => {
     await expect(page.locator(".profile .handle")).toContainText("@balajis.eth · fid 37");
     await page.goto(at("/u/balajis.eth"));
     await expect(page.locator(".profile .handle")).toContainText("@balajis.eth");
-    await expect(firstCard(page).locator(".author")).toHaveText("@balajis.eth");
+    await expect(firstCard(page).locator("header.cast-meta .author")).toHaveText("@balajis.eth");
     // A name the account holds but no longer goes by: dwr.eth is fid 3, now @dwr.
     await page.goto(at("/u/dwr.eth"));
     await expect(page.locator(".profile .handle")).toContainText("@dwr · fid 3");
@@ -644,10 +644,14 @@ test.describe("threads and navigation", () => {
     const hash = await card.getAttribute("data-hash");
     // Select text inside the card: no navigation.
     const text = card.locator(".cast-text");
+    // Measured right before the drag, on the first line, so media loading
+    // above can't have moved it.
+    await text.scrollIntoViewIfNeeded();
     const box = (await text.boundingBox())!;
-    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    const y = box.y + Math.min(box.height / 2, 10);
+    await page.mouse.move(box.x + 2, y);
     await page.mouse.down();
-    await page.mouse.move(box.x + Math.min(box.width - 2, 120), box.y + box.height / 2, { steps: 5 });
+    await page.mouse.move(box.x + Math.min(box.width - 2, 120), y, { steps: 5 });
     await page.mouse.up();
     await page.waitForTimeout(300);
     // The drag selected text (it did not drag a link), and did not navigate.
@@ -662,7 +666,7 @@ test.describe("threads and navigation", () => {
     await page.goBack();
     await expect(firstCard(page)).toBeVisible();
     // A link inside the card goes where it points.
-    await card.locator(".user-chip .author").click();
+    await card.locator("header.cast-meta .user-chip .author").click();
     await expect(page).toHaveURL(/\/u\//);
     await page.goBack();
     // Clicking empty space in the card opens the post.
@@ -677,14 +681,14 @@ test.describe("threads and navigation", () => {
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     // A card with a single image, scrolled past so its image has loaded.
-    const image = page.locator(".cast-card .media-grid.n1 .tile-image img").first();
+    const image = page.locator(".cast-card > .media-grid.n1 .tile-image img").first();
     await image.scrollIntoViewIfNeeded();
     await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > 0)).toBe(true);
     const hash = await image.evaluate((img) => img.closest(".cast-card")!.getAttribute("data-hash")!);
     const height = await image.evaluate((img) => Math.round(img.getBoundingClientRect().height));
     expect(height).toBeGreaterThan(50);
     // Open it inside the app, as a reader does.
-    await page.locator(`.cast-card[data-hash="${hash}"] a.when`).click();
+    await page.locator(`.cast-card[data-hash="${hash}"] header.cast-meta a.when`).click();
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await expect(page.locator(".post")).toBeVisible();
     // Images now take 3 s to arrive.
@@ -696,7 +700,7 @@ test.describe("threads and navigation", () => {
       },
     );
     await page.goBack();
-    const again = page.locator(`.cast-card[data-hash="${hash}"] .media-grid.n1 .tile-image img`);
+    const again = page.locator(`.cast-card[data-hash="${hash}"] > .media-grid.n1 .tile-image img`);
     await expect(again).toBeAttached();
     // Its box is already the loaded image's size: nothing below it will move.
     expect(await again.evaluate((img: HTMLImageElement) => img.complete)).toBe(false);

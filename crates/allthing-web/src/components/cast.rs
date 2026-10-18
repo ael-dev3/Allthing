@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Casts in listings.
 
-use allthing_core::model::{Cast, Embed};
+use allthing_core::model::Cast;
 use leptos::prelude::*;
 
 use crate::Notes;
 use crate::api;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::quote::{QuoteCard, quote_chip};
 use crate::components::text::CastText;
 use crate::nav::card_click;
 use crate::util::{cast_href, channel_href};
@@ -28,9 +29,10 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
     })
 }
 
-/// One cast in a listing: who and where, its whole text, media, and its
-/// engagement. The whole card opens the post (text stays selectable), and
-/// hovering or touching it prefetches the post's data.
+/// One cast in a listing: who and where, its whole text, media, the casts
+/// it quotes, and its engagement. The whole card opens the post (text stays
+/// selectable), except a quoted cast's card, which opens the quoted cast.
+/// Hovering or touching the card prefetches the post's data.
 #[component]
 pub fn CastCard(
     cast: Cast,
@@ -39,10 +41,14 @@ pub fn CastCard(
     #[prop(optional)] show_parent: bool,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
-    let quote = cast.embeds.iter().find_map(|e| match e {
-        Embed::Cast { hash, .. } => Some(hash.clone()),
-        _ => None,
-    });
+    // Quoted casts the payload carries show as cards; others as links.
+    let quotes: Vec<AnyView> = cast
+        .quoted()
+        .map(|hash| match notes.quotes.get(hash) {
+            Some(quoted) => view! { <QuoteCard cast=quoted.clone()/> }.into_any(),
+            None => quote_chip(hash),
+        })
+        .collect();
     let parent = show_parent.then(|| cast.parent_hash.clone()).flatten();
     let data_path = cast_path(&cast.hash);
     let warm = move || api::prefetch(&data_path);
@@ -88,7 +94,7 @@ pub fn CastCard(
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
-            {quote.map(|q| view! { <a class="quote-chip" href=cast_href(&q)>"↳ quotes a cast"</a> })}
+            {quotes}
             <footer class="cast-foot">
                 <Engagement cast=cast.clone() reply_href=href.clone()/>
             </footer>
@@ -121,7 +127,10 @@ pub fn CastList(
         SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
-    Effect::new(move |_| casts.with(|c| api::remember_casts(c)));
+    Effect::new(move |_| {
+        let notes = notes.get();
+        casts.with(|c| api::remember_casts(c, &notes));
+    });
     let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
     let grow = move || {
         let len = casts.with_untracked(Vec::len);

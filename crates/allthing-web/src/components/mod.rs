@@ -8,6 +8,7 @@ pub mod layout;
 pub mod media;
 pub mod player;
 pub mod popover;
+pub mod quote;
 pub mod search;
 pub mod text;
 pub mod thread;

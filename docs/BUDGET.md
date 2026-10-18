@@ -80,15 +80,15 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Build | Calls |
 |---|---|
 | Any cache hit | 1 (cache read) |
-| home | cache read 1 + trending casts 1 + link pages ≤12 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
-| latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + origins ≤36 + app names ≤1 + cache write 1 |
+| home | cache read 1 + trending casts 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
+| latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
-| channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
+| channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤1 + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
-| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤12 + apps ≤1 + cache write 1 (≤ 24) |
+| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤12 + quoted casts ≤1 + apps ≤1 + cache write 1 (≤ 25) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
-| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + cache write 1 (≤ 18) |
+| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + quoted casts ≤1 + cache write 1 (≤ 19) |
 | reactions | cache read 1 + reactions 1 + cache write 1 (≤ 3) |
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤12 + cache write 1 (≤ 15) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
@@ -98,6 +98,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 
 **Link pages** are read to find mini apps hosted on their own domains, which Hypersnap gives no metadata for: the page's `<head>` is checked for `fc:miniapp`, `fc:frame`, `fc:frame:*` or `of:*` meta tags (`crates/allthing-data/src/miniapps.rs`). Each build reads at most 12 unknown links, in batches of six, and never takes the last 10 subrequests, so the rest of the build keeps its share. Pages are read with a 2.5 s timeout and at most 128 KB, as a `Range` request and a capped stream. Verdicts are kept per URL for 24 h in each isolate and carried in the payload, so a link is read once, not on every refresh. Links that couldn't be read are tried again an hour later. Sites that never serve mini apps (YouTube, X, GitHub, Farcaster's own hosts and a few others) and media links are not read. A cast whose link is still unknown stays listed until a later refresh reads it.
 
+**Quoted casts** come in the feed payloads, so cards show each quote at once instead of a link. The home, channel, profile and search builds read the casts their casts quote in one bulk `casts?casts=…` request of up to 100 hashes (`quoted_casts` in `crates/allthing-data/src/pages.rs`), alongside origins, and never take the last 2 subrequests for it, so app names and the cache write keep theirs. Quotes already in the previous payload are carried forward while still quoted, so a refresh reads only newly quoted casts, and makes no request when there are none. A read that fails or doesn't fit the budget leaves those quotes as links.
+
 ## 4. CPU time
 
 Parsing is the main CPU cost, and it happens only when a payload is (re)built. Measured natively at `opt-level = "z"`, the full parse, normalize and serialize step takes:
@@ -106,13 +108,15 @@ Parsing is the main CPU cost, and it happens only when a payload is (re)built. M
 - a user's casts, 100 casts (178 KB): **0.68 ms**
 - a channel feed, 200 casts (382 KB): **1.46 ms**. Channel feeds come back at twice the requested limit, so Allthing requests 50.
 
+A feed build also parses its quoted casts: one bulk read, usually a handful of casts and at most 100, and only those not carried from the previous payload.
+
 WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. Solana-style large responses are avoided entirely (see below).
 
 ## 5. Load on upstreams
 
 Allthing's goal is that the number of viewers barely changes upstream volume.
 
-- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins are memoized. A channel page's rebuild also reads the Farcaster app's channel record once, which shares the vote's farcaster.xyz bucket; if that read fails or is refused, the page is built from Hypersnap alone.
+- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 7 Hypersnap calls once origins are memoized, one of them for newly quoted casts when there are any.
 - **Per isolate token buckets** (`crates/allthing-data/src/upstream.rs`) cap bursts:
 
   | Upstream | Burst | Sustained |

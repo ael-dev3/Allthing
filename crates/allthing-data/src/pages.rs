@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One payload per page, assembled from upstream reads.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use allthing_core::api::{
@@ -10,10 +10,11 @@ use allthing_core::api::{
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
 use allthing_core::latest::{self, Cursor};
-use allthing_core::model::{Cast, Channel, Embed};
+use allthing_core::model::{Cast, Channel};
 use allthing_core::normalize::{self, RawAppChannel};
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
+use allthing_core::quotes;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, without_hidden};
 use allthing_core::vote::{AppVote, VotePayload};
@@ -28,6 +29,9 @@ use crate::{chain, hypersnap, miniapps};
 pub const POOL_SIZE: u32 = 100;
 /// Authors whose cast origins may be resolved while building one payload.
 const ORIGIN_AUTHORS: usize = 12;
+/// Subrequests that reading a listing's quoted casts leaves to the rest of
+/// the build: app names and the cache write.
+const QUOTES_RESERVE: u32 = 2;
 
 fn meta(inv: &Invocation) -> Meta {
     Meta { backend: Backend::Hypersnap, fetched_at: inv.now() as i64, stale: false }
@@ -68,6 +72,35 @@ async fn drop_hidden(inv: &Invocation, mut casts: Vec<Cast>, notes: &mut api::An
     notes.links = miniapps::check(inv, &casts, &notes.links).await;
     mark_mini_apps(&mut casts, &notes.links);
     without_hidden(casts)
+}
+
+/// The casts that `casts` quote, by hash, so their cards show them at once:
+/// the `known` ones (carried from the previous payload) still quoted, and
+/// the rest from one bulk read, made only while the build's budget keeps
+/// [`QUOTES_RESERVE`]. A skipped or failed read leaves those quotes out, and
+/// their cards link to them instead.
+async fn quoted_casts(inv: &Invocation, casts: &[Cast], mut known: BTreeMap<String, Cast>) -> BTreeMap<String, Cast> {
+    quotes::retain_quoted(&mut known, casts);
+    let missing = quotes::missing(casts, &known, hypersnap::MAX_BULK_CASTS);
+    if missing.is_empty() || inv.remaining_subrequests() <= QUOTES_RESERVE {
+        return known;
+    }
+    if let Ok(found) = hypersnap::casts_bulk(inv, &missing).await {
+        for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
+            known.insert(cast.hash.clone(), quotes::as_quote(cast));
+        }
+    }
+    known
+}
+
+/// Origins and app names for a listing's casts, with the casts they quote
+/// read meanwhile. The quotes read starts first, so its one subrequest is
+/// taken before origins size their batch to the budget that is left.
+async fn annotate_listing(inv: &Invocation, notes: &mut api::Annotations, pool: &[Cast], max_authors: usize) {
+    let refs: Vec<&Cast> = pool.iter().collect();
+    let known = std::mem::take(&mut notes.quotes);
+    let (quotes, ()) = join(quoted_casts(inv, pool, known), annotate(inv, notes, &targets(&refs), max_authors)).await;
+    notes.quotes = quotes;
 }
 
 fn newest_unique(mut casts: Vec<Cast>, limit: usize) -> Vec<Cast> {
@@ -113,8 +146,7 @@ pub async fn home(
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let pool = drop_hidden(&inv, casts, &mut notes).await;
-    let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
+    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS).await;
     Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
 }
 
@@ -171,8 +203,7 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
     };
     let fresh = drop_hidden(&inv, fresh, &mut notes).await;
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
-    let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
+    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS).await;
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
 }
 
@@ -233,8 +264,8 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     mark_mini_apps(&mut casts, &notes.links);
     channel.pinned = without_hidden(pinned).pop();
     let pool = newest_unique(without_hidden(casts), POOL_SIZE as usize);
-    let refs: Vec<&Cast> = channel.pinned.iter().chain(&pool).collect();
-    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
+    let listed: Vec<Cast> = channel.pinned.iter().chain(&pool).cloned().collect();
+    annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
 
@@ -251,15 +282,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         thread.cast.strip_hidden();
     }
     let first = &thread.cast;
-    let quote_hashes: Vec<String> = first
-        .embeds
-        .iter()
-        .filter_map(|e| match e {
-            Embed::Cast { hash, .. } => Some(hash.clone()),
-            _ => None,
-        })
-        .take(3)
-        .collect();
+    let quote_hashes: Vec<String> = first.quoted().take(3).map(str::to_owned).collect();
 
     // Context around the cast is best-effort; the thread is what matters.
     let channel_key = first.channel.as_ref().map(|c| c.id.clone());
@@ -282,7 +305,11 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
             async move {
                 QuotedCast {
                     hash: hash.clone(),
-                    cast: hypersnap::cast(inv, hash).await.ok().flatten().map(|c| normalize::cast(&c)),
+                    cast: hypersnap::cast(inv, hash)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|c| quotes::as_quote(normalize::cast(&c))),
                 }
             }
         })),
@@ -342,8 +369,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
             notes.origins.insert(hash, origin);
         }
     }
-    let refs: Vec<&Cast> = pool.iter().collect();
-    annotate(&inv, &mut notes, &targets(&refs), 2).await;
+    annotate_listing(&inv, &mut notes, &pool, 2).await;
     let policy = if retry { api::USER_RETRY_CACHE } else { api::USER_CACHE };
     Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, policy)
 }
@@ -383,6 +409,7 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
+    notes.quotes = quoted_casts(&inv, &casts, BTreeMap::new()).await;
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
 }
 
@@ -744,5 +771,143 @@ mod channel_tests {
         let (payload, _) = build(&host);
         assert!(payload.channel.pinned.is_none());
         assert_eq!(payload.channel.member_count, Some(1));
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use std::cell::RefCell;
+
+    use allthing_core::model::{Embed, UserSummary};
+    use futures::future::{FutureExt, LocalBoxFuture};
+    use serde_json::json;
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// A quoted cast whose text is spam.
+    const SPAM: &str = "0xb2";
+
+    /// Answers Hypersnap's bulk `casts?casts=…` with the casts asked for, or
+    /// fails every request when `down`.
+    struct Bulk {
+        down: bool,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Bulk {
+        fn new(down: bool) -> Rc<Bulk> {
+            Rc::new(Bulk { down, requests: RefCell::new(Vec::new()) })
+        }
+
+        /// The hashes each request asked for.
+        fn asked(&self) -> Vec<Vec<String>> {
+            self.requests.borrow().iter().map(|url| requested(url).into_iter().map(str::to_owned).collect()).collect()
+        }
+    }
+
+    fn requested(url: &str) -> Vec<&str> {
+        url.split_once("casts=").map_or("", |(_, list)| list).split("%2C").collect()
+    }
+
+    impl Host for Bulk {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            assert!(request.url.starts_with(&format!("{}/v2/farcaster/casts?", hypersnap::BASE)), "{}", request.url);
+            self.requests.borrow_mut().push(request.url.clone());
+            let response = if self.down {
+                Err(FetchError::Network("unreachable".into()))
+            } else {
+                let casts: Vec<serde_json::Value> = requested(&request.url)
+                    .into_iter()
+                    .map(|hash| {
+                        json!({
+                            "hash": hash,
+                            "text": if hash == SPAM { "Just unlocked my DEGEN rewards" } else { "quoted words" },
+                            "timestamp": "2026-10-17T00:00:00Z",
+                            "author": { "fid": 2, "username": "quoted" },
+                        })
+                    })
+                    .collect();
+                let body = serde_json::to_vec(&json!({ "casts": casts })).unwrap();
+                Ok(HttpResponse { status: 200, retry_after: None, body: Some(body) })
+            };
+            async move { response }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn cast(hash: &str, quotes: &[&str]) -> Cast {
+        Cast {
+            hash: hash.into(),
+            author: UserSummary { fid: 1, username: "a".into(), display_name: String::new(), pfp_url: None },
+            text: String::new(),
+            mentions: vec![],
+            ts: 0,
+            parent_hash: None,
+            parent_url: None,
+            channel: None,
+            embeds: quotes.iter().map(|q| Embed::Cast { hash: (*q).into(), fid: Some(2) }).collect(),
+            likes: 0,
+            recasts: 0,
+            replies: 0,
+            mini_app: false,
+            spam: false,
+        }
+    }
+
+    #[test]
+    fn one_read_brings_the_quotes_not_carried_and_hidden_ones_come_stripped() {
+        let host = Bulk::new(false);
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1", SPAM]), cast("0x02", &["0xb1", "0xb3"]), cast("0x03", &[])];
+        let carried =
+            BTreeMap::from([("0xb3".to_owned(), cast("0xb3", &[])), ("0xold".to_owned(), cast("0xold", &[]))]);
+        let quotes = quoted_casts(&inv, &pool, carried).now_or_never().unwrap();
+        assert_eq!(host.asked(), [["0xb1", SPAM]]);
+        assert_eq!(inv.remaining_subrequests(), 44);
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", SPAM, "0xb3"]);
+        assert_eq!((quotes["0xb1"].text.as_str(), quotes["0xb1"].author.username.as_str()), ("quoted words", "quoted"));
+        assert!(quotes[SPAM].spam && quotes[SPAM].text.is_empty());
+
+        // The next build carries them all and reads nothing.
+        let again = quoted_casts(&inv, &pool, quotes.clone()).now_or_never().unwrap();
+        assert_eq!(again, quotes);
+        assert_eq!(host.requests.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_short_budget_or_a_failed_read_leaves_quotes_out() {
+        let pool = [cast("0x01", &["0xb1", "0xb3"])];
+        let carried = BTreeMap::from([("0xb3".to_owned(), cast("0xb3", &[]))]);
+
+        let host = Bulk::new(false);
+        let tight = Invocation::new(host.clone(), QUOTES_RESERVE);
+        assert_eq!(quoted_casts(&tight, &pool, carried.clone()).now_or_never().unwrap(), carried);
+        assert!(host.requests.borrow().is_empty());
+
+        let host = Bulk::new(true);
+        let inv = Invocation::new(host.clone(), 45);
+        assert_eq!(quoted_casts(&inv, &pool, carried.clone()).now_or_never().unwrap(), carried);
+        assert_eq!(host.requests.borrow().len(), 1);
+    }
+
+    #[test]
+    fn quotes_beyond_one_bulk_read_wait_for_a_later_build() {
+        let host = Bulk::new(false);
+        let inv = Invocation::new(host.clone(), 45);
+        let hashes: Vec<String> = (0..150).map(|i| format!("0x{i:04x}")).collect();
+        let pool: Vec<Cast> = hashes
+            .chunks(2)
+            .enumerate()
+            .map(|(i, pair)| cast(&format!("0xc{i}"), &pair.iter().map(String::as_str).collect::<Vec<_>>()))
+            .collect();
+        let quotes = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
+        assert_eq!(host.asked()[0], hashes[..hypersnap::MAX_BULK_CASTS]);
+        assert_eq!(quotes.len(), hypersnap::MAX_BULK_CASTS);
     }
 }

@@ -38,16 +38,16 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 
 | Endpoint | Payload | Built from |
 |---|---|---|
-| `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, annotations | `feed/trending` |
+| `/api/v1/home` | `HomePayload`: a pool of about 100 trending casts, annotations (with the casts they quote) | `feed/trending`, `casts` (quoted casts) |
 | `/api/v1/channel?id=<id or parent URL>` | `ChannelPayload`: the channel (with its banner, picture, description, follower and member counts, lead, moderators, pinned cast and link where the Farcaster app has them) and a pool of its casts | `channel`, `feed/parent_urls` (every spelling of the channel's parent URL) and farcaster.xyz `v1/channel` in parallel, then `user/bulk` (lead, moderators, mentions) and `cast` (the pinned cast) |
 | `/api/v1/cast?hash=<hash>` | `CastPayload`: the thread (5 levels), the parent, quoted casts, the channel | `cast/conversation`, `cast` |
-| `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts | `user/by_username` (it knows current fnames only; any other name goes through the hub's `userNameProofByName`, then `user/bulk` for the FID it names), `user/bulk`, `feed/user/casts`, and for an account registered before the ID registry moved to OP Mainnet (Nov 2023), the fname server's `transfers?fid=` for when it got its first username |
+| `/api/v1/user?name=<username or fid:N>` | `UserPayload`: the profile and a pool of recent casts, with the casts they quote | `user/by_username` (it knows current fnames only; any other name goes through the hub's `userNameProofByName`, then `user/bulk` for the FID it names), `user/bulk`, `feed/user/casts`, and for an account registered before the ID registry moved to OP Mainnet (Nov 2023), the fname server's `transfers?fid=` for when it got its first username, `casts` (quoted casts) |
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
 | `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
 | `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter). Month, year and all time use 7 days, Hypersnap's widest window | `feed/trending` with `time_window` |
-| `/api/v1/latest` | `LatestPayload`: the newest ~100 top-level casts, for the front page's "new", with each shard's event cursor | `/v1/events` on shards 1 and 2 (only the events since the previous build's cursors; the newest 1,000 per shard when the previous copy is over 10 minutes old), then `casts?casts=…` once for the new casts and the listed ones' counts |
-| `/api/v1/search?q=<query>` | `SearchPayload`: casts, people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts), `user/search`, `channel/search` |
+| `/api/v1/latest` | `LatestPayload`: the newest ~100 top-level casts, for the front page's "new", with each shard's event cursor | `/v1/events` on shards 1 and 2 (only the events since the previous build's cursors; the newest 1,000 per shard when the previous copy is over 10 minutes old), then `casts?casts=…` once for the new casts and the listed ones' counts, and once more for the casts they quote |
+| `/api/v1/search?q=<query>` | `SearchPayload`: casts (with the casts they quote), people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts, and once more for quoted casts), `user/search`, `channel/search` |
 | `/api/v1/reactions?hash=<hash>&type=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
 | `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |
 | `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's Farcaster vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
@@ -59,6 +59,7 @@ Paths are relative to `https://haatz.quilibrium.com/v2/farcaster/` (Hypersnap's 
 - **origins**: for each cast, its signer key and the fid of the app that registered that key. The app comes from the signer's `SignedKeyRequest` metadata: `requestFid` from Hypersnap's `/v1/signersByFid`, or decoded from the key's onchain event (`/v1/onChainEventsByFid`) when the key has since been removed. Signers are matched to casts with `/v1/castById` (one cast) or `/v1/castsByFid` (several).
 - **apps**: the names and pictures of those app fids.
 - **pending**: how many casts are still unattributed. Origins resolve progressively, up to 12 new authors per build, and each payload carries the previous one's origins forward.
+- **quotes**: in feeds (home, channels, profiles, search), the casts that the page's casts quote, by hash, so each card shows its quote at once as a small card instead of a link. A build reads the ones it lacks in one bulk `casts?casts=…` request (up to 100), within the build's budget, and carries the previous payload's quotes forward while still quoted. A quoted cast that is spam or a mini app keeps only its author and time, and its card says it is hidden. Quotes that a failed read or the budget leaves out show as links.
 
 ## Edge cache, coalescing and guards
 
@@ -98,7 +99,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 - **Detection by URL.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it.
 - **Detection by page.** Hypersnap returns no embed metadata, so mini apps on their own domains are found by reading the linked page's meta tags (`fc:miniapp`, `fc:frame`, `fc:frame:*`, `of:*`). The Worker reads a few unknown links per build, remembers each verdict per URL, and carries the verdicts in the payload (`Annotations.links`); `thread::mark_mini_apps` then flags the casts. See [BUDGET.md](BUDGET.md#3-subrequests-per-invocation).
 - **Spam.** `spam.rs` flags casts by the owner's content rules: links or embeds on `*.vercel.app`, anything mentioning or linking gig-bot, DEGEN reward or airdrop bait ("Just unlocked my DEGEN rewards", `?degen=1` links), and DEGEN staking promotions (yeetr.fun links or names, "stake your DEGEN"). `normalize.rs` sets `Cast.spam`, and spam goes wherever mini apps go. The rules read only the cast's own text, links and mentions, never an account label.
-- **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`).
+- **Lists.** The builders drop hidden casts (`Cast::hidden`: mini apps and spam) from home, channels, profiles, search and reply previews (`thread::without_hidden`). A quoted cast that is hidden, in a listing or on a post page, comes without its content (`quotes::as_quote`) and shows as "Quoted cast hidden: spam" or "…: mini app".
 - **Threads.** `thread::prune_hidden` drops a hidden reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden" or "Spam post hidden".
 
 Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel feeds return twice the requested limit, a channel's `member_count` is its number of distinct casters (`Channel.casters`), user lookups by ENS-style names need a search fallback, and errors come back as HTTP 400. The Farcaster app's channel record is merged in by `normalize::enrich_channel`. The rest of the code sees the `allthing_core::model` types only.
@@ -111,7 +112,7 @@ Provider quirks stay in `hypersnap.rs` and `normalize.rs`. Examples: channel fee
 - **Speed** ([PERFORMANCE.md](PERFORMANCE.md)):
   - posts open instantly from the feed's own data;
   - cards prefetch on hover and in idle time, within caps;
-  - `nav.rs` restores scroll on back and forward, and makes the whole card open the post.
+  - `nav.rs` restores scroll on back and forward, and makes the whole card open the post; a quoted cast's card inside it opens the quoted cast.
 - **Channel pages.** `pages/channel.rs` heads the feed with the channel's banner (a fixed 3:1 box, cover-cropped), its picture over the banner's edge, its name and `/id`, description, follower and member counts, link, lead and moderators (six, then "+N"), and puts the pinned cast above the feed. Each part shows only when the payload has it, so a channel known only to Hypersnap shows its name and how many accounts have cast there.
 - **Popovers.** `popover.rs` is one accessible popover (hover or focus after 280 ms, tap on touch, Escape, outside click). `who.rs` uses it for who liked, recasted and replied. It is also behind the profile's "Wallets" button, which lists every verified address with copy-to-clipboard.
 - **Media.** `media.rs` turns embeds into a gallery with generated alt text that names the author and quotes the cast. The lightbox is a modal dialog with a focus trap, Escape, arrow keys and pointer swipes, and it returns focus to the tile that opened it.
