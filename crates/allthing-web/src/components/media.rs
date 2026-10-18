@@ -11,6 +11,7 @@ use allthing_core::text::truncate_title;
 use allthing_core::video::{self, VideoLink};
 use leptos::ev;
 use leptos::prelude::*;
+use leptos_router::hooks::use_location;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
@@ -263,9 +264,18 @@ pub fn VideoLinks(cast: Cast) -> impl IntoView {
 #[component]
 pub fn Lightbox() -> impl IntoView {
     let viewer = use_viewer();
+    let location = use_location();
     let dialog = NodeRef::<leptos::html::Div>::new();
     let close_button = NodeRef::<leptos::html::Button>::new();
     let start = StoredValue::new(None::<(f64, f64)>);
+
+    // History navigation leaves the post without clicking the viewer's
+    // close button. Dismiss it without focusing an opener on the old page.
+    Effect::new(move |_| {
+        let _ = (location.pathname.get(), location.search.get());
+        viewer.gallery.set(None);
+        RETURN_FOCUS.with(|r| r.borrow_mut().take());
+    });
 
     let keys = window_event_listener(ev::keydown, move |ev| {
         if viewer.gallery.with_untracked(Option::is_none) {
@@ -309,7 +319,13 @@ pub fn Lightbox() -> impl IntoView {
             _ => {}
         }
     });
-    on_cleanup(move || keys.remove());
+    on_cleanup(move || {
+        keys.remove();
+        RETURN_FOCUS.with(|r| r.borrow_mut().take());
+        if let Some(root) = document().document_element() {
+            let _ = root.class_list().remove_1("lightbox-open");
+        }
+    });
 
     // Lock page scroll and move focus in when opening.
     Effect::new(move |_| {
