@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reply-tree helpers.
 
+use std::collections::BTreeMap;
+
+use crate::embeds::link_key;
 use crate::model::{Cast, ThreadNode};
 
 pub fn count_descendants(node: &ThreadNode) -> usize {
@@ -18,6 +21,26 @@ pub fn flatten(node: &ThreadNode) -> Vec<&Cast> {
         out.extend(flatten(child));
     }
     out
+}
+
+/// Whether a cast links to a page known to be a mini app or frame.
+fn links_to_mini_app(cast: &Cast, links: &BTreeMap<String, bool>) -> bool {
+    cast.link_urls().any(|url| links.get(link_key(url)).copied().unwrap_or(false))
+}
+
+/// Mark the casts that link to a known mini app page as mini apps.
+pub fn mark_mini_apps(casts: &mut [Cast], links: &BTreeMap<String, bool>) {
+    for cast in casts {
+        cast.mini_app |= links_to_mini_app(cast, links);
+    }
+}
+
+/// [`mark_mini_apps`] for every cast in a tree.
+pub fn mark_mini_apps_in_tree(node: &mut ThreadNode, links: &BTreeMap<String, bool>) {
+    node.cast.mini_app |= links_to_mini_app(&node.cast, links);
+    for child in &mut node.children {
+        mark_mini_apps_in_tree(child, links);
+    }
 }
 
 /// Listings leave mini app casts out entirely.
@@ -42,7 +65,7 @@ pub fn prune_mini_apps(mut node: ThreadNode) -> Option<ThreadNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::UserSummary;
+    use crate::model::{Embed, UserSummary};
 
     fn node(hash: &str, children: Vec<ThreadNode>) -> ThreadNode {
         ThreadNode {
@@ -63,6 +86,32 @@ mod tests {
             },
             children,
         }
+    }
+
+    #[test]
+    fn marks_casts_linking_to_mini_app_pages() {
+        let linking = |hash: &str, url: &str| {
+            let mut n = node(hash, vec![]);
+            n.cast.embeds = vec![Embed::Link { url: url.into(), image_url: None, title: None }];
+            n
+        };
+        let links = BTreeMap::from([
+            ("https://gig-bot-2-0.vercel.app/".to_owned(), true),
+            ("https://example.com/post".to_owned(), false),
+        ]);
+        let mut casts = vec![
+            linking("app", "https://gig-bot-2-0.vercel.app/#start").cast,
+            linking("page", "https://example.com/post").cast,
+            linking("unknown", "https://basefriend.tech/").cast,
+        ];
+        mark_mini_apps(&mut casts, &links);
+        let flagged: Vec<bool> = casts.iter().map(|c| c.mini_app).collect();
+        assert_eq!(flagged, [true, false, false]);
+
+        let mut tree = node("r", vec![node("a", vec![linking("deep", "https://gig-bot-2-0.vercel.app/")])]);
+        mark_mini_apps_in_tree(&mut tree, &links);
+        assert!(tree.children[0].children[0].cast.mini_app);
+        assert!(!tree.cast.mini_app && !tree.children[0].cast.mini_app);
     }
 
     #[test]

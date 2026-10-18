@@ -27,7 +27,7 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         HttpMethod::Post => "POST",
     });
     let headers = web_sys::Headers::new().map_err(failed)?;
-    let _ = headers.set("accept", "application/json");
+    let _ = headers.set("accept", request.accept);
     if let Some(body) = &request.body {
         let _ = headers.set("content-type", "application/json");
         init.set_body(&JsValue::from_str(body));
@@ -44,7 +44,11 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         let retry_after = response.headers().get("retry-after").ok().flatten();
         let body = if response.ok() {
             let buffer = JsFuture::from(response.array_buffer().map_err(failed)?).await.map_err(failed)?;
-            Some(js_sys::Uint8Array::new(&buffer).to_vec())
+            let mut bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+            if let Some(max) = request.max_bytes {
+                bytes.truncate(max as usize);
+            }
+            Some(bytes)
         } else {
             None
         };

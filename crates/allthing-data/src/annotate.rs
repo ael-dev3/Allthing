@@ -22,22 +22,22 @@ use crate::Invocation;
 use crate::{chain, hypersnap};
 
 /// A map that forgets its oldest insertions beyond a capacity.
-struct Bounded<K, V> {
+pub(crate) struct Bounded<K, V> {
     map: HashMap<K, V>,
     order: VecDeque<K>,
     capacity: usize,
 }
 
 impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
-    fn new(capacity: usize) -> Self {
+    pub(crate) fn new(capacity: usize) -> Self {
         Bounded { map: HashMap::new(), order: VecDeque::new(), capacity }
     }
 
-    fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         self.map.get(key)
     }
 
-    fn insert(&mut self, key: K, value: V) {
+    pub(crate) fn insert(&mut self, key: K, value: V) {
         if self.map.insert(key.clone(), value).is_none() {
             self.order.push_back(key);
             while self.order.len() > self.capacity {

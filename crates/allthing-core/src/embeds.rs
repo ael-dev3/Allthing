@@ -84,6 +84,80 @@ pub fn is_mini_app_url(url: &str) -> bool {
     }
 }
 
+/// Sites (and their subdomains) whose pages are never mini apps, so their
+/// links aren't fetched to look for mini app meta tags. Mini apps on
+/// Farcaster's own hosts are found by [`is_mini_app_url`].
+const NOT_MINI_APP_HOSTS: &[&str] = &[
+    "farcaster.xyz",
+    "warpcast.com",
+    "youtube.com",
+    "youtu.be",
+    "x.com",
+    "twitter.com",
+    "github.com",
+    "instagram.com",
+    "tiktok.com",
+    "reddit.com",
+    "open.spotify.com",
+    "vimeo.com",
+    "en.wikipedia.org",
+];
+
+/// A link URL as a key for its mini app check: without its `#fragment`.
+pub fn link_key(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
+}
+
+/// Whether a link embed's page may be a mini app, and so is worth fetching to
+/// read its meta tags: an http(s) page that isn't media, isn't already known
+/// to be a mini app by its URL, and isn't on a site that never serves them.
+pub fn worth_checking_for_mini_app(url: &str) -> bool {
+    let Some(host) = host_of(url) else { return false };
+    let skipped = NOT_MINI_APP_HOSTS
+        .iter()
+        .any(|site| host == *site || host.strip_suffix(site).is_some_and(|sub| sub.ends_with('.')));
+    classify_url(url, None) == MediaKind::Link && !is_mini_app_url(url) && !skipped
+}
+
+/// Whether a page's HTML declares a Farcaster mini app or frame in its
+/// `<head>`: an `fc:miniapp` or `fc:frame` meta tag, the older `fc:frame:*`
+/// tags, or an Open Frame's `of:*` tags.
+pub fn html_declares_mini_app(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    let head = lower.find("</head").map_or(lower.as_str(), |end| &lower[..end]);
+    head.match_indices("<meta").any(|(start, _)| {
+        let tag = &head[start + 5..];
+        let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+        ["name", "property"].iter().filter_map(|attr| attribute(tag, attr)).any(|value| {
+            let value = value.trim();
+            value == "fc:miniapp" || value == "fc:frame" || value.starts_with("fc:frame:") || value.starts_with("of:")
+        })
+    })
+}
+
+/// The value of `name` in a tag's attributes (`name="v"`, `name='v'` or
+/// `name=v`), if present.
+fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let bytes = tag.as_bytes();
+    let mut from = 0;
+    while let Some(found) = tag[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        // A whole attribute name: after whitespace, followed by "=".
+        if at > 0 && !bytes[at - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let rest = tag[from..].trim_start();
+        let Some(value) = rest.strip_prefix('=') else { continue };
+        let value = value.trim_start();
+        return Some(match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or(""),
+            _ => value.split(|c: char| c.is_ascii_whitespace() || c == '/').next().unwrap_or(""),
+        });
+    }
+    None
+}
+
 /// "i.imgur.com" for a URL; the raw string if it can't be parsed.
 pub fn embed_domain(url: &str) -> String {
     match host_of(url) {
@@ -149,6 +223,42 @@ pub fn visible_embeds<'a>(embeds: &'a [Embed], text: &str) -> Vec<&'a Embed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_mini_app_meta_tags() {
+        let page = |head: &str| format!("<!doctype html><html><head><title>x</title>{head}</head><body></body></html>");
+        assert!(html_declares_mini_app(&page(r#"<meta name="fc:miniapp" content='{"version":"1"}'>"#)));
+        assert!(html_declares_mini_app(&page(r#"<meta name="fc:frame" content="{}" />"#)));
+        assert!(html_declares_mini_app(&page(r#"<META PROPERTY="fc:frame:image" CONTENT="https://x/y.png">"#)));
+        assert!(html_declares_mini_app(&page(r#"<meta property='fc:frame' content=vNext>"#)));
+        assert!(html_declares_mini_app(&page(r#"<meta content="1.0" property="of:version">"#)));
+        assert!(html_declares_mini_app(&page(r#"<meta property=of:accepts:xmtp content=2024-02-01>"#)));
+        // Ordinary pages, and the tags only in the body or in other attributes.
+        assert!(!html_declares_mini_app(&page(r#"<meta property="og:title" content="fc:frame">"#)));
+        assert!(!html_declares_mini_app(&page(r#"<meta name="description" content="a frame">"#)));
+        assert!(!html_declares_mini_app(r#"<html><head></head><body><meta name="fc:frame"></body></html>"#));
+        assert!(!html_declares_mini_app(&page(r#"<meta data-name="fc:frame" name="viewport">"#)));
+        assert!(!html_declares_mini_app(""));
+        // Cut off before the head ends (a capped download): what's there counts.
+        assert!(html_declares_mini_app(r#"<html><head><meta name="fc:miniapp" content="{}">"#));
+    }
+
+    #[test]
+    fn picks_links_worth_checking_for_mini_apps() {
+        assert!(worth_checking_for_mini_app("https://gig-bot-2-0.vercel.app/"));
+        assert!(worth_checking_for_mini_app("https://basefriend.tech/app?ref=1"));
+        assert!(!worth_checking_for_mini_app("https://www.youtube.com/watch?v=x"));
+        assert!(!worth_checking_for_mini_app("https://x.com/dwr/status/1"));
+        assert!(!worth_checking_for_mini_app("https://farcaster.xyz/dwr/0xabc"));
+        assert!(!worth_checking_for_mini_app("https://docs.farcaster.xyz/learn/what-is-farcaster"));
+        assert!(!worth_checking_for_mini_app("https://m.youtube.com/watch?v=x"));
+        assert!(worth_checking_for_mini_app("https://notfarcaster.xyz/"));
+        assert!(!worth_checking_for_mini_app("https://farcaster.xyz/miniapps/Z6gEN6rYltaz/swarmhood"));
+        assert!(!worth_checking_for_mini_app("https://i.imgur.com/a.png"));
+        assert!(!worth_checking_for_mini_app("https://example.com/clip.mp4"));
+        assert!(!worth_checking_for_mini_app("ipfs://bafy"));
+        assert_eq!(link_key("https://a.app/x?y=1#top"), "https://a.app/x?y=1");
+    }
 
     #[test]
     fn classifies_urls() {

@@ -92,7 +92,8 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 | Video | Cloudflare Stream behind `stream.farcaster.xyz` (and `stream.warpcast.com`), fetched by the browser | Posters are Stream thumbnails next to the redirected manifest. |
 
 **Mini apps and frames are filtered out server-side.** Allthing doesn't run them, so a cast whose embeds or text link to a mini app or frame is dropped:
-- **Detection.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it. Hypersnap returns no embed metadata.
+- **Detection by URL.** `normalize.rs` sets `Cast.mini_app` from URLs: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`, `warpcast.com/~/frames…`, `*.neynar.app`. It also uses `fc:frame` or `fc:miniapp` metadata when an API provides it.
+- **Detection by page.** Hypersnap returns no embed metadata, so mini apps on their own domains are found by reading the linked page's meta tags (`fc:miniapp`, `fc:frame`, `fc:frame:*`, `of:*`). The Worker reads a few unknown links per build, remembers each verdict per URL, and carries the verdicts in the payload (`Annotations.links`); `thread::mark_mini_apps` then flags the casts. See [BUDGET.md](BUDGET.md#3-subrequests-per-invocation).
 - **Lists.** The builders drop flagged casts from home, channels, profiles, search and reply previews (`thread::without_mini_apps`).
 - **Threads.** `thread::prune_mini_apps` drops a flagged reply. If it has replies of its own, it keeps the node with its content stripped, shown as "Mini app post hidden".
 

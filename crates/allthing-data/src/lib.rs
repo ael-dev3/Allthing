@@ -9,6 +9,7 @@
 pub mod annotate;
 pub mod chain;
 pub mod hypersnap;
+pub mod miniapps;
 pub mod pages;
 pub mod upstream;
 
@@ -36,6 +37,11 @@ pub struct HttpRequest {
     /// A JSON body, for POST.
     pub body: Option<String>,
     pub timeout_ms: u32,
+    /// The `Accept` header.
+    pub accept: &'static str,
+    /// Read at most this many bytes of the body (asked for with `Range`, and
+    /// cut if the server sends more).
+    pub max_bytes: Option<u32>,
 }
 
 pub struct HttpResponse {

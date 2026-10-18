@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use allthing_data::{FetchError, Host, HttpMethod, HttpRequest, HttpResponse};
+use futures::StreamExt;
 use futures::future::{Either, FutureExt, LocalBoxFuture, select};
 use worker::{AbortController, Context, Date, Delay, Fetch, Headers, Method, Request, RequestInit};
 
@@ -21,7 +22,10 @@ impl WorkerHost {
 async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     let network = |e: worker::Error| FetchError::Network(e.to_string());
     let headers = Headers::new();
-    let _ = headers.set("accept", "application/json");
+    let _ = headers.set("accept", request.accept);
+    if let Some(max) = request.max_bytes {
+        let _ = headers.set("range", &format!("bytes=0-{}", max.saturating_sub(1)));
+    }
     let _ = headers.set("user-agent", &format!("allthing/{} (+https://allthing.social)", crate::VERSION));
     let mut init = RequestInit::new();
     let method = match request.method {
@@ -41,7 +45,23 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         let mut response = Fetch::Request(outgoing).send_with_signal(&signal).await.map_err(network)?;
         let status = response.status_code();
         let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body = if (200..300).contains(&status) { Some(response.bytes().await.map_err(network)?) } else { None };
+        let body = if !(200..300).contains(&status) {
+            None
+        } else if let Some(max) = request.max_bytes {
+            // Stop reading at the cap: servers may ignore the Range header.
+            let mut stream = response.stream().map_err(network)?;
+            let mut body = Vec::new();
+            while body.len() < max as usize {
+                match stream.next().await {
+                    Some(chunk) => body.extend(chunk.map_err(network)?),
+                    None => break,
+                }
+            }
+            body.truncate(max as usize);
+            Some(body)
+        } else {
+            Some(response.bytes().await.map_err(network)?)
+        };
         Ok(HttpResponse { status, retry_after, body })
     };
     let timeout = Delay::from(Duration::from_millis(u64::from(request.timeout_ms)));
