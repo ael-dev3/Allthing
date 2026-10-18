@@ -140,6 +140,21 @@ pub fn prefetch(path: &str) {
     });
 }
 
+/// The response the boot script already requested for `path`, if any. It is
+/// handed out once.
+fn early_response(path: &str) -> Option<js_sys::Promise> {
+    use wasm_bindgen::JsValue;
+    let window = web_sys::window()?;
+    let key = JsValue::from_str("__allthingEarly");
+    let early = js_sys::Reflect::get(&window, &key).ok().filter(|e| e.is_object())?;
+    let early_path = js_sys::Reflect::get(&early, &JsValue::from_str("path")).ok()?.as_string()?;
+    if early_path != path {
+        return None;
+    }
+    let _ = js_sys::Reflect::delete_property(&window, &key);
+    js_sys::Reflect::get(&early, &JsValue::from_str("response")).ok()?.dyn_into().ok()
+}
+
 async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
     #[cfg(feature = "static-host")]
     if path.starts_with(allthing_core::api::API_PREFIX) {
@@ -147,7 +162,8 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
         return Ok(Raw { at: js_sys::Date::now(), status, body: body.into(), age: 0, stale: false, retry_after });
     }
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
-    let response = JsFuture::from(window.fetch_with_str(path))
+    let request = early_response(path).unwrap_or_else(|| window.fetch_with_str(path));
+    let response = JsFuture::from(request)
         .await
         .map_err(|_| Failure::Failed("Network error: could not reach Allthing's API".into()))?;
     let response: web_sys::Response = response.dyn_into().map_err(|_| Failure::Failed("bad response".into()))?;

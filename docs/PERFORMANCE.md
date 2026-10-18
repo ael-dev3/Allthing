@@ -22,6 +22,8 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 - `/p/<hash>` reads that store first (`api::seen_cast`). If the cast is there, the post renders at once with its text, media, author and counts, and reply skeletons. The full payload (thread, parent, quotes) loads behind it and replaces the skeletons.
 - A direct visit with nothing in the store falls back to the normal one-request load.
 
+- **The front page's data is requested by `boot.js`**, in parallel with the WebAssembly download. `api.rs` (`early_response`) takes that pending response instead of fetching again. Before, the request started only once the module was compiled and running, 400–500 ms into a cold load. The static copy has no API, so it skips this.
+
 ### 2. Prefetch, under a strict budget
 
 - **Hover or touch** on a card prefetches `/api/v1/cast?hash=…` (`pointerenter`, `touchstart`).
