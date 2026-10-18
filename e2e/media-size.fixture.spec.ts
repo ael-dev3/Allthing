@@ -97,21 +97,22 @@ test("back to the feed, images take their final box at once", async ({ page }) =
   await expect(page).toHaveURL(new RegExp(`/p/${hash(2)}$`));
   // Note, for each image tile the feed adds again, whether it already has
   // its size: only a size known from the first visit can set it that early
-  // (an image's own load comes in a later task).
+  // (an image's own load comes in a later task). A tile is noted once, even
+  // when the list and the page around it are inserted in separate steps.
   await page.evaluate(() => {
-    const seen: boolean[] = ((window as any).__sizedAtInsert = []);
+    const seen = ((window as any).__sizedAtInsert = new Map<Element, boolean>());
     new MutationObserver((records) => {
       for (const node of records.flatMap((r) => [...r.addedNodes])) {
         if (!(node instanceof Element)) continue;
         for (const tile of [node, ...node.querySelectorAll(".tile-image")]) {
-          if (tile.matches(".tile-image")) seen.push(tile.hasAttribute("data-sized"));
+          if (tile.matches(".tile-image") && !seen.has(tile)) seen.set(tile, tile.hasAttribute("data-sized"));
         }
       }
     }).observe(document.body, { childList: true, subtree: true });
   });
   await page.goBack();
   await expect(card(page, 2)).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__sizedAtInsert)).toEqual([true, true]);
+  expect(await page.evaluate(() => [...(window as any).__sizedAtInsert.values()])).toEqual([true, true]);
   const after = await box(card(page, 2).locator(".tile-image"));
   expect(Math.abs(after.width - before.width)).toBeLessThanOrEqual(1);
   expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);

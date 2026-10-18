@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="{{BASE}}/favicon.svg" type="image/svg+xml">
 <!-- Starts the front page's data request while the app downloads; api.rs takes it over. Its hash is in _headers (checked by scripts/check.sh). -->
-<script id="early-fetch">if(location.pathname==="/"&&location.hostname!=="www.allthing.social"){var t=new URLSearchParams(location.search).get("t"),w=t==="hour"?"1h":["week","month","year","all"].indexOf(t)>=0?"7d":"",p="/api/v1/home"+(w?"?window="+w:"");window.__allthingEarly={path:p,response:fetch(p)}}</script>
+<script id="early-fetch">if(location.pathname==="/"&&location.hostname!=="www.allthing.social"){var q=new URLSearchParams(location.search),t=q.get("t"),w=t==="hour"?"1h":["week","month","year","all"].indexOf(t)>=0?"7d":"",p=q.get("sort")==="new"?"/api/v1/latest":"/api/v1/home"+(w?"?window="+w:"");window.__allthingEarly={path:p,response:fetch(p)}}</script>
 <link rel="preconnect" href="https://imagedelivery.net">
 <link rel="preconnect" href="https://stream.farcaster.xyz" crossorigin>
 <script type="speculationrules">{"prefetch":[{"source":"document","where":{"href_matches":"/p/*"},"eagerness":"moderate"}]}</script>

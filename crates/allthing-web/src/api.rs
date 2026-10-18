@@ -16,6 +16,7 @@ use wasm_bindgen_futures::JsFuture;
 /// How long a fetched payload is reused without asking the Worker again.
 /// Long enough that going back to a feed or post is instant.
 const CLIENT_TTL_MS: f64 = 300_000.0;
+const LATEST_TTL_MS: f64 = 30_000.0;
 /// At most this many prefetches in flight.
 const MAX_PREFETCHES: usize = 2;
 
@@ -119,7 +120,7 @@ pub fn constrained_network() -> bool {
 /// prefetches are running, and on Save-Data or slow connections.
 pub fn prefetch(path: &str) {
     let now = js_sys::Date::now();
-    let cached = CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < CLIENT_TTL_MS && r.status == 200));
+    let cached = CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < ttl(path) && r.status == 200));
     if cached || constrained_network() {
         return;
     }
@@ -193,10 +194,16 @@ fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
     }
 }
 
+/// How long an answer for `path` is reused: the newest casts change by the
+/// minute, everything else is kept for a few.
+fn ttl(path: &str) -> f64 {
+    if path == allthing_core::api::latest_path() { LATEST_TTL_MS } else { CLIENT_TTL_MS }
+}
+
 /// A recent answer for `path`, if one is kept.
 fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>, Failure>> {
     CACHE.with(|c| {
-        c.borrow().get(path).filter(|raw| now - raw.at < CLIENT_TTL_MS).map(|raw| {
+        c.borrow().get(path).filter(|raw| now - raw.at < ttl(path)).map(|raw| {
             let age = raw.age.saturating_add(((now - raw.at).max(0.0) / 1000.0) as u32);
             decode::<T>(&Raw { age, ..raw.clone() })
         })

@@ -160,6 +160,8 @@ impl Failure {
 pub enum Endpoint {
     /// Trending casts over a window, from `offset` (0 for the front page).
     Home(u32, TrendingWindow),
+    /// The newest casts, from the event stream.
+    Latest,
     Channel(String),
     Cast(String),
     User(String),
@@ -194,6 +196,7 @@ impl Endpoint {
                     Some(_) => Err(bad("Expected ?offset=<multiple of 100 below 1000>")),
                 }
             }
+            "/latest" => Ok(Endpoint::Latest),
             "/reactions" => {
                 let hash = query("hash").and_then(|v| hash_from_param(&v)).ok_or(bad("Expected ?hash=<cast hash>"))?;
                 let kind =
@@ -275,6 +278,7 @@ impl Endpoint {
             Endpoint::Home(offset, window) => {
                 home_page_path(*offset, *window).trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
             }
+            Endpoint::Latest => "latest".into(),
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
@@ -295,6 +299,7 @@ impl Endpoint {
     pub async fn build(&self, inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
         match self.clone() {
             Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
+            Endpoint::Latest => pages::latest(inv, previous).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,

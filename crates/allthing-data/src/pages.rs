@@ -5,10 +5,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use allthing_core::api::{
-    self, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, Meta, QuotedCast, ReactionKind, ReactionsPayload,
-    RepliesPayload, SearchPayload, UserPayload,
+    self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, LatestPayload, Meta, QuotedCast,
+    ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_url_for_id, is_channel_id};
+use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel, Embed};
 use allthing_core::normalize;
 use allthing_core::params::fid_username;
@@ -120,6 +121,64 @@ pub async fn home(
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
     Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
+}
+
+/// Events read per shard in one build: about 14 minutes of Farcaster, most
+/// of them block confirmations.
+const EVENTS_PAGE: u32 = 1000;
+/// A buffer older than this starts over from the newest events: continuing
+/// from its cursors would leave a gap one page can't cover.
+const WARM_MS: f64 = 600_000.0;
+
+/// The newest casts on Farcaster, from Snapchain's event stream. Each build
+/// continues from the previous one's cursors, so it reads only the events
+/// since then: it adds the new top-level casts, read in one bulk call that
+/// also refreshes the listed casts' counts, and drops removed ones. New casts
+/// are never skipped: if they can't be read now, the build fails, the
+/// previous copy is served, and the next build reads the same events again.
+pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
+    let warm = previous
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<LatestPayload>(bytes).ok())
+        .filter(|p| inv.now() - (p.meta.fetched_at as f64) < WARM_MS);
+    let (listed, cursors, mut notes) = match warm {
+        Some(p) => (p.pool, p.cursors, p.notes),
+        None => (Vec::new(), Vec::new(), Annotations::default()),
+    };
+    let cursor = |shard: u32| cursors.iter().find(|c| c.shard == shard).map(|c| c.event_id);
+    let pages = join_all(latest::SHARDS.map(|shard| hypersnap::events(&inv, shard, cursor(shard), EVENTS_PAGE))).await;
+    let (mut added, mut removed, mut next) = (Vec::new(), Vec::new(), Vec::new());
+    let mut failure = None;
+    for (shard, page) in latest::SHARDS.into_iter().zip(pages) {
+        match page.map(|body| latest::cast_events(&body)) {
+            Ok(Some(events)) => {
+                if let Some(event_id) = events.last_id.or(cursor(shard)) {
+                    next.push(Cursor { shard, event_id });
+                }
+                added.extend(events.added);
+                removed.extend(events.removed);
+            }
+            // Unreadable: this shard continues from where it was next time.
+            other => {
+                failure = other.err().or(failure);
+                next.extend(cursor(shard).map(|event_id| Cursor { shard, event_id }));
+            }
+        }
+    }
+    if next.is_empty() {
+        return Err(failure.map(Failure::upstream).unwrap_or_else(|| Failure::internal("unreadable event stream")));
+    }
+    let hashes = latest::to_hydrate(&added, &listed, &removed, 100);
+    let fresh: Vec<Cast> = match hypersnap::casts_bulk(&inv, &hashes).await {
+        Ok(raw) => raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect(),
+        Err(e) if !added.is_empty() => return Err(Failure::upstream(e)),
+        Err(_) => Vec::new(),
+    };
+    let fresh = drop_hidden(&inv, fresh, &mut notes).await;
+    let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
+    let refs: Vec<&Cast> = pool.iter().collect();
+    annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
+    Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
 }
 
 pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
@@ -388,4 +447,132 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
     }
     let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
     Built::json(&activity, api::WALLET_CACHE)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// A hub with an event page per (shard, first event), the casts it can
+    /// read in bulk, and whether bulk reads fail.
+    #[derive(Default)]
+    struct Hub {
+        events: HashMap<(String, String), String>,
+        casts: HashMap<String, String>,
+        bulk_fails: bool,
+        requests: RefCell<Vec<String>>,
+    }
+
+    fn param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
+        url.split(['?', '&']).find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
+    }
+
+    impl Host for Hub {
+        fn now(&self) -> f64 {
+            1_800_000_000_000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let url = request.url.clone();
+            self.requests.borrow_mut().push(url.clone());
+            let ok = |body: String| HttpResponse { status: 200, retry_after: None, body: Some(body.into_bytes()) };
+            let missing = HttpResponse { status: 404, retry_after: None, body: None };
+            let response = if url.contains("/v1/events?") {
+                let shard = param(&url, "shard_index").unwrap_or_default().to_owned();
+                let from = param(&url, "from_event_id").unwrap_or("newest").to_owned();
+                self.events.get(&(shard, from)).cloned().map_or(missing, ok)
+            } else if url.contains("/v2/farcaster/casts?") {
+                if self.bulk_fails {
+                    HttpResponse { status: 500, retry_after: None, body: None }
+                } else {
+                    let hashes = param(&url, "casts").unwrap_or_default().replace("%2C", ",");
+                    let found: Vec<String> = hashes.split(',').filter_map(|h| self.casts.get(h).cloned()).collect();
+                    ok(format!(r#"{{"casts":[{}]}}"#, found.join(",")))
+                }
+            } else {
+                missing
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn add(id: u64, hash: &str, ts: i64, reply: bool) -> String {
+        let parent = if reply { r#"{"fid":1,"hash":"0x01"}"# } else { "null" };
+        format!(
+            r#"{{"id":{id},"mergeMessageBody":{{"message":{{"hash":"{hash}","data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":7,"timestamp":{ts},"castAddBody":{{"parentCastId":{parent}}}}}}}}}}}"#
+        )
+    }
+
+    fn remove(id: u64, target_base64: &str) -> String {
+        format!(
+            r#"{{"id":{id},"mergeMessageBody":{{"message":{{"hash":"0x09","data":{{"type":"MESSAGE_TYPE_CAST_REMOVE","fid":7,"timestamp":1,"castRemoveBody":{{"targetHash":"{target_base64}"}}}}}}}}}}"#
+        )
+    }
+
+    fn page(events: &[String]) -> String {
+        format!(r#"{{"events":[{}]}}"#, events.join(","))
+    }
+
+    fn raw_cast(hash: &str, ts: &str, likes: u32) -> String {
+        format!(
+            r#"{{"hash":"{hash}","author":{{"fid":7,"username":"seven"}},"text":"cast {hash}","timestamp":"{ts}","reactions":{{"likes_count":{likes},"recasts_count":0}},"replies":{{"count":0}}}}"#
+        )
+    }
+
+    /// 20 bytes of 0xaa..., in base64 and hex.
+    const GONE_B64: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqo=";
+    const GONE: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn build(hub: Rc<Hub>, previous: Option<Vec<u8>>) -> Result<LatestPayload, Failure> {
+        let inv = Rc::new(Invocation::new(hub, 45));
+        let built = latest(inv, previous.map(Rc::new)).now_or_never().unwrap()?;
+        Ok(serde_json::from_slice(&built.body).unwrap())
+    }
+
+    #[test]
+    fn keeps_the_newest_top_level_casts_and_continues_from_its_cursors() {
+        let mut hub = Hub::default();
+        hub.events.insert(("1".into(), "newest".into()), page(&[add(12, GONE, 100, false), add(11, "0xb1", 90, true)]));
+        hub.events.insert(("2".into(), "newest".into()), page(&[add(22, "0xc2", 95, false)]));
+        hub.casts.insert(GONE.into(), raw_cast(GONE, "2026-01-01T00:01:40Z", 1));
+        hub.casts.insert("0xc2".into(), raw_cast("0xc2", "2026-01-01T00:01:35Z", 2));
+        let first = build(Rc::new(hub), None).unwrap();
+        // Replies are left out; newest first.
+        assert_eq!(first.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), [GONE, "0xc2"]);
+        assert_eq!(first.cursors, [Cursor { shard: 1, event_id: 12 }, Cursor { shard: 2, event_id: 22 }]);
+
+        // Next build: only the events after the cursors. A new cast, and the
+        // first one removed; the listed cast's counts are read again.
+        let mut hub = Hub::default();
+        hub.events.insert(("1".into(), "13".into()), page(&[add(13, "0xd3", 110, false), remove(14, GONE_B64)]));
+        hub.events.insert(("2".into(), "23".into()), page(&[]));
+        hub.casts.insert("0xd3".into(), raw_cast("0xd3", "2026-01-01T00:01:50Z", 0));
+        hub.casts.insert("0xc2".into(), raw_cast("0xc2", "2026-01-01T00:01:35Z", 9));
+        let hub = Rc::new(hub);
+        let mut previous = first;
+        previous.meta.fetched_at = 1_800_000_000_000 - 30_000;
+        let second = build(hub.clone(), Some(serde_json::to_vec(&previous).unwrap())).unwrap();
+        let listed: Vec<(&str, u64)> = second.pool.iter().map(|c| (c.hash.as_str(), c.likes)).collect();
+        assert_eq!(listed, [("0xd3", 0), ("0xc2", 9)]);
+        assert_eq!(second.cursors, [Cursor { shard: 1, event_id: 14 }, Cursor { shard: 2, event_id: 22 }]);
+        let events: Vec<String> = hub.requests.borrow().iter().filter(|u| u.contains("/v1/events?")).cloned().collect();
+        assert!(events.iter().all(|url| url.contains("from_event_id=") && !url.contains("reverse=true")));
+    }
+
+    #[test]
+    fn new_casts_that_cant_be_read_are_not_skipped() {
+        let mut hub = Hub { bulk_fails: true, ..Default::default() };
+        hub.events.insert(("1".into(), "newest".into()), page(&[add(12, "0xe1", 100, false)]));
+        hub.events.insert(("2".into(), "newest".into()), page(&[]));
+        // The build fails, so the previous copy stays (with its cursors).
+        assert!(build(Rc::new(hub), None).is_err());
+    }
 }
