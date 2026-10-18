@@ -117,7 +117,8 @@ fn truncate(value: &str, max: usize) -> String {
 }
 
 fn is_hex_address(value: &str) -> bool {
-    value.len() == 42 && value[..2].eq_ignore_ascii_case("0x") && value[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    let bytes = value.as_bytes();
+    bytes.len() == 42 && bytes[..2].eq_ignore_ascii_case(b"0x") && bytes[2..].iter().all(u8::is_ascii_hexdigit)
 }
 
 fn is_base58_address(value: &str) -> bool {
@@ -213,5 +214,17 @@ mod tests {
         assert!(!is_channel_id("-dev"));
         assert!(!is_channel_id(""));
         assert!(!is_channel_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn unicode_parent_urls_do_not_panic_during_address_detection() {
+        for address in [format!("€{}", "x".repeat(39)), format!("a€{}", "x".repeat(38))] {
+            assert_eq!(address.len(), 42);
+            let url = format!("token:{address}");
+            let label = short_parent_url_label(&url);
+            assert!(label.starts_with("token:"));
+            assert!(label.ends_with('…'));
+            assert_eq!(channel_ref_from_url(Some(&url)).unwrap().label, label);
+        }
     }
 }
