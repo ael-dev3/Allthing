@@ -525,11 +525,16 @@ pub fn HlsVideo(
 
     // The badge on an autoplaying video: turns its sound on, or off, and the
     // reader's choice holds for later videos.
+    // The badge does what it says: its label is the state the reader sees,
+    // so it decides, and changes at once rather than when the element's
+    // volumechange event comes back (a queued event could leave a quick
+    // second press reading a stale state).
     let toggle_sound = move |_: ev::MouseEvent| {
         let Some(video) = video_ref.get_untracked() else { return };
-        let sound = video.muted();
+        let sound = muted.get_untracked();
         set_sound(sound);
         set_muted(&video, !sound);
+        muted.set(!sound);
         if sound {
             claim(&video, true);
         }
