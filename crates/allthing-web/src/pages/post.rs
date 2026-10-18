@@ -18,7 +18,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
 use crate::components::chips::{Avatar, Engagement, OriginChip, ScoreBadge, TimeAgo, UserChip};
-use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SideBox};
+use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
@@ -92,7 +92,7 @@ pub fn PostPage() -> impl IntoView {
             }
             .into_any(),
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
-            Some(Some(Ok(Fetched { data, age, stale }))) => {
+            Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<CastPayload> = data;
                 let notes: Notes = Arc::new(payload.notes.clone());
                 let cast = payload.thread.cast.clone();
@@ -114,7 +114,7 @@ pub fn PostPage() -> impl IntoView {
                     <Columns side>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
                         <MainCast cast=cast.clone() notes=notes.clone() payload=payload.clone()/>
-                        <Freshness age stale/>
+                        <StaleNotice stale/>
                         <section class="replies" aria-label="Replies">
                             <div class="replies-head">
                                 <h2>{if cast.replies.max(shown as u64) == 1 { "Reply" } else { "Replies" }}<span class="num">{full_number(cast.replies.max(shown as u64))}</span></h2>

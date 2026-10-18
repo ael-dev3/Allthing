@@ -14,7 +14,7 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
-use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SideBox, SortTabs};
+use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, SortTabs, StaleNotice};
 use crate::components::text::CastText;
 use crate::util::{channel_href, set_title};
 
@@ -56,7 +56,7 @@ pub fn ChannelPage() -> impl IntoView {
             }
             .into_any(),
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
-            Some(Some(Ok(Fetched { data, age, stale }))) => {
+            Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<ChannelPayload> = data;
                 let notes = Arc::new(payload.notes.clone());
                 let channel = payload.channel.clone();
@@ -82,7 +82,7 @@ pub fn ChannelPage() -> impl IntoView {
                             </div>
                         </header>
                         <div class="listing-head">{move || view! { <SortTabs path=path.clone() current=sort.get()/> }}</div>
-                        <Freshness age stale/>
+                        <StaleNotice stale/>
                         <CastList casts notes/>
                     </Columns>
                 }
