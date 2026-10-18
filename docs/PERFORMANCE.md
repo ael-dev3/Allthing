@@ -64,8 +64,10 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 
 | | 0.2.0 | 0.3.0 |
 |---|---|---|
-| Edge cache cold for that post | 840–1,350 ms | 15–37 ms (local), see below for production |
-| Edge cache warm | ≈ 335 ms | 15–37 ms (local) |
+| Edge cache cold for that post | 840–1,350 ms | 20–28 ms |
+| Edge cache warm | ≈ 335 ms | 20–28 ms |
+
+Both columns were measured on https://allthing.social, from the same cloud sandbox, on 2026-10-18.
 
 In 0.2.0 a post waited for its API call. In 0.3.0 the post renders from the feed's data, so the click no longer depends on the network at all, and replies arrive in the background.
 
@@ -73,7 +75,10 @@ In 0.2.0 a post waited for its API call. In 0.3.0 the post renders from the feed
 
 | Metric | Local | Production |
 |---|---|---|
-| Home LCP, cold (median of 3) | ≈ 150 ms | see the CI `perf` job |
-| Slowest interaction (sort tabs, popovers) | 56–72 ms | see the CI `perf` job |
+| Home LCP, cold (median of 3) | ≈ 120–150 ms | 736 ms (samples 655, 736, 1,872 ms) |
+| Slowest interaction (sort tabs, popovers) | 56–72 ms | 56 ms |
+| Layout shift (CLS), home | — | 0.000 |
+
+The production LCP samples vary with the sandbox's proxy and with how warm each data center's edge cache is. The 1,872 ms outlier was a cold load through the proxy. The budget applies to the median.
 
 Interaction latency was 312–1,088 ms before sorting became reactive, because each sort change rebuilt the page.
