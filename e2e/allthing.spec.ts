@@ -529,7 +529,11 @@ test.describe("profiles", () => {
     await expect(profile.locator(".fact", { hasText: "Registered" }).locator("dd")).toHaveText(/\d{4}/);
     await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText(/no label|labeled|spam|Nerfed|unavailable/i);
     // The vote, read onchain on Base (0xael.eth voted to stay).
-    await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted to stay");
+    await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted yes");
+    // Only "Voted yes", "Voted no" or "Didn't vote", never the old wordings.
+    await expect(page.getByText(/Voted to (stay|leave)|Stay vote revoked|Did not vote|checking…/)).toHaveCount(0);
+    await page.goto(at("/u/vitalik.eth"));
+    await expect(page.locator(".profile .vote-fact .vote")).toHaveText("Didn't vote");
 
     // The side area holds only the wallet infographic.
     const wallets = page.locator(".side .wallets");

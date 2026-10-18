@@ -13,8 +13,9 @@ use crate::api::Meta;
 pub const VOTE_CONTRACT: &str = "0x4ecfEd276c566AeB49Da1f3A888E8Dbb7263028D";
 /// `minted(uint256 fid)`: 1 while the FID holds a stay vote.
 pub const MINTED_SELECTOR: &str = "7dc0bf3f";
-/// Per-FID revocation count (selector `0xae36b5b8`; the name is not public).
-pub const REVOKED_SELECTOR: &str = "ae36b5b8";
+/// `mintGeneration(uint256 fid)`: raised by one each time the FID's stay
+/// vote is revoked (a new vote must be signed for the new generation).
+pub const MINT_GENERATION_SELECTOR: &str = "ae36b5b8";
 
 /// ABI-encode a call taking one `uint256 fid`.
 pub fn encode_fid_call(selector: &str, fid: u64) -> String {
@@ -25,20 +26,22 @@ pub fn encode_fid_call(selector: &str, fid: u64) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnchainVote {
-    /// Holds the opt-in NFT: voted to stay.
+    /// Holds the opt-in token: voted to stay.
     Stay,
-    /// Voted to stay, and the opt-in was later revoked (moderated out).
+    /// Voted to stay, and Network School's moderation later revoked it,
+    /// which burns the token and cancels the vote.
     Revoked,
-    /// No stay vote onchain: voted to leave, or did not vote.
+    /// No stay vote onchain: voted to leave (recorded offchain only), or did
+    /// not vote.
     NoVote,
 }
 
 impl OnchainVote {
-    /// From `minted(fid)` and the revocation count.
-    pub fn from_words(minted: u64, revoked: u64) -> OnchainVote {
-        match (minted, revoked) {
+    /// From `minted(fid)` and `mintGeneration(fid)`.
+    pub fn from_words(minted: u64, generation: u64) -> OnchainVote {
+        match (minted, generation) {
             (m, _) if m > 0 => OnchainVote::Stay,
-            (_, r) if r > 0 => OnchainVote::Revoked,
+            (_, g) if g > 0 => OnchainVote::Revoked,
             _ => OnchainVote::NoVote,
         }
     }
@@ -66,6 +69,33 @@ impl AppVote {
     }
 }
 
+/// How an account voted, as profiles say it: stay is "yes", leave is "no".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoteResult {
+    Yes,
+    No,
+    DidNotVote,
+}
+
+impl VoteResult {
+    pub fn label(self) -> &'static str {
+        match self {
+            VoteResult::Yes => "Voted yes",
+            VoteResult::No => "Voted no",
+            VoteResult::DidNotVote => "Didn't vote",
+        }
+    }
+
+    /// The CSS modifier for its pill.
+    pub fn class(self) -> &'static str {
+        match self {
+            VoteResult::Yes => "vote-yes",
+            VoteResult::No => "vote-no",
+            VoteResult::DidNotVote => "vote-none",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VotePayload {
     pub fid: u64,
@@ -77,34 +107,37 @@ pub struct VotePayload {
 }
 
 impl VotePayload {
-    /// A short label and where it comes from. The onchain record wins; the
-    /// app's word is only used for what Base cannot know (leaving).
-    pub fn summary(&self) -> (&'static str, &'static str) {
-        match (self.onchain, self.app) {
-            (Some(OnchainVote::Stay), _) => ("Voted to stay", "Recorded onchain on Base (opt-in NFT for this FID)."),
-            (Some(OnchainVote::Revoked), _) => {
-                ("Stay vote revoked", "Voted to stay; the opt-in was later revoked onchain.")
+    /// The result and where it comes from, or `None` when the sources can't
+    /// settle it (profiles then leave the vote out). Base decides wherever it
+    /// can: a stay vote is the token, and a revoked one is cancelled. Leave
+    /// votes exist only at farcaster.xyz.
+    pub fn summary(&self) -> Option<(VoteResult, &'static str)> {
+        use AppVote::*;
+        use OnchainVote::*;
+        use VoteResult::{DidNotVote, No, Yes};
+        Some(match (self.onchain, self.app) {
+            (Some(Stay), _) => (Yes, "Voted to stay: recorded on Base as this account's opt-in token."),
+            (Some(Revoked | NoVote), Some(OptedOut)) => {
+                (No, "Voted to leave, per farcaster.xyz: leave votes aren't recorded on Base.")
             }
-            (_, Some(AppVote::ModeratedOut)) => {
-                ("Stay vote revoked", "Per farcaster.xyz; its client opt-in was moderated out.")
+            (Some(Revoked), _) => {
+                (DidNotVote, "A stay vote on Base was revoked by Network School's moderation, which cancels it.")
             }
-            (_, Some(AppVote::OptedOut)) => {
-                ("Voted to leave", "Per farcaster.xyz; leave votes are not recorded onchain.")
+            (Some(NoVote), Some(Pending | ModeratedOut)) => {
+                (DidNotVote, "No vote on Base, and no leave vote at farcaster.xyz.")
             }
-            (Some(OnchainVote::NoVote), Some(AppVote::OptedIn)) => {
-                ("Unknown", "Base reports no current stay vote, but farcaster.xyz reports opted in.")
+            (Some(NoVote), Some(OptedIn)) => {
+                (DidNotVote, "No vote is recorded on Base, though farcaster.xyz lists this account as opted in.")
             }
-            (None, Some(AppVote::OptedIn)) => {
-                ("Voted to stay", "Per farcaster.xyz; the onchain record could not be read.")
+            (None, Some(OptedIn)) => (Yes, "Voted to stay, per farcaster.xyz: Base couldn't be read just now."),
+            (None, Some(OptedOut)) => (No, "Voted to leave, per farcaster.xyz: leave votes aren't recorded on Base."),
+            (None, Some(Pending | ModeratedOut)) => {
+                (DidNotVote, "No vote, per farcaster.xyz: Base couldn't be read just now.")
             }
-            (Some(OnchainVote::NoVote), None) => {
-                ("Unknown", "No stay vote onchain; farcaster.xyz could not be read to check for a leave vote.")
-            }
-            (Some(OnchainVote::NoVote), Some(AppVote::Pending)) => {
-                ("Did not vote", "No stay vote onchain, and farcaster.xyz reports no leave vote.")
-            }
-            (None, _) => ("Unknown", "The vote could not be read just now."),
-        }
+            // No stay vote, but a leave vote can't be ruled out; or nothing
+            // could be read.
+            (Some(NoVote), None) | (None, None) => return None,
+        })
     }
 }
 
@@ -113,21 +146,60 @@ mod tests {
     use super::*;
     use crate::provenance::Backend;
 
-    fn payload(onchain: Option<OnchainVote>, app: Option<AppVote>) -> VotePayload {
-        VotePayload { fid: 1, onchain, app, meta: Meta { backend: Backend::Hypersnap, fetched_at: 0, stale: false } }
+    fn shown(onchain: Option<OnchainVote>, app: Option<AppVote>) -> Option<&'static str> {
+        let payload = VotePayload {
+            fid: 1,
+            onchain,
+            app,
+            meta: Meta { backend: Backend::Hypersnap, fetched_at: 0, stale: false },
+        };
+        payload.summary().map(|(result, _)| result.label())
     }
 
     #[test]
-    fn missing_and_conflicting_sources_do_not_invent_vote_results() {
-        assert_eq!(payload(Some(OnchainVote::NoVote), None).summary().0, "Unknown");
-        assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::OptedIn)).summary().0, "Unknown");
-        let (_, detail) = payload(None, Some(AppVote::ModeratedOut)).summary();
-        assert!(detail.contains("farcaster.xyz"));
-        assert!(!detail.contains("revoked onchain"));
-        assert_eq!(payload(None, Some(AppVote::OptedOut)).summary().0, "Voted to leave");
-        assert_eq!(payload(None, Some(AppVote::OptedIn)).summary().0, "Voted to stay");
-        assert_eq!(payload(Some(OnchainVote::Stay), Some(AppVote::OptedOut)).summary().0, "Voted to stay");
-        assert_eq!(payload(Some(OnchainVote::Revoked), None).summary().0, "Stay vote revoked");
+    fn every_combination_reads_yes_no_or_didnt_vote() {
+        use AppVote::*;
+        use OnchainVote::*;
+        let onchain = [Some(Stay), Some(Revoked), Some(NoVote), None];
+        let app = [Some(OptedIn), Some(OptedOut), Some(ModeratedOut), Some(Pending), None];
+        for o in onchain {
+            for a in app {
+                if let Some(label) = shown(o, a) {
+                    assert!(["Voted yes", "Voted no", "Didn't vote"].contains(&label), "{o:?} {a:?}: {label}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn base_decides_where_it_can() {
+        use AppVote::*;
+        use OnchainVote::*;
+        // The token is the stay vote, whatever the app says.
+        assert_eq!(shown(Some(Stay), Some(OptedOut)), Some("Voted yes"));
+        assert_eq!(shown(Some(Stay), None), Some("Voted yes"));
+        // Revoking cancels the vote; a later leave vote still counts.
+        assert_eq!(shown(Some(Revoked), None), Some("Didn't vote"));
+        assert_eq!(shown(Some(Revoked), Some(ModeratedOut)), Some("Didn't vote"));
+        assert_eq!(shown(Some(Revoked), Some(OptedOut)), Some("Voted no"));
+        // Leave is offchain only.
+        assert_eq!(shown(Some(NoVote), Some(OptedOut)), Some("Voted no"));
+        assert_eq!(shown(Some(NoVote), Some(Pending)), Some("Didn't vote"));
+        // The app says opted in but no token exists: Base's result stands.
+        assert_eq!(shown(Some(NoVote), Some(OptedIn)), Some("Didn't vote"));
+    }
+
+    #[test]
+    fn missing_sources_do_not_invent_a_result() {
+        use AppVote::*;
+        use OnchainVote::*;
+        // No token, and farcaster.xyz unreadable: could be a leave vote.
+        assert_eq!(shown(Some(NoVote), None), None);
+        assert_eq!(shown(None, None), None);
+        // Base unreadable: the app's word, said so in the tooltip.
+        assert_eq!(shown(None, Some(OptedIn)), Some("Voted yes"));
+        assert_eq!(shown(None, Some(OptedOut)), Some("Voted no"));
+        assert_eq!(shown(None, Some(ModeratedOut)), Some("Didn't vote"));
     }
 
     #[test]
@@ -140,11 +212,8 @@ mod tests {
         assert_eq!(OnchainVote::from_words(0, 1), OnchainVote::Revoked);
         assert_eq!(OnchainVote::from_words(0, 0), OnchainVote::NoVote);
         assert_eq!(AppVote::parse("opted_out"), Some(AppVote::OptedOut));
-        assert_eq!(payload(Some(OnchainVote::Stay), Some(AppVote::OptedIn)).summary().0, "Voted to stay");
-        assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::OptedOut)).summary().0, "Voted to leave");
-        assert_eq!(payload(Some(OnchainVote::NoVote), Some(AppVote::Pending)).summary().0, "Did not vote");
-        assert_eq!(payload(Some(OnchainVote::NoVote), None).summary().0, "Unknown");
-        assert_eq!(payload(Some(OnchainVote::Revoked), None).summary().0, "Stay vote revoked");
-        assert_eq!(payload(None, None).summary().0, "Unknown");
+        // The known FIDs in docs/VOTE.md.
+        assert_eq!(shown(Some(OnchainVote::Stay), Some(AppVote::OptedIn)), Some("Voted yes")); // 539854, 3
+        assert_eq!(shown(Some(OnchainVote::NoVote), Some(AppVote::Pending)), Some("Didn't vote")); // 5650
     }
 }

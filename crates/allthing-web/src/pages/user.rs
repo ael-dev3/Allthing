@@ -343,30 +343,32 @@ async fn copy_text(text: &str) -> Result<(), wasm_bindgen::JsValue> {
     Ok(())
 }
 
-/// How the account voted when farcaster.xyz asked everyone to stay or leave.
+/// How the account voted when farcaster.xyz asked everyone to stay (yes) or
+/// leave (no). Left out when the sources can't settle it.
 #[component]
 fn VoteFact(fid: u64) -> impl IntoView {
     let data = LocalResource::new(move || async move { api::get::<VotePayload>(&vote_path(fid)).await });
-    view! {
-        <div class="fact vote-fact">
-            <dt>
-                "Farcaster vote "
-                <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
-            </dt>
-            <dd>{move || match data.get() {
-                None => view! { <span class="muted">"checking…"</span> }.into_any(),
-                Some(Err(_)) => view! { <span class="muted">"unavailable"</span> }.into_any(),
-                Some(Ok(fetched)) => {
-                    let (label, detail) = fetched.data.summary();
-                    let class = match label {
-                        "Voted to stay" => "vote vote-stay",
-                        "Voted to leave" => "vote vote-leave",
-                        "Stay vote revoked" => "vote vote-revoked",
-                        _ => "vote vote-none",
-                    };
-                    view! { <span class=class title=detail>{label}</span> }.into_any()
-                }
-            }}</dd>
-        </div>
+    let row = |answer: AnyView| {
+        view! {
+            <div class="fact vote-fact">
+                <dt>
+                    "Farcaster vote "
+                    <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
+                </dt>
+                <dd>{answer}</dd>
+            </div>
+        }
+        .into_any()
+    };
+    move || match data.get() {
+        None => {
+            Some(row(view! { <span class="vote vote-loading" aria-busy="true" aria-label="Loading the vote"></span> }
+                .into_any()))
+        }
+        Some(Ok(fetched)) => fetched.data.summary().map(|(result, detail)| {
+            row(view! { <span class=format!("vote {}", result.class()) title=detail>{result.label()}</span> }
+                .into_any())
+        }),
+        Some(Err(_)) => None,
     }
 }
