@@ -1036,19 +1036,29 @@ test.describe("threads and navigation", () => {
     expect(status.freshness.new.built_age_s).toBeGreaterThanOrEqual(0);
   });
 
-  test("the front page's data request starts inline and is reused", async ({ page }) => {
-    test.skip(PAGES, "the static copy has no API");
-    const violations: string[] = [];
-    page.on("console", (m) => /Content Security Policy/.test(m.text()) && violations.push(m.text()));
-    const calls: string[] = [];
-    page.on("request", (r) => r.url().includes("/api/v1/home") && calls.push(r.url()));
-    await page.goto(at("/"));
-    await expect(firstCard(page)).toBeVisible();
-    // The inline script ran (CSP allowed it) and the app took its response.
-    expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);
-    expect(calls).toHaveLength(1);
-    expect(violations).toEqual([]);
-  });
+  // Mixed case and an "@" or "0X" prefix are normalized the way the app
+  // normalizes them, so the app still finds the request it started.
+  for (const [page_, path, api, shown] of [
+    ["front page", "/", "/api/v1/home", ".cast-card:not(.skeleton)"],
+    ["post", `/p/${GALLERY_CAST.replace("0x", "0X").toUpperCase()}`, `/api/v1/cast?hash=${GALLERY_CAST}`, ".post .post-text"],
+    ["profile", "/u/@DWR", "/api/v1/user?name=dwr", ".profile-name"],
+    ["channel", "/c/Farcaster", "/api/v1/channel?id=farcaster", ".cast-card:not(.skeleton)"],
+  ] as const) {
+    test(`the ${page_}'s data request starts inline and is reused`, async ({ page }) => {
+      test.skip(PAGES, "the static copy has no API");
+      const violations: string[] = [];
+      page.on("console", (m) => /Content Security Policy/.test(m.text()) && violations.push(m.text()));
+      const calls: string[] = [];
+      page.on("request", (r) => r.url().includes("/api/v1/") && calls.push(new URL(r.url()).pathname + new URL(r.url()).search));
+      await page.goto(at(path));
+      await expect(page.locator(shown).first()).toBeVisible();
+      // The inline script ran (CSP allowed it) and the app took its response:
+      // the page's one data request is the one the script made.
+      expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);
+      expect(calls.filter((c) => c.startsWith(api.split("?")[0]))).toEqual([api]);
+      expect(violations).toEqual([]);
+    });
+  }
 
   test("/version names the release and commit", async ({ request }) => {
     test.skip(PAGES, "the static copy has no Worker");
