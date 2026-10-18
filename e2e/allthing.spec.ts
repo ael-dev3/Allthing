@@ -286,6 +286,61 @@ test.describe("media", () => {
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 3 && v.currentTime >= 4.5), { timeout: 15_000 }).toBe(true);
   });
 
+  test("a video scrolling into view autoplays without flashing the play icon", async ({ page }) => {
+    await useFixtureStream(page);
+    // The playlist takes a moment, as over a real network...
+    await page.route("https://stream.farcaster.xyz/v1/video/**", async (route: Route) => {
+      await new Promise((done) => setTimeout(done, 400));
+      await route.fallback();
+    });
+    // ...and the video starts far below the fold, so it loads as it arrives.
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = ".post .video { margin-top: 3000px; }";
+        document.head.append(style);
+      });
+    });
+    await page.goto(at(`/p/${VIDEO_CAST}`));
+    const player = page.locator(".post .video").first();
+    const video = player.locator("video");
+    await expect(player).toBeAttached();
+    // Count frames, from now until it plays, in which the play icon shows over
+    // the video while any of it is on screen.
+    await player.evaluate((el) => {
+      const w = window as any;
+      w.__iconFrames = 0;
+      const video = el.querySelector("video") as HTMLVideoElement;
+      const tick = () => {
+        const r = el.getBoundingClientRect();
+        const onScreen = r.bottom > 0 && r.top < innerHeight;
+        const button = el.querySelector(".video-play");
+        const icon = el.querySelector(".video-play svg");
+        const shown =
+          !!button && !!icon && getComputedStyle(button).opacity !== "0" && getComputedStyle(icon).display !== "none";
+        if (onScreen && video.paused && shown && r.top < innerHeight * 0.5) w.__iconFrames += 1;
+        if (video.paused) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await player.scrollIntoViewIfNeeded();
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => !v.paused), { timeout: 15_000 }).toBe(true);
+    const frames = await page.evaluate(() => (window as any).__iconFrames as number);
+    // One frame of slack for the in-view signal to arrive.
+    expect(frames, "frames with the play icon over the video before it played").toBeLessThanOrEqual(1);
+  });
+
+  test("a video that can't autoplay shows its play icon again", async ({ page }) => {
+    // The real stream (H.264): Playwright's Chromium can't decode it, so
+    // autoplay never starts and the icon must not stay hidden.
+    await page.goto(at(`/p/${VIDEO_CAST}`));
+    const player = page.locator(".post .video").first();
+    await expect(player).toBeVisible();
+    await page.waitForTimeout(3500);
+    expect(await player.locator("video").evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    expect(await player.locator(".video-play").evaluate((b) => getComputedStyle(b).opacity)).not.toBe("0");
+  });
+
   test("videos respect reduced motion: no autoplay", async ({ browser }) => {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 900 } });
     const page = await context.newPage();
@@ -295,6 +350,9 @@ test.describe("media", () => {
     await expect(video).toBeVisible();
     await page.waitForTimeout(1500);
     expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    // No autoplay coming: the play icon shows.
+    const button = page.locator(".post .video .video-play").first();
+    expect(await button.evaluate((b) => getComputedStyle(b).opacity)).not.toBe("0");
     await context.close();
   });
 

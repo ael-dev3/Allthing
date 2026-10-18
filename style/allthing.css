@@ -857,6 +857,13 @@ code {
   display: none;
 }
 
+/* About to autoplay: no play icon in the moment before the first frame
+   (at once: no fade-out either). */
+.video.autoplay-pending .video-play {
+  opacity: 0;
+  transition: none;
+}
+
 .video-sound {
   display: none;
 }
