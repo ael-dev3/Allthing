@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Joined, User};
+use crate::model::{Joined, User, UserSummary};
 use crate::text::{Token, tokenize};
 
 /// Characters of bio a card shows; a longer bio is cut between words.
@@ -64,6 +64,47 @@ impl UserCard {
             self.first_username_at = other.and_then(|o| o.first_username_at);
         }
         self
+    }
+}
+
+/// What a profile can show before its payload arrives, from what the visit
+/// has seen of the account: its picture and names, from a cast it wrote,
+/// and its card, if a payload carried one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfilePreview {
+    /// The account as far as it is known: no addresses; the card's bio (its
+    /// start) and counts.
+    pub user: User,
+    /// Whether the bio and counts are known. Without a card the profile
+    /// shows placeholders for them, never an empty bio or zero followers.
+    pub has_card: bool,
+    /// When the account joined, if the card already says what the profile
+    /// will: a card without the date of the first username of an account
+    /// registered before the ID registry's migration would say "before Nov
+    /// 2023", which the profile then corrects, so it says nothing yet.
+    pub joined: Option<Joined>,
+}
+
+impl ProfilePreview {
+    pub fn new(author: &UserSummary, card: Option<&UserCard>) -> ProfilePreview {
+        let user = User {
+            fid: author.fid,
+            username: author.username.clone(),
+            display_name: author.display_name.clone(),
+            pfp_url: author.pfp_url.clone(),
+            bio: card.map(|c| c.bio.clone()).unwrap_or_default(),
+            follower_count: card.map_or(0, |c| c.followers),
+            following_count: card.map_or(0, |c| c.following),
+            registered_at: card.and_then(|c| c.registered_at),
+            first_username_at: card.and_then(|c| c.first_username_at),
+            custody_address: None,
+            eth_addresses: Vec::new(),
+            sol_addresses: Vec::new(),
+            primary_eth: None,
+            primary_sol: None,
+        };
+        let joined = card.and_then(UserCard::joined).filter(|j| *j != Joined::BeforeMigration);
+        ProfilePreview { user, has_card: card.is_some(), joined }
     }
 }
 
@@ -187,6 +228,53 @@ mod tests {
         assert_eq!(filled.followers, 12);
         assert_eq!(feed.clone().filled_from(None), feed);
         assert_eq!(profile.clone().filled_from(Some(&UserCard::default())), profile);
+    }
+
+    fn author() -> UserSummary {
+        UserSummary {
+            fid: 3,
+            username: "dwr".into(),
+            display_name: "Dan Romero".into(),
+            pfp_url: Some("https://example.com/dwr.png".into()),
+        }
+    }
+
+    #[test]
+    fn a_preview_shows_the_author_and_the_card_it_has() {
+        let card = UserCard {
+            bio: "Working on Farcaster…".into(),
+            followers: 500_000,
+            following: 2_000,
+            registered_at: Some(1_759_222_921),
+            first_username_at: None,
+        };
+        let preview = ProfilePreview::new(&author(), Some(&card));
+        assert!(preview.has_card);
+        assert_eq!(preview.user.summary(), author());
+        assert_eq!(preview.user.bio, "Working on Farcaster…");
+        assert_eq!((preview.user.follower_count, preview.user.following_count), (500_000, 2_000));
+        assert_eq!(preview.joined, Some(Joined::Registered(1_759_222_921)));
+        assert!(preview.user.eth_addresses.is_empty() && preview.user.sol_addresses.is_empty());
+    }
+
+    #[test]
+    fn a_preview_without_a_card_claims_no_bio_or_counts() {
+        let preview = ProfilePreview::new(&author(), None);
+        assert!(!preview.has_card);
+        assert_eq!(preview.user.summary(), author());
+        assert_eq!(preview.joined, None);
+    }
+
+    #[test]
+    fn a_preview_leaves_out_a_join_date_the_profile_would_correct() {
+        let migrated = ID_REGISTRY_MIGRATION_DAY.start + 3600;
+        // A cast author's card: registered "on" the migration day, no first username.
+        let card = UserCard { registered_at: Some(migrated), ..Default::default() };
+        assert_eq!(card.joined(), Some(Joined::BeforeMigration));
+        assert_eq!(ProfilePreview::new(&author(), Some(&card)).joined, None);
+        // A card from a profile seen earlier knows the first username's date.
+        let card = UserCard { registered_at: Some(migrated), first_username_at: Some(1_623_888_000), ..card };
+        assert_eq!(ProfilePreview::new(&author(), Some(&card)).joined, Some(Joined::FirstUsername(1_623_888_000)));
     }
 
     #[test]
