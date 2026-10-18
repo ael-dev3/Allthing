@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Two cheap jobs. `check`, on pushes and pull requests: formatting, Clippy
+# `check`, on pushes and pull requests: formatting, Clippy
 # (native and wasm32), unit tests and the dependency license audit. `perf`,
 # on pushes to main: the performance budget against the live site.
+# `browser`: deterministic fixture regressions against the local build.
 # Cloudflare Workers Builds deploys the site, so nothing here deploys; the
-# full end-to-end suite runs locally or against https://allthing.social.
+# full live-data suite runs locally or against https://allthing.social.
 name: ci
 
 on:
@@ -56,3 +57,41 @@ jobs:
       - run: npx playwright test e2e/perf.spec.ts
         env:
           E2E_BASE_URL: https://allthing.social
+
+  browser:
+    name: browser regressions (fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SKIP_LABELS: "1"
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache build tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/tools
+            ~/.cache/worker-build
+          key: browser-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: bash scripts/build.sh
+      - name: Test the local build without live data
+        run: npx playwright test '\.fixture\.spec\.ts$'
+      - name: Upload browser failure reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-fixtures
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
