@@ -43,14 +43,15 @@ fn remember(key: String, now: f64, verdict: Option<bool>) {
     VERDICTS.with(|v| v.borrow_mut().insert(key, (until, verdict)));
 }
 
-/// Read one page: `Some(verdict)`, or `None` when it couldn't be read now.
-async fn read(inv: &Invocation, url: &str) -> Option<bool> {
-    match upstream::send(inv, Upstream::LinkPage, HttpMethod::Get, url, None, false).await {
+/// Read one page, leaving locally deferred checks eligible for the next build.
+async fn read(inv: &Invocation, url: &str) -> Result<Option<bool>, UpstreamError> {
+    Ok(match upstream::send(inv, Upstream::LinkPage, HttpMethod::Get, url, None, false).await {
         Ok(Some(bytes)) => Some(html_declares_mini_app(&String::from_utf8_lossy(&bytes))),
         // Gone or refused: there's no mini app to run there.
         Ok(None) | Err(UpstreamError::Status(400..=499)) => Some(false),
+        Err(error @ (UpstreamError::Budget | UpstreamError::Busy(_))) => return Err(error),
         Err(_) => None,
-    }
+    })
 }
 
 /// Verdicts for the links of `casts` that aren't already hidden (known mini
@@ -83,10 +84,12 @@ pub async fn check<'a>(
             None => unknown.push(key),
         }
     }
-    unknown.truncate(MAX_CHECKS.min((inv.remaining_subrequests() as usize).saturating_sub(RESERVE)));
+    let affordable = (inv.remaining_subrequests() as usize).saturating_sub(RESERVE);
+    unknown.truncate(inv.take_link_checks(unknown.len().min(affordable)));
     for batch in unknown.chunks(PARALLEL) {
         let read = join_all(batch.iter().map(|url| read(inv, url))).await;
         for (key, verdict) in batch.iter().zip(read) {
+            let Ok(verdict) = verdict else { continue };
             remember(key.clone(), now, verdict);
             if let Some(verdict) = verdict {
                 verdicts.insert(key.clone(), verdict);

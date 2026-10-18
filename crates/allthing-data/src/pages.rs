@@ -68,8 +68,13 @@ fn with_defaults(mut channels: Vec<Channel>, limit: usize) -> Vec<Channel> {
 
 /// Check the casts' links for mini app pages (within the build's budget),
 /// then leave out every cast that is a mini app or spam.
-async fn drop_hidden(inv: &Invocation, mut casts: Vec<Cast>, notes: &mut api::Annotations) -> Vec<Cast> {
-    notes.links = miniapps::check(inv, &casts, &notes.links).await;
+async fn drop_hidden(
+    inv: &Invocation,
+    mut casts: Vec<Cast>,
+    notes: &mut api::Annotations,
+    known_links: &BTreeMap<String, bool>,
+) -> Vec<Cast> {
+    notes.links = miniapps::check(inv, &casts, known_links).await;
     mark_mini_apps(&mut casts, &notes.links);
     without_hidden(casts)
 }
@@ -93,14 +98,47 @@ async fn quoted_casts(inv: &Invocation, casts: &[Cast], mut known: BTreeMap<Stri
     known
 }
 
+/// Check a quote's own links before stripping hidden content. The outer
+/// cast stays visible; its quote keeps the author and the hidden reason.
+async fn check_quotes<'a>(
+    inv: &Invocation,
+    casts: impl IntoIterator<Item = &'a mut Cast>,
+    known_links: &BTreeMap<String, bool>,
+) -> BTreeMap<String, bool> {
+    let casts: Vec<&mut Cast> = casts.into_iter().collect();
+    let links = miniapps::check(inv, casts.iter().map(|c| &**c), known_links).await;
+    for cast in casts {
+        mark_mini_apps(std::slice::from_mut(cast), &links);
+        if cast.hidden() {
+            cast.strip_hidden();
+        }
+    }
+    links
+}
+
 /// Origins and app names for a listing's casts, with the casts they quote
 /// read meanwhile. The quotes read starts first, so its one subrequest is
 /// taken before origins size their batch to the budget that is left.
-async fn annotate_listing(inv: &Invocation, notes: &mut api::Annotations, pool: &[Cast], max_authors: usize) {
+async fn annotate_listing(
+    inv: &Invocation,
+    notes: &mut api::Annotations,
+    pool: &[Cast],
+    max_authors: usize,
+    known_links: &BTreeMap<String, bool>,
+) {
     let refs: Vec<&Cast> = pool.iter().collect();
     let known = std::mem::take(&mut notes.quotes);
-    let (quotes, ()) = join(quoted_casts(inv, pool, known), annotate(inv, notes, &targets(&refs), max_authors)).await;
+    let ((quotes, links), ()) = join(
+        async {
+            let mut quotes = quoted_casts(inv, pool, known).await;
+            let links = check_quotes(inv, quotes.values_mut(), known_links).await;
+            (quotes, links)
+        },
+        annotate(inv, notes, &targets(&refs), max_authors),
+    )
+    .await;
     notes.quotes = quotes;
+    notes.links.extend(links);
 }
 
 fn newest_unique(mut casts: Vec<Cast>, limit: usize) -> Vec<Cast> {
@@ -145,8 +183,9 @@ pub async fn home(
     let casts = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await;
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
-    let pool = drop_hidden(&inv, casts, &mut notes).await;
-    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS).await;
+    let known_links = std::mem::take(&mut notes.links);
+    let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
+    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     Built::json(&HomePayload { pool, notes, meta: meta(&inv) }, api::HOME_CACHE)
 }
 
@@ -207,9 +246,10 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
         Err(e) if !added.is_empty() => return Err(Failure::upstream(e)),
         Err(_) => Vec::new(),
     };
-    let fresh = drop_hidden(&inv, fresh, &mut notes).await;
+    let known_links = std::mem::take(&mut notes.links);
+    let fresh = drop_hidden(&inv, fresh, &mut notes, &known_links).await;
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
-    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS).await;
+    annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
 }
 
@@ -261,17 +301,18 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     }
     // Hypersnap merges several shards per page, so order isn't guaranteed.
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
     let mut casts: Vec<Cast> = raw.iter().map(normalize::cast).collect();
     let mut pinned: Vec<Cast> = pinned.iter().map(normalize::cast).collect();
     // The pinned cast's links are checked first, with the feed's, and it is
     // left out like any listed cast if it is a mini app or spam.
-    notes.links = miniapps::check(&inv, pinned.iter().chain(&casts), &notes.links).await;
+    notes.links = miniapps::check(&inv, pinned.iter().chain(&casts), &known_links).await;
     mark_mini_apps(&mut pinned, &notes.links);
     mark_mini_apps(&mut casts, &notes.links);
     channel.pinned = without_hidden(pinned).pop();
     let pool = newest_unique(without_hidden(casts), POOL_SIZE as usize);
     let listed: Vec<Cast> = channel.pinned.iter().chain(&pool).cloned().collect();
-    annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS).await;
+    annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS, &known_links).await;
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
 
@@ -280,8 +321,9 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         return Ok(Built::not_found("No such cast"));
     };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
     let mut thread = normalize::thread(&root);
-    notes.links = miniapps::check(&inv, flatten(&thread), &notes.links).await;
+    notes.links = miniapps::check(&inv, flatten(&thread), &known_links).await;
     mark_mini_apps_in_tree(&mut thread, &notes.links);
     thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_hidden).collect();
     if thread.cast.hidden() {
@@ -293,7 +335,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     // Context around the cast is best-effort; the thread is what matters.
     let channel_key = first.channel.as_ref().map(|c| c.id.clone());
     let parent_hash = first.parent_hash.clone();
-    let (channel, parent, quotes) = join3(
+    let (channel, parent, mut quotes) = join3(
         async {
             match &channel_key {
                 Some(key) => hypersnap::channel(&inv, key).await.ok().flatten(),
@@ -321,6 +363,7 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         })),
     )
     .await;
+    notes.links.extend(check_quotes(&inv, quotes.iter_mut().filter_map(|q| q.cast.as_mut()), &known_links).await);
 
     // Attribute the cast itself first, then its context, then the replies.
     let mut refs: Vec<&Cast> = vec![first];
@@ -365,8 +408,9 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         None => None,
     };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
     let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
-    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes).await, POOL_SIZE as usize);
+    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes, &known_links).await, POOL_SIZE as usize);
     let active = signers.ok().map(|apps| annotate::remember_signers(&inv, fid, apps));
     if let Ok(recent) = recent {
         let cast_signers: Vec<(String, String)> =
@@ -375,7 +419,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
             notes.origins.insert(hash, origin);
         }
     }
-    annotate_listing(&inv, &mut notes, &pool, 2).await;
+    annotate_listing(&inv, &mut notes, &pool, 2, &known_links).await;
     let policy = if retry { api::USER_RETRY_CACHE } else { api::USER_CACHE };
     Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, policy)
 }
@@ -412,10 +456,11 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
         casts.unwrap_or_default().iter().map(|c| allthing_core::params::normalize_hash(&c.hash)).collect();
     let hydrated = hypersnap::casts_bulk(&inv, &hashes).await.unwrap_or_default();
     let mut notes = api::Annotations::default();
-    let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes).await;
+    let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes, &BTreeMap::new()).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
     notes.quotes = quoted_casts(&inv, &casts, BTreeMap::new()).await;
+    notes.links.extend(check_quotes(&inv, notes.quotes.values_mut(), &BTreeMap::new()).await);
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
 }
 
@@ -438,7 +483,7 @@ pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure
     };
     let mut notes = api::Annotations::default();
     let replies = root.direct_replies.iter().flatten().map(normalize::cast).collect();
-    let mut replies = drop_hidden(&inv, replies, &mut notes).await;
+    let mut replies = drop_hidden(&inv, replies, &mut notes, &BTreeMap::new()).await;
     replies.sort_by_key(|c| std::cmp::Reverse(allthing_core::ranking::points(c)));
     replies.truncate(10);
     Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)

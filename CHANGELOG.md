@@ -9,6 +9,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The static copy reads linked-page metadata only up to its byte limit and cancels the remaining body. A large or stalled tail no longer delays a usable head or requires buffering the full response. CI also checks the static payload builder.
 - If the app module or WebAssembly fails to load, the loading glow gives way to an accessible error message and Reload button. Reload preserves the requested page and query.
 
+- Quoted casts have their linked pages checked for mini-app metadata, sharing the build's twelve-link quota with ordinary casts. Locally deferred checks remain eligible on the next build, and carried quote verdicts survive feed refreshes.
 - Playing an autoplaying HLS video reuses its buffered source when it is already the best rendition the stream can supply. Low-resolution videos no longer restart the same rendition to satisfy an unavailable higher resolution; genuine upgrades still work.
 - Leaving or replacing an MSE video cancels its rendition playlists and segments, pending source/buffer event waits, and idle buffering timer. Removed players no longer keep those operations alive.
 - Ordinary linked pages are no longer mistaken for mini apps because a comment, script, template, or quoted attribute contains a metadata example. Actual frame and mini-app declarations in the page head still apply.
