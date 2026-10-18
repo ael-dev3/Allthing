@@ -63,6 +63,7 @@ impl<T> PartialEq for Fetched<T> {
     }
 }
 
+#[derive(Clone)]
 struct Raw {
     at: f64,
     status: u16,
@@ -132,9 +133,8 @@ pub fn prefetch(path: &str) {
     let path = path.to_owned();
     wasm_bindgen_futures::spawn_local(async move {
         if let Ok(raw) = fetch_raw(&path).await {
-            CACHE.with(|c| {
-                c.borrow_mut().insert(path.clone(), raw);
-            });
+            let now = js_sys::Date::now();
+            remember(&path, raw, now);
         }
         IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
     });
@@ -193,6 +193,36 @@ fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
     }
 }
 
+/// A recent answer for `path`, if one is kept.
+fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>, Failure>> {
+    CACHE.with(|c| {
+        c.borrow().get(path).filter(|raw| now - raw.at < CLIENT_TTL_MS).map(|raw| {
+            let age = raw.age.saturating_add(((now - raw.at).max(0.0) / 1000.0) as u32);
+            decode::<T>(&Raw { age, ..raw.clone() })
+        })
+    })
+}
+
+/// Keep an answer for reuse: only real data and "no such thing". Errors,
+/// busy answers and unreadable bodies are asked for again next time.
+fn remember(path: &str, raw: Raw, now: f64) {
+    let keep = match raw.status {
+        200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
+        404 => true,
+        _ => false,
+    };
+    if !keep {
+        return;
+    }
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() > 200 {
+            c.retain(|_, r| now - r.at < CLIENT_TTL_MS);
+        }
+        c.insert(path.to_owned(), raw);
+    });
+}
+
 /// GET an API path, reusing a recent answer for the same path.
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
     // A prefetch of the same path is on its way: wait for it, don't repeat it.
@@ -203,33 +233,12 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
         crate::video::sleep(25).await;
     }
     let now = js_sys::Date::now();
-    let cached = CACHE.with(|c| {
-        c.borrow().get(path).filter(|raw| now - raw.at < CLIENT_TTL_MS && raw.status != 503 && raw.status != 429).map(
-            |raw| {
-                let age = raw.age + ((now - raw.at) / 1000.0) as u32;
-                decode::<T>(&Raw {
-                    at: raw.at,
-                    status: raw.status,
-                    body: raw.body.clone(),
-                    age,
-                    stale: raw.stale,
-                    retry_after: raw.retry_after,
-                })
-            },
-        )
-    });
-    if let Some(result) = cached {
+    if let Some(result) = cached(path, now) {
         return result;
     }
     let raw = fetch_raw(path).await?;
     let result = decode::<T>(&raw);
-    CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() > 200 {
-            c.retain(|_, r| now - r.at < CLIENT_TTL_MS);
-        }
-        c.insert(path.to_owned(), raw);
-    });
+    remember(path, raw, now);
     result
 }
 
@@ -242,4 +251,36 @@ pub async fn get_text(path: &str) -> Option<Rc<str>> {
     let body = (raw.status == 200).then(|| raw.body.clone());
     CACHE.with(|c| c.borrow_mut().insert(path.to_owned(), raw));
     body
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(status: u16, body: &str) -> Raw {
+        Raw { at: 1000.0, status, body: body.into(), age: 10, stale: false, retry_after: Some(5) }
+    }
+
+    #[test]
+    fn errors_are_asked_for_again() {
+        for status in [400, 403, 429, 500, 502, 503, 504] {
+            let path = format!("/test/error/{status}");
+            remember(&path, response(status, r#"{"error":"unavailable"}"#), 1000.0);
+            assert!(cached::<serde_json::Value>(&path, 2000.0).is_none(), "kept HTTP {status}");
+        }
+        remember("/test/garbled", response(200, "<html>"), 1000.0);
+        assert!(cached::<serde_json::Value>("/test/garbled", 2000.0).is_none());
+    }
+
+    #[test]
+    fn data_and_missing_pages_are_reused_until_they_expire() {
+        remember("/test/data", response(200, r#"{"casts":[]}"#), 1000.0);
+        let hit = cached::<serde_json::Value>("/test/data", 3000.0).unwrap().unwrap();
+        assert_eq!(hit.data["casts"], serde_json::json!([]));
+        assert_eq!(hit.age, 12);
+        assert!(cached::<serde_json::Value>("/test/data", 1000.0 + CLIENT_TTL_MS).is_none());
+
+        remember("/test/missing", response(404, r#"{"error":"unknown user"}"#), 1000.0);
+        assert!(matches!(cached::<serde_json::Value>("/test/missing", 2000.0), Some(Err(Failure::NotFound(_)))));
+    }
 }
