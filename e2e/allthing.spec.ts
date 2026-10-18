@@ -477,6 +477,28 @@ test.describe("media", () => {
     await expect(player.locator(".video-note")).toHaveCount(0);
   });
 
+  test("hovering media doesn't enlarge or highlight it", async ({ page }) => {
+    const look = (el: Element) => {
+      const style = getComputedStyle(el);
+      return `${style.transform} ${style.opacity} ${style.filter}`;
+    };
+    const unchangedOnHover = async (media: Locator) => {
+      await media.scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      const before = await media.evaluate(look);
+      await media.hover({ force: true });
+      await page.waitForTimeout(700);
+      expect(await media.evaluate(look)).toBe(before);
+      expect(before).toBe("none 1 none");
+    };
+    await page.goto(at(`/p/${YOUTUBE_CAST}`));
+    await unchangedOnHover(page.locator(".post .facade img"));
+    await page.goto(at(`/p/${VIDEO_CAST}`));
+    await unchangedOnHover(page.locator(".post .video video").first());
+    await page.goto(at("/"));
+    await unchangedOnHover(page.locator(".cast-card .tile-image img").first());
+  });
+
   test("YouTube links get a privacy-friendly, click-to-load player", async ({ page }) => {
     // Keep the test hermetic: nothing from YouTube itself needs to load.
     await page.route(/youtube-nocookie\.com|ytimg\.com/, (route) => route.fulfill({ status: 204, body: "" }));
