@@ -2205,11 +2205,12 @@ code {
   max-height: 360px;
   overflow: auto;
   overscroll-behavior: contain;
-  background: rgba(255, 255, 255, 0.97);
-  backdrop-filter: blur(10px);
+  /* Solid: a see-through, blurred background let Chrome draw images from
+     the card above over the list. */
+  background: var(--card);
   border: 1px solid var(--line-2);
   border-radius: 12px;
-  box-shadow: 0 24px 60px -24px rgba(27, 34, 51, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  box-shadow: 0 24px 60px -24px rgba(27, 34, 51, 0.45);
   padding: 10px 12px;
   font-size: 13.5px;
   color: var(--ink-2);
