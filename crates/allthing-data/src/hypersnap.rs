@@ -72,8 +72,13 @@ struct CastList {
     casts: Vec<RawCast>,
 }
 
-/// Fully hydrated casts (embeds, counts) by hash, up to 100 per call.
+/// Casts that one `casts` request reads, at most.
+pub const MAX_BULK_CASTS: usize = 100;
+
+/// Fully hydrated casts (embeds, counts) by hash: the first
+/// [`MAX_BULK_CASTS`] of `hashes`, in one request.
 pub async fn casts_bulk(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCast>, UpstreamError> {
+    let hashes = &hashes[..hashes.len().min(MAX_BULK_CASTS)];
     if hashes.is_empty() {
         return Ok(Vec::new());
     }

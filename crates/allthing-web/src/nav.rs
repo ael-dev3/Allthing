@@ -193,6 +193,10 @@ const INTERACTIVE: &str =
 
 /// A click handler for a whole card: open `href` unless the click was on an
 /// interactive element or ended a text selection. Ctrl/⌘-click opens a tab.
+///
+/// A click it opens is marked handled (`preventDefault`), so a card inside
+/// a card (a quoted cast) opens its own post, and the enclosing card's
+/// handler, which runs next, leaves it alone.
 pub fn card_click(href: String) -> impl Fn(ev::MouseEvent) + Clone + 'static {
     let navigate = use_navigate();
     move |ev: ev::MouseEvent| {
@@ -209,6 +213,7 @@ pub fn card_click(href: String) -> impl Fn(ev::MouseEvent) + Clone + 'static {
         if on_control || selecting {
             return;
         }
+        ev.prevent_default();
         if ev.ctrl_key() || ev.meta_key() || ev.shift_key() {
             let _ = window().open_with_url_and_target(&href, "_blank");
             return;

@@ -46,6 +46,12 @@ pub struct Annotations {
     /// Worker, and carried to the next build of the same payload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub links: BTreeMap<String, bool>,
+    /// Quoted cast hash -> the quoted cast, for listing cards that quote
+    /// one. A hidden quoted cast (spam, a mini app) comes without its
+    /// content (see [`crate::quotes::as_quote`]). Carried to the next build
+    /// of the same payload while still quoted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub quotes: BTreeMap<String, Cast>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -60,6 +66,7 @@ impl Annotations {
         self.origins.extend(newer.origins.clone());
         self.apps.extend(newer.apps.clone());
         self.links.extend(newer.links.clone());
+        self.quotes.extend(newer.quotes.clone());
         self.pending = self.pending.saturating_add(newer.pending);
     }
 
@@ -320,11 +327,19 @@ pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 
 mod tests {
     use super::*;
 
+    fn quoted(hash: &str) -> Cast {
+        serde_json::from_value(serde_json::json!({
+            "hash": hash, "author": { "fid": 2, "username": "quoted" }, "text": "quoted words", "ts": 1_700_000_000,
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn merging_pages_keeps_known_facts_and_prefers_newer_values() {
         let mut notes = Annotations {
             origins: BTreeMap::from([("first".into(), Origin { signer: "old".into(), app_fid: None })]),
             links: BTreeMap::from([("https://first.example".into(), false), ("https://both.example".into(), false)]),
+            quotes: BTreeMap::from([("0xq1".into(), quoted("0xq1"))]),
             pending: 2,
             ..Default::default()
         };
@@ -335,6 +350,7 @@ mod tests {
                 UserSummary { fid: 99, username: "app".into(), display_name: String::new(), pfp_url: None },
             )]),
             links: BTreeMap::from([("https://later.example".into(), true), ("https://both.example".into(), true)]),
+            quotes: BTreeMap::from([("0xq2".into(), quoted("0xq2"))]),
             pending: 1,
         };
         notes.merge(&newer);
@@ -348,6 +364,7 @@ mod tests {
                 ("https://later.example".into(), true),
             ])
         );
+        assert_eq!(notes.quotes.keys().collect::<Vec<_>>(), ["0xq1", "0xq2"]);
         assert_eq!(notes.pending, 3);
     }
 
@@ -377,7 +394,9 @@ mod tests {
             9152,
             UserSummary { fid: 9152, username: "warpcast".into(), display_name: "Warpcast".into(), pfp_url: None },
         );
+        notes.quotes.insert("0xq1".into(), quoted("0xq1"));
         let json = serde_json::to_string(&notes).unwrap();
+        assert!(json.contains(r#""quotes":{"0xq1":{"hash":"0xq1""#), "{json}");
         let back: Annotations = serde_json::from_str(&json).unwrap();
         assert_eq!(back, notes);
         assert_eq!(back.app_for("0xab").map(|a| a.username.as_str()), Some("warpcast"));

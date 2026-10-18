@@ -104,7 +104,7 @@ pub fn ChannelPage() -> impl IntoView {
                     <Columns side>
                         <ChannelHeader channel=channel.clone()/>
                         {pinned.map(|cast| {
-                            api::remember_casts(std::slice::from_ref(&cast));
+                            api::remember_casts(std::slice::from_ref(&cast), &notes);
                             view! {
                                 <section class="pinned-cast" aria-labelledby="pinned-label">
                                     <p class="pinned-label" id="pinned-label">

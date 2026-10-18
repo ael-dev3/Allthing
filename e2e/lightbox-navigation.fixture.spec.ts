@@ -19,7 +19,7 @@ test("Back dismisses a lightbox and unlocks the destination page", async ({ page
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/search?q=fixture");
-  await page.locator(`.cast-card[data-hash="${hash}"] a.when`).click();
+  await page.locator(`.cast-card[data-hash="${hash}"] header.cast-meta a.when`).click();
   await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
   await page.locator(".post .tile-image").click();
   const dialog = page.getByRole("dialog", { name: "Media viewer", exact: true });
