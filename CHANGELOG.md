@@ -28,6 +28,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A cast whose channel URL holds a non-ASCII character where an address would start no longer crashes the page that lists it, and a malformed answer from the score contract is ignored instead of crashing the request.
 - On phones, profiles show the wallet activity panel and its Wallets button right after the profile header, instead of below every cast. The Wallets popover opens toward the side with more room, like the others.
 - A profile no longer shows its Neynar score as "unavailable" when the onchain score read fails once. The score already known from Hypersnap or from the page's previous copy was thrown away whenever that read failed, and the page was then cached that way for up to 35 minutes; it is now kept.
+- Clicking play on a video while its playlist is still loading plays it, with sound, once it has loaded. Before, the click was lost and the video stayed still.
 
 ## [0.3.0] - 2026-10-18
 
