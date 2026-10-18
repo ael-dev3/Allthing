@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Images and videos attached to casts: an inline grid, a hover preview that
-//! needs no click, and an accessible lightbox (keyboard, alt text, swipe).
+//! Images and videos attached to casts: an inline grid and an accessible
+//! lightbox (keyboard, alt text, swipe).
 
 use std::cell::RefCell;
-use std::time::Duration;
 
 use allthing_core::embeds::{ImageSize, embed_domain, resized_image_url};
 use allthing_core::model::{Cast, Embed};
@@ -15,7 +14,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
 use crate::components::player::{HlsVideo, VideoFacade};
-use crate::util::{can_hover, cast_href};
+use crate::util::cast_href;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
@@ -38,38 +37,24 @@ pub struct Gallery {
     pub caption: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Preview {
-    pub src: String,
-    pub placeholder: String,
-    pub alt: String,
-    pub left: f64,
-    pub top: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-/// Shared state of the lightbox and the hover preview.
+/// Shared state of the lightbox.
 #[derive(Clone, Copy)]
 pub struct Viewer {
     pub gallery: RwSignal<Option<Gallery>>,
-    pub preview: RwSignal<Option<Preview>>,
 }
 
 thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
-    static HOVER_TIMER: RefCell<Option<TimeoutHandle>> = const { RefCell::new(None) };
 }
 
 impl Viewer {
     pub fn new() -> Viewer {
-        Viewer { gallery: RwSignal::new(None), preview: RwSignal::new(None) }
+        Viewer { gallery: RwSignal::new(None) }
     }
 
     pub fn open(&self, gallery: Gallery) {
         let active = document().active_element().and_then(|e| e.dyn_into::<HtmlElement>().ok());
         RETURN_FOCUS.with(|r| *r.borrow_mut() = active);
-        self.preview.set(None);
         self.gallery.set(Some(gallery));
     }
 
@@ -142,63 +127,6 @@ pub fn video_links(cast: &Cast) -> Vec<(String, VideoLink)> {
     out
 }
 
-fn clear_hover() {
-    HOVER_TIMER.with(|t| {
-        if let Some(handle) = t.borrow_mut().take() {
-            handle.clear();
-        }
-    });
-}
-
-/// Show an enlarged preview next to `anchor` after a short dwell.
-fn schedule_preview(viewer: Viewer, anchor: HtmlElement, item: MediaItem) {
-    clear_hover();
-    if !can_hover() {
-        return;
-    }
-    let handle = set_timeout_with_handle(
-        move || {
-            let rect = anchor.get_bounding_client_rect();
-            let window = window();
-            let vw = window.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1280.0);
-            let vh = window.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
-            // Use the loaded thumbnail's shape, or fall back to the tile's.
-            let (nw, nh) = anchor
-                .query_selector("img")
-                .ok()
-                .flatten()
-                .and_then(|img| img.dyn_into::<web_sys::HtmlImageElement>().ok())
-                .map(|img| (f64::from(img.natural_width()), f64::from(img.natural_height())))
-                .filter(|(w, h)| *w > 0.0 && *h > 0.0)
-                .unwrap_or((rect.width(), rect.height()));
-            let (max_w, max_h) = ((vw * 0.42).min(620.0), (vh * 0.72).min(660.0));
-            let scale = (max_w / nw).min(max_h / nh);
-            let (width, height) = (nw * scale, nh * scale);
-            let right_room = vw - rect.right() - 18.0;
-            let left = if right_room >= width { rect.right() + 14.0 } else { (rect.left() - 14.0 - width).max(8.0) };
-            let top = (rect.top() + rect.height() / 2.0 - height / 2.0).clamp(8.0, (vh - height - 8.0).max(8.0));
-            viewer.preview.set(Some(Preview {
-                src: resized_image_url(&item.url, ImageSize::Preview),
-                placeholder: resized_image_url(&item.url, ImageSize::Inline),
-                alt: item.alt.clone(),
-                left,
-                top,
-                width,
-                height,
-            }));
-        },
-        Duration::from_millis(140),
-    );
-    if let Ok(handle) = handle {
-        HOVER_TIMER.with(|t| *t.borrow_mut() = Some(handle));
-    }
-}
-
-fn hide_preview(viewer: Viewer) {
-    clear_hover();
-    viewer.preview.set(None);
-}
-
 /// A cast's images and videos. In listings, images link to the post; on the
 /// post page (`open_on_click`), they open the lightbox.
 #[component]
@@ -239,27 +167,17 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                             referrerpolicy="no-referrer"
                         />
                     };
-                    let hover_item = item.clone();
-                    let enter = move |ev: ev::MouseEvent| {
-                        if let Some(anchor) = ev.current_target().and_then(|t| t.dyn_into::<HtmlElement>().ok()) {
-                            schedule_preview(viewer, anchor, hover_item.clone());
-                        }
-                    };
-                    let leave = move |_: ev::MouseEvent| hide_preview(viewer);
                     if open_on_click {
                         let label = format!("Open {} in the media viewer", item.alt);
                         view! {
-                            <button class="tile tile-image" type="button" aria-label=label
-                                on:mouseenter=enter on:mouseleave=leave
-                                on:click=move |_| { hide_preview(viewer); open() }>
+                            <button class="tile tile-image" type="button" aria-label=label on:click=move |_| open()>
                                 {img}
                             </button>
                         }
                         .into_any()
                     } else {
                         view! {
-                            <a class="tile tile-image" href=href.clone() on:mouseenter=enter on:mouseleave=leave
-                                on:click=move |_| hide_preview(viewer)>
+                            <a class="tile tile-image" href=href.clone()>
                                 {img}
                             </a>
                         }
@@ -308,36 +226,6 @@ pub fn VideoLinks(cast: Cast) -> impl IntoView {
         .take(2)
         .map(|(url, link)| view! { <VideoFacade link url title=title.clone()/> })
         .collect_view()
-}
-
-/// The floating, no-click preview of a hovered image.
-#[component]
-pub fn HoverPreview() -> impl IntoView {
-    let viewer = use_viewer();
-    // Scrolling moves the anchor away; drop the preview.
-    let handle = window_event_listener(ev::scroll, move |_| {
-        if viewer.preview.with_untracked(Option::is_some) {
-            hide_preview(viewer);
-        }
-    });
-    on_cleanup(move || handle.remove());
-    move || {
-        viewer.preview.get().map(|p| {
-            view! {
-                <div
-                    class="hover-preview"
-                    aria-hidden="true"
-                    style:left=format!("{:.0}px", p.left)
-                    style:top=format!("{:.0}px", p.top)
-                    style:width=format!("{:.0}px", p.width)
-                    style:height=format!("{:.0}px", p.height)
-                    style:background-image=format!("url(\"{}\")", p.placeholder)
-                >
-                    <img src=p.src alt=p.alt referrerpolicy="no-referrer"/>
-                </div>
-            }
-        })
-    }
 }
 
 /// Modal media viewer: arrow keys and swipes move between items, Escape or

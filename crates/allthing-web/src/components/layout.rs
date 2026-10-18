@@ -2,17 +2,17 @@
 //! Page frame: header with the wordmark, footer, sidebar boxes, sort tabs,
 //! pagination and loading or error states.
 
-use allthing_core::listing::PageSlice;
 use allthing_core::ranking::Sort;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
 use crate::api::Failure;
+use crate::components::search::SearchBox;
 use crate::util::{BASE, SOURCE_URL, href, with_query};
 
 #[component]
 pub fn Wordmark() -> impl IntoView {
-    view! { <a class="wordmark" href=href("/") aria-label="Allthing, front page">"Allthing"</a> }
+    view! { <a class="wordmark" href=href("/") aria-label="Allthing, home">"Allthing"</a> }
 }
 
 #[component]
@@ -28,10 +28,10 @@ pub fn SiteHeader() -> impl IntoView {
             <div class="header-inner">
                 <Wordmark/>
                 <nav class="main-nav" aria-label="Main">
-                    <a href=href("/") aria-current=move || current("/").then_some("page")>"Front page"</a>
+                    <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
                     <a href=href("/channels") aria-current=move || current("/channels").then_some("page")>"Channels"</a>
-                    <a href=href("/about") aria-current=move || current("/about").then_some("page")>"About"</a>
                 </nav>
+                <SearchBox/>
                 <span class="readonly-pill" title="Allthing only reads public Farcaster data. There is no sign-in and nothing is ever posted.">"read-only"</span>
             </div>
             <div class="portal-line" aria-hidden="true"></div>
@@ -43,15 +43,13 @@ pub fn SiteHeader() -> impl IntoView {
 pub fn SiteFooter() -> impl IntoView {
     view! {
         <footer class="site-footer">
-            <p>
-                <strong>"Allthing"</strong>
-                " is free software under the "
-                <a href=format!("{SOURCE_URL}/blob/main/LICENSE")>"GNU AGPL v3 or later"</a>
-                ". "
-                <a href=SOURCE_URL>"Source code"</a>
-                " · Farcaster data via Hypersnap · Neynar scores read onchain on Base · spam labels from the Farcaster app's public dataset."
-            </p>
-            <p class="fine">"Independent and read-only; not affiliated with Farcaster, Neynar or Quilibrium. The name nods to the Allthing of Dan Simmons' Hyperion Cantos."</p>
+            <a href=format!("{SOURCE_URL}/blob/main/LICENSE")>"AGPL-3.0"</a>
+            <span aria-hidden="true">" · "</span>
+            <a href=SOURCE_URL>"Source"</a>
+            <span aria-hidden="true">" · "</span>
+            <span class="version" title=format!("Allthing {} built from commit {}", crate::VERSION, crate::COMMIT)>
+                {format!("v{} ({})", crate::VERSION, crate::COMMIT)}
+            </span>
         </footer>
     }
 }
@@ -88,7 +86,7 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
                 .map(|sort| {
                     let href = with_query(&path, &[("sort", (sort != default_sort).then(|| sort.as_str().to_owned()))]);
                     view! {
-                        <a href=href class:selected=sort == current aria-current=(sort == current).then_some("page") title=sort.describe()>
+                        <a href=href data-noscroll="" class:selected=sort == current aria-current=(sort == current).then_some("page") title=sort.describe()>
                             {sort.as_str()}
                         </a>
                     }
@@ -99,28 +97,6 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
 }
 
 /// Previous and next page links for a paginated listing.
-#[component]
-pub fn Pager(
-    path: String,
-    slice: PageSlice,
-    #[prop(optional)] sort: Option<Sort>,
-    #[prop(optional)] default_sort: Option<Sort>,
-) -> impl IntoView {
-    let sort_param = sort.filter(|s| Some(*s) != default_sort.or(Some(Sort::Hot))).map(|s| s.as_str().to_owned());
-    let link =
-        |page: u32| with_query(&path, &[("sort", sort_param.clone()), ("page", (page > 1).then(|| page.to_string()))]);
-    (slice.has_prev || slice.has_next).then(|| {
-        view! {
-            <nav class="pager" aria-label="Pages">
-                {slice.has_prev.then(|| view! { <a rel="prev" href=link(slice.page - 1)>"‹ prev"</a> })}
-                <span class="page-number">"page "{slice.page}</span>
-                {slice.has_next.then(|| view! { <a rel="next" href=link(slice.page + 1)>"next ›"</a> })}
-            </nav>
-        }
-    })
-}
-
-/// Freshness note for a payload served from the edge cache.
 #[component]
 pub fn Freshness(age: u32, stale: bool) -> impl IntoView {
     let text = match (stale, age) {

@@ -6,9 +6,15 @@ use allthing_core::text::cast_title;
 use leptos::prelude::*;
 
 use crate::Notes;
-use crate::components::chips::{BackendBadge, Engagement, OriginChip, TimeAgo, UserChip};
+use crate::api;
+use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::nav::card_click;
 use crate::util::{cast_href, channel_href};
+use allthing_core::api::cast_path;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
 
 /// The channel line of a cast's meta row.
 #[component]
@@ -23,7 +29,8 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
 }
 
 /// One cast in a listing: who and where, the text as a title, media, and its
-/// engagement.
+/// engagement. The whole card opens the post (text stays selectable), and
+/// hovering or touching it prefetches the post's data.
 #[component]
 pub fn CastCard(
     cast: Cast,
@@ -39,14 +46,32 @@ pub fn CastCard(
         _ => None,
     });
     let parent = show_parent.then(|| cast.parent_hash.clone()).flatten();
+    let data_path = cast_path(&cast.hash);
+    let warm = move || api::prefetch(&data_path);
+    let warm_touch = warm.clone();
+    let click = card_click(href.clone());
+    let node = NodeRef::<leptos::html::Article>::new();
+    Effect::new(move |_| {
+        if let Some(element) = node.get() {
+            watch_for_prefetch(&element);
+        }
+    });
+    on_cleanup(move || {
+        if let Some(element) = node.get_untracked() {
+            unwatch(&element);
+        }
+    });
     view! {
         <article
             class="cast-card"
-            data-nav=""
+            node_ref=node
             data-hash=cast.hash.clone()
             data-ts=cast.ts
             data-points=allthing_core::ranking::points(&cast)
             style=format!("--i: {}", index.min(16))
+            on:click=click
+            on:pointerenter=move |_| warm()
+            on:touchstart=move |_| warm_touch()
         >
             <header class="cast-meta">
                 <UserChip user=cast.author.clone() score=score.unwrap_or(0) show_name=true/>
@@ -56,34 +81,174 @@ pub fn CastCard(
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
             </header>
             {parent.map(|p| view! { <p class="replying-to">"replying to "<a href=cast_href(&p)>"a cast"</a></p> })}
-            <h2 class="cast-title"><a href=href.clone() data-primary="">{title}</a></h2>
+            <h2 class="cast-title"><a href=href.clone()>{title}</a></h2>
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
             {quote.map(|q| view! { <a class="quote-chip" href=cast_href(&q)>"↳ quotes a cast"</a> })}
             <footer class="cast-foot">
-                <Engagement cast=cast.clone() reply_href=href/>
-                <BackendBadge/>
+                <Engagement cast=cast.clone() reply_href=href.clone()/>
             </footer>
         </article>
     }
 }
 
+/// How many cards infinite scroll adds at a time.
+const STEP: usize = 25;
+
+/// A listing that grows as the reader scrolls. `on_end` asks for more casts
+/// (the next server page) a little before the reader reaches the end.
 #[component]
-pub fn CastList(casts: Vec<Cast>, notes: Notes, #[prop(optional)] show_parent: bool) -> impl IntoView {
-    if casts.is_empty() {
-        return view! { <p class="empty">"Nothing here yet."</p> }.into_any();
-    }
+pub fn CastList(
+    #[prop(into)] casts: Signal<Vec<Cast>>,
+    notes: Notes,
+    #[prop(optional)] show_parent: bool,
+    #[prop(optional)] on_end: Option<Callback<()>>,
+) -> impl IntoView {
+    let shown = RwSignal::new(STEP);
+    let sentinel = NodeRef::<leptos::html::Div>::new();
+    let remembered = notes.clone();
+    Effect::new(move |_| casts.with(|c| api::remember_casts(c, &remembered)));
+    let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
+    let grow = move || {
+        let len = casts.with_untracked(Vec::len);
+        if shown.get_untracked() < len {
+            shown.update(|s| *s += STEP);
+        }
+        if let Some(on_end) = on_end
+            && shown.get_untracked() + STEP / 2 >= casts.with_untracked(Vec::len)
+        {
+            on_end.run(());
+        }
+    };
+    Effect::new(move |_| {
+        let Some(element) = sentinel.get() else { return };
+        observe_once_visible(&element, grow);
+    });
     view! {
-        <div class="cast-list">
-            {casts
-                .into_iter()
-                .enumerate()
-                .map(|(index, cast)| view! { <CastCard cast notes=notes.clone() index show_parent/> })
-                .collect_view()}
-        </div>
+        <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
+            <div class="cast-list">
+                <For
+                    each=visible
+                    key=|(_, cast)| cast.hash.clone()
+                    children={
+                        let notes = notes.clone();
+                        move |(index, cast)| view! { <CastCard cast notes=notes.clone() index show_parent/> }
+                    }
+                />
+            </div>
+        </Show>
+        <div class="feed-sentinel" node_ref=sentinel aria-hidden="true"></div>
     }
-    .into_any()
+}
+
+/// Call `f` every time `element` comes within 1200px of the viewport.
+fn observe_once_visible(element: &web_sys::Element, f: impl Fn() + 'static) {
+    let callback = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+        if entries.iter().filter_map(|e| e.dyn_into::<IntersectionObserverEntry>().ok()).any(|e| e.is_intersecting()) {
+            f();
+        }
+    });
+    let options = IntersectionObserverInit::new();
+    options.set_root_margin("1200px 0px");
+    if let Ok(observer) = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options) {
+        observer.observe(element);
+        let observer = StoredValue::new_local(observer);
+        on_cleanup(move || observer.with_value(|o| o.disconnect()));
+    }
+    callback.forget();
+}
+
+thread_local! {
+    /// One observer for every card: posts that stay in view get prefetched.
+    static PREFETCH_OBSERVER: Option<IntersectionObserver> = prefetch_observer();
+    /// Viewport prefetches allowed: a small token bucket (6 a minute).
+    static VIEWPORT_TOKENS: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((6.0, 0.0)) };
+}
+
+fn prefetch_observer() -> Option<IntersectionObserver> {
+    // The static build runs payload builders in the browser; prefetching
+    // everything in view would be too heavy there.
+    if cfg!(feature = "static-host") {
+        return None;
+    }
+    let callback = Closure::<dyn FnMut(js_sys::Array)>::new(|entries: js_sys::Array| {
+        for entry in entries.iter().filter_map(|e| e.dyn_into::<IntersectionObserverEntry>().ok()) {
+            if !entry.is_intersecting() {
+                continue;
+            }
+            let Some(hash) = entry.target().get_attribute("data-hash") else { continue };
+            let target = entry.target();
+            // Only cards that stay in view for a moment, and only when idle.
+            set_timeout(
+                move || {
+                    if still_visible(&target) && take_viewport_token() {
+                        idle(move || api::prefetch(&cast_path(&hash)));
+                    }
+                },
+                std::time::Duration::from_millis(600),
+            );
+        }
+    });
+    let options = IntersectionObserverInit::new();
+    options.set_threshold(&JsValue::from_f64(0.6));
+    let observer = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options).ok();
+    callback.forget();
+    observer
+}
+
+fn still_visible(element: &web_sys::Element) -> bool {
+    let rect = element.get_bounding_client_rect();
+    let height = window().inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+    rect.top() < height && rect.bottom() > 0.0
+}
+
+fn take_viewport_token() -> bool {
+    VIEWPORT_TOKENS.with(|cell| {
+        let (tokens, at) = cell.get();
+        let now = js_sys::Date::now();
+        let tokens = (tokens + (now - at) / 10_000.0).min(6.0);
+        if tokens >= 1.0 {
+            cell.set((tokens - 1.0, now));
+            true
+        } else {
+            cell.set((tokens, now));
+            false
+        }
+    })
+}
+
+/// Run `f` when the browser is idle (or soon, where that isn't supported).
+fn idle(f: impl FnOnce() + 'static) {
+    let callback = Closure::once_into_js(f);
+    let window = window();
+    let request = js_sys::Reflect::get(&window, &JsValue::from_str("requestIdleCallback"))
+        .ok()
+        .and_then(|r| r.dyn_into::<js_sys::Function>().ok());
+    match request {
+        Some(request) => {
+            let _ = request.call1(&window, &callback);
+        }
+        None => {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 200);
+        }
+    }
+}
+
+fn watch_for_prefetch(element: &web_sys::Element) {
+    PREFETCH_OBSERVER.with(|o| {
+        if let Some(observer) = o {
+            observer.observe(element);
+        }
+    });
+}
+
+fn unwatch(element: &web_sys::Element) {
+    PREFETCH_OBSERVER.with(|o| {
+        if let Some(observer) = o {
+            observer.unobserve(element);
+        }
+    });
 }
 
 /// Placeholder cards while a listing loads.

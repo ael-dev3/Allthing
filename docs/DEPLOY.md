@@ -50,7 +50,7 @@ A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty 
 
 ## After the first deploy
 
-1. Open <https://allthing.social>. `https://allthing.social/api/v1/status` should answer with JSON.
+1. Open <https://allthing.social>. `https://allthing.social/api/v1/status` should answer with JSON, and `https://allthing.social/version` with the version and commit just deployed.
 2. Run the end-to-end suite against production: `E2E_BASE_URL=https://allthing.social npx playwright test`.
 3. **Recommended:** make `www` redirect with a real HTTP 301 at no Worker cost. Go to the zone's **Rules → Redirect Rules**, choose the template **Redirect from WWW to root**, and deploy it. Without it, `www.allthing.social` still redirects: API calls get a 301 from the Worker, and pages are sent to the apex by the first script that runs (`web/boot.js`).
 4. Optional protections that stop abusive traffic before it reaches the Worker, so it doesn't count against the 100,000 requests a day: a **WAF rate-limiting rule** on `/api/` and **Bot Fight Mode** (both under the zone's Security settings).
@@ -61,7 +61,9 @@ In the dashboard, **Workers & Pages → allthing → Deployments** lists every v
 
 ## The GitHub Pages copy
 
-`https://ael-dev3.github.io/Allthing/` serves the static build of the same app from the `gh-pages` branch, without GitHub Actions. That build runs the payload builders in the browser (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)). To update it:
+`https://ael-dev3.github.io/Allthing/` now redirects to `https://allthing.social`, keeping the path and query. The `gh-pages` branch holds a two-file redirect (`index.html` and `404.html`).
+
+The static build of the app still works and can be published from the `gh-pages` branch again, without GitHub Actions. That build runs the payload builders in the browser (see [ARCHITECTURE.md](ARCHITECTURE.md#the-static-copy-github-pages)). To update it:
 
 ```sh
 bash scripts/build.sh             # toolchain, label shards (dist/data), Cloudflare build
@@ -70,7 +72,7 @@ E2E_PAGES=1 npx playwright test   # check it locally
 # then commit the contents of dist-pages/ to the gh-pages branch and push it
 ```
 
-Once `allthing.social` is live, the `gh-pages` branch can instead hold a two-file redirect (`index.html` and `404.html`). The redirect keeps the path and query, so `…/Allthing/u/dwr` lands on `https://allthing.social/u/dwr`. Pages can then be switched off under **Settings → Pages**.
+With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.social/u/dwr`.
 
 ## Local development
 

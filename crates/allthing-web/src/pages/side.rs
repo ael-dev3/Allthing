@@ -6,17 +6,7 @@ use allthing_core::model::Channel;
 use leptos::prelude::*;
 
 use crate::components::layout::SideBox;
-use crate::util::{PROVENANCE_DOC_URL, SOURCE_URL, channel_href, href};
-
-#[component]
-pub fn AboutBox() -> impl IntoView {
-    view! {
-        <SideBox title="The Allthing">
-            <p>"A quiet, read-only window onto Farcaster's open conversation. No sign-in, no posting, nobody hidden."</p>
-            <p><a href=href("/about")>"How it works →"</a></p>
-        </SideBox>
-    }
-}
+use crate::util::{channel_href, href};
 
 #[component]
 pub fn ChannelsBox(channels: Vec<Channel>) -> impl IntoView {
@@ -40,51 +30,6 @@ pub fn ChannelsBox(channels: Vec<Channel>) -> impl IntoView {
                     .collect_view()}
             </ul>
             <p><a href=href("/channels")>"All channels →"</a></p>
-        </SideBox>
-    }
-}
-
-#[component]
-pub fn RankingBox() -> impl IntoView {
-    view! {
-        <SideBox title="How ranking works">
-            <p>
-                "Farcaster has likes, recasts and replies, and no downvotes. A cast's engagement is "
-                <strong>"likes + 2 × recasts + replies"</strong>"."
-            </p>
-            <p>
-                <strong>"hot"</strong>" weighs engagement against age (ten times the engagement buys 12.5 hours), "
-                <strong>"top"</strong>" is engagement alone, "<strong>"new"</strong>" is time alone."
-            </p>
-        </SideBox>
-    }
-}
-
-#[component]
-pub fn SourcesBox() -> impl IntoView {
-    view! {
-        <SideBox title="Where data comes from">
-            <ul class="plain">
-                <li><strong>"Casts, profiles, channels"</strong>": Hypersnap, a read node that mirrors Snapchain mainnet."</li>
-                <li><strong>"Posted via"</strong>": the app that registered the signing key."</li>
-                <li><strong>"Scores"</strong>": Neynar user scores, read onchain on Base."</li>
-                <li><strong>"Labels"</strong>": the Farcaster app's public spam dataset."</li>
-            </ul>
-            <p><a href=PROVENANCE_DOC_URL>"Provenance design →"</a>" · "<a href=SOURCE_URL>"source"</a></p>
-        </SideBox>
-    }
-}
-
-#[component]
-pub fn KeyboardBox() -> impl IntoView {
-    view! {
-        <SideBox title="Keyboard">
-            <dl class="keys">
-                <dt><kbd>"j"</kbd>" "<kbd>"k"</kbd></dt><dd>"next / previous"</dd>
-                <dt><kbd>"o"</kbd></dt><dd>"open"</dd>
-                <dt><kbd>"x"</kbd></dt><dd>"collapse a reply"</dd>
-                <dt><kbd>"←"</kbd>" "<kbd>"→"</kbd></dt><dd>"browse media"</dd>
-            </dl>
         </SideBox>
     }
 }

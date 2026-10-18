@@ -16,14 +16,13 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
 use crate::api::{self, Fetched};
-use crate::components::cast::ChannelLink;
-use crate::components::chips::{Avatar, BackendBadge, Engagement, OriginChip, ScoreBadge, TimeAgo, UserChip};
+use crate::components::cast::{CastSkeletons, ChannelLink};
+use crate::components::chips::{Avatar, Engagement, OriginChip, ScoreBadge, TimeAgo, UserChip};
 use crate::components::layout::{Columns, ErrorPanel, Freshness, NotFound, SideBox};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
-use crate::pages::side::KeyboardBox;
-use crate::util::{PROVENANCE_DOC_URL, cast_href, set_title, user_href, with_query};
+use crate::util::{cast_href, set_title, user_href, with_query};
 
 #[component]
 pub fn PostPage() -> impl IntoView {
@@ -58,7 +57,34 @@ pub fn PostPage() -> impl IntoView {
         let Some(hash) = hash.get() else {
             return view! { <NotFound/> }.into_any();
         };
-        match data.get() {
+        let loaded = data.get();
+        if let (None | Some(None), Some((cast, score))) = (&loaded, api::seen_cast(&hash)) {
+            // Seen in a feed: show the cast now; replies arrive with the thread.
+            let mut notes = allthing_core::api::Annotations::default();
+            if let Some(score) = score {
+                notes.scores.insert(cast.author.fid, score);
+            }
+            let payload = Arc::new(CastPayload {
+                thread: allthing_core::model::ThreadNode { cast: cast.clone(), children: Vec::new() },
+                parent: None,
+                quotes: Vec::new(),
+                channel: None,
+                notes: notes.clone(),
+                meta: allthing_core::api::Meta { backend: Default::default(), fetched_at: 0, stale: false },
+            });
+            let notes: Notes = Arc::new(notes);
+            return view! {
+                <Columns side=().into_any()>
+                    <MainCast cast notes payload/>
+                    <section class="replies" aria-label="Replies" aria-busy="true">
+                        <div class="replies-head"><h2>"Replies"</h2></div>
+                        <CastSkeletons count=2/>
+                    </section>
+                </Columns>
+            }
+            .into_any();
+        }
+        match loaded {
             None | Some(None) => view! {
                 <div class="post-loading" aria-busy="true">
                     <div class="post skeleton"><span class="sk sk-meta"></span><span class="sk sk-title"></span><span class="sk sk-title"></span><span class="sk sk-title short"></span></div>
@@ -81,7 +107,6 @@ pub fn PostPage() -> impl IntoView {
                             {channel.member_count.map(|m| view! { <p class="muted">{plural(m, "member", "members")}</p> })}
                         </SideBox>
                     })}
-                    <KeyboardBox/>
                 }
                 .into_any();
                 let path = cast_href(&hash);
@@ -98,7 +123,7 @@ pub fn PostPage() -> impl IntoView {
                                         .into_iter()
                                         .map(|option| {
                                             let href = with_query(&path, &[("sort", (option != CommentSort::Top).then(|| option.as_str().to_owned()))]);
-                                            view! { <a href=href class:selected=option == sort.get()>{option.as_str()}</a> }
+                                            view! { <a href=href data-noscroll="" class:selected=option == sort.get()>{option.as_str()}</a> }
                                         })
                                         .collect_view()}
                                 </nav>
@@ -133,7 +158,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     let score = notes.scores.get(&cast.author.fid).copied().unwrap_or(0);
     let author = cast.author.clone();
     view! {
-        <article class="post" data-nav="">
+        <article class="post">
             <header class="post-author">
                 <a href=user_href(&author.username) tabindex="-1" aria-hidden="true"><Avatar url=author.pfp_url.clone() size=44 large=true/></a>
                 <div class="post-author-text">
@@ -144,7 +169,11 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                     </span>
                 </div>
             </header>
-            <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div>
+            {if cast.mini_app {
+                view! { <p class="mini-app-note">"Mini app post hidden: Allthing does not run mini apps or frames."</p> }.into_any()
+            } else {
+                view! { <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
+            }}
             <MediaGrid cast=cast.clone() open_on_click=true/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
@@ -160,8 +189,6 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             </p>
             <footer class="cast-foot">
                 <Engagement cast=cast.clone()/>
-                <BackendBadge/>
-                <a class="external" href=format!("https://farcaster.xyz/{}/{}", author.username, &cast.hash[..10]) target="_blank" rel="noopener">"view on farcaster.xyz"</a>
             </footer>
         </article>
     }
@@ -180,15 +207,15 @@ fn QuoteCard(cast: Cast, notes: Notes) -> impl IntoView {
     }
 }
 
-/// Which app signed the cast and which backend Allthing read it from.
+/// Which app signed the cast.
 #[component]
 fn ProvenanceBox(cast: Cast, notes: Notes) -> impl IntoView {
     let origin = notes.origins.get(&cast.hash).cloned();
     let app = notes.app_for(&cast.hash).cloned();
     view! {
-        <SideBox title="Provenance">
+        <SideBox title="Posted via">
             <dl class="provenance">
-                <dt>"Posted via"</dt>
+                <dt>"App"</dt>
                 <dd>{match (&origin, &app) {
                     (Some(_), Some(app)) => view! {
                         <a href=user_href(&app.username)>{app.name().to_owned()}</a>
@@ -204,12 +231,7 @@ fn ProvenanceBox(cast: Cast, notes: Notes) -> impl IntoView {
                     <dt>"Signer key"</dt>
                     <dd><code title=o.signer.clone()>{short_address(&o.signer)}</code></dd>
                 })}
-                <dt>"Read from"</dt>
-                <dd><BackendBadge/><span class="muted">" a read node mirroring Snapchain mainnet"</span></dd>
-                <dt>"Entered the network via"</dt>
-                <dd class="muted">"not recorded: Farcaster messages carry no ingress-node field"</dd>
             </dl>
-            <p class="small"><a href=PROVENANCE_DOC_URL>"How a chain could record this →"</a></p>
         </SideBox>
     }
 }

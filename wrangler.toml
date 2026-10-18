@@ -21,7 +21,7 @@ routes = [
 [assets]
 directory = "dist"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+run_worker_first = ["/api/*", "/version"]
 
 # Per-client backstop so one client cannot drain the 100k requests/day
 # allowance: 120 API calls a minute per IP, per Cloudflare location.

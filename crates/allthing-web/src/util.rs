@@ -76,4 +76,3 @@ pub fn with_query(path: &str, pairs: &[(&str, Option<String>)]) -> String {
 }
 
 pub const SOURCE_URL: &str = "https://github.com/ael-dev3/Allthing";
-pub const PROVENANCE_DOC_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/docs/PROVENANCE.md";

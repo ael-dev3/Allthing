@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Roadmap
 
-Milestones, not dates. Allthing stays read-only throughout; participation would need its own scope decision.
+Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); details per release are in the [changelog](../CHANGELOG.md). Allthing stays read-only throughout; participation would need its own scope decision.
 
 ## Done
 
-- **v0: seed.** Rust workspace and product direction.
-- **v1: Next.js prototype.** Live data from Hypersnap, threads, profiles and keyboard navigation, on GitHub Pages. It has since been replaced.
-- **v2: Allthing in Rust, on Cloudflare Workers** ([allthing.social](https://allthing.social)):
+- **Seed.** Rust workspace and product direction.
+- **0.1.0: Next.js prototype.** Live data from Hypersnap, threads, profiles and keyboard navigation, on GitHub Pages. It has since been replaced.
+- **0.2.0: Allthing in Rust, on Cloudflare Workers** ([allthing.social](https://allthing.social)):
   - [x] Leptos WebAssembly app and a workers-rs API Worker; static assets free on the Workers Free plan
   - [x] Original light design with an "Allthing" wordmark, subtle motion and reduced-motion support
   - [x] Honest engagement (likes, recasts, replies; no downvotes) and engagement-based hot, new and top ranking
@@ -19,6 +19,15 @@ Milestones, not dates. Allthing stays read-only throughout; participation would 
   - [x] Provenance per cast (signing app and backend) and the protocol design in [PROVENANCE.md](PROVENANCE.md)
   - [x] Edge caching with stale-while-revalidate, coalescing and upstream guards ([BUDGET.md](BUDGET.md))
   - [x] AGPL-3.0-or-later, with a dependency license audit in CI
+- **0.3.0: polish and speed**:
+  - [x] instant post opening, prefetching, infinite scroll and scroll restoration;
+  - [x] search;
+  - [x] who-liked and replies popovers;
+  - [x] videos that autoplay in view;
+  - [x] the wallets popover and the Farcaster vote;
+  - [x] mini app filtering;
+  - [x] a simpler interface;
+  - [x] a release process.
 
 ## Next
 
@@ -26,9 +35,9 @@ Milestones, not dates. Allthing stays read-only throughout; participation would 
 - **Smaller app.** The WebAssembly module is about 410 KB compressed, mostly the Leptos runtime and `serde_json`. Candidates: a leaner JSON decoder for payloads, splitting rarely used views, and trimming web-sys features.
 - **Solana activity.** Find a keyless source of Solana address history that allows browser or Worker requests, or document a key-based option that keeps the key out of the repository.
 - **Reading controls kept in the browser.** Local mutes and filters (clearly separate from network labels), saved posts, and remembered collapse state.
-- **Search** across casts and users, as far as public endpoints allow.
 - **Ingress provenance.** Prototype phase 2 of [PROVENANCE.md](PROVENANCE.md), signed ingress receipts, against a Hypersnap fork, and show receipts when nodes publish them.
-- **Pagination beyond the pool.** Cursor-based "more" for long channels and profiles, within the subrequest budget.
+- **Pagination beyond the pool** for channels and profiles: cursor-based loading as the reader scrolls, as the front page already does, within the subrequest budget.
+- **Vote badges in feeds**: one Multicall3 batch per page ([VOTE.md](VOTE.md#alternatives-considered)).
 
 ## Not planned
 

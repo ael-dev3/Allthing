@@ -71,7 +71,7 @@ test.describe("front page", () => {
 
     // Branding: the wordmark only, no logo mark.
     await expect(page.locator("header .wordmark")).toHaveText("Allthing");
-    await expect(page.locator(".site-header svg, .site-header img, .logo-mark")).toHaveCount(0);
+    await expect(page.locator(".site-header img, .wordmark svg, .logo-mark")).toHaveCount(0);
 
     // Likes, recasts and replies as three labeled counts; nothing to vote with.
     const card = firstCard(page);
@@ -81,12 +81,21 @@ test.describe("front page", () => {
     await expect(page.locator('[aria-label*="downvote" i], .downvote, .arrow.down')).toHaveCount(0);
     await expect(page.getByRole("button", { name: /vote/i })).toHaveCount(0);
 
-    // Who, when, where, scored, and via which app; read from Hypersnap.
+    // Who, when, where, scored, and via which app.
     await expect(card.locator(".user-chip .avatar").first()).toBeVisible();
     await expect(card.locator("time")).toHaveAttribute("datetime", /^\d{4}-\d\d-\d\dT/);
     await expect(page.locator(".cast-card .score").first()).toHaveText(/^[01]\.\d\d$/);
     await expect(page.locator(".cast-card .origin").first()).toContainText("via ");
-    await expect(card.locator(".backend")).toContainText("Hypersnap");
+
+    // 0.3: no backend badges, intro, ranking or keyboard boxes; a Home button,
+    // and a one-line footer with the version.
+    await expect(page.locator(".backend")).toHaveCount(0);
+    await expect(page.locator(".main-nav a")).toHaveText(["Home", "Channels"]);
+    await expect(page.getByText("Front page")).toHaveCount(0);
+    await expect(page.getByText(/How ranking works|A quiet, read-only window|Keyboard/)).toHaveCount(0);
+    await expect(page.locator(".site-footer")).toContainText(/AGPL-3\.0\s*·\s*Source\s*·\s*v\d+\.\d+\.\d+ \(\w+\)/);
+    // Mini apps and frames are filtered out.
+    await expect(page.locator(".cast-card a[href*='/miniapps/'], .cast-card a[href*='neynar.app']")).toHaveCount(0);
 
     // Current data: the newest cast in the pool is under two days old.
     const newest = await page.locator(".cast-card").evaluateAll((cards) =>
@@ -104,7 +113,8 @@ test.describe("front page", () => {
       await expect(page).toHaveURL(/sort=new/);
       await expect(firstCard(page)).toBeVisible();
     });
-    expect(calls, "sorting is local").toHaveLength(0);
+    // Prefetches of posts may run meanwhile; the feed itself is not refetched.
+    expect(calls.filter((c) => /\/api\/v1\/home|feed\/trending/.test(c)), "sorting is local").toHaveLength(0);
     const times = await page.locator(".cast-card").evaluateAll((c) => c.map((e) => Number(e.getAttribute("data-ts"))));
     expect(times).toEqual([...times].sort((a, b) => b - a));
 
@@ -126,17 +136,12 @@ test.describe("front page", () => {
 });
 
 test.describe("media", () => {
-  test("images enlarge on hover and open an accessible lightbox", async ({ page }) => {
+  test("images open an accessible lightbox (and no longer enlarge on hover)", async ({ page }) => {
     await page.goto(at(`/p/${GALLERY_CAST}`));
     const tiles = page.locator(".post .tile-image");
     await expect(tiles).toHaveCount(2);
-
-    // Hover preview: no click needed.
     await tiles.first().hover();
-    const preview = page.locator(".hover-preview img");
-    await expect(preview).toBeVisible();
-    await expect(preview).toHaveAttribute("src", /imagedelivery\.net|https:/);
-    await page.mouse.move(5, 5);
+    await page.waitForTimeout(400);
     await expect(page.locator(".hover-preview")).toHaveCount(0);
 
     // Lightbox: dialog, focus inside, alt text, keyboard and swipe navigation.
@@ -195,7 +200,7 @@ test.describe("media", () => {
     await shoot(page, "video-post");
   });
 
-  test("the Rust HLS player streams segments: hover previews muted, click plays with controls", async ({ page }) => {
+  test("the Rust HLS player streams segments: autoplays muted in view, click plays with controls", async ({ page }) => {
     await useFixtureStream(page);
     await page.goto(at(`/p/${VIDEO_CAST}`));
     const player = page.locator(".post .video").first();
@@ -203,10 +208,17 @@ test.describe("media", () => {
     await expect(player).toBeVisible();
     await expect.poll(() => player.getAttribute("class")).not.toMatch(/loading/);
 
-    await player.hover();
+    // In view: plays muted without a click.
+    await player.scrollIntoViewIfNeeded();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.muted && !v.paused)).toBe(true);
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(0.3);
     expect(await video.evaluate((v: HTMLVideoElement) => v.src)).toMatch(/^blob:/);
+    // Off screen: paused.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.evaluate(() => document.body.style.minHeight = "4000px");
+    await page.evaluate(() => window.scrollTo(0, 3500));
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    await page.evaluate(() => window.scrollTo(0, 0));
 
     await player.getByRole("button", { name: /^Play video:/ }).click();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.muted)).toBe(true);
@@ -217,6 +229,18 @@ test.describe("media", () => {
     // Seeking past the buffer fetches the right segment.
     await video.evaluate((v: HTMLVideoElement) => { v.currentTime = 4.5; });
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 3 && v.currentTime >= 4.5), { timeout: 15_000 }).toBe(true);
+  });
+
+  test("videos respect reduced motion: no autoplay", async ({ browser }) => {
+    const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    await useFixtureStream(page);
+    await page.goto(at(`/p/${VIDEO_CAST}`));
+    const video = page.locator(".post .video video").first();
+    await expect(video).toBeVisible();
+    await page.waitForTimeout(1500);
+    expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    await context.close();
   });
 
   test("a video opens in the lightbox with the full player", async ({ page }) => {
@@ -248,7 +272,6 @@ test.describe("media", () => {
     const player = page.locator(".post .video").first();
     const video = player.locator("video");
     await expect(video).toHaveAttribute("src", `${clip}#t=0.1`);
-    await player.hover();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.muted && !v.paused)).toBe(true);
     await player.getByRole("button", { name: /^Play video:/ }).click();
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.muted && v.currentTime > 0.5), { timeout: 15_000 }).toBe(true);
@@ -281,15 +304,31 @@ test.describe("profiles", () => {
     await expect(profile.locator(".fact", { hasText: "Neynar score" }).locator("dd")).toHaveText(/^[01]\.\d\d$/);
     await expect(profile.locator(".fact", { hasText: "Registered" }).locator("dd")).toHaveText(/\d{4}/);
     await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText(/no label|labeled|spam|Nerfed|unavailable/i);
+    // The vote, read onchain on Base (0xael.eth voted to stay).
+    await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted to stay");
 
-    const wallets = page.locator(".wallets");
+    // The side area holds only the wallet infographic.
+    const wallets = page.locator(".side .wallets");
     await expect(wallets.locator(".share-bar")).toBeVisible();
     await expect(wallets.locator(".share-list li").first()).toContainText(/%/);
     await expect(wallets.locator(".share-list")).toContainText("Base");
-    await expect(wallets.locator(".sources summary")).toContainText("How this is measured");
-    await expect(page.locator(".side-box", { hasText: "Posts via" })).toContainText("%");
+    await expect(page.getByText(/How this is measured|Solana: Not measured|No activity on|Posts via|Verified addresses/)).toHaveCount(0);
+    await expect(page.locator(".side .side-box")).toHaveCount(1);
     await expect(firstCard(page)).toBeVisible();
     await shoot(page, "profile");
+
+    // "Wallets": every verified address, copyable in one click.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+    await wallets.getByRole("button", { name: /verified wallet/ }).click();
+    const list = page.getByRole("dialog", { name: "Verified wallets" });
+    await expect(list).toBeVisible();
+    await expect(list.locator(".chain-tag")).toContainText(["EVM"]);
+    expect(await list.locator("li").count()).toBeGreaterThanOrEqual(2);
+    await list.locator("li").first().getByRole("button", { name: /^Copy/ }).click();
+    await expect(list.locator("li").first().locator(".copy")).toHaveText("Copied");
+    await shoot(page, "profile-wallets");
+    await page.keyboard.press("Escape");
+    await expect(list).toHaveCount(0);
   });
 
   test("a flagged account shows the label and still shows every cast", async ({ page }) => {
@@ -305,6 +344,7 @@ test.describe("profiles", () => {
     await page.goto(at("/u/0xael.eth"));
     await expect(page.locator(".spam-label")).toHaveText("Nerfed for malicious activity");
     await expect(page.locator(".label-note")).toContainText("never hides anyone's casts");
+    await expect(page.locator(".vote-fact .vote")).toBeVisible();
     await expect(firstCard(page)).toBeVisible();
     expect(await page.locator(".cast-card").count()).toBeGreaterThan(5);
     await shoot(page, "profile-labeled");
@@ -336,41 +376,133 @@ test.describe("threads and navigation", () => {
     await expect.poll(() => parent.locator(":scope > .comment-body").evaluate((e) => e.getBoundingClientRect().height)).toBeLessThan(2);
     await shoot(page, "thread-collapsed");
 
+    // Expanding keeps the reader where they were.
+    const before = await page.evaluate(() => window.scrollY);
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(child).toBeVisible();
-
-    // Keyboard: select the reply by clicking its header, then x.
-    await parent.locator(":scope > .comment-head .sep").click();
-    await expect(parent).toHaveClass(/selected/);
-    await page.keyboard.press("x");
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await page.keyboard.press("x");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(Math.abs((await page.evaluate(() => window.scrollY)) - before)).toBeLessThan(40);
   });
 
-  test("j/k move between casts and o opens one", async ({ page }) => {
-    await page.goto(at("/"));
-    await expect(firstCard(page)).toBeVisible();
-    await page.keyboard.press("j");
-    await expect(page.locator(".cast-card").nth(0)).toHaveClass(/selected/);
-    await page.keyboard.press("j");
-    await expect(page.locator(".cast-card").nth(1)).toHaveClass(/selected/);
-    await page.keyboard.press("k");
-    await expect(page.locator(".cast-card").nth(0)).toHaveClass(/selected/);
-    const hash = await page.locator(".cast-card").nth(0).getAttribute("data-hash");
-    await page.keyboard.press("o");
-    await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
-    await expect(page.locator(".post")).toBeVisible();
-  });
-
-  test("provenance names the signing app and the backend", async ({ page }) => {
+  test("posts name the signing app, without backend badges or outbound app links", async ({ page }) => {
     await page.goto(at(`/p/${VIDEO_CAST}`));
-    const box = page.locator(".side-box", { hasText: "Provenance" });
+    const box = page.locator(".side-box", { hasText: "Posted via" });
     await expect(box.locator("dd").first()).toContainText(/Warpcast|Farcaster|app fid/);
     await expect(box).toContainText(/0x[0-9a-f]{4}…[0-9a-f]{4}/);
-    await expect(box).toContainText("Hypersnap");
-    await expect(box).toContainText("not recorded");
+    await expect(page.getByText(/Hypersnap|view on farcaster/i)).toHaveCount(0);
+    await shoot(page, "post");
+  });
+
+  test("the whole card opens the post, but selecting text or clicking links does not", async ({ page }) => {
+    await page.goto(at("/"));
+    const card = firstCard(page);
+    await expect(card).toBeVisible();
+    const hash = await card.getAttribute("data-hash");
+    // Select text inside the card: no navigation.
+    const title = card.locator(".cast-title");
+    const box = (await title.boundingBox())!;
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + Math.min(box.width - 2, 120), box.y + box.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    await expect(page).not.toHaveURL(/\/p\//);
+    // A link inside the card goes where it points.
+    await card.locator(".user-chip .author").click();
+    await expect(page).toHaveURL(/\/u\//);
+    await page.goBack();
+    // Clicking empty space in the card opens the post.
+    await expect(firstCard(page)).toBeVisible();
+    const target = page.locator(`.cast-card[data-hash="${hash}"]`);
+    const cardBox = (await target.boundingBox())!;
+    await page.mouse.click(cardBox.x + cardBox.width - 12, cardBox.y + 10);
+    await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
+  });
+
+  test("opening a post from the feed renders at once, and back restores the scroll position", async ({ page }) => {
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 1600));
+    await page.waitForTimeout(300);
+    const card = page.locator(".cast-card").nth(6);
+    await card.scrollIntoViewIfNeeded();
+    const y = await page.evaluate(() => window.scrollY);
+    const hash = await card.getAttribute("data-hash");
+    // Measure in the page: from the click to the post's text in the DOM.
+    await page.evaluate(() => {
+      (window as any).__openedIn = null;
+      document.addEventListener("click", () => {
+        const t0 = performance.now();
+        const check = () => document.querySelector(".post .post-text, .post .mini-app-note")
+          ? ((window as any).__openedIn = performance.now() - t0)
+          : requestAnimationFrame(check);
+        requestAnimationFrame(check);
+      }, { capture: true, once: true });
+    });
+    await card.locator(".cast-title a").click();
+    await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
+    await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
+    const openedIn = await page.evaluate(() => (window as any).__openedIn as number);
+    console.log(`post opened in ${openedIn.toFixed(0)} ms`);
+    expect(openedIn, "post renders from feed data").toBeLessThan(100);
+
+    await page.goBack();
+    await expect(page.locator(`.cast-card[data-hash="${hash}"]`)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(y - 60);
+    expect(await page.evaluate(() => window.scrollY)).toBeLessThan(y + 60);
+  });
+
+  test("hovering likes, recasts and replies previews them; clicking opens the full list", async ({ page }) => {
+    await page.goto(at(`/p/${NESTED_THREAD}`));
+    const foot = page.locator(".post .engagement");
+    await foot.locator(".stat-likes").hover();
+    const likes = page.getByRole("dialog", { name: "Liked by" });
+    await expect(likes).toBeVisible();
+    await expect(likes.locator(".who-list li").first()).toBeVisible();
+    expect(await likes.locator(".who-list li").count()).toBeLessThanOrEqual(10);
+    await shoot(page, "likes-popover");
+    // Moving into the popover keeps it open.
+    await likes.locator(".who-list li").first().hover();
+    await page.waitForTimeout(400);
+    await expect(likes).toBeVisible();
+    await page.mouse.move(5, 5);
+    await expect(likes).toHaveCount(0);
+
+    // Click: the full list in a dialog.
+    await foot.locator(".stat-likes").click();
+    const full = page.locator(".who-modal");
+    await expect(full).toBeVisible();
+    await expect.poll(() => full.locator(".who-list li").count()).toBeGreaterThan(10);
+    await page.keyboard.press("Escape");
+    await expect(full).toHaveCount(0);
+
+    // Keyboard focus opens it too.
+    await foot.locator(".stat-recasts").focus();
+    await expect(page.getByRole("dialog", { name: "Recasted by" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // Replies preview from a card on the front page.
+    await page.goto(at("/"));
+    const withReplies = page.locator(".cast-card").filter({ has: page.locator("button.stat-replies") }).first();
+    await withReplies.locator(".stat-replies").hover();
+    const replies = page.getByRole("dialog", { name: "Replies" });
+    await expect(replies).toBeVisible();
+    await expect(replies.locator(".reply-item").first()).toBeVisible();
+    await expect(replies.getByRole("link", { name: "View full thread →" })).toBeVisible();
+    await shoot(page, "replies-popover");
+  });
+
+  test("one search box finds posts, people and channels", async ({ page }) => {
+    await page.goto(at("/"));
+    const box = page.getByRole("searchbox", { name: /Search casts, people and channels/ });
+    await box.fill("farcaster");
+    await box.press("Enter");
+    await expect(page).toHaveURL(/\/search\?q=farcaster/);
+    await expect(page.getByRole("region", { name: "People" }).locator(".person").first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Channels" }).locator("li").first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Casts" }).locator(".cast-card").first()).toBeVisible();
+    await expect(box).toHaveValue("farcaster");
+    await shoot(page, "search");
   });
 
   test("channels and the directory render", async ({ page }) => {
@@ -395,6 +527,16 @@ test.describe("threads and navigation", () => {
       const response = await page.request.post("/api/v1/home", { data: {} });
       expect(response.status()).toBe(405);
     }
+  });
+
+  test("/version names the release and commit", async ({ request }) => {
+    test.skip(PAGES, "the static copy has no Worker");
+    const response = await request.get("/version");
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.name).toBe("allthing");
+    expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(body.commit).toMatch(/^[0-9a-f]{7}|dev$/);
   });
 
   test("unknown things say so", async ({ page }) => {

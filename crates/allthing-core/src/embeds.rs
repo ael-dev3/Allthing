@@ -68,6 +68,22 @@ pub fn is_hls(url: &str) -> bool {
     has_extension(url, &["m3u8"]) || host_of(url).is_some_and(|h| VIDEO_HOSTS.contains(&h.as_str()))
 }
 
+/// Whether a URL opens a Farcaster mini app or frame, which Allthing does not
+/// run: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`,
+/// `warpcast.com/~/frames…` and similar, and `*.neynar.app` mini app hosts.
+pub fn is_mini_app_url(url: &str) -> bool {
+    let Some(host) = host_of(url) else { return false };
+    let path = url.split_once("://").and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..])).unwrap_or("/");
+    let path = path.to_ascii_lowercase();
+    let starts = |prefixes: &[&str]| prefixes.iter().any(|p| path.starts_with(p));
+    match host.strip_prefix("www.").unwrap_or(&host) {
+        "farcaster.xyz" | "warpcast.com" => {
+            starts(&["/miniapps/", "/~/mini-apps", "/~/miniapps", "/~/frames", "/~/frame", "/~/mini-app"])
+        }
+        h => h.ends_with(".neynar.app"),
+    }
+}
+
 /// "i.imgur.com" for a URL; the raw string if it can't be parsed.
 pub fn embed_domain(url: &str) -> String {
     match host_of(url) {
@@ -146,6 +162,15 @@ mod tests {
         assert!(!is_hls("https://cdn.example.com/clip.mp4"));
         assert!(!is_hls("https://cdn.example.com/clip.webm#t=2"));
         assert_eq!(classify_url("https://example.com/page", None), MediaKind::Link);
+        assert!(is_mini_app_url("https://farcaster.xyz/miniapps/Z6gEN6rYltaz/swarmhood?ref=3353201"));
+        assert!(is_mini_app_url("https://farcaster.xyz/~/mini-apps/launch?domain=x"));
+        assert!(is_mini_app_url("https://warpcast.com/~/frames/abc"));
+        assert!(is_mini_app_url("https://warpcast.com/~/miniapps/abc"));
+        assert!(is_mini_app_url("https://my-game.neynar.app/"));
+        assert!(!is_mini_app_url("https://farcaster.xyz/~/vote"));
+        assert!(!is_mini_app_url("https://farcaster.xyz/dwr/0xabc"));
+        assert!(!is_mini_app_url("https://warpcast.com/~/channel/base"));
+        assert!(!is_mini_app_url("https://neynar.app.example.com/"));
         assert_eq!(classify_url("https://example.com/page", Some("image/png")), MediaKind::Image);
         assert_eq!(classify_url("https://example.com/v", Some("application/x-mpegURL")), MediaKind::Video);
         assert_eq!(classify_url("https://example.com/a.mp4/b", None), MediaKind::Link);

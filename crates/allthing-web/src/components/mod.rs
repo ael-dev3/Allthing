@@ -6,5 +6,8 @@ pub mod chips;
 pub mod layout;
 pub mod media;
 pub mod player;
+pub mod popover;
+pub mod search;
 pub mod text;
 pub mod thread;
+pub mod who;

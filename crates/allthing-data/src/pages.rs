@@ -5,14 +5,16 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use allthing_core::api::{
-    self, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, Meta, QuotedCast, UserPayload,
+    self, CastPayload, ChannelPayload, ChannelsPayload, HomePayload, Meta, QuotedCast, ReactionKind, ReactionsPayload,
+    RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_url_for_id, is_channel_id};
 use allthing_core::model::{Cast, Channel, Embed};
 use allthing_core::normalize;
 use allthing_core::params::fid_username;
 use allthing_core::provenance::Backend;
-use allthing_core::thread::flatten;
+use allthing_core::thread::{flatten, prune_mini_apps, without_mini_apps};
+use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
 use futures::future::{join, join_all, join3};
 
@@ -99,10 +101,15 @@ async fn trending_channels(inv: &Invocation) -> Vec<Channel> {
     }
 }
 
-pub async fn home(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    let (casts, channels) = join(hypersnap::trending_casts(&inv, POOL_SIZE), trending_channels(&inv)).await;
-    let pool: Vec<Cast> = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
-    let channels = with_defaults(channels, 12);
+/// Trending casts. `offset` 0 is the front page; later offsets are the
+/// next pages that infinite scroll loads, without the channel list.
+pub async fn home(inv: Rc<Invocation>, offset: u32, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
+    let (casts, channels) = join(hypersnap::trending_casts(&inv, POOL_SIZE, offset), async {
+        if offset == 0 { trending_channels(&inv).await } else { Vec::new() }
+    })
+    .await;
+    let pool = without_mini_apps(casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect());
+    let channels = if offset == 0 { with_defaults(channels, 12) } else { channels };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
@@ -123,7 +130,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
         _ => hypersnap::channel_casts(&inv, &channel.parent_url, POOL_SIZE / 2).await.map_err(Failure::upstream)?,
     };
     // Hypersnap merges several shards per page, so order isn't guaranteed.
-    let pool = newest_unique(raw.iter().map(normalize::cast).collect(), POOL_SIZE as usize);
+    let pool = newest_unique(without_mini_apps(raw.iter().map(normalize::cast).collect()), POOL_SIZE as usize);
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let refs: Vec<&Cast> = pool.iter().collect();
     annotate(&inv, &mut notes, &author_fids(&refs), &targets(&refs), ORIGIN_AUTHORS).await;
@@ -131,10 +138,14 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
 }
 
 pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    let Some(root) = hypersnap::conversation(&inv, &hash).await.map_err(Failure::upstream)? else {
+    let Some(root) = hypersnap::conversation(&inv, &hash, 5).await.map_err(Failure::upstream)? else {
         return Ok(Built::not_found("No such cast"));
     };
-    let thread = normalize::thread(&root);
+    let mut thread = normalize::thread(&root);
+    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_mini_apps).collect();
+    if thread.cast.mini_app {
+        thread.cast.strip_mini_app();
+    }
     let first = &thread.cast;
     let quote_hashes: Vec<String> = first
         .embeds
@@ -203,8 +214,10 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         hypersnap::recent_cast_signers(&inv, fid, POOL_SIZE),
     )
     .await;
-    let pool =
-        newest_unique(casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect(), POOL_SIZE as usize);
+    let pool = newest_unique(
+        without_mini_apps(casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect()),
+        POOL_SIZE as usize,
+    );
 
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     if let Some(score) = raw.score_micros() {
@@ -235,6 +248,78 @@ pub async fn channels(inv: Rc<Invocation>, query: Option<String>) -> Result<Buil
         None => with_defaults(trending_channels(&inv).await, 50),
     };
     Built::json(&ChannelsPayload { channels, meta: meta(&inv) }, api::CHANNELS_CACHE)
+}
+
+/// Casts, people and channels matching `query`, searched in parallel. A
+/// failing part leaves its group empty rather than failing the page.
+pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure> {
+    let terms = hypersnap::search_terms(&query);
+    let (casts, users, channels) = join3(
+        hypersnap::search_casts(&inv, &terms, 25),
+        hypersnap::search_users(&inv, &terms, 10),
+        hypersnap::search_channels(&inv, &terms, 10),
+    )
+    .await;
+    if let (Err(e), Err(_), Err(_)) = (&casts, &users, &channels) {
+        return Err(Failure::upstream(e.clone()));
+    }
+    // Search hits come without embeds or counts: fetch the full casts.
+    let hashes: Vec<String> =
+        casts.unwrap_or_default().iter().map(|c| allthing_core::params::normalize_hash(&c.hash)).collect();
+    let hydrated = hypersnap::casts_bulk(&inv, &hashes).await.unwrap_or_default();
+    let casts: Vec<Cast> = without_mini_apps(hydrated.iter().map(normalize::cast).collect());
+    let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
+    let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
+    let mut notes = api::Annotations::default();
+    let refs: Vec<&Cast> = casts.iter().collect();
+    let mut fids = author_fids(&refs);
+    fids.extend(users.iter().map(|u| u.fid));
+    notes.scores = annotate::scores(&inv, &fids).await;
+    Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
+}
+
+/// Who liked or recasted a cast: a preview (`limit` 10) or the full list
+/// (100, which is as many as Hypersnap returns).
+pub async fn reactions(inv: Rc<Invocation>, hash: String, kind: ReactionKind, limit: u32) -> Result<Built, Failure> {
+    let raw = hypersnap::reactions(&inv, &hash, kind.as_str(), 100).await.map_err(Failure::upstream)?;
+    let total = raw.len();
+    // Hypersnap lists the oldest first; show the newest.
+    let users: Vec<_> = raw.iter().rev().take(limit as usize).map(normalize::user_summary).collect();
+    let fids: Vec<u64> = users.iter().map(|u| u.fid).collect();
+    let scores = annotate::scores(&inv, &fids).await;
+    let more = total > users.len();
+    Built::json(&ReactionsPayload { hash, kind, users, more, scores, meta: meta(&inv) }, api::REACTIONS_CACHE)
+}
+
+/// Replies to show when hovering a cast's reply count: the ten most engaged
+/// direct replies, without mini apps.
+pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure> {
+    let Some(root) = hypersnap::conversation(&inv, &hash, 1).await.map_err(Failure::upstream)? else {
+        return Ok(Built::not_found("No such cast"));
+    };
+    let mut replies = without_mini_apps(root.direct_replies.iter().flatten().map(normalize::cast).collect());
+    replies.sort_by_key(|c| std::cmp::Reverse(allthing_core::ranking::points(c)));
+    replies.truncate(10);
+    let mut notes = api::Annotations::default();
+    let refs: Vec<&Cast> = replies.iter().collect();
+    notes.scores = annotate::scores(&inv, &author_fids(&refs)).await;
+    Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)
+}
+
+/// How an FID voted on staying with farcaster.xyz: Base first, the app for
+/// what Base cannot know. Either part may be missing.
+pub async fn vote(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
+    let (onchain, app) = join(chain::vote(&inv, fid), hypersnap::app_vote(&inv, fid)).await;
+    if let (Err(e), Err(_)) = (&onchain, &app) {
+        return Err(Failure::upstream(e.clone()));
+    }
+    let payload = VotePayload {
+        fid,
+        onchain: onchain.ok(),
+        app: app.ok().flatten().as_deref().and_then(AppVote::parse),
+        meta: meta(&inv),
+    };
+    Built::json(&payload, api::VOTE_CACHE)
 }
 
 /// At most this many addresses of each kind are measured per account.

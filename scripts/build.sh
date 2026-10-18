@@ -54,6 +54,11 @@ if ! worker-build --version 2>/dev/null | grep -q "^$WB_VERSION\$"; then
   cargo install worker-build --version "$WB_VERSION" --locked --root "$TOOLS"
 fi
 
+# Version stamp: the workspace version is in Cargo.toml; the commit comes
+# from Workers Builds or the local checkout.
+ALLTHING_COMMIT="$(printf '%s' "${WORKERS_CI_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo dev)}" | cut -c1-7)"
+export ALLTHING_COMMIT
+
 # 4. The Worker. worker-build also fetches esbuild and wasm-opt.
 log "Building the Worker"
 (cd crates/allthing-worker && worker-build --release)
