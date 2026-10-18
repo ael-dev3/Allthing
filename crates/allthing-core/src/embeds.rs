@@ -124,38 +124,115 @@ pub fn worth_checking_for_mini_app(url: &str) -> bool {
 /// tags, or an Open Frame's `of:*` tags.
 pub fn html_declares_mini_app(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    let head = lower.find("</head").map_or(lower.as_str(), |end| &lower[..end]);
-    head.match_indices("<meta").any(|(start, _)| {
-        let tag = &head[start + 5..];
-        let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
-        ["name", "property"].iter().filter_map(|attr| attribute(tag, attr)).any(|value| {
-            let value = value.trim();
-            value == "fc:miniapp" || value == "fc:frame" || value.starts_with("fc:frame:") || value.starts_with("of:")
-        })
-    })
+    let mut rest = lower.as_str();
+    let mut templates = 0usize;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start + 1..];
+        if let Some(comment) = rest.strip_prefix("!--") {
+            rest = comment.split_once("-->").map_or("", |(_, after)| after);
+            continue;
+        }
+        let end = tag_end(rest);
+        let tag = &rest[..end];
+        rest = rest.get(end + 1..).unwrap_or("");
+        let (closing, tag) = tag.strip_prefix('/').map_or((false, tag), |tag| (true, tag));
+        let name_end = tag.find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, ':' | '-')).unwrap_or(tag.len());
+        let name = &tag[..name_end];
+        if closing {
+            if name == "head" && templates == 0 {
+                break;
+            }
+            if name == "template" {
+                templates = templates.saturating_sub(1);
+            }
+            continue;
+        }
+        if name == "body" && templates == 0 {
+            break;
+        }
+        if matches!(name, "script" | "style" | "title" | "textarea") {
+            // HTML treats their contents as text, even when it looks like tags.
+            let close = format!("</{name}");
+            rest = rest
+                .match_indices(&close)
+                .find_map(|(at, _)| {
+                    rest.as_bytes()
+                        .get(at + close.len())
+                        .filter(|c| c.is_ascii_whitespace() || matches!(c, b'>' | b'/'))
+                        .map(|_| &rest[at..])
+                })
+                .unwrap_or("");
+        } else if name == "template" {
+            templates += 1;
+        } else if name == "meta" && templates == 0 {
+            let attrs = &tag[name_end..];
+            if ["name", "property"].iter().filter_map(|attr| attribute(attrs, attr)).any(|value| {
+                let value = value.trim();
+                value == "fc:miniapp"
+                    || value == "fc:frame"
+                    || value.starts_with("fc:frame:")
+                    || value.starts_with("of:")
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The tag's end, preserving '>' inside quoted attribute values. A capped
+/// head can end inside a tag; its complete attributes are still useful.
+fn tag_end(tag: &str) -> usize {
+    let mut quote = None;
+    for (at, c) in tag.char_indices() {
+        if quote == Some(c) {
+            quote = None;
+        } else if quote.is_none() {
+            match c {
+                '\'' | '"' => quote = Some(c),
+                '>' => return at,
+                _ => {}
+            }
+        }
+    }
+    tag.len()
 }
 
 /// The value of `name` in a tag's attributes (`name="v"`, `name='v'` or
 /// `name=v`), if present.
 fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let bytes = tag.as_bytes();
-    let mut from = 0;
-    while let Some(found) = tag[from..].find(name) {
-        let at = from + found;
-        from = at + name.len();
-        // A whole attribute name: after whitespace, followed by "=".
-        if at > 0 && !bytes[at - 1].is_ascii_whitespace() {
-            continue;
+    let mut rest = tag;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+        if rest.is_empty() {
+            return None;
         }
-        let rest = tag[from..].trim_start();
-        let Some(value) = rest.strip_prefix('=') else { continue };
+        let end = rest.find(|c: char| c.is_ascii_whitespace() || c == '=').unwrap_or(rest.len());
+        let key = &rest[..end];
+        rest = rest[end..].trim_start();
+        let Some(value) = rest.strip_prefix('=') else {
+            if key == name {
+                return Some("");
+            }
+            continue;
+        };
         let value = value.trim_start();
-        return Some(match value.chars().next() {
-            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or(""),
-            _ => value.split(|c: char| c.is_ascii_whitespace() || c == '/').next().unwrap_or(""),
-        });
+        let (value, after) = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let value = &value[1..];
+                let end = value.find(quote).unwrap_or(value.len());
+                (&value[..end], value.get(end + 1..).unwrap_or(""))
+            }
+            _ => {
+                let end = value.find(|c: char| c.is_ascii_whitespace()).unwrap_or(value.len());
+                (&value[..end], &value[end..])
+            }
+        };
+        if key == name {
+            return Some(value);
+        }
+        rest = after;
     }
-    None
 }
 
 /// "i.imgur.com" for a URL; the raw string if it can't be parsed.
@@ -241,6 +318,35 @@ mod tests {
         assert!(!html_declares_mini_app(""));
         // Cut off before the head ends (a capped download): what's there counts.
         assert!(html_declares_mini_app(r#"<html><head><meta name="fc:miniapp" content="{}">"#));
+    }
+
+    #[test]
+    fn metadata_examples_in_comments_and_templates_are_not_declarations() {
+        assert!(!html_declares_mini_app("<head><!-- <meta name='fc:frame'> --></head>"));
+        assert!(!html_declares_mini_app("<head><template><meta name='fc:frame'></template></head>"));
+        assert!(!html_declares_mini_app("<head><metadata name='fc:frame'></head>"));
+        assert!(html_declares_mini_app("<head><!-- </head><meta name='description'> --><meta name='fc:frame'></head>"));
+    }
+
+    #[test]
+    fn raw_text_elements_do_not_declare_metadata() {
+        for tag in ["script", "style", "title", "textarea"] {
+            let example = format!("<head><{tag}>const example = `<meta name='fc:frame'>`;</{tag}></head>");
+            assert!(!html_declares_mini_app(&example));
+        }
+        assert!(html_declares_mini_app("<head><script>const s = '</head>';</script><meta name='fc:frame'></head>"));
+        assert!(!html_declares_mini_app("<head><script>'</scripture><meta name=fc:frame>'</script></head>"));
+    }
+
+    #[test]
+    fn attribute_values_are_not_separate_attributes_or_tag_boundaries() {
+        assert!(!html_declares_mini_app(r#"<head><meta content="example name='fc:frame'" name='description'></head>"#));
+        assert!(!html_declares_mini_app(
+            r#"<head><meta name='description' content="example property='fc:frame'"></head>"#
+        ));
+        assert!(!html_declares_mini_app(r#"<head><meta name name='fc:frame'></head>"#));
+        assert!(html_declares_mini_app(r#"<head><meta content="a > b" name="fc:frame"></head>"#));
+        assert!(!html_declares_mini_app(r#"<head><meta content="<meta name='fc:frame'>"></head>"#));
     }
 
     #[test]

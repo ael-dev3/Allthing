@@ -114,6 +114,19 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     // the end of the list stays where the reader is waiting for it.
     let failures = StoredValue::new(0u32);
     let retry = StoredValue::new(None::<Callback<()>>);
+    let retry_timer = StoredValue::new(None::<TimeoutHandle>);
+    let revision = StoredValue::new(0u64);
+    let cancel_retry = move || {
+        if let Some(Some(handle)) = retry_timer.try_get_value() {
+            handle.clear();
+        }
+        retry_timer.set_value(None);
+    };
+    on_cleanup(move || {
+        if let Some(Some(handle)) = retry_timer.try_get_value() {
+            handle.clear();
+        }
+    });
     let load_more = Callback::new(move |()| {
         let offset = next_offset.get_untracked();
         if loading.get_untracked() || offset > LAST_OFFSET {
@@ -121,15 +134,12 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
         }
         loading.set(true);
         let asked = window.get_untracked();
+        let requested = revision.get_value();
         wasm_bindgen_futures::spawn_local(async move {
             let result = api::get::<HomePayload>(&home_page_path(offset, asked)).await;
             // The request can finish after navigation disposed this page, or
             // after the reader picked another time range.
-            if next_offset.is_disposed() {
-                return;
-            }
-            if window.get_untracked() != asked {
-                loading.set(false);
+            if revision.try_get_value() != Some(requested) || window.get_untracked() != asked {
                 return;
             }
             if let Ok(page) = result {
@@ -155,14 +165,20 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 failures.update_value(|f| *f += 1);
                 let wait = std::time::Duration::from_secs(1 << failures.get_value());
                 // Nothing to do if the reader has left the page meanwhile.
-                set_timeout(
-                    move || {
-                        if let Some(Some(again)) = retry.try_get_value() {
-                            loading.set(false);
-                            again.run(());
-                        }
-                    },
-                    wait,
+                retry_timer.set_value(
+                    set_timeout_with_handle(
+                        move || {
+                            if revision.try_get_value() == Some(requested)
+                                && let Some(Some(again)) = retry.try_get_value()
+                            {
+                                retry_timer.set_value(None);
+                                loading.set(false);
+                                again.run(());
+                            }
+                        },
+                        wait,
+                    )
+                    .ok(),
                 );
                 // Keep further observer callbacks from bypassing backoff.
                 return;
@@ -175,6 +191,9 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     Effect::new(move |previous: Option<TrendingWindow>| {
         let current = window.get();
         if previous.is_some_and(|p| p != current) {
+            revision.update_value(|r| *r = r.wrapping_add(1));
+            cancel_retry();
+            loading.set(false);
             more.set(Vec::new());
             next_offset.set(100);
             failures.set_value(0);
