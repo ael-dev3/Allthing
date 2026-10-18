@@ -26,6 +26,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Channel directory | 1 (`/api/v1/channels`) | none |
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
 | Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
+| Opening a profile card (hovering a picture or name for 350 ms, keyboard focus resting on it, or a tap) | up to 2 (`/api/v1/vote`, `/api/v1/wallets`), then reused for 5 minutes in the browser; its bio, counts and join date come with the page's payload, and it never reads `/api/v1/user` | the label shard and `meta.json`, as on profiles |
 | Typing in the search box | 1 per distinct query, after typing pauses for 250 ms (`/api/v1/search`, the same payload the results page uses, so pressing Enter then costs nothing) | none |
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
@@ -45,7 +46,7 @@ The front page fills the space near the end of the list even when filtering leav
 
 A reader who opens posts they hovered spends nothing extra; idle viewport prefetches cost at most 6 requests a minute per active reader.
 
-**Capacity:** about **60,000 page views a day** with a typical mix, including prefetches and popovers (about 1.6 Worker requests per view). That is before counting views that cost nothing (sorting, back/forward, revisits).
+**Capacity:** about **60,000 page views a day** with a typical mix, including prefetches and popovers (about 1.6 Worker requests per view). That is before counting views that cost nothing (sorting, back/forward, revisits). Each profile card a reader opens adds up to 2 more, and nothing for that account again within 5 minutes.
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby
 
@@ -101,6 +102,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 
 **Link pages** are read to find mini apps hosted on their own domains, which Hypersnap gives no metadata for: the page's `<head>` is checked for `fc:miniapp`, `fc:frame`, `fc:frame:*` or `of:*` meta tags (`crates/allthing-data/src/miniapps.rs`). Each build reads at most 12 unknown links across ordinary casts, replies and quoted casts together, in batches of six, and never takes the last 10 subrequests, so the rest of the build keeps its share. Quoted links can use the quota left after ordinary links; the hard per-invocation limit stays 45. Pages are read with a 2.5 s timeout and at most 128 KB, as a `Range` request and a capped stream. Verdicts are kept per URL for 24 h in each isolate and carried in the payload, so a link is read once, not on every refresh. Links that couldn't be read are tried again an hour later. A check skipped because of the invocation budget or an empty local token bucket is not memoized as a failed read: it stays eligible on the next build. Sites that never serve mini apps (YouTube, X, GitHub, Farcaster's own hosts and a few others) and media links are not read. A cast whose link is still unknown stays listed until a later refresh reads it.
 
+**Profile cards** take no subrequest. The home, new, channel, post, profile and search builds read the bio, counts and registration of the accounts they show from the user objects that already come with their casts and quoted casts (and, on channel pages, with the hosts' `user/bulk` read), and carry them in `notes.users`. Only the vote and wallet activity are read when a card opens, through their own cached endpoints above.
+
 **Quoted casts** come in the feed payloads, so cards show each quote at once instead of a link. The home, channel, profile and search builds read the casts their casts quote in one bulk `casts?casts=…` request of up to 100 hashes (`quoted_casts` in `crates/allthing-data/src/pages.rs`), alongside origins, and never take the last 2 subrequests for it, so app names and the cache write keep theirs. Quotes already in the previous payload are carried forward while still quoted, so a refresh reads only newly quoted casts, and makes no request when there are none. A read that fails or doesn't fit the budget leaves those quotes as links.
 
 A quote's linked pages use the shared link-page quota above before hidden content is stripped. Feed quotes are checked alongside origins, and a busy build may defer their unknown links until a later refresh. Payloads carry only verdicts for the current ordinary and quoted links, while retaining a still-quoted cast's known verdict without another fetch. A hidden quote keeps its author and time; it does not hide the ordinary cast quoting it.
@@ -114,6 +117,8 @@ Parsing is the main CPU cost, and it happens only when a payload is (re)built. M
 - a channel feed, 200 casts (382 KB): **1.46 ms**. Channel feeds come back at twice the requested limit, so Allthing requests 50.
 
 A feed build also parses its quoted casts: one bulk read, usually a handful of casts and at most 100, and only those not carried from the previous payload.
+
+Profile cards (`notes.users`) come from objects a build has already parsed. For a live trending feed of 100 casts by 78 accounts (222 KB), collecting the cards, cutting each bio to 160 characters and serializing them took **0.10 to 0.13 ms**, measured natively at `opt-level = "z"` on a busier machine than the numbers above, where the whole build took 1.6 to 2.0 ms: about 6% of the build. The payload grew from 67.4 KB to 80.1 KB of JSON, about half of it the bios (73 characters on average), and from 23.6 KB to 29.0 KB gzipped.
 
 WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. Solana-style large responses are avoided entirely (see below).
 
@@ -137,6 +142,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
 - **Static, built at deploy time**: the Farcaster app's 125 MB spam-label dataset becomes 35 shards of 32 KB, one character per fid (about 1.1 MB in all). Profiles read one shard as a free static asset, with zero Worker or upstream requests. Deploys reuse the live shards unless the upstream dataset changed (`scripts/build.sh`).
+- **Profile cards read votes and wallets more often** than profile views alone would: the first card opened for an account in a data center builds its `/vote` (fresh for an hour) and `/wallets` (fresh for 6 hours). The chain buckets above still cap the wallet reads. A chain refused while its bucket is empty is left out of that copy of the account's shares, as it would be on a profile.
 - **Solana activity is not measured**. Its public RPC refuses requests from Cloudflare Workers and from browsers (HTTP 403), and the keyless alternatives don't serve address history. Allthing leaves it out of the activity chart instead of retrying.
 
 ## 6. Abuse and the daily request limit

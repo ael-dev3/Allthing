@@ -2,6 +2,7 @@
 //! Quoted casts, shown inside the cast that quotes them.
 
 use allthing_core::model::Cast;
+use allthing_core::profile::UserCard;
 use allthing_core::text::truncate_title;
 use leptos::prelude::*;
 
@@ -37,6 +38,10 @@ pub fn QuoteCard(
     /// How much of the text to show.
     #[prop(default = FEED_QUOTE_CHARS)]
     max_chars: usize,
+    /// What the payload says about the quoted cast's author, for their
+    /// profile card.
+    #[prop(optional_no_strip)]
+    author_card: Option<UserCard>,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     let click = card_click(href.clone());
@@ -57,7 +62,7 @@ pub fn QuoteCard(
     view! {
         <blockquote class="quote" on:click=click>
             <div class="cast-meta">
-                <UserChip user=cast.author.clone() show_name=true/>
+                <UserChip user=cast.author.clone() show_name=true card=author_card/>
                 <span class="sep" aria-hidden="true">"·"</span>
                 <a class="when" href=href><span class="visually-hidden">"Open quoted cast, "</span><TimeAgo ts=cast.ts/></a>
             </div>

@@ -21,6 +21,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 - Every cast that a list renders, and every cast it quotes, goes into a client-side store (`api::remember_casts`, at most 2,000 entries).
 - `/p/<hash>` reads that store first (`api::seen_cast`). If the cast is there, the post renders at once with its text, media, author and counts, the quoted casts the feed carried, and reply skeletons. The full payload (thread, parent, quotes) loads behind it and replaces the skeletons.
 - A direct visit with nothing in the store falls back to the normal one-request load.
+- **Profile cards** open with what the page's payload already says about the account (`notes.users`: the start of its bio, its counts, when it joined), or what an earlier page of the visit showed (`api::seen_card`), so they show at once. Only the vote and wallet activity load once the card is open, reused for 5 minutes like any answer, and the label shard, read once per visit.
 
 - **The front page's data is requested by a one-line inline script** at the top of `index.html`, so it starts while the HTML is still being parsed. `api.rs` (`early_response`) takes that pending response instead of fetching again.
   - The script is allowed by its hash in the CSP (`web/_headers`), and `scripts/check.sh` fails if the two disagree.
