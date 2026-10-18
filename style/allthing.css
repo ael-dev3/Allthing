@@ -715,12 +715,19 @@ code {
 }
 
 .media-grid.n1 .tile-image img {
+  --max-h: 460px;
   width: auto;
   max-width: 100%;
   height: auto;
-  max-height: 460px;
+  max-height: var(--max-h);
   object-fit: contain;
   margin: 0 auto;
+}
+
+/* Size known from an earlier load (Back to a feed): take the loaded box at
+   once, so the page doesn't grow while the image arrives. */
+.media-grid.n1 .tile-image img[width] {
+  width: min(100%, calc(var(--w) * 1px), calc(var(--max-h) * var(--w) / var(--h)));
 }
 
 .link-card {
@@ -1258,7 +1265,7 @@ code {
 }
 
 .post .media-grid.n1 .tile-image img {
-  max-height: 620px;
+  --max-h: 620px;
 }
 
 .post-meta {
