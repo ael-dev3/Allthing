@@ -64,11 +64,13 @@ pub fn SideBox(#[prop(into)] title: String, children: Children) -> impl IntoView
     }
 }
 
-/// Main column plus sidebar.
+/// Main column plus sidebar. `class` adds a modifier, such as
+/// `profile-columns`, which moves the sidebar under the profile header on
+/// narrow screens.
 #[component]
-pub fn Columns(side: AnyView, children: Children) -> impl IntoView {
+pub fn Columns(side: AnyView, #[prop(optional, into)] class: String, children: Children) -> impl IntoView {
     view! {
-        <div class="columns">
+        <div class=format!("columns {class}")>
             <div class="content">{children()}</div>
             <aside class="side" aria-label="Sidebar">{side}</aside>
         </div>

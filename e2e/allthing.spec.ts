@@ -1,7 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+
+/** Waits until the images on screen have loaded, so nothing shifts under the pointer. */
+async function settleImages(page: Page) {
+  await page.evaluate(async () => {
+    const pending = [...document.images].filter((img) => !img.complete);
+    await Promise.race([
+      Promise.all(
+        pending.map(
+          (img) =>
+            new Promise((done) => {
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            }),
+        ),
+      ),
+      new Promise((done) => setTimeout(done, 4000)),
+    ]);
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  });
+}
+
+/** A popover panel lies wholly inside the viewport, below the sticky header. */
+async function expectClearOfHeader(page: Page, panel: Locator) {
+  const header = await page.locator(".site-header").boundingBox();
+  const box = await panel.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && header && viewport).toBeTruthy();
+  expect(box!.y).toBeGreaterThanOrEqual(header!.y + header!.height - 1);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 1);
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 1);
+  // Nothing else is painted over it: the topmost element across its
+  // middle and near its bottom belongs to the panel.
+  const covered = await panel.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return [0.5, 0.9].some((f) => {
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height * f);
+      return !hit || !el.contains(hit);
+    });
+  });
+  expect(covered).toBe(false);
+}
 
 /*
  * Allthing end to end, against live Farcaster data (Hypersnap), either through
@@ -326,6 +368,8 @@ test.describe("profiles", () => {
     expect(await list.locator("li").count()).toBeGreaterThanOrEqual(2);
     await list.locator("li").first().getByRole("button", { name: /^Copy/ }).click();
     await expect(list.locator("li").first().locator(".copy")).toHaveText("Copied");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectClearOfHeader(page, list);
     await shoot(page, "profile-wallets");
     await page.keyboard.press("Escape");
     await expect(list).toHaveCount(0);
@@ -455,11 +499,14 @@ test.describe("threads and navigation", () => {
   test("hovering likes, recasts and replies previews them; clicking opens the full list", async ({ page }) => {
     await page.goto(at(`/p/${NESTED_THREAD}`));
     const foot = page.locator(".post .engagement");
+    await expect(foot).toBeVisible();
+    await settleImages(page);
     await foot.locator(".stat-likes").hover();
     const likes = page.getByRole("dialog", { name: "Liked by" });
     await expect(likes).toBeVisible();
     await expect(likes.locator(".who-list li").first()).toBeVisible();
     expect(await likes.locator(".who-list li").count()).toBeLessThanOrEqual(10);
+    await expectClearOfHeader(page, likes);
     await shoot(page, "likes-popover");
     // Moving into the popover keeps it open.
     await likes.locator(".who-list li").first().hover();
@@ -484,11 +531,15 @@ test.describe("threads and navigation", () => {
     // Replies preview from a card on the front page.
     await page.goto(at("/"));
     const withReplies = page.locator(".cast-card").filter({ has: page.locator("button.stat-replies") }).first();
+    await expect(withReplies).toBeVisible();
+    await settleImages(page);
     await withReplies.locator(".stat-replies").hover();
     const replies = page.getByRole("dialog", { name: "Replies" });
     await expect(replies).toBeVisible();
     await expect(replies.locator(".reply-item").first()).toBeVisible();
     await expect(replies.getByRole("link", { name: "View full thread →" })).toBeVisible();
+    // Near the top of the page it opens downward, clear of the sticky header.
+    await expectClearOfHeader(page, replies);
     await shoot(page, "replies-popover");
   });
 
@@ -546,6 +597,55 @@ test.describe("threads and navigation", () => {
     await expect(page.locator(".error-panel")).toContainText("Nothing here");
     await page.goto(at("/definitely/not/a/page"));
     await expect(page.locator(".error-panel")).toContainText("Page not found");
+  });
+});
+
+test.describe("phone width", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("pages fit the screen without sideways scrolling", async ({ page }) => {
+    for (const path of ["/", "/u/0xael.eth", `/p/${VIDEO_CAST}`, "/search?q=farcaster", "/channels"]) {
+      await page.goto(at(path));
+      await expect(page.locator("main .cast-card, main .person, main .channel-card, main .post").first()).toBeVisible();
+      await page.waitForTimeout(500);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `${path} scrolls sideways`).toBeLessThanOrEqual(0);
+    }
+    await shoot(page, "phone-channels");
+  });
+
+  test("profiles show the wallet panel before the casts", async ({ page }) => {
+    await page.goto(at("/u/0xael.eth"));
+    const panel = page.locator(".side .side-box").first();
+    const firstCast = page.locator(".cast-card").first();
+    await expect(firstCast).toBeVisible();
+    await expect(panel).toBeVisible();
+    const [p, c, h] = await Promise.all([panel.boundingBox(), firstCast.boundingBox(), page.locator(".profile").boundingBox()]);
+    expect(p!.y).toBeGreaterThan(h!.y + h!.height - 1);
+    expect(p!.y + p!.height).toBeLessThan(c!.y);
+    await panel.getByRole("button", { name: /verified wallet/ }).tap();
+    const list = page.getByRole("dialog", { name: "Verified wallets" });
+    await expect(list).toBeVisible();
+    await page.waitForTimeout(200);
+    await expectClearOfHeader(page, list);
+    await shoot(page, "phone-profile-wallets");
+  });
+
+  test("tapping a replies count opens the preview", async ({ page }) => {
+    await page.goto(at("/"));
+    const button = page.locator(".cast-card button.stat-replies").first();
+    await expect(button).toBeVisible();
+    await button.tap();
+    const replies = page.getByRole("dialog", { name: "Replies" });
+    await expect(replies).toBeVisible();
+    await expect(replies.locator(".reply-item").first()).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(at("/"));
+    await page.waitForTimeout(200);
+    await expectClearOfHeader(page, replies);
+    await shoot(page, "phone-replies");
+    // A second tap closes it.
+    await button.tap();
+    await expect(replies).toHaveCount(0);
   });
 });
 

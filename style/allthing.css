@@ -415,6 +415,8 @@ code {
 
 .cast-list {
   display: grid;
+  /* minmax(0, …): an image's natural width must not widen the column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -678,7 +680,7 @@ code {
 }
 
 .media-grid.n1 {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .media-grid.n2,
@@ -2092,6 +2094,12 @@ code {
   cursor: pointer;
 }
 
+/* A card's animation makes it a stacking context: lift the card whose
+   popover is open above its neighbours. */
+.cast-card:has(.popover-panel) {
+  z-index: 30;
+}
+
 .cast-card .cast-title,
 .cast-card p {
   cursor: text;
@@ -2165,9 +2173,12 @@ code {
   animation: pop-out 0.12s ease-in both;
 }
 
-.wallets .popover-panel {
+.popover-panel.below {
   bottom: auto;
   top: calc(100% + 8px);
+}
+
+.wallets .popover-panel {
   left: auto;
   right: 0;
 }
@@ -2462,6 +2473,36 @@ code {
 
   .side {
     position: static;
+  }
+
+  /* Profiles: the wallet panel comes right after the profile header,
+     not after every cast. */
+  .profile-columns {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .profile-columns > .content {
+    display: contents;
+  }
+
+  .profile-columns > .content > * {
+    order: 2;
+  }
+
+  .profile-columns > .content > .profile {
+    order: 0;
+  }
+
+  .profile-columns > .side {
+    order: 1;
+  }
+
+  .profile-columns > .content > .tabs,
+  .profile-columns > .content > .listing-head {
+    align-self: flex-start;
   }
 }
 
