@@ -64,6 +64,10 @@ pub fn parse_rfc3339(value: &str) -> Option<i64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
         return None;
     }
+    let days = days_from_civil(i64::from(year), month, day);
+    if civil_from_days(days) != (i64::from(year), month, day) {
+        return None;
+    }
     let mut i = 19;
     if b.get(i) == Some(&b'.') {
         i += 1;
@@ -76,19 +80,22 @@ pub fn parse_rfc3339(value: &str) -> Option<i64> {
         }
     }
     let offset = match b.get(i) {
-        None | Some(b'Z' | b'z') => 0,
+        None => 0,
+        Some(b'Z' | b'z') if i + 1 == b.len() => 0,
         Some(&sign @ (b'+' | b'-')) => {
             let hours = digits(b, i + 1..i + 3)?;
-            let minutes = match b.get(i + 3) {
-                Some(b':') => digits(b, i + 4..i + 6)?,
-                _ => digits(b, i + 3..i + 5)?,
+            let (minutes, end) = match b.get(i + 3) {
+                Some(b':') => (digits(b, i + 4..i + 6)?, i + 6),
+                _ => (digits(b, i + 3..i + 5)?, i + 5),
             };
+            if hours > 23 || minutes > 59 || end != b.len() {
+                return None;
+            }
             let seconds = i64::from(hours * 3600 + minutes * 60);
             if sign == b'+' { seconds } else { -seconds }
         }
         Some(_) => return None,
     };
-    let days = days_from_civil(i64::from(year), month, day);
     Some(days * DAY + i64::from(hour * 3600 + minute * 60 + second) - offset)
 }
 
@@ -158,6 +165,29 @@ mod tests {
         assert_eq!(parse_rfc3339("not a date"), None);
         assert_eq!(parse_rfc3339("2026-13-01T00:00:00Z"), None);
         assert_eq!(parse_rfc3339("2026-10-17T11:14:41.Z"), None);
+    }
+
+    #[test]
+    fn rejects_invalid_dates_offsets_and_trailing_data() {
+        for value in [
+            "2026-02-29T00:00:00Z",
+            "1900-02-29T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2026-01-01T00:00:00+24:00",
+            "2026-01-01T00:00:00-00:60",
+            "2026-01-01T00:00:00+2400",
+            "2026-01-01T00:00:00+0060",
+            "2026-01-01T00:00:00Zextra",
+            "2026-01-01T00:00:00+01:00extra",
+            "2026-01-01T00:00:00+0100extra",
+        ] {
+            assert_eq!(parse_rfc3339(value), None, "accepted {value}");
+        }
+        assert!(parse_rfc3339("2000-02-29T00:00:00Z").is_some());
+        assert!(parse_rfc3339("2024-02-29T00:00:00z").is_some());
+        assert_eq!(parse_rfc3339("1970-01-01T01:30:00+01:30"), Some(0));
+        assert_eq!(parse_rfc3339("1970-01-01T01:30:00+0130"), Some(0));
     }
 
     #[test]

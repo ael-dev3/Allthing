@@ -20,6 +20,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The Content Security Policy allows Cloudflare Web Analytics' script (`static.cloudflareinsights.com`). Cloudflare injects it when Web Analytics is on, and before, the browser blocked it on every page and logged an error.
 - The header search box says "Search", so its placeholder no longer gets cut off on phones. Its accessible name still says what it searches.
 - Popovers (who liked, recasted, replies) open toward the side with more room, so the replies preview on the first card no longer slides under the sticky header. Their height fits the space available, and the card with an open popover sits above the next card instead of under it.
+- Timestamps with impossible dates (30 February, 31 April), out-of-range time zone offsets or trailing text are rejected instead of being rolled over into a different date.
 - On touch screens, tapping a likes, recasts or replies count opens its popover. Before, the tap's focus opened it and the tap itself closed it again. On narrow screens, popovers are nudged to stay on screen.
 - On phones, a cast with a wide image no longer makes its list wider than the screen.
 - On phones, profiles show the wallet activity panel and its Wallets button right after the profile header, instead of below every cast. The Wallets popover opens toward the side with more room, like the others.
