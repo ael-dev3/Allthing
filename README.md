@@ -63,7 +63,7 @@ More in [docs/](docs):
 - [Budget](docs/BUDGET.md): fitting the Workers Free plan, and the load on upstreams
 - [Performance](docs/PERFORMANCE.md): targets, instant navigation, prefetching and measurements
 - [Provenance](docs/PROVENANCE.md): which client and which backend, with research and a protocol design
-- [The Farcaster vote](docs/VOTE.md): where votes are recorded and how Allthing reads them
+- [The NS vote](docs/VOTE.md): where votes are recorded and how Allthing reads them
 - [Product principles](docs/PRODUCT.md), [deploying](docs/DEPLOY.md), [releasing](docs/RELEASING.md) and the [roadmap](docs/ROADMAP.md)
 
 ## Quick start

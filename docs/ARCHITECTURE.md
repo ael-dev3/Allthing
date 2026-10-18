@@ -12,7 +12,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
  one call per page          ── /api/* ──▶  allthing-worker (Rust, workers-rs)
  GET /api/v1/home …                          rate limit (per IP) → edge cache (Cache API)
                                              → coalesced build → guarded upstream calls  ──▶  Hypersnap /v2 + /v1
-                                                                                         ──▶  Base RPC (Farcaster vote)
+                                                                                         ──▶  Base RPC (NS vote)
                                                                                          ──▶  EVM RPCs (wallet activity)
                                                                                          ──▶  farcaster.xyz (votes, channel records)
 
@@ -56,7 +56,7 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/reactions?hash=<hash>&type=likes\|recasts&limit=10\|100` | `ReactionsPayload`: who liked or recasted, newest first | `reactions/cast` |
 | `/api/v1/engagement?likes=<hashes>&recasts=<hashes>` | `EngagementPayload`: who liked and recasted a batch of feed cards, loaded before anyone hovers a count. The hashes are comma-separated, 12 lists in all at most, and are normalized, deduplicated and sorted, so the same lists share one cache entry. Each of its `previews` is exactly what `/reactions?…&limit=10` answers for that cast and kind; a list that couldn't be read is left out, and its popover loads it on hover | `reactions/cast`, once per list, six at a time |
 | `/api/v1/replies?hash=<hash>` | `RepliesPayload`: the ten most engaged direct replies | `cast/conversation` with `reply_depth=1` |
-| `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's Farcaster vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
+| `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's NS vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
 | `/api/v1/status` | isolate and upstream-guard state, how fresh the cached "new" and trending lists are, and the index's rankings and progress | two cache reads and the indexer's state in D1; no upstream calls |
 | `/version` (and `/api/v1/version`) | `{"name","version","commit"}` | nothing |
 
@@ -94,7 +94,7 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 | Data | Source | Notes |
 |---|---|---|
 | Casts, threads, channels, users, search, reactions | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. |
-| The Farcaster vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
+| The NS vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
 | Channel records: display name, description, picture, banner, follower and member counts, lead, moderators, pinned cast, link | The Farcaster app's public channel API (`api.farcaster.xyz/v1/channel`), one read per channel build | Best-effort: without it a channel page shows Hypersnap's data. It sends no CORS headers, so the static copy never has it. Hypersnap's `member_count` counts the accounts that have cast in a feed, so it is shown as "casters", never as members. |
 | Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Farcaster" and the like (the Farcaster app's account, fid 9152, is still named Warpcast; `allthing_core::clients::client_name` calls it Farcaster), and the front page's bar of the apps posting today's trending casts |
 | When an account joined | Its onchain registration, as Hypersnap reports it; for accounts registered before the ID registry moved to OP Mainnet (7 Nov 2023), which all report that day, the fname server's public transfer log (`fnames.farcaster.xyz/transfers?fid=`) | Those show when they got their first username, which the old sign-up registered along with the account. It allows cross-origin reads, so the static copy shows it too. |

@@ -16,7 +16,7 @@ use crate::{FetchError, HttpMethod, HttpRequest, Invocation};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Upstream {
     Hypersnap,
-    /// Base JSON-RPC, for the Farcaster vote read onchain.
+    /// Base JSON-RPC, for the NS vote read onchain.
     BaseRpc,
     /// A chain's public JSON-RPC, for wallet activity.
     Chain(&'static str),

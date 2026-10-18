@@ -23,7 +23,7 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
   - [x] search;
   - [x] who-liked and replies popovers;
   - [x] videos that autoplay in view;
-  - [x] the wallets popover and the Farcaster vote;
+  - [x] the wallets popover and the NS vote;
   - [x] mini app filtering;
   - [x] a simpler interface;
   - [x] a release process.
