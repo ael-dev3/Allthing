@@ -18,7 +18,9 @@ use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
 
-use allthing_core::api::{API_PREFIX, ApiError, CachePolicy, ReactionKind, home_page_path};
+use allthing_core::api::{
+    API_PREFIX, ApiError, CachePolicy, ENGAGEMENT_USAGE, EngagementRequest, ReactionKind, home_page_path,
+};
 use allthing_core::params::{
     channel_key_from_decoded, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
@@ -187,6 +189,9 @@ pub enum Endpoint {
     Channels(Option<String>),
     Search(String),
     Reactions(String, ReactionKind, u32),
+    /// Who liked and recasted a batch of feed cards, each list as its own
+    /// preview (`Reactions` with a limit of 10) answers it.
+    Engagement(EngagementRequest),
     Replies(String),
     Vote(u64),
 }
@@ -226,6 +231,9 @@ impl Endpoint {
                 };
                 Ok(Endpoint::Reactions(hash, kind, limit))
             }
+            "/engagement" => EngagementRequest::parse(query("likes").as_deref(), query("recasts").as_deref())
+                .map(Endpoint::Engagement)
+                .ok_or(bad(ENGAGEMENT_USAGE)),
             "/vote" => query("fid")
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|f| *f > 0)
@@ -300,6 +308,10 @@ impl Endpoint {
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
+            // Canonical: the same lists, in any order or spelling, share one entry.
+            Endpoint::Engagement(request) => {
+                request.path().trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
+            }
             Endpoint::Replies(hash) => format!("replies?hash={hash}"),
             Endpoint::Vote(fid) => format!("vote?fid={fid}"),
             Endpoint::Channel(id) => format!("channel?id={}", percent_encode(id)),
@@ -319,6 +331,7 @@ impl Endpoint {
             Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
             Endpoint::Latest => pages::latest(inv, previous).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
+            Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
@@ -375,6 +388,46 @@ mod tests {
         assert_eq!(Endpoint::from_path("/api/v1/wallets?fid=0").map_err(|e| e.status), Err(400));
         assert_eq!(Endpoint::from_path("/api/v1/nope").map_err(|e| e.status), Err(404));
         assert_eq!(Endpoint::from_path("/api/v2/home").map_err(|e| e.status), Err(404));
+    }
+
+    #[test]
+    fn parses_engagement_batches_into_one_cache_name_per_set() {
+        let (a, b) = (format!("0x{}", "a".repeat(40)), format!("0x{}", "b".repeat(40)));
+        let request = EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&b)).unwrap();
+        let endpoint = Endpoint::Engagement(request.clone());
+        // Any order and spelling of the same lists is one cache entry.
+        let messy =
+            format!("/api/v1/engagement?recasts={}&likes={b},{}", b.to_uppercase().replace("0X", "0x"), &a[2..]);
+        assert_eq!(Endpoint::from_path(&messy), Ok(endpoint.clone()));
+        assert_eq!(Endpoint::from_path(&request.path()), Ok(endpoint.clone()));
+        assert_eq!(endpoint.cache_name(), format!("engagement?likes={a},{b}&recasts={b}"));
+        // Commas may arrive escaped, and query values as the Worker decodes them.
+        assert_eq!(
+            Endpoint::from_path(&format!("/api/v1/engagement?likes={a}%2C{b}&recasts={b}")),
+            Ok(endpoint.clone())
+        );
+        let worker = |key: &str| match key {
+            "likes" => Some(format!("{b}, {a}")),
+            "recasts" => Some(b.clone()),
+            _ => None,
+        };
+        assert_eq!(Endpoint::parse("/engagement", worker), Ok(endpoint));
+        // A batch holds a run of cards' lists; one more list is too many.
+        let most = allthing_core::api::ENGAGEMENT_MAX_LISTS;
+        let hashes: Vec<String> = (0..=most).map(|i| format!("0x{i:040x}")).collect();
+        let half = most / 2;
+        let full =
+            format!("/api/v1/engagement?likes={}&recasts={}", hashes[..half].join(","), hashes[half..most].join(","));
+        assert!(matches!(Endpoint::from_path(&full), Ok(Endpoint::Engagement(r)) if r.len() == most));
+        for bad in [
+            "/api/v1/engagement".to_owned(),
+            "/api/v1/engagement?likes=".to_owned(),
+            "/api/v1/engagement?likes=0x12".to_owned(),
+            format!("/api/v1/engagement?likes={}&recasts={}", hashes[..=half].join(","), hashes[half + 1..].join(",")),
+        ] {
+            let refused = Endpoint::from_path(&bad).map_err(|e| (e.status, e.message));
+            assert_eq!(refused, Err((400, ENGAGEMENT_USAGE)), "{bad}");
+        }
     }
 
     #[test]

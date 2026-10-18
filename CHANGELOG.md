@@ -32,6 +32,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Like and recast popovers on feed cards open with their people already listed, without "Loading…": the cards in view load them ahead, six cards per request (`/api/v1/engagement`, edge-cached; one at a time, at most four per page view, and none on touch screens, with Save-Data or on 2g, or in the static copy). A replies popover reuses the post that hovering its card prefetched. Who liked or recasted a cast is now listed newest first across Hypersnap's shards, not just within the last one.
 - Profile cards open after 100 ms instead of 350 ms, and complete: the vote and wallet activity of the authors of feed cards in view are prefetched (two at a time, at most 12 accounts per 5 minutes, only where a pointer hovers), so an opened card has no loading state.
 - Profiles' wallet activity includes Solana: the transactions involving the account's verified Solana addresses (up to 1,000 each, from Solana's public RPC) count alongside EVM chains, so the chart reads like "Base 44% · Solana 55% · other". The static copy still can't read Solana, whose RPC refuses browsers.
 - Post pages drop the "Posted via" box. The posting app is a quiet line in the post's meta ("via Farcaster"), and its signing key and app fid show on hover.
