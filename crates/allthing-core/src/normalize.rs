@@ -43,11 +43,6 @@ pub struct RawVerified {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct RawExperimental {
-    pub neynar_user_score: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
 pub struct RawUser {
     pub fid: u64,
     pub username: Option<String>,
@@ -59,18 +54,6 @@ pub struct RawUser {
     pub registered_at: Option<String>,
     pub custody_address: Option<String>,
     pub verified_addresses: Option<RawVerified>,
-    /// Neynar only.
-    pub score: Option<f64>,
-    /// Neynar only (older responses).
-    pub experimental: Option<RawExperimental>,
-}
-
-impl RawUser {
-    /// The Neynar user score in millionths, when the provider includes one.
-    pub fn score_micros(&self) -> Option<u32> {
-        let score = self.score.or_else(|| self.experimental.as_ref()?.neynar_user_score)?;
-        (score.is_finite() && score >= 0.0).then(|| (score.min(1.0) * 1_000_000.0).round() as u32)
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -450,16 +433,11 @@ mod tests {
         assert_eq!(dwr.sol_addresses.len(), 1);
         assert_eq!(dwr.primary_eth.as_deref(), Some("0x187c7b0393ebe86378128f2653d0930e33218899"));
         assert!(dwr.follower_count > 1_000_000);
-        assert_eq!(raw.users[0].score_micros(), None);
         assert_eq!(user(&raw.users[1]).username, "balajis.eth");
     }
 
     #[test]
-    fn reads_neynar_scores_when_present() {
-        let raw: RawUser = serde_json::from_str(r#"{"fid":1,"score":0.873}"#).unwrap();
-        assert_eq!(raw.score_micros(), Some(873_000));
-        let raw: RawUser = serde_json::from_str(r#"{"fid":1,"experimental":{"neynar_user_score":1.2}}"#).unwrap();
-        assert_eq!(raw.score_micros(), Some(1_000_000));
+    fn blank_usernames_fall_back_to_the_fid() {
         let raw: RawUser = serde_json::from_str(r#"{"fid":1,"username":"  "}"#).unwrap();
         assert_eq!(user_summary(&raw).username, "fid:1");
     }

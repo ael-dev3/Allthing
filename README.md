@@ -9,11 +9,11 @@ The client and the API are written in Rust: a [Leptos](https://leptos.dev) app c
 
 | Front page | A post |
 |---|---|
-| ![Front page: trending casts with likes, recasts and replies, scores and the app each cast was posted from](docs/screenshots/home.png) | ![A post with its replies and a box naming the app it was posted via](docs/screenshots/post.png) |
-| **A profile: score, vote, wallet activity, wallets** | **Search: people, channels and casts** |
-| ![Profile of @0xael.eth: Neynar score, the Farcaster vote, wallet activity by chain and the open Wallets popover](docs/screenshots/profile-wallets.png) | ![Search results grouped into people, channels and casts](docs/screenshots/search.png) |
+| ![Front page: trending casts with likes, recasts and replies, and the app each cast was posted from](docs/screenshots/home.png) | ![A post with its replies and a box naming the app it was posted via](docs/screenshots/post.png) |
+| **A profile: vote, wallet activity, wallets** | **Search: people, channels and casts** |
+| ![Profile of @0xael.eth: the Farcaster vote, wallet activity by chain and the open Wallets popover](docs/screenshots/profile-wallets.png) | ![Search results grouped into people, channels and casts](docs/screenshots/search.png) |
 | **Who liked it** | **A preview of the replies** |
-| ![A popover listing the newest people who liked a cast, with their scores](docs/screenshots/likes-popover.png) | ![A popover previewing a cast's replies with avatars, scores and text](docs/screenshots/replies-popover.png) |
+| ![A popover listing the newest people who liked a cast](docs/screenshots/likes-popover.png) | ![A popover previewing a cast's replies with avatars and text](docs/screenshots/replies-popover.png) |
 
 ## What it does
 
@@ -22,10 +22,10 @@ The client and the API are written in Rust: a [Leptos](https://leptos.dev) app c
 - **Shows who engaged.** Hovering a likes or recasts count lists the newest people, and a click opens everyone. Hovering a replies count previews the replies.
 - **Shows engagement as it is.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts and nothing else. Ranking uses engagement (likes + 2 × recasts + replies) with time decay for **hot**, and also offers **new** and **top**. Re-sorting happens in the browser, with no extra request.
 - **Plays media in place.** Images show inline and open in an accessible media viewer: keyboard and swipe navigation, alt text, and focus that returns where it was. Farcaster's HLS videos play inline: Safari plays HLS natively, and other browsers use a small HLS player written in Rust over Media Source Extensions. Videos autoplay while in view, one at a time, and pause when scrolled away. They start muted; once the reader turns sound on, later videos play with sound until they mute one. They don't autoplay with reduced motion or Save-Data. A click plays them with sound. YouTube, Vimeo, Loom and Streamable links become click-to-load players; YouTube uses `youtube-nocookie.com`. Video bytes come straight from their host.
-- **Says who people are.** Profile pictures and [Neynar scores](https://docs.neynar.com/docs/neynar-user-quality-score) appear beside names. Profiles show the bio, follower and following counts, and the registration date.
+- **Says who people are.** Profile pictures appear beside names. Profiles show the bio, follower and following counts, and the registration date.
   - **Spam labels**: if the Farcaster app's [public spam labels](https://github.com/warpcast/labels) flag an account, the profile shows the label, and every cast stays visible.
   - **Wallet activity by chain**: the share of transactions sent from the account's verified EVM addresses on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad. A **Wallets** button lists every verified address, with copy to clipboard.
-  - **The Farcaster vote**: whether the account voted to stay or to leave when farcaster.xyz asked, or did not vote. Stay votes are read onchain; see [docs/VOTE.md](docs/VOTE.md). Scores are read onchain too; see [docs/SCORE.md](docs/SCORE.md).
+  - **The Farcaster vote**: whether the account voted to stay or to leave when farcaster.xyz asked, or did not vote. Stay votes are read onchain; see [docs/VOTE.md](docs/VOTE.md).
 - **Leaves out mini apps.** Casts that embed mini apps or frames, which Allthing doesn't run, are filtered out by the Worker.
 - **Shows provenance.** Each cast names the app that registered its signing key (for example *via Warpcast*). [docs/PROVENANCE.md](docs/PROVENANCE.md) studies Snapchain and Hypersnap and proposes how a chain could record client and ingress at the protocol level.
 
@@ -76,7 +76,7 @@ The end-to-end suite covers:
 - ranking and a single API call per page;
 - the media viewer (keyboard, swipe, alt text, focus trap);
 - HLS playback through the Rust player, autoplay in view, and reduced motion;
-- profiles: score, vote, wallet shares, the wallets popover, and labels, including a flagged account that still shows every cast;
+- profiles: vote, wallet shares, the wallets popover, and labels, including a flagged account that still shows every cast;
 - search, clickable cards, scroll restoration, the who-liked and replies popovers, and thread collapsing;
 - provenance, `/version` and read-only behaviour.
 
@@ -97,7 +97,7 @@ Cloudflare Workers Builds deploys every push to `main`. Settings and the first-d
 - [Budget](docs/BUDGET.md): fitting the Workers Free plan; upstream load
 - [Deploy](docs/DEPLOY.md): Workers Builds settings, domains, rollback
 - [Performance](docs/PERFORMANCE.md): budget, instant navigation, prefetching, measurements
-- [Neynar score](docs/SCORE.md) and [the Farcaster vote](docs/VOTE.md): sources and how they are read
+- [The Farcaster vote](docs/VOTE.md): sources and how it is read
 - [Releasing](docs/RELEASING.md): versions, commits, branches, releases
 - [Provenance](docs/PROVENANCE.md): client and backend provenance, research and protocol design
 - [Roadmap](docs/ROADMAP.md)

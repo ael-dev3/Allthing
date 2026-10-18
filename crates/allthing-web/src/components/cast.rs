@@ -39,7 +39,6 @@ pub fn CastCard(
     #[prop(optional)] show_parent: bool,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
-    let score = notes.scores.get(&cast.author.fid).copied();
     let quote = cast.embeds.iter().find_map(|e| match e {
         Embed::Cast { hash, .. } => Some(hash.clone()),
         _ => None,
@@ -73,7 +72,7 @@ pub fn CastCard(
             on:touchstart=move |_| warm_touch()
         >
             <header class="cast-meta">
-                <UserChip user=cast.author.clone() score=score.unwrap_or(0) show_name=true/>
+                <UserChip user=cast.author.clone() show_name=true/>
                 <span class="sep" aria-hidden="true">"·"</span>
                 // The post's own link: for keyboards and screen readers (the
                 // card's text is plain so it can be selected; a click on it
@@ -122,10 +121,7 @@ pub fn CastList(
         SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
-    Effect::new(move |_| {
-        let notes = notes.get();
-        casts.with(|c| api::remember_casts(c, &notes));
-    });
+    Effect::new(move |_| casts.with(|c| api::remember_casts(c)));
     let visible = move || casts.with(|c| c.iter().take(shown.get()).cloned().enumerate().collect::<Vec<_>>());
     let grow = move || {
         let len = casts.with_untracked(Vec::len);

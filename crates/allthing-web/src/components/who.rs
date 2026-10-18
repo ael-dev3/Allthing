@@ -15,7 +15,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
 use crate::api;
-use crate::components::chips::{Avatar, ScoreBadge, TimeAgo};
+use crate::components::chips::{Avatar, TimeAgo};
 use crate::util::{cast_href, user_href};
 
 /// The open full who-list, if any: (cast hash, which reactions).
@@ -66,18 +66,14 @@ fn heading(kind: ReactionKind) -> &'static str {
 fn People(payload: std::sync::Arc<ReactionsPayload>) -> impl IntoView {
     view! {
         <ul class="who-list">
-            {payload.users.iter().map(|u| {
-                let score = payload.scores.get(&u.fid).copied().unwrap_or(0);
-                view! {
-                    <li>
-                        <a href=user_href(&u.username)>
-                            <Avatar url=u.pfp_url.clone() size=28/>
-                            <span class="who-name">{u.name().to_owned()}</span>
-                            <span class="muted">"@"{u.username.clone()}</span>
-                        </a>
-                        <ScoreBadge micros=score/>
-                    </li>
-                }
+            {payload.users.iter().map(|u| view! {
+                <li>
+                    <a href=user_href(&u.username)>
+                        <Avatar url=u.pfp_url.clone() size=28/>
+                        <span class="who-name">{u.name().to_owned()}</span>
+                        <span class="muted">"@"{u.username.clone()}</span>
+                    </a>
+                </li>
             }).collect_view()}
         </ul>
     }
@@ -239,7 +235,6 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                     view! {
                         <ul class="reply-items">
                             {payload.replies.iter().map(|reply| {
-                                let score = payload.notes.scores.get(&reply.author.fid).copied().unwrap_or(0);
                                 let thumbs: Vec<String> = reply.embeds.iter().filter_map(|e| match e {
                                     Embed::Image { url } => Some(resized_image_url(url, ImageSize::Thumb)),
                                     _ => None,
@@ -250,7 +245,6 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                                             <span class="reply-who">
                                                 <Avatar url=reply.author.pfp_url.clone() size=22/>
                                                 <strong>{reply.author.name().to_owned()}</strong>
-                                                <ScoreBadge micros=score/>
                                                 <span class="muted small"><TimeAgo ts=reply.ts/></span>
                                             </span>
                                             <span class="reply-text">{truncate_title(&reply.text, 220)}</span>

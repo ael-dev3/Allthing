@@ -503,7 +503,7 @@ code {
   background: var(--accent-soft);
 }
 
-/* Avatars, user chips and scores */
+/* Avatars and user chips */
 
 .avatar {
   display: inline-block;
@@ -537,34 +537,6 @@ code {
 
 .user-chip a:hover {
   color: var(--accent);
-}
-
-.score {
-  font: 650 10.5px/1 var(--font-ui);
-  font-variant-numeric: tabular-nums;
-  padding: 3px 6px 3px;
-  border-radius: 999px;
-  border: 1px solid;
-  cursor: help;
-  letter-spacing: 0.02em;
-}
-
-.score-high {
-  color: #7a5310;
-  background: linear-gradient(180deg, #fffaf0, #fdf0d4);
-  border-color: rgba(185, 130, 42, 0.38);
-}
-
-.score-mid {
-  color: #0b6273;
-  background: #eaf7f9;
-  border-color: rgba(10, 143, 167, 0.3);
-}
-
-.score-low {
-  color: var(--ink-3);
-  background: #f2f1ed;
-  border-color: var(--line-2);
 }
 
 .origin {
@@ -1604,23 +1576,6 @@ code {
   margin: 5px 0 0;
   font-size: 15.5px;
   font-weight: 600;
-}
-
-.score-value {
-  font: 400 26px/1 var(--font-display) !important;
-}
-
-.score-value.tier-high {
-  color: #8a5d12;
-}
-
-.score-value.tier-mid {
-  color: #0b6273;
-}
-
-.score-value.tier-low,
-.score-value.tier-none {
-  color: var(--ink-3);
 }
 
 .spam-label {

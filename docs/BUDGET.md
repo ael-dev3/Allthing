@@ -76,15 +76,15 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Build | Calls |
 |---|---|
 | Any cache hit | 1 (cache read) |
-| home | cache read 1 + trending casts 1 + link pages ≤12 + Neynar scores ≤2 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
+| home | cache read 1 + trending casts 1 + link pages ≤12 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
 | channel | as home, plus channel lookup 1 and a possible feed refetch 1 |
-| cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + scores ≤2 + origins (budget-limited) + apps ≤1 + cache write 1 |
-| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + scores ≤2 + apps ≤1 + cache write 1 (≤ 25) |
+| cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
+| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + apps ≤1 + cache write 1 (≤ 23) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
-| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + scores ≤2 + cache write 1 (≤ 20) |
-| reactions | cache read 1 + reactions 1 + scores ≤2 + cache write 1 (≤ 5) |
-| replies | cache read 1 + conversation (depth 1) 1 + link pages ≤12 + scores ≤2 + cache write 1 (≤ 17) |
+| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + cache write 1 (≤ 18) |
+| reactions | cache read 1 + reactions 1 + cache write 1 (≤ 3) |
+| replies | cache read 1 + conversation (depth 1) 1 + link pages ≤12 + cache write 1 (≤ 15) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
 | `/version` | 0 |
 
@@ -106,13 +106,13 @@ WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild st
 
 Allthing's goal is that the number of viewers barely changes upstream volume.
 
-- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins and scores are memoized.
+- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 6 Hypersnap calls once origins are memoized.
 - **Per isolate token buckets** (`crates/allthing-data/src/upstream.rs`) cap bursts:
 
   | Upstream | Burst | Sustained |
   |---|---|---|
   | Hypersnap | 40 | 10 requests/s |
-  | Base RPC (scores) | 10 | 2 requests/s |
+  | Base RPC (vote) | 10 | 2 requests/s |
   | Each chain RPC (wallets) | 4 | 1 request every 2 s |
   | farcaster.xyz client API (vote) | 6 | 1 request/s |
   | Link pages (mini app meta tags), all sites together | 12 | 2 requests/s |
@@ -120,7 +120,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
   A request finding an empty bucket is not sent. The payload is served from cache, or the API answers 503 with `Retry-After`.
 - **Circuit breakers** (one per upstream, per isolate, except link pages, which are many unrelated sites): three consecutive failures (timeouts, 5xx, 429) open the breaker for 5 s, doubling up to 5 minutes. An upstream's `Retry-After` is honored, up to the same cap. While open, nothing is sent and cached copies are served.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
-- **Memoized per isolate**: Neynar scores (12 h, batched up to 150 fids per `eth_call`), signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
+- **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
 - **Static, built at deploy time**: the Farcaster app's 125 MB spam-label dataset becomes 35 shards of 32 KB, one character per fid (about 1.1 MB in all). Profiles read one shard as a free static asset, with zero Worker or upstream requests. Deploys reuse the live shards unless the upstream dataset changed (`scripts/build.sh`).
 - **Solana activity is not measured**. Its public RPC refuses requests from Cloudflare Workers and from browsers (HTTP 403), and the keyless alternatives don't serve address history. Allthing leaves it out of the activity chart instead of retrying.
 

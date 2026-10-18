@@ -13,7 +13,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
  one call per page          ── /api/* ──▶  allthing-worker (Rust, workers-rs)
  GET /api/v1/home …                          rate limit (per IP) → edge cache (Cache API)
                                              → coalesced build → guarded upstream calls  ──▶  Hypersnap /v2 + /v1
-                                                                                         ──▶  Base RPC (Neynar scores)
+                                                                                         ──▶  Base RPC (Farcaster vote)
                                                                                          ──▶  EVM RPCs (wallet activity)
 
  images, video, posters     ── direct ──▶  imagedelivery.net, Cloudflare Stream, …  (never proxied)
@@ -53,7 +53,6 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 
 Paths are relative to `https://haatz.quilibrium.com/v2/farcaster/` (Hypersnap's Neynar-compatible API). Payloads carry `Meta` (backend, fetch time, staleness) and `Annotations`, shared by every cast on the page:
 
-- **scores**: Neynar user scores by fid, read onchain on Base ([SCORE.md](SCORE.md)). One `eth_call` to `getScores(uint256[])` on the scores contract covers up to 150 fids; scores are memoized for 12 h per isolate.
 - **origins**: for each cast, its signer key and the fid of the app that registered that key. The app comes from the signer's `SignedKeyRequest` metadata: `requestFid` from Hypersnap's `/v1/signersByFid`, or decoded from the key's onchain event (`/v1/onChainEventsByFid`) when the key has since been removed. Signers are matched to casts with `/v1/castById` (one cast) or `/v1/castsByFid` (several).
 - **apps**: the names and pictures of those app fids.
 - **pending**: how many casts are still unattributed. Origins resolve progressively, up to 12 new authors per build, and each payload carries the previous one's origins forward.
@@ -85,7 +84,6 @@ Numbers and the request budget are in [BUDGET.md](BUDGET.md).
 |---|---|---|
 | Casts, threads, channels, users, search, reactions | Hypersnap (`haatz.quilibrium.com`): Neynar-shaped `/v2/farcaster/*` plus hub `/v1/*` | A read node mirroring Snapchain mainnet. |
 | The Farcaster vote | Network School's opt-in NFT on Base (stay), farcaster.xyz's public `user-by-fid` (leave) | [VOTE.md](VOTE.md) |
-| Neynar user score | Neynar's score contract on Base, via public RPCs (`mainnet.base.org`, publicnode) | Shown beside names when above zero, with tiers at 0.5 and 0.9 |
 | Signing app | Signer events and `SignedKeyRequest` metadata through Hypersnap `/v1` | "via Warpcast" and the like |
 | Spam labels | [warpcast/labels](https://github.com/warpcast/labels) `spam.jsonl` (Git LFS) | Compacted at deploy time into 32 KB shards, one character per fid, read by the browser as static files. Shown on profiles; never used to hide anything. |
 | Wallet activity | Account nonces of verified EVM addresses (up to 5) on Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain and Monad, from keyless public RPCs | A nonce counts transactions *sent* from an address. Shares use largest-remainder rounding. Solana is not measured: its public RPC refuses Workers and browsers. |
@@ -123,7 +121,7 @@ A static host can't run the Worker, so `cargo xtask pages` builds a second varia
 - compiled with `ALLTHING_BASE_PATH=/Allthing`, every link, asset, label shard and the router live under that prefix;
 - `404.html` is a copy of `index.html`, which is how GitHub Pages serves deep links to a single-page app.
 
-Annotations memoized in the page (scores, origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
+Annotations memoized in the page (origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
 
 ## Security and privacy
 
@@ -135,7 +133,7 @@ Annotations memoized in the page (scores, origins, apps) carry over between page
 
 ## Testing
 
-- **Unit tests**: `cargo test` covers the core against recorded Hypersnap responses, the Worker's ABI decoding of onchain scores, link shortening in the app, and the xtask's CSS minifier and fingerprinting.
+- **Unit tests**: `cargo test` covers the core against recorded Hypersnap responses, link shortening in the app, and the xtask's CSS minifier and fingerprinting.
 - **Lints**: `scripts/check.sh` runs rustfmt and Clippy with `-D warnings` for the native and wasm32 targets, and the `cargo deny` license audit.
 - **Tooling**: `npm run test:tools` checks the static test server with temporary fixture directories: malformed paths, root boundaries, redirects and deep-link fallback. CI runs it before the browser fixtures.
 - **Browser regressions**: `npx playwright test '\.fixture\.spec\.ts$'` runs deterministic browser tests against the local build, with API and media responses supplied by fixtures. CI runs these on pull requests and pushes to `main`; new deterministic suites should use the `.fixture.spec.ts` suffix. They exercise the code under review without depending on live data. Failure reports are uploaded for 7 days.

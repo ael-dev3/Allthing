@@ -125,11 +125,11 @@ test.describe("front page", () => {
     await expect(page.locator('[aria-label*="downvote" i], .downvote, .arrow.down')).toHaveCount(0);
     await expect(page.getByRole("button", { name: /vote/i })).toHaveCount(0);
 
-    // Who, when, where, scored, and via which app.
+    // Who, when, where, and via which app; no scores beside names.
     await expect(card.locator(".user-chip .avatar").first()).toBeVisible();
     await expect(card.locator("time")).toHaveAttribute("datetime", /^\d{4}-\d\d-\d\dT/);
-    await expect(page.locator(".cast-card .score").first()).toHaveText(/^[01]\.\d\d$/);
     await expect(page.locator(".cast-card .origin").first()).toContainText("via ");
+    await expect(page.locator(".score")).toHaveCount(0);
 
     // 0.3: no backend badges, intro, ranking or keyboard boxes; a Home button,
     // and a one-line footer with the version.
@@ -522,7 +522,7 @@ test.describe("media", () => {
 });
 
 test.describe("profiles", () => {
-  test("show score, registration, counts, wallet activity by chain and the app label", async ({ page }) => {
+  test("show registration, counts, wallet activity by chain and the app label", async ({ page }) => {
     await page.goto(at("/u/0xael.eth"));
     const profile = page.locator(".profile");
     await expect(profile.locator(".profile-name")).toHaveText(/\S/);
@@ -532,11 +532,11 @@ test.describe("profiles", () => {
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ followers/);
     await expect(profile.locator(".counts")).toContainText(/[\d,]+ following/);
     await expect(profile.locator(".bio")).toHaveText(/\S/);
-    await expect(profile.locator(".fact", { hasText: "Neynar score" }).locator("dd")).toHaveText(/^[01]\.\d\d$/);
     await expect(profile.locator(".fact", { hasText: "Registered" }).locator("dd")).toHaveText(/\d{4}/);
     await expect(profile.locator(".fact", { hasText: "Farcaster app label" }).locator("dd")).toHaveText(/no label|labeled|spam|Nerfed|unavailable/i);
     // The vote, read onchain on Base (0xael.eth voted to stay).
     await expect(profile.locator(".vote-fact .vote")).toHaveText("Voted yes");
+    await expect(profile.getByText(/Neynar/)).toHaveCount(0);
     // Only "Voted yes", "Voted no" or "Didn't vote", never the old wordings.
     await expect(page.getByText(/Voted to (stay|leave)|Stay vote revoked|Did not vote|checking…/)).toHaveCount(0);
     await page.goto(at("/u/vitalik.eth"));

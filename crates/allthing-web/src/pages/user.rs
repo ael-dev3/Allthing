@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A profile: who the account is, how others rate and label it, where its
-//! wallets are active, and its casts. Labels inform; they never hide content.
+//! A profile: who the account is, how others label it, where its wallets
+//! are active, and its casts. Labels inform; they never hide content.
 
 use std::sync::Arc;
 
 use allthing_core::api::{UserPayload, user_path, vote_path, wallets_path};
-use allthing_core::format::{full_number, score as format_score, short_address};
+use allthing_core::format::{full_number, short_address};
 use allthing_core::labels::SpamLabel;
 use allthing_core::listing::{replies_only, top_level};
 use allthing_core::model::User;
@@ -83,7 +83,7 @@ pub fn UserPage() -> impl IntoView {
                 let replies_link = with_query(&path, &[("tab", Some("replies".to_owned()))]);
                 view! {
                     <Columns side class="profile-columns">
-                        <ProfileHeader user=user.clone() score=notes.scores.get(&user.fid).copied()/>
+                        <ProfileHeader user=user.clone()/>
                         <nav class="tabs" aria-label="Profile sections">
                             <a href=casts_link data-noscroll="" class:selected=move || !replies_tab.get() aria-current=move || (!replies_tab.get()).then_some("page")>"Casts"</a>
                             <a href=replies_link data-noscroll="" class:selected=move || replies_tab.get() aria-current=move || replies_tab.get().then_some("page")>"Replies"</a>
@@ -102,7 +102,7 @@ pub fn UserPage() -> impl IntoView {
 }
 
 #[component]
-fn ProfileHeader(user: User, score: Option<u32>) -> impl IntoView {
+fn ProfileHeader(user: User) -> impl IntoView {
     let label = LocalResource::new({
         let fid = user.fid;
         move || spam_label(fid)
@@ -114,11 +114,6 @@ fn ProfileHeader(user: User, score: Option<u32>) -> impl IntoView {
             (format_date(ts), format!("Registered onchain {} ago", duration_since(ts, now())))
         }
     });
-    let (score_text, score_note) = match score {
-        Some(0) => ("no score".to_owned(), "Neynar has not scored this account."),
-        Some(micros) => (format_score(micros), "Neynar user score, 0–1, read onchain on Base; updated weekly."),
-        None => ("unavailable".to_owned(), "The onchain score could not be read just now."),
-    };
     view! {
         <section class="profile" aria-label="Profile">
             <div class="profile-top">
@@ -139,10 +134,6 @@ fn ProfileHeader(user: User, score: Option<u32>) -> impl IntoView {
                 view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> }.into_any()
             }}
             <dl class="facts">
-                <div class="fact" title=score_note>
-                    <dt>"Neynar score"</dt>
-                    <dd class=format!("score-value tier-{}", score.map_or("none", |s| if s == 0 { "none" } else { crate::components::chips::score_tier(s) }))>{score_text}</dd>
-                </div>
                 {registered.map(|(date, note)| view! {
                     <div class="fact" title=note>
                         <dt>"Registered"</dt>

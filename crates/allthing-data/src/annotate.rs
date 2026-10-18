@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Scores, cast origins and app names for the casts on a page.
+//! Cast origins and app names for the casts on a page.
 //!
 //! Each comes from three places, cheapest first: the previous payload for the
 //! same page (carried forward), bounded in-isolate memory, and finally a
@@ -7,7 +7,7 @@
 //! within the limit is counted as `pending` and picked up by later refreshes.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -19,7 +19,7 @@ use futures::future::{join, join_all};
 use serde::Deserialize;
 
 use crate::Invocation;
-use crate::{chain, hypersnap};
+use crate::hypersnap;
 
 /// A map that forgets its oldest insertions beyond a capacity.
 pub(crate) struct Bounded<K, V> {
@@ -53,7 +53,6 @@ type SignerApps = Rc<HashMap<String, Option<u64>>>;
 
 const SIGNERS_TTL_MS: f64 = 3_600_000.0;
 const APPS_TTL_MS: f64 = 86_400_000.0;
-const SCORES_TTL_MS: f64 = 43_200_000.0;
 
 thread_local! {
     /// Cast hash -> origin. Origins never change, so no TTL.
@@ -62,8 +61,6 @@ thread_local! {
     static SIGNERS: RefCell<Bounded<u64, (f64, SignerApps)>> = RefCell::new(Bounded::new(4_000));
     /// app fid -> (fetched, app account).
     static APPS: RefCell<Bounded<u64, (f64, UserSummary)>> = RefCell::new(Bounded::new(2_000));
-    /// fid -> (fetched, Neynar score in millionths).
-    static SCORES: RefCell<Bounded<u64, (f64, u32)>> = RefCell::new(Bounded::new(50_000));
 }
 
 /// The annotations of a previously cached payload for the same page.
@@ -78,43 +75,6 @@ pub fn carried(previous: Option<&[u8]>) -> Annotations {
 
 /// A cast to attribute: (author fid, cast hash), in display priority order.
 pub type Target = (u64, String);
-
-pub fn remember_scores(inv: &Invocation, scores: &HashMap<u64, u32>) {
-    let now = inv.now();
-    SCORES.with(|s| {
-        let mut s = s.borrow_mut();
-        for (fid, score) in scores {
-            s.insert(*fid, (now, *score));
-        }
-    });
-}
-
-/// Neynar scores for `fids`, from memory or one batched onchain read.
-pub async fn scores(inv: &Invocation, fids: &[u64]) -> BTreeMap<u64, u32> {
-    let now = inv.now();
-    let mut out = BTreeMap::new();
-    let mut missing = Vec::new();
-    SCORES.with(|s| {
-        let s = s.borrow();
-        for fid in fids {
-            match s.get(fid) {
-                Some((at, score)) if now - at < SCORES_TTL_MS => {
-                    out.insert(*fid, *score);
-                }
-                _ => missing.push(*fid),
-            }
-        }
-    });
-    missing.sort_unstable();
-    missing.dedup();
-    if !missing.is_empty()
-        && let Ok(fetched) = chain::neynar_scores(inv, &missing).await
-    {
-        remember_scores(inv, &fetched);
-        out.extend(fetched);
-    }
-    out
-}
 
 async fn signer_apps(inv: &Invocation, fid: u64) -> Option<SignerApps> {
     let now = inv.now();
@@ -277,14 +237,9 @@ pub async fn apps(inv: &Invocation, notes: &mut Annotations) {
     }
 }
 
-/// Scores, origins and apps for a page, with scores and origins fetched
-/// concurrently.
-pub async fn annotate(inv: &Invocation, notes: &mut Annotations, fids: &[u64], targets: &[Target], max_authors: usize) {
-    let mut origin_notes = std::mem::take(notes);
-    let (scores, pending) = join(scores(inv, fids), origins(inv, &mut origin_notes, targets, max_authors)).await;
-    *notes = origin_notes;
-    notes.merge_scores(scores, fids);
-    notes.pending = pending;
+/// Origins and apps for a page.
+pub async fn annotate(inv: &Invocation, notes: &mut Annotations, targets: &[Target], max_authors: usize) {
+    notes.pending = origins(inv, notes, targets, max_authors).await;
     apps(inv, notes).await;
 }
 

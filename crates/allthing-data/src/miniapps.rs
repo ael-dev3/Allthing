@@ -18,7 +18,7 @@ use crate::{HttpMethod, Invocation};
 /// Link pages fetched while building one payload, at most; the rest are
 /// checked on a later refresh.
 pub const MAX_CHECKS: usize = 12;
-/// Subrequests left for the rest of the build (scores, origins, the cache
+/// Subrequests left for the rest of the build (origins, app names, the cache
 /// write): checks never take these.
 const RESERVE: usize = 10;
 /// A Worker keeps at most six connections open at once, so pages are read in
