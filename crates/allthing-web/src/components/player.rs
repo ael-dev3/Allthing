@@ -535,6 +535,14 @@ pub fn HlsVideo(
         }
     };
 
+    // Media events are queued. A pause/ended event from an earlier state
+    // can arrive after play has resumed; it must not hide active controls.
+    let on_stopped = move |_: ev::Event| {
+        if video_ref.get_untracked().is_some_and(|video| video.paused() || video.ended()) {
+            playing.set(false);
+        }
+    };
+
     view! {
         <div
             class="video"
@@ -558,8 +566,8 @@ pub fn HlsVideo(
                 loop=!full
                 prop:controls=move || engaged.get()
                 on:playing=move |_| {
-                    playing.set(true);
                     if let Some(video) = video_ref.get_untracked() {
+                        playing.set(!video.paused() && !video.ended());
                         muted.set(video.muted());
                     }
                 }
@@ -571,8 +579,8 @@ pub fn HlsVideo(
                         set_sound(!video.muted());
                     }
                 }
-                on:pause=move |_| playing.set(false)
-                on:ended=move |_| playing.set(false)
+                on:pause=on_stopped
+                on:ended=on_stopped
                 on:loadedmetadata=move |_| {
                     let Some(video) = video_ref.get_untracked() else { return };
                     let (w, h) = (video.video_width(), video.video_height());
