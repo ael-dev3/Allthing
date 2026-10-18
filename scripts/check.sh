@@ -13,6 +13,17 @@ if [ "$cargo_version" != "$npm_version" ]; then
   exit 1
 fi
 
+# Every inline <script> in web/index.html must have its CSP hash in web/_headers.
+grep -oE '<script( [^>]*)?>[^<]+</script>' web/index.html | grep -v ' src=' | while IFS= read -r tag; do
+  body="${tag#*>}"
+  body="${body%</script>}"
+  hash="sha256-$(printf '%s' "$body" | openssl dgst -sha256 -binary | openssl base64 -A)"
+  if ! grep -qF "'$hash'" web/_headers; then
+    echo "web/_headers lacks the CSP hash of an inline script in web/index.html ($hash)" >&2
+    exit 1
+  fi
+done
+
 cargo fmt --all -- --check
 cargo clippy --locked -p allthing-core -p xtask --all-targets -- -D warnings
 cargo clippy --locked -p allthing-data -p allthing-web -p allthing-worker --target wasm32-unknown-unknown -- -D warnings

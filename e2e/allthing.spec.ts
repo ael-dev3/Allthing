@@ -625,6 +625,20 @@ test.describe("threads and navigation", () => {
     expect(violations).toEqual([]);
   });
 
+  test("the front page's data request starts inline and is reused", async ({ page }) => {
+    test.skip(PAGES, "the static copy has no API");
+    const violations: string[] = [];
+    page.on("console", (m) => /Content Security Policy/.test(m.text()) && violations.push(m.text()));
+    const calls: string[] = [];
+    page.on("request", (r) => r.url().includes("/api/v1/home") && calls.push(r.url()));
+    await page.goto(at("/"));
+    await expect(firstCard(page)).toBeVisible();
+    // The inline script ran (CSP allowed it) and the app took its response.
+    expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(violations).toEqual([]);
+  });
+
   test("/version names the release and commit", async ({ request }) => {
     test.skip(PAGES, "the static copy has no Worker");
     const response = await request.get("/version");
