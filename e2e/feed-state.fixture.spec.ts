@@ -6,8 +6,9 @@ const cast = (id: number, likes: number, time: number) => ({
   hash: `0x${id.toString(16).padStart(40, "0")}`, author: { fid: 1, username: "fixture" },
   text: `Feed fixture ${id}`, ts: 1792235681 + time, likes,
 });
-const first = [cast(1, 20, 100), cast(2, 5, 300)];
-const next = [cast(3, 10, 400), cast(4, 30, 200)];
+// Hours apart, so hot (which counts age) and top order each page differently.
+const first = [cast(1, 20, 100), cast(2, 5, 100_000)];
+const next = [cast(3, 10, 200_000), cast(4, 30, 200)];
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 
 test.beforeEach(async ({ page }) => {
@@ -29,12 +30,14 @@ test("sorting reorders every loaded trending page without rebuilding cards or fe
   const count = requests.length;
   const firstCard = await page.locator('.cast-card[data-hash="' + first[0].hash + '"]').elementHandle();
   const sort = page.getByRole("navigation", { name: "Sort", exact: true });
-  await sort.getByRole("link", { name: "new", exact: true }).click();
-  await expect.poll(() => page.locator(".cast-card[data-hash]").evaluateAll((cards) => cards.map((c) => Number(c.getAttribute("data-ts")))), { timeout: 1500 })
-    .toEqual([300, 100, 400, 200].map((time) => 1792235681 + time));
+  const points = () => page.locator(".cast-card[data-hash]").evaluateAll((cards) => cards.map((c) => Number(c.getAttribute("data-points"))));
+  // Hot: the newer cast of each page first. ("new" is its own list, from
+  // the event stream: e2e/latest-feed.fixture.spec.ts.)
+  await expect.poll(points, { timeout: 1500 }).toEqual([5, 20, 10, 30]);
   await sort.getByRole("link", { name: "top", exact: true }).click();
-  await expect.poll(() => page.locator(".cast-card[data-hash]").evaluateAll((cards) => cards.map((c) => Number(c.getAttribute("data-points")))), { timeout: 1500 })
-    .toEqual([20, 5, 30, 10]);
+  await expect.poll(points, { timeout: 1500 }).toEqual([20, 5, 30, 10]);
+  await sort.getByRole("link", { name: "hot", exact: true }).click();
+  await expect.poll(points, { timeout: 1500 }).toEqual([5, 20, 10, 30]);
   expect(await firstCard!.evaluate((card) => card.isConnected)).toBe(true);
   expect(requests).toHaveLength(count);
 });

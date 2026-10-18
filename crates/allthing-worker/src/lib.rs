@@ -15,6 +15,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError};
+use allthing_core::latest;
+use allthing_core::ranking::TrendingWindow;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
 use futures::future::FutureExt;
 use worker::{Context, Env, Headers, Method, Request, Response, Result, Url, event};
@@ -89,14 +91,19 @@ async fn route(inv: &Rc<Invocation>, url: &Url) -> Result<Response> {
         return error(404, "Unknown API version", None);
     };
     if name == "/status" {
-        return status(inv);
+        return status(inv, url).await;
     }
     let endpoint = match Endpoint::parse(name, |key| query(url, key)) {
         Ok(endpoint) => Rc::new(endpoint),
         Err(bad) => return error(bad.status, bad.message, None),
     };
-    let key = format!("{}/__cache{API_PREFIX}/{}", url.origin().ascii_serialization(), endpoint.cache_name());
+    let key = cache_key(url, &endpoint.cache_name());
     serve(inv, key, endpoint).await
+}
+
+/// Where a payload is cached: its endpoint's cache name on this origin.
+fn cache_key(url: &Url, name: &str) -> String {
+    format!("{}/__cache{API_PREFIX}/{name}", url.origin().ascii_serialization())
 }
 
 async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Result<Response> {
@@ -142,11 +149,22 @@ fn version() -> Result<Response> {
     Ok(Response::from_json(&body)?.with_headers(headers))
 }
 
-/// Health and guard state of the isolate that answers. Makes no upstream
-/// calls and touches no cache.
-fn status(inv: &Invocation) -> Result<Response> {
+/// Health and guard state of the isolate that answers, and how fresh the
+/// cached "new" and trending lists are. Makes no upstream calls: it reads
+/// those two lists from the edge cache.
+async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
     let now = inv.now();
+    let (new, trending) = futures::future::join(
+        cache::peek(inv, &cache_key(url, &Endpoint::Latest.cache_name())),
+        cache::peek(inv, &cache_key(url, &Endpoint::Home(0, TrendingWindow::Day).cache_name())),
+    )
+    .await;
+    let freshness = |entry: Option<cache::Entry>| entry.and_then(|e| latest::freshness(&e.body, e.fetched_at, now));
     let body = serde_json::json!({
+        "freshness": {
+            "new": freshness(new),
+            "trending": freshness(trending),
+        },
         "ok": true,
         "isolate": {
             "up_seconds": ((now - STARTED.with(Cell::get)) / 1000.0).round(),

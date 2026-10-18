@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{Annotations, HomePayload, home_page_path};
+use allthing_core::api::{Annotations, HomePayload, LatestPayload, home_page_path, latest_path};
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
 use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted};
@@ -48,6 +48,53 @@ pub fn Home() -> impl IntoView {
     let query = use_query_map();
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
+    Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
+    // "new" lists the newest casts from the event stream; hot and top rank
+    // the trending pool over the time range (and switching between them
+    // re-sorts in place).
+    let newest = Memo::new(move |_| sort.get() == Sort::New);
+    move || {
+        if newest.get() {
+            view! { <Latest sort range/> }.into_any()
+        } else {
+            view! { <Trending sort range/> }.into_any()
+        }
+    }
+}
+
+/// The newest casts on Farcaster, read from Snapchain's event stream and
+/// rebuilt at the edge every 30 seconds.
+#[component]
+fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+    let data = LocalResource::new(|| async { api::get::<LatestPayload>(&latest_path()).await });
+    move || match data.get() {
+        None => view! {
+            <Columns>
+                <Heading sort range/>
+                <CastSkeletons/>
+            </Columns>
+        }
+        .into_any(),
+        Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
+        Some(Ok(Fetched { data, stale, .. })) => {
+            let notes = Arc::new(data.notes.clone());
+            let casts = top_level(&data.pool);
+            view! {
+                <Columns>
+                    <Heading sort range/>
+                    <StaleNotice stale/>
+                    <CastList casts=Signal::stored(casts) notes=Signal::stored(notes)/>
+                </Columns>
+            }
+            .into_any()
+        }
+    }
+}
+
+/// Trending casts over the time range, ranked hot or top, with more pages
+/// as the reader scrolls.
+#[component]
+fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     let window = Memo::new(move |_| range.get().window());
     let data = LocalResource::new(move || {
         let window = window.get();
@@ -63,7 +110,6 @@ pub fn Home() -> impl IntoView {
     let more = RwSignal::new(kept);
     let next_offset = RwSignal::new(kept_offset);
     let loading = RwSignal::new(false);
-    Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
     // A failed page is tried again a few times, a little later each time:
     // the end of the list stays where the reader is waiting for it.
     let failures = StoredValue::new(0u32);

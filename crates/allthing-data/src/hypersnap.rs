@@ -13,8 +13,8 @@ use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_m
 use allthing_core::ranking::TrendingWindow;
 use serde::Deserialize;
 
-use crate::Invocation;
-use crate::upstream::{Upstream, UpstreamError, get_json, url};
+use crate::upstream::{self, Upstream, UpstreamError, get_json, url};
+use crate::{HttpMethod, Invocation};
 
 pub const BASE: &str = "https://haatz.quilibrium.com";
 
@@ -40,6 +40,25 @@ pub async fn trending_casts(
         if offset == "0" { &[("limit", &limit), window] } else { &[("limit", &limit), ("cursor", &offset), window] };
     let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2("feed/trending", query), false).await?;
     Ok(feed.map(|f| f.casts).unwrap_or_default())
+}
+
+/// A page of one shard's hub events: the next `page_size` after the event
+/// `after`, or without it the newest `page_size`, newest first.
+pub async fn events(
+    inv: &Invocation,
+    shard: u32,
+    after: Option<u64>,
+    page_size: u32,
+) -> Result<Vec<u8>, UpstreamError> {
+    let (shard, page_size) = (shard.to_string(), page_size.to_string());
+    let from = after.map(|id| (id + 1).to_string());
+    let mut query = vec![("shard_index", shard.as_str()), ("pageSize", page_size.as_str())];
+    match &from {
+        Some(from) => query.push(("from_event_id", from)),
+        None => query.push(("reverse", "true")),
+    }
+    let body = upstream::send(inv, Upstream::Hypersnap, HttpMethod::Get, &v1("events", &query), None, true).await?;
+    Ok(body.unwrap_or_default())
 }
 
 #[derive(Deserialize)]

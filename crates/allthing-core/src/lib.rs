@@ -15,6 +15,7 @@ pub mod format;
 pub mod guard;
 pub mod hls;
 pub mod labels;
+pub mod latest;
 pub mod listing;
 pub mod model;
 pub mod normalize;

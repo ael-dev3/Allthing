@@ -951,6 +951,19 @@ test.describe("threads and navigation", () => {
     expect(violations).toEqual([]);
   });
 
+  test("new lists casts from the last few minutes, from Snapchain's event stream", async ({ page, request }) => {
+    await page.goto(at("/?sort=new"));
+    const first = firstCard(page);
+    await expect(first).toBeVisible();
+    const age = Date.now() / 1000 - Number(await first.getAttribute("data-ts"));
+    expect(age, `newest cast is ${Math.round(age)} s old`).toBeLessThan(600);
+    // /status reports the real lag of both lists.
+    test.skip(PAGES, "the static copy has no Worker");
+    const status = await (await request.get(at("/api/v1/status"))).json();
+    expect(status.freshness.new.newest_cast_age_s).toBeLessThan(600);
+    expect(status.freshness.new.built_age_s).toBeGreaterThanOrEqual(0);
+  });
+
   test("the front page's data request starts inline and is reused", async ({ page }) => {
     test.skip(PAGES, "the static copy has no API");
     const violations: string[] = [];

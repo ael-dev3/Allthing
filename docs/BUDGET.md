@@ -27,7 +27,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
 | Hovering likes, recasts or replies | 1 per popover (`/api/v1/reactions`, `/api/v1/replies`), after a 280 ms delay, then cached | none |
 | Opening a post already prefetched | **0** | none: client cache |
-| Changing sort | **0** | none: the payload holds the whole pool and the browser re-ranks it locally |
+| Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
 | Changing the time range | 1 per trending window not loaded yet (`/api/v1/home?window=1h` or `7d`); the past month, year and all time share the week's payload | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
@@ -53,6 +53,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | Endpoint | Fresh | Stale-while-revalidate until | Kept for stale-if-error | Browser `max-age` |
 |---|---|---|---|---|
 | home | 60 s | 10 min | 24 h | 30 s |
+| latest ("new") | 30 s | 60 s | 24 h | 15 s |
 | channel | 2 min | 15 min | 24 h | 60 s |
 | cast | 2 min | 30 min | 24 h | 60 s |
 | user | 5 min | 30 min | 24 h | 2 min |
@@ -78,6 +79,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 |---|---|
 | Any cache hit | 1 (cache read) |
 | home | cache read 1 + trending casts 1 + link pages ≤12 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
+| latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + origins ≤36 + app names ≤1 + cache write 1 |
+| status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
 | channel | as home, plus channel lookup 1 and a possible feed refetch 1 |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
 | user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + link pages ≤12 + apps ≤1 + cache write 1 (≤ 23) |

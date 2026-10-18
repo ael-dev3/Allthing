@@ -85,6 +85,11 @@ fn header_f64(headers: &Headers, name: &str) -> Option<f64> {
     headers.get(name).ok().flatten()?.parse().ok()
 }
 
+/// The cached entry for `key`, whatever its age, without building it.
+pub async fn peek(inv: &Invocation, key: &str) -> Option<Entry> {
+    lookup(inv, key).await
+}
+
 async fn lookup(inv: &Invocation, key: &str) -> Option<Entry> {
     if !inv.take_subrequests(1) {
         return None;

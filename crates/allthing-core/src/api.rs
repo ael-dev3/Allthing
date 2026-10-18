@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::latest::Cursor;
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::percent_encode;
 use crate::provenance::{Backend, Origin};
@@ -74,6 +75,20 @@ pub struct HomePayload {
     pub pool: Vec<Cast>,
     #[serde(default)]
     pub notes: Annotations,
+    pub meta: Meta,
+}
+
+/// The newest casts on Farcaster, from Snapchain's event stream: the front
+/// page's "new" list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatestPayload {
+    /// Newest first.
+    pub pool: Vec<Cast>,
+    #[serde(default)]
+    pub notes: Annotations,
+    /// Where the next build continues reading each shard's events.
+    #[serde(default)]
+    pub cursors: Vec<Cursor>,
     pub meta: Meta,
 }
 
@@ -206,6 +221,11 @@ pub fn home_page_path(offset: u32, window: TrendingWindow) -> String {
     if query.is_empty() { home_path() } else { format!("{API_PREFIX}/home?{}", query.join("&")) }
 }
 
+/// The newest casts (the front page's "new").
+pub fn latest_path() -> String {
+    format!("{API_PREFIX}/latest")
+}
+
 pub fn vote_path(fid: u64) -> String {
     format!("{API_PREFIX}/vote?fid={fid}")
 }
@@ -260,6 +280,9 @@ pub struct CachePolicy {
 }
 
 pub const HOME_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 30 };
+/// New casts arrive every few seconds: fresh for 30 s, then refreshed in the
+/// background for a minute, then rebuilt while the reader waits.
+pub const LATEST_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 60, keep: 86_400, browser: 15 };
 pub const CHANNEL_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 900, keep: 86_400, browser: 60 };
 pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
@@ -356,7 +379,9 @@ mod tests {
 
     #[test]
     fn policies_are_ordered() {
-        for policy in [HOME_CACHE, CHANNEL_CACHE, CAST_CACHE, USER_CACHE, WALLET_CACHE, CHANNELS_CACHE, MISS_CACHE] {
+        for policy in
+            [HOME_CACHE, LATEST_CACHE, CHANNEL_CACHE, CAST_CACHE, USER_CACHE, WALLET_CACHE, CHANNELS_CACHE, MISS_CACHE]
+        {
             assert!(policy.fresh <= policy.stale && policy.stale <= policy.keep);
             assert!(policy.browser <= policy.fresh);
         }
