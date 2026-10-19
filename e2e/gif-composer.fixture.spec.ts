@@ -173,6 +173,8 @@ test("without a GIF key there is no GIF button, and a cast still hands off", asy
   const dialog = page.getByRole("dialog", { name: "New cast" });
   await expect(dialog.getByRole("textbox")).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Post in Farcaster" })).toBeDisabled();
+  // This Worker endorses no keys: the Farcaster app posts it, and says so.
+  await expect(dialog.locator(".compose-note")).toHaveText("Allthing doesn't post: this opens the Farcaster app with your cast ready to post.");
   await page.keyboard.type("Just words");
   await page.waitForTimeout(400);
   await expect(dialog.getByRole("button", { name: "Add a GIF" })).toHaveCount(0);

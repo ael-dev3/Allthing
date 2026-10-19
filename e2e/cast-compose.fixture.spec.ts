@@ -124,12 +124,11 @@ test("with a key, a cast with a mention and a GIF goes out from the composer", a
   await dialog.getByRole("textbox", { name: "What's happening?" }).fill("gm @alice and @nobody");
   await dialog.getByRole("button", { name: "Add a GIF" }).click();
   await dialog.getByRole("button", { name: "trending 1" }).click();
-  await expect(dialog).toContainText("Posted from this browser, with your key.");
-  // The hand-off is still there, for whoever prefers it.
-  await expect(dialog.getByRole("link", { name: "Post in the Farcaster app instead" })).toHaveAttribute(
-    "href",
-    /^https:\/\/farcaster\.xyz\/~\/compose\?text=gm%20%40alice%20and%20%40nobody&embeds\[\]=/,
-  );
+  // It posts from here, with no way round to the Farcaster app and no note.
+  await expect(dialog.getByRole("button", { name: "Cast", exact: true })).toBeEnabled();
+  await expect(dialog.getByRole("link", { name: /Farcaster/ })).toHaveCount(0);
+  await expect(dialog.locator(".compose-note")).toHaveCount(0);
+  await expect(dialog).not.toContainText(/Farcaster app|doesn't post/);
   await dialog.getByRole("button", { name: "Cast", exact: true }).click();
   await expect(dialog).toBeHidden();
   // @alice is someone's, @nobody no one's: a mention, and text.

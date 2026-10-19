@@ -3531,11 +3531,6 @@ code {
   font-size: 14px;
 }
 
-.compose-elsewhere {
-  color: inherit;
-  text-decoration: underline;
-}
-
 /* The GIF picker: KLIPY's results, in its order, in a grid of their own. */
 .gif-picker {
   display: grid;

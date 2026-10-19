@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Composing a cast. Allthing doesn't post: a draft (its text, a GIF, the
-//! channel it goes to or the cast it answers) opens in the Farcaster app,
-//! ready to post, through farcaster.xyz's compose link.
+//! Composing a cast. A draft (its text, a GIF, the channel it goes to, the
+//! cast it answers or quotes) becomes the cast the reader's key signs
+//! ([`Draft::new_cast`]); where Allthing endorses no keys, it opens in the
+//! Farcaster app instead, ready to post, through farcaster.xyz's compose
+//! link ([`Draft::compose_url`]).
 //!
 //! GIFs come from KLIPY (<https://docs.klipy.com>). KLIPY asks that its API
 //! and its media be reached from the reader's browser, never through a
