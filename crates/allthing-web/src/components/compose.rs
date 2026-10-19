@@ -7,9 +7,9 @@
 //! Where the reader can like and recast here (`components::writer`), the
 //! draft is posted with their key: "@name"s become mentions, and the cast
 //! goes to the node from their browser (`allthing_core::compose::Draft::
-//! new_cast`). Elsewhere, and on request, "Post in Farcaster" opens the
-//! draft in the Farcaster app, through farcaster.xyz's compose link, and the
-//! reader posts it there.
+//! new_cast`). Only where the Worker endorses no keys does "Post in
+//! Farcaster" open the draft in the Farcaster app instead, through
+//! farcaster.xyz's compose link, for the reader to post there.
 //!
 //! GIFs come from KLIPY. Its terms ask that the browser reach its API and
 //! its media itself, never through Allthing's server, and that results show
@@ -321,7 +321,8 @@ pub fn QuoteButton(cast: Cast) -> impl IntoView {
 }
 
 /// The composer's dialog: the draft's text, its GIF, the GIF picker, and
-/// the link that opens it in the Farcaster app.
+/// the button that posts it (or, where Allthing can't, the link that opens
+/// it in the Farcaster app).
 #[component]
 pub fn ComposerDialog() -> impl IntoView {
     let composer = use_composer();
@@ -406,7 +407,10 @@ pub fn ComposerDialog() -> impl IntoView {
                     channel.map(|id| view! { <p class="compose-context">"In "<strong>"/"{id}</strong></p> }.into_any()),
                 ),
             };
-            let writer = use_writer().filter(|w| w.can_post());
+            let writer = use_writer();
+            // Posted from here wherever the Worker endorses keys, with no
+            // way round it; the Farcaster app only where it doesn't.
+            let posts_here = Memo::new(move |_| writer.map_or(Some(false), |w| w.posts_here()));
             // The text's length, in bytes, as a cast counts it.
             let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
             let picked = Callback::new(move |gif: Gif| {
@@ -466,24 +470,14 @@ pub fn ComposerDialog() -> impl IntoView {
                                         {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
                                     </span>
                                 })}
-                                {match writer {
-                                    Some(writer) => view! { <PostButton composer writer/> }.into_any(),
-                                    None => view! { <PostLink composer/> }.into_any(),
+                                {move || match (posts_here.get(), writer) {
+                                    (Some(false), _) | (_, None) => view! { <PostLink composer/> }.into_any(),
+                                    (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
                                 }}
                             </div>
-                            {match writer {
-                                Some(_) => view! {
-                                    <p class="compose-note muted small">
-                                        "Posted from this browser, with your key. "
-                                        <a class="compose-elsewhere" href=move || composer.draft().compose_url() target="_blank" rel="noopener noreferrer">
-                                            "Post in the Farcaster app instead"
-                                        </a>
-                                    </p>
-                                }.into_any(),
-                                None => view! {
-                                    <p class="compose-note muted small">"Allthing doesn't post: this opens the Farcaster app with your cast ready to post."</p>
-                                }.into_any(),
-                            }}
+                            {move || (posts_here.get() == Some(false)).then(|| view! {
+                                <p class="compose-note muted small">"Allthing doesn't post: this opens the Farcaster app with your cast ready to post."</p>
+                            })}
                         </footer>
                     </div>
                 </div>
@@ -493,14 +487,15 @@ pub fn ComposerDialog() -> impl IntoView {
 }
 
 /// Cast, Reply or Quote, with the reader's key: their first post opens the
-/// dialog that approves one.
+/// dialog that approves one. It waits while the Worker is asked whether it
+/// endorses keys.
 #[component]
 fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
     let blocked = Memo::new(move |_| {
         let empty = composer.text.with(|t| t.trim().is_empty())
             && composer.gif.with(Option::is_none)
             && !matches!(composer.target.get(), Target::Quote(_));
-        empty || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES)
+        empty || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES) || writer.posts_here().is_none()
     });
     let label = move || match (composer.posting.get(), composer.target.get()) {
         (true, _) => "Posting…",

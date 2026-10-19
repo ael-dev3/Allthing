@@ -250,10 +250,15 @@ impl Writer {
         });
     }
 
-    /// Whether the reader can post here, with a key they have or will
-    /// approve.
-    pub fn can_post(self) -> bool {
-        self.shows_buttons()
+    /// Whether the reader's casts go out from here, with a key they have or
+    /// will approve: yes where the Worker endorses keys, no where it
+    /// doesn't, and not yet known while that is found out.
+    pub fn posts_here(self) -> Option<bool> {
+        match self.can.get() {
+            Can::Approve | Can::Yes => Some(true),
+            Can::No => Some(false),
+            Can::Checking => None,
+        }
     }
 
     /// Run `then` with the reader's key: at once, or when they have
