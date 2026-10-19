@@ -86,7 +86,9 @@ pub fn is_mini_app_url(url: &str) -> bool {
 
 /// Sites (and their subdomains) whose pages are never mini apps, so their
 /// links aren't fetched to look for mini app meta tags. Mini apps on
-/// Farcaster's own hosts are found by [`is_mini_app_url`].
+/// Farcaster's own hosts are found by [`is_mini_app_url`]. Block explorers'
+/// pages are large and slow to answer a Worker: a Basescan link held cold
+/// profile builds for the whole 2.5 s link-page timeout.
 const NOT_MINI_APP_HOSTS: &[&str] = &[
     "farcaster.xyz",
     "warpcast.com",
@@ -101,6 +103,16 @@ const NOT_MINI_APP_HOSTS: &[&str] = &[
     "open.spotify.com",
     "vimeo.com",
     "en.wikipedia.org",
+    "etherscan.io",
+    "basescan.org",
+    "arbiscan.io",
+    "polygonscan.com",
+    "celoscan.io",
+    "bscscan.com",
+    "uniscan.xyz",
+    "blockscout.com",
+    "solscan.io",
+    "explorer.solana.com",
 ];
 
 /// A link URL as a key for its mini app check: without its `#fragment`.
@@ -373,6 +385,10 @@ mod tests {
         assert!(!worth_checking_for_mini_app("https://docs.farcaster.xyz/learn/what-is-farcaster"));
         assert!(!worth_checking_for_mini_app("https://m.youtube.com/watch?v=x"));
         assert!(worth_checking_for_mini_app("https://notfarcaster.xyz/"));
+        assert!(!worth_checking_for_mini_app("https://basescan.org/tx/0x16fa"));
+        assert!(!worth_checking_for_mini_app("https://optimistic.etherscan.io/address/0x76d0"));
+        assert!(!worth_checking_for_mini_app("https://solscan.io/tx/5abc"));
+        assert!(worth_checking_for_mini_app("https://notbasescan.org/"));
         assert!(!worth_checking_for_mini_app("https://farcaster.xyz/miniapps/Z6gEN6rYltaz/swarmhood"));
         assert!(!worth_checking_for_mini_app("https://i.imgur.com/a.png"));
         assert!(!worth_checking_for_mini_app("https://example.com/clip.mp4"));
