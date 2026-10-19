@@ -426,7 +426,7 @@ mod tests {
             image_url: None,
             title: title.map(str::to_owned),
         };
-        assert_eq!(embed_label(&[image.clone()]), None);
+        assert_eq!(embed_label(std::slice::from_ref(&image)), None);
         assert_eq!(embed_label(&[]), None);
         assert_eq!(
             embed_label(&[image.clone(), Embed::Video { url: "https://s/v.m3u8".into() }]).as_deref(),
