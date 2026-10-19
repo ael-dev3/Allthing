@@ -640,6 +640,13 @@ code {
   flex: none;
 }
 
+/* The small copy of a large picture shows until the large one has loaded. */
+.avatar-large {
+  background-image: var(--small, none), linear-gradient(135deg, #e9e6f8, #dff3f6);
+  background-size: cover;
+  background-position: center;
+}
+
 .user-chip {
   display: inline-flex;
   align-items: center;

@@ -35,6 +35,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A profile card's picture no longer flashes blank as the card opens: until its sharper copy has loaded, it shows the small copy the feed already loaded. A post's author and a profile's own picture do the same, and load at once instead of lazily.
 - Wallet activity no longer swings when a chain can't be read: that chain keeps its last good count from the previous read of the same addresses, and the chart says some counts are from an earlier read. Before, it was left out and the other chains shared its part (0xael.eth showed Optimism 58% and Monad 41% while Base, its main chain, was unread), and that copy was kept for six hours. A copy still missing an EVM chain is now read again within minutes.
 - Search and the channel directory's search no longer show a channel count that contradicts the channel's page: Hypersnap's channel search can return a different record of the same channel, so /farcaster showed "23 casters" in search while its page shows 445,633 followers. Search rows now show the channel without a count.
 - A post's meta line names the app it was posted from once ("via Farcaster"), not twice: the feed card's "via" chip had stayed next to the post's own linked one since the app moved into the meta line.

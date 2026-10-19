@@ -126,6 +126,29 @@ test("cards in view preload their authors' vote and wallets, so a hovered card o
   await expect(page).toHaveURL(/\/u\/alice$/);
 });
 
+test("a card's picture shows the small copy the feed loaded until its own has loaded", async ({ page }) => {
+  await serve(page);
+  // Alice has a picture. The feed's small copy comes at once; the card's
+  // larger copy doesn't come during the test.
+  const pfp = "https://imagedelivery.net/fixture/alice/original";
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("https://imagedelivery.net/**", (route) => {
+    if (route.request().url().includes("w=64")) return route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.route("**/api/v1/home**", (route) => {
+    const later = new URL(route.request().url()).searchParams.has("offset");
+    return route.fulfill({ json: { pool: later ? [] : [{ ...cast, author: { ...alice, pfp_url: pfp } }], notes: { users }, meta } });
+  });
+  await page.goto("/");
+  const small = feedCard(page).locator("header.cast-meta .avatar").first();
+  await expect.poll(() => small.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await chipLink(feedCard(page), "user-link").hover();
+  const picture = profileOf(page, "Alice", "alice").locator("img.avatar-large");
+  await expect(picture).toHaveAttribute("src", /w=140/);
+  expect(await picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(0);
+  expect(await picture.evaluate((img) => getComputedStyle(img).backgroundImage)).toContain(await small.getAttribute("src"));
+});
+
 test("the card is solid and on top of the cards below it; clicks inside it stay in it", async ({ page }) => {
   await serve(page);
   await page.goto("/");
