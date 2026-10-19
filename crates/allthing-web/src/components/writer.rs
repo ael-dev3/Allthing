@@ -59,6 +59,7 @@ const NODE_DOWN: &str = "Couldn't reach Farcaster's network. Check your connecti
 const UNSUPPORTED: &str = "This browser can't keep a signing key safely. Update it, or use another browser, to like and recast from Allthing.";
 const KEY_GONE: &str =
     "Allthing's key isn't on your Farcaster account anymore. Like or recast again to approve a new one.";
+const NOT_HERE: &str = "Liking and recasting aren't available from Allthing right now.";
 
 /// Whether the reader can like and recast here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +144,11 @@ thread_local! {
     /// What opened the dialog (a like, a recast, a cast): done once the
     /// key is approved.
     static WAITING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    /// A like or recast clicked while signed out, or before the check: done
+    /// once the reader is signed in and the check is back (after approving
+    /// a key, if they need one). Dropped with a sign-in dialog closed
+    /// without signing in.
+    static PENDING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
     /// Usernames looked up for mentions this visit, and whose they are.
     static NAMES: RefCell<HashMap<String, Option<u64>>> = RefCell::new(HashMap::new());
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
@@ -181,13 +187,20 @@ impl Writer {
             }
             fid
         });
+        Effect::new(move |_| {
+            if !session.dialog_open() && session.user.with(Option::is_none) {
+                PENDING.with(|p| p.borrow_mut().take());
+            }
+        });
         writer.follow_tabs();
         writer
     }
 
-    /// Whether casts show the like and recast buttons.
-    pub fn shows_buttons(self) -> bool {
-        matches!(self.can.get(), Can::Approve | Can::Yes)
+    /// Whether a cast's like and recast icons are buttons: for anyone signed
+    /// out (a click signs them in first) and wherever the Worker endorses
+    /// keys, or may. Pictures for a reader it endorses none for.
+    pub fn icons_act(self) -> bool {
+        self.can.get() != Can::No || self.session.user.with(Option::is_none)
     }
 
     /// Whether the reader's key is approved and signs.
@@ -210,7 +223,8 @@ impl Writer {
         self.mine.with(|m| m.busy.contains(&(hash.to_owned(), kind)))
     }
 
-    /// Like or recast `target`, or take it back.
+    /// Like or recast `target`, or take it back: at once with the reader's
+    /// key, or once they have signed in or approved one (`when_ready`).
     pub fn toggle(self, target: CastId, kind: Reaction) {
         let key = (hex_encode(&target.hash), kind);
         if self.mine.with_untracked(|m| m.busy.contains(&key)) {
@@ -262,7 +276,9 @@ impl Writer {
     }
 
     /// Run `then` with the reader's key: at once, or when they have
-    /// approved one, for which the dialog opens. Nothing where they can't.
+    /// approved one, for which the dialog opens. Signed out, the sign-in
+    /// dialog opens first; while the Worker is asked, it waits for the
+    /// answer. Where it endorses no keys, a notice says so.
     pub fn when_ready(self, then: impl FnOnce() + 'static) {
         match self.can.get_untracked() {
             Can::Yes => then(),
@@ -270,7 +286,12 @@ impl Writer {
                 WAITING.with(|w| *w.borrow_mut() = Some(Box::new(then)));
                 self.connect();
             }
-            Can::No | Can::Checking => {}
+            Can::Checking => PENDING.with(|p| *p.borrow_mut() = Some(Box::new(then))),
+            Can::No if self.session.user.with_untracked(Option::is_none) => {
+                PENDING.with(|p| *p.borrow_mut() = Some(Box::new(then)));
+                self.session.sign_in();
+            }
+            Can::No => self.say(NOT_HERE.into()),
         }
     }
 
@@ -338,6 +359,10 @@ impl Writer {
             if can == Can::Yes {
                 self.load_mine(fid);
             }
+            // The like that signed the reader in, or came before the answer.
+            if let Some(then) = PENDING.with(|p| p.borrow_mut().take()) {
+                self.when_ready(then);
+            }
         });
     }
 
@@ -346,6 +371,7 @@ impl Writer {
         self.can.set(Can::No);
         KEY.with(|k| k.borrow_mut().take());
         WAITING.with(|w| w.borrow_mut().take());
+        PENDING.with(|p| p.borrow_mut().take());
         self.mine.set(Mine::default());
         if self.open.get_untracked() {
             self.dismiss();

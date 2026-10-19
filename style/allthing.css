@@ -840,9 +840,9 @@ code {
   stroke: var(--cyan);
 }
 
-/* Like and recast, for a reader who can (components/writer.rs): the icon is
-   the button, with a hit area about 30 px around it that leaves the icon
-   where it was and stops at the count. */
+/* Like and recast (components/writer.rs): the icon is the button, with a hit
+   area about 30 px around it that leaves the icon where it was and stops at
+   the count. Signed out, it signs the reader in first. */
 .engagement .act {
   font: inherit;
   color: inherit;
@@ -884,6 +884,24 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+/* A like or recast: the icon (the button, components/chips.rs), then the
+   count that previews who; pointing at either opens the preview. */
+.engagement .stat > .popover {
+  align-items: center;
+  gap: 5px;
+}
+
+/* The count's hit area reaches 7.5 px past it, to where the next one's
+   icon begins, so a finger finds it beside the button. */
+.engagement .popover-trigger.stat-count {
+  padding: 7.5px 7.5px 7.5px 0;
+  margin: -7.5px -7.5px -7.5px 0;
+}
+
+.engagement .popover-trigger.stat-count:focus-visible {
+  outline-offset: -2px;
 }
 
 .replies-link {

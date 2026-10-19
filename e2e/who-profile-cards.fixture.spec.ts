@@ -88,7 +88,7 @@ test.describe("profile cards in the who-list", () => {
     const page = await context.newPage();
     const requests = await serve(page);
     await page.goto("/");
-    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes").tap();
+    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").tap();
     const list = page.getByRole("dialog", { name: "Liked by" });
     await expect(list).toBeVisible();
     await list.getByRole("link", { name: /Dave/ }).tap();
@@ -106,7 +106,7 @@ test.describe("profile cards in the who-list", () => {
     await serve(page);
     await page.goto("/");
     const card = page.locator(".cast-card:not(.skeleton)").first();
-    await card.locator(".stat-likes").tap();
+    await card.locator(".stat-likes .stat-count").tap();
     const list = page.getByRole("dialog", { name: "Liked by" });
     await expect(list).toBeVisible();
     await list.getByRole("link", { name: /Dave/ }).tap();

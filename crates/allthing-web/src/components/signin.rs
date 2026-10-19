@@ -129,6 +129,19 @@ impl Session {
         fresh(self);
     }
 
+    /// Open the sign-in dialog, for something only a signed-in reader can
+    /// do (a like, say), which follows once they have.
+    pub fn sign_in(self) {
+        if !self.open.get_untracked() {
+            self.open();
+        }
+    }
+
+    /// Whether the sign-in dialog is open.
+    pub fn dialog_open(self) -> bool {
+        self.open.get()
+    }
+
     /// Close the dialog, stopping its sign-in, and return focus to where it
     /// was.
     fn close(self) {

@@ -145,9 +145,12 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
     view! { <div class="engagement">{likes}{recasts}{replies}<span class="visually-hidden">{title}</span></div> }
 }
 
-/// A like or recast count: hovering it previews who, clicking opens the full
-/// list. Where the reader can like and recast from Allthing, its icon is
-/// the button that does, and the count follows what they do.
+/// A like or recast: its icon, then its count. Pointing at either previews
+/// who liked or recasted, with "see all" for the full list, which a click
+/// on the count opens too (on a touch screen a tap on the count shows the
+/// preview). The icon never opens the list: in front of the Worker it is the
+/// button that likes or recasts (`acting_stat`); in the static copy, a
+/// picture.
 fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList) -> AnyView {
     #[cfg(not(feature = "static-host"))]
     if let Some(writer) = crate::components::writer::use_writer()
@@ -155,7 +158,11 @@ fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList) -> AnyVi
     {
         return acting_stat(writer, target, cast.hash.clone(), kind, n, who);
     }
-    count_stat(kind, n, cast.hash.clone(), who, true)
+    let (icon, _, _, class) = reaction_words(kind);
+    let lead =
+        ViewFn::from(move || view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> });
+    view! { <span class=format!("stat {class}")>{count_stat(kind, Signal::stored(n), cast.hash.clone(), who, lead)}</span> }
+        .into_any()
 }
 
 /// The icon and the words for each kind, and its class.
@@ -166,27 +173,26 @@ fn reaction_words(kind: ReactionKind) -> (&'static str, &'static str, &'static s
     }
 }
 
-/// The count, with its icon or (beside a like or recast button) without.
-fn count_stat(kind: ReactionKind, n: u64, hash: String, who: WhoList, with_icon: bool) -> AnyView {
-    let (icon, one, many, class) = reaction_words(kind);
-    let class = if with_icon { format!("stat {class}") } else { "stat-count".to_owned() };
+/// The count, after `lead` (its icon, or the button that likes or
+/// recasts): the preview's trigger, or plain text while it is 0.
+fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, lead: ViewFn) -> AnyView {
+    let (_, one, many, _) = reaction_words(kind);
+    let words = move || if n.get() == 1 { one } else { many };
     let body = move || {
         view! {
-            {with_icon.then(|| view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> })}
-            <span class="n">{compact_number(n)}</span>
-            <span class="label">{if n == 1 { one } else { many }}</span>
+            <span class="n">{move || compact_number(n.get())}</span>
+            <span class="label">{words}</span>
         }
     };
-    if n == 0 {
-        return view! { <span class=class>{body()}</span> }.into_any();
-    }
     let preview_hash = hash.clone();
     view! {
         <Popover
             label=match kind { ReactionKind::Likes => "Liked by", ReactionKind::Recasts => "Recasted by" }
-            trigger_label=format!("{}{}: show who", compact_number(n), many)
-            trigger_class=class
+            trigger_label=Signal::derive(move || format!("{}{}: show who", compact_number(n.get()), words()))
+            trigger_class="stat-count"
             hover=true
+            lead
+            idle=Signal::derive(move || n.get() == 0)
             on_activate=Callback::new(move |()| who.open(hash.clone(), kind))
             trigger=body
             content=move || view! { <WhoPreview hash=preview_hash.clone() kind/> }
@@ -195,9 +201,11 @@ fn count_stat(kind: ReactionKind, n: u64, hash: String, who: WhoList, with_icon:
     .into_any()
 }
 
-/// A like or recast button, pressed when the reader has, before the count.
-/// Until they can (the Worker endorses no keys, or they signed out), the
-/// plain count.
+/// A like or recast button before the count, pressed when the reader has,
+/// and the count, which follows what they do. For a reader signed out, or
+/// without a key yet, the button signs them in or approves a key first
+/// (`Writer::toggle`); where the Worker endorses no keys, the icon is a
+/// picture.
 #[cfg(not(feature = "static-host"))]
 fn acting_stat(
     writer: crate::components::writer::Writer,
@@ -219,30 +227,33 @@ fn acting_stat(
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
     let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
-    let buttons = Memo::new(move |_| writer.shows_buttons());
-    (move || {
-        if !buttons.get() {
-            return count_stat(kind, n, hash.clone(), who, true);
-        }
-        let hash = hash.clone();
-        view! {
-            <span class=move || format!("stat {class} acting{}", if mine.get() { " mine" } else { "" })>
+    let buttons = Memo::new(move |_| writer.icons_act());
+    let lead = ViewFn::from(move || {
+        move || {
+            let icon = view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> };
+            if !buttons.get() {
+                return icon.into_any();
+            }
+            view! {
                 <button
                     type="button"
                     class="act"
                     aria-label=action
-                    title=action
                     aria-pressed=move || mine.get().to_string()
                     aria-busy=move || busy.get().then_some("true")
                     on:click=move |_| writer.toggle(target, reaction)
                 >
-                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
+                    {icon}
                 </button>
-                {move || count_stat(kind, shown.get(), hash.clone(), who, false)}
-            </span>
+            }
+            .into_any()
         }
-        .into_any()
-    })
+    });
+    view! {
+        <span class=move || format!("stat {class} acting{}", if mine.get() { " mine" } else { "" })>
+            {count_stat(kind, shown.into(), hash, who, lead)}
+        </span>
+    }
     .into_any()
 }
 

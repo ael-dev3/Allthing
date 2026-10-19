@@ -281,7 +281,7 @@ test("on a phone, a tapped list preloads its people, and a tapped name's card is
   const { context, page } = await phone(browser, testInfo);
   const reads = await serve(page);
   await page.goto("/");
-  await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes").tap();
+  await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").tap();
   const list = page.getByRole("dialog", { name: "Liked by" });
   await expect(list.locator(".who-list li")).toHaveCount(10);
   const fids = likers(0).map((p) => p.fid);

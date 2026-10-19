@@ -768,8 +768,8 @@ test.describe("threads and navigation", () => {
     await page.mouse.move(5, 5);
     await expect(likes).toHaveCount(0);
 
-    // Click: the full list in a dialog.
-    await foot.locator(".stat-likes").click();
+    // Click on the count (the icon likes): the full list in a dialog.
+    await foot.locator(".stat-likes .stat-count").click();
     const full = page.locator(".who-modal");
     await expect(full).toBeVisible();
     await expect.poll(() => full.locator(".who-list li").count()).toBeGreaterThan(10);
@@ -777,7 +777,7 @@ test.describe("threads and navigation", () => {
     await expect(full).toHaveCount(0);
 
     // Keyboard focus opens it too.
-    await foot.locator(".stat-recasts").focus();
+    await foot.locator(".stat-recasts .stat-count").focus();
     await expect(page.getByRole("dialog", { name: "Recasted by" })).toBeVisible();
     await page.keyboard.press("Escape");
 
