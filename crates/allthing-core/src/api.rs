@@ -508,6 +508,8 @@ pub fn first_username_at_in(payload: &[u8], fid: u64) -> Option<i64> {
 /// refreshed soon, so the gap isn't kept for the usual five minutes.
 pub const USER_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 300, keep: 86_400, browser: 15 };
 pub const WALLET_CACHE: CachePolicy = CachePolicy { fresh: 21_600, stale: 86_400, keep: 172_800, browser: 3600 };
+/// Wallet activity with an EVM chain still unread: read again in minutes.
+pub const WALLET_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 172_800, browser: 60 };
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 pub const REACTIONS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 86_400, browser: 300 };
@@ -693,6 +695,7 @@ mod tests {
             USER_CACHE,
             USER_RETRY_CACHE,
             WALLET_CACHE,
+            WALLET_RETRY_CACHE,
             CHANNELS_CACHE,
             SEARCH_CACHE,
             REACTIONS_CACHE,

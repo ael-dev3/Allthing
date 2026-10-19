@@ -739,7 +739,7 @@ pub async fn vote(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
 const MAX_EVM_ADDRESSES: usize = 5;
 const MAX_SOLANA_ADDRESSES: usize = 2;
 
-pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
+pub async fn wallets(inv: Rc<Invocation>, fid: u64, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
     let Some(raw) = hypersnap::users_bulk(&inv, &[fid]).await.map_err(Failure::upstream)?.into_iter().next() else {
         return Ok(Built::not_found("No such user"));
     };
@@ -790,16 +790,23 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
                         capped,
                         percent: 0,
                         error: result.err(),
+                        carried: false,
                     }
                 }
             }),
     )
     .await;
     let mut chains = measured;
+    // A chain that can't be read now keeps its last good count, from the
+    // previous copy, instead of leaving the others to share its part.
+    if let Some(last) = previous.as_deref().and_then(|p| serde_json::from_slice::<WalletActivity>(p).ok()) {
+        wallet::carry_unread(&mut chains, &addresses, &last);
+    }
+    let policy = if wallet::evm_unread(&chains) { api::WALLET_RETRY_CACHE } else { api::WALLET_CACHE };
     let total = wallet::apportion(&mut chains);
     let sources = wallet_sources(!evm.is_empty(), !solana.is_empty(), inv.solana_rpc().is_some(), &chains);
     let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
-    Built::json(&activity, api::WALLET_CACHE)
+    Built::json(&activity, policy)
 }
 
 /// Where each kind of count was read, or that Solana's couldn't be.
@@ -1779,6 +1786,7 @@ mod wallet_tests {
             capped: false,
             percent: 0,
             error: error.map(str::to_owned),
+            carried: false,
         };
         let unread = wallet_sources(true, true, false, &[solana(Some("upstream returned HTTP 403"))]);
         assert_eq!(unread.len(), 2);

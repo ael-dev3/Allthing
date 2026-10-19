@@ -66,6 +66,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | user | 5 min | 30 min | 24 h | 2 min |
 | user, when the first-username read failed | 30 s | 5 min | 24 h | 15 s |
 | wallets | 6 h | 24 h | 48 h | 1 h |
+| wallets, an EVM chain still unread | 5 min | 1 h | 48 h | 1 min |
 | channels | 1 h | 24 h | 48 h | 10 min |
 | search | 5 min | 30 min | 24 h | 2 min |
 | reactions (who liked, recasted) | 5 min | 1 h | 24 h | 5 min |
