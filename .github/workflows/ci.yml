@@ -40,20 +40,24 @@ jobs:
 
   perf:
     # The performance budget (docs/PERFORMANCE.md), checked against the live
-    # site after each push to main. Workers Builds deploys in parallel, so this
-    # measures the release being replaced or the new one, whichever is live.
+    # site after Workers Builds deploys the checked-out main commit.
     name: performance budget (allthing.social)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+        with:
+          # A manual run measures production main, even when dispatched from another ref.
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - name: Wait for the intended deployment
+        run: node scripts/wait-for-deploy.mjs https://allthing.social "$(git rev-parse HEAD)"
       - run: npx playwright test e2e/perf.spec.ts
         env:
           E2E_BASE_URL: https://allthing.social
