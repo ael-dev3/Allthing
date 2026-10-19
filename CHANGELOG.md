@@ -7,6 +7,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.
 - The usage bar filters the feed: each app is a link to its casts, the filter is a removable chip, and "Other apps" lists the smaller clients. The filter stays in the URL with the sort and time range.
 - API answers carry a `Server-Timing` header with the Worker's time for them, named after how they were served (`fresh`, `revalidating`, `miss` or `stale-if-error`), so slow page builds can be measured in production from any browser.
 
