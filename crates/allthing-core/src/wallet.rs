@@ -103,6 +103,10 @@ pub struct ChainActivity {
     /// The chain could not be measured; `count` is meaningless.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The chain couldn't be read this time, so `count` is its last good
+    /// count, from an earlier read of the same addresses.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub carried: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +128,37 @@ pub struct WalletActivity {
     pub sources: Vec<String>,
     /// Unix milliseconds.
     pub fetched_at: i64,
+}
+
+/// Give each chain that couldn't be read now (`error`) its last good count
+/// from `previous`, an earlier read of the same `addresses`: a count only
+/// grows, so an older one is closer to the truth than leaving the chain out,
+/// which would scale the other chains up to its share. Nothing is carried
+/// when the account's addresses changed.
+pub fn carry_unread(chains: &mut [ChainActivity], addresses: &[WalletAddress], previous: &WalletActivity) {
+    fn sorted(addresses: &[WalletAddress]) -> Vec<&str> {
+        let mut list: Vec<&str> = addresses.iter().map(|w| w.address.as_str()).collect();
+        list.sort_unstable();
+        list
+    }
+    if sorted(addresses) != sorted(&previous.addresses) {
+        return;
+    }
+    for chain in chains.iter_mut().filter(|c| c.error.is_some()) {
+        let Some(last) = previous.chains.iter().find(|p| p.chain == chain.chain && p.error.is_none()) else { continue };
+        chain.count = last.count;
+        chain.capped = last.capped;
+        chain.error = None;
+        chain.carried = true;
+    }
+}
+
+/// Whether an EVM chain is still unread after [`carry_unread`]: the payload
+/// is then refreshed soon, not hours later. Solana is left out: an unread
+/// Solana usually means no keyed endpoint is configured, which a re-read
+/// doesn't change.
+pub fn evm_unread(chains: &[ChainActivity]) -> bool {
+    chains.iter().any(|c| c.kind == ChainKind::Evm && c.error.is_some())
 }
 
 /// Fill in `percent` with the largest-remainder method, and order chains by
@@ -170,7 +205,56 @@ mod apportion_tests {
             capped: false,
             percent: 0,
             error: None,
+            carried: false,
         }
+    }
+
+    fn unread(name: &str) -> ChainActivity {
+        ChainActivity { error: Some("upstream returned HTTP 429".into()), ..chain(name, 0) }
+    }
+
+    fn address(a: &str) -> WalletAddress {
+        WalletAddress { address: a.into(), kind: ChainKind::Evm, primary: false }
+    }
+
+    fn previous(addresses: &[&str], chains: Vec<ChainActivity>) -> WalletActivity {
+        WalletActivity {
+            fid: 539_854,
+            addresses: addresses.iter().map(|a| address(a)).collect(),
+            chains,
+            total: 0,
+            sources: vec![],
+            fetched_at: 0,
+        }
+    }
+
+    /// 0xael.eth on 19 Oct 2026: Base and Ethereum went unread, and the
+    /// chart showed Optimism 58%, Monad 41%. Carried, Base leads again.
+    #[test]
+    fn an_unread_chain_keeps_its_last_good_count_and_the_shares_stay_true() {
+        let last =
+            previous(&["0xa", "0xb"], vec![chain("base", 33_000), chain("ethereum", 300), chain("optimism", 95)]);
+        let mut now = vec![unread("base"), unread("ethereum"), chain("optimism", 96), chain("monad", 60)];
+        carry_unread(&mut now, &[address("0xb"), address("0xa")], &last);
+        assert!(!evm_unread(&now));
+        let base = now.iter().find(|c| c.chain == "base").unwrap();
+        assert_eq!((base.count, base.carried, base.error.is_none()), (33_000, true, true));
+        apportion(&mut now);
+        assert_eq!(now[0].chain, "base");
+        assert!(now[0].percent >= 98, "{}", now[0].percent);
+        assert!(!now.iter().find(|c| c.chain == "optimism").unwrap().carried);
+    }
+
+    #[test]
+    fn nothing_is_carried_when_the_addresses_changed_or_the_chain_was_never_read() {
+        let last = previous(&["0xa"], vec![chain("base", 33_000), unread("celo")]);
+        let mut changed = vec![unread("base")];
+        carry_unread(&mut changed, &[address("0xa"), address("0xc")], &last);
+        assert!(changed[0].error.is_some() && !changed[0].carried);
+        assert!(evm_unread(&changed));
+        let mut never = vec![unread("celo")];
+        carry_unread(&mut never, &[address("0xa")], &last);
+        assert!(never[0].error.is_some());
     }
 
     /// 0xael.eth (fid 539854) on 18 Oct 2026: Optimism's 95 of 33,090 is 0.29%,

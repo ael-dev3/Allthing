@@ -377,7 +377,7 @@ impl Endpoint {
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
             Endpoint::Cast(hash) => pages::cast(inv, hash, previous).await,
             Endpoint::User(name) => pages::user(inv, name, previous).await,
-            Endpoint::Wallets(fid) => pages::wallets(inv, fid).await,
+            Endpoint::Wallets(fid) => pages::wallets(inv, fid, previous).await,
             Endpoint::Channels(q) => pages::channels(inv, q).await,
             Endpoint::Search(q) => pages::search(inv, q).await,
         }

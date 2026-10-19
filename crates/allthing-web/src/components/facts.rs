@@ -110,6 +110,8 @@ fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
     // An EVM chain that couldn't be read just now is left out of the shares:
     // say so, rather than let the shares look complete.
     let missed = activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Evm);
+    // A shown chain whose count is from an earlier read: say so.
+    let carried = measured.iter().any(|c| c.carried);
     let bar_label = measured.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
     view! {
         <div class="share-bar" role="img" aria-label=bar_label>
@@ -127,6 +129,7 @@ fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
             }).collect_view()}
         </ul>
         {missed.then(|| view! { <p class="muted small">"Some chains weren't read just now, so the shares cover the rest."</p> })}
+        {carried.then(|| view! { <p class="muted small">"Some counts are from an earlier read: those chains couldn't be read just now."</p> })}
         {solana_note()}
     }
     .into_any()
