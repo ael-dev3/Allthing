@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Notes for coding agents
 
-Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly app plus a workers-rs API Worker, deployed to Cloudflare Workers (Free plan) at https://allthing.social. Read `docs/ARCHITECTURE.md` first.
+Allthing is a Farcaster client for reading, written in Rust: a Leptos WebAssembly app plus a workers-rs API Worker, deployed to Cloudflare Workers (Free plan) at https://allthing.social. Read `docs/ARCHITECTURE.md` first.
 
-- **Read-only.** Never add login, signing, wallet connections or write paths unless asked to.
+- **Reads only.** The one sign-in is Sign In With Farcaster by QR code (`allthing-worker/src/auth.rs`, `allthing-core/src/siwf.rs`, `allthing-web/src/components/signin.rs`; see `docs/ARCHITECTURE.md#sign-in`). Never add other login methods, signing, wallet connections or write paths unless asked to.
 - **Never hide content** because of who posted it. Allthing shows no account labels; spam is judged by a cast's content (see Mini apps and spam below).
 - **Where code goes.**
   - Pure logic and data types, with unit tests, go in `crates/allthing-core`.
@@ -17,7 +17,7 @@ Allthing is a read-only Farcaster client written in Rust: a Leptos WebAssembly a
   - Update `docs/BUDGET.md` when costs change.
 - **Links.** The app's routes are `/`, `/c/<id>`, `/p/<hash>`, `/u/<name>`, `/channels` and `/search?q=`. Build them with the helpers in `crates/allthing-web/src/util.rs` (`href`, `channel_href`, …), never as literal strings: the GitHub Pages build lives under `/Allthing`.
 - **Licensing.** Licensing is AGPL-3.0-or-later. Start new files with an SPDX header. New dependencies must pass `cargo deny check licenses`.
-- **Secrets.** Never commit secrets, tokens, `.dev.vars` or `.env` files, or session URLs.
+- **Secrets.** Never commit secrets, tokens, `.dev.vars` or `.env` files, or session URLs. The Worker's secrets (`SESSION_SECRET`, `SOLANA_RPC_URL`) are set in Cloudflare; see `docs/DEPLOY.md#secrets`.
 - **Checks.**
   - Run `bash scripts/check.sh` (fmt, Clippy native and wasm32, tests, license audit).
   - End to end: `bash scripts/build.sh && npx playwright test`. Playwright starts `wrangler dev` on port 8787.

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! JSON-RPC reads: the NS vote (onchain on Base) and
-//! EVM and Solana transaction counts.
+//! JSON-RPC reads: the NS vote (onchain on Base), whether an address may
+//! sign in as a Farcaster account (OP Mainnet), and EVM and Solana
+//! transaction counts.
 
+use allthing_core::siwf::{ID_REGISTRY, KEY_REGISTRY, auth_address_call, id_of_answer, id_of_call, is_auth_address};
 use allthing_core::vote::{MINT_GENERATION_SELECTOR, MINTED_SELECTOR, OnchainVote, VOTE_CONTRACT, encode_fid_call};
 use allthing_core::wallet::{ChainInfo, parse_quantity};
 use serde::Deserialize;
@@ -11,6 +13,7 @@ use crate::Invocation;
 use crate::upstream::{Upstream, UpstreamError, rpc};
 
 const BASE_RPCS: &[&str] = &["https://mainnet.base.org", "https://base-rpc.publicnode.com"];
+const OPTIMISM_RPCS: &[&str] = &["https://mainnet.optimism.io", "https://optimism-rpc.publicnode.com"];
 const SOLANA_NETWORK_ERROR: &str = "Solana RPC request failed";
 const SOLANA_PARSE_ERROR: &str = "Solana RPC returned an invalid response";
 
@@ -73,6 +76,40 @@ pub async fn vote(inv: &Invocation, fid: u64) -> Result<OnchainVote, UpstreamErr
                     return Ok(OnchainVote::from_words(minted, generation));
                 }
                 last_error = UpstreamError::Parse("vote eth_call failed".into());
+            }
+            Ok(_) => last_error = UpstreamError::Parse("batch answer size mismatch".into()),
+            Err(e @ (UpstreamError::Budget | UpstreamError::Busy(_))) => return Err(e),
+            Err(e) => last_error = e,
+        }
+    }
+    Err(last_error)
+}
+
+/// Whether `address` may sign in as `fid`: it is the account's custody
+/// address (`IdRegistry.idOf`) or one of its auth addresses
+/// (`KeyRegistry.keyDataOf`), as `@farcaster/auth-client` checks it. Both
+/// questions go to OP Mainnet in one batched request.
+pub async fn signs_for(inv: &Invocation, fid: u64, address: &str) -> Result<bool, UpstreamError> {
+    let call = |id: u32, to: &str, data: String| json!({ "jsonrpc": "2.0", "id": id, "method": "eth_call", "params": [{ "to": to, "data": data }, "latest"] });
+    let body = Value::Array(vec![
+        call(0, ID_REGISTRY, id_of_call(address)),
+        call(1, KEY_REGISTRY, auth_address_call(fid, address)),
+    ])
+    .to_string();
+    let answer = |r: &RpcResponse| r.result.as_ref().and_then(Value::as_str).map(str::to_owned);
+    let mut last_error = UpstreamError::Budget;
+    for endpoint in OPTIMISM_RPCS {
+        match rpc::<Vec<RpcResponse>>(inv, Upstream::OptimismRpc, endpoint, &body).await {
+            Ok(mut responses) if responses.len() == 2 => {
+                responses.sort_by_key(|r| r.id.as_ref().and_then(Value::as_u64).unwrap_or(0));
+                let custody = answer(&responses[0]).and_then(|a| id_of_answer(&a));
+                let auth = answer(&responses[1]).and_then(|a| is_auth_address(&a));
+                match (custody, auth) {
+                    (Some(owner), _) if owner == fid => return Ok(true),
+                    (_, Some(true)) => return Ok(true),
+                    (Some(_), Some(false)) => return Ok(false),
+                    _ => last_error = UpstreamError::Parse("registry eth_call failed".into()),
+                }
             }
             Ok(_) => last_error = UpstreamError::Parse("batch answer size mismatch".into()),
             Err(e @ (UpstreamError::Budget | UpstreamError::Busy(_))) => return Err(e),
@@ -266,6 +303,71 @@ mod tests {
         fn solana_rpc(&self) -> Option<String> {
             Some("https://keyed.example/rpc".into())
         }
+    }
+
+    /// OP Mainnet's registries: `idOf` answers `owns` for any address, and
+    /// `keyDataOf` answers `(state, key_type)`. With `down`, the first
+    /// endpoint fails.
+    struct Registries {
+        owns: u64,
+        key: (u64, u64),
+        down: bool,
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Host for Registries {
+        fn now(&self) -> f64 {
+            0.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            self.calls.borrow_mut().push(request.url.clone());
+            if self.down && request.url == OPTIMISM_RPCS[0] {
+                return async { Ok(HttpResponse { status: 502, retry_after: None, body: None }) }.boxed_local();
+            }
+            let batch: Vec<Value> = serde_json::from_str(request.body.as_deref().unwrap()).unwrap();
+            let answers: Vec<Value> = batch
+                .iter()
+                .rev()
+                .map(|call| {
+                    let data = call["params"][0]["data"].as_str().unwrap();
+                    let result = if data.starts_with("0xd94fe832") {
+                        format!("0x{:064x}", self.owns)
+                    } else {
+                        assert!(data.starts_with("0xac34cc5a"), "{data}");
+                        format!("0x{:064x}{:064x}", self.key.0, self.key.1)
+                    };
+                    json!({ "jsonrpc": "2.0", "id": call["id"], "result": result })
+                })
+                .collect();
+            let body = Some(serde_json::to_vec(&answers).unwrap());
+            async move { Ok(HttpResponse { status: 200, retry_after: None, body }) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn signs(owns: u64, key: (u64, u64), down: bool) -> (Result<bool, UpstreamError>, usize) {
+        let host = Rc::new(Registries { owns, key, down, calls: Default::default() });
+        let inv = Invocation::new(host.clone(), 45);
+        let signer = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        let answer = signs_for(&inv, 1234, signer).now_or_never().unwrap();
+        let calls = host.calls.borrow().len();
+        (answer, calls)
+    }
+
+    #[test]
+    fn the_custody_address_or_an_auth_address_signs_for_an_account() {
+        // Custody: idOf names the account. One batched request.
+        assert_eq!(signs(1234, (0, 0), false), (Ok(true), 1));
+        // An auth address the account added.
+        assert_eq!(signs(0, (1, 2), false), (Ok(true), 1));
+        // Another account's custody address; a removed auth address; an app key.
+        assert_eq!(signs(77, (0, 0), false).0, Ok(false));
+        assert_eq!(signs(0, (2, 2), false).0, Ok(false));
+        assert_eq!(signs(0, (1, 1), false).0, Ok(false));
+        // The first endpoint failing, the second answers.
+        assert_eq!(signs(1234, (0, 0), true), (Ok(true), 2));
     }
 
     fn keyed_count(history: usize, addresses: usize) -> (u64, bool) {

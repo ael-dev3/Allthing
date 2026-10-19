@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Architecture
 
-Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serves two things: a static WebAssembly app, and a small JSON API that the app calls once per page. All of it is Rust, except generated glue, a short boot script and a one-line inline script that starts the front page's data request.
+Allthing is a Farcaster client for reading: it shows Farcaster and posts nothing. It is one Cloudflare Worker that serves two things: a static WebAssembly app, and a small JSON API that the app calls once per page. Readers can [sign in with Farcaster](#sign-in), by scanning a QR code with the Farcaster app, to say who is reading. All of it is Rust, except generated glue, a short boot script and a one-line inline script that starts the front page's data request.
 
 ```text
  Browser                                   Cloudflare (one Worker, Free plan)            Upstreams
@@ -19,6 +19,10 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 
  images, video, posters     ── direct ──▶  imagedelivery.net, Cloudflare Stream, …  (never proxied)
 
+ sign in (QR code)          ── POST /api/v1/auth/* ──▶  nonce, QR code, signature check,
+                                             HMAC-signed session cookie            ──────────▶  OP Mainnet RPC (Farcaster's registries)
+                            ── direct ──▶  relay.farcaster.xyz: the channel the Farcaster app answers on
+
                                            cron, every minute: the indexer
                                              one page of casts             ──────────────────▶  Hypersnap /v2
                                              → D1 allthing-index (casts, rankings); the front page
@@ -31,7 +35,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 |---|---|---|
 | `allthing-core` | native + wasm32 | Everything that can be pure: the data model, normalizing Hypersnap's JSON, ranking, cast text tokenizing, embed classification and image sizes, HLS playlist parsing, provenance decoding, wallet shares, the content spam filter, profile cards, upstream guards (token bucket, breaker, budget), the API payload types and cache policies. Only `serde` and `serde_json`; no I/O. Most unit tests live here and run against real Hypersnap responses in `tests/fixtures`. |
 | `allthing-data` | native + wasm32 | The page builders that assemble each payload, and the Hypersnap and RPC clients behind guards. The runtime is abstracted as a `Host` (clock, HTTP with a timeout, background work), so the same code runs in the Worker and in the browser. |
-| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController`, `waitUntil` and D1. Its cron handler runs the indexer. |
+| `allthing-worker` | wasm32 (Worker) | The `/api/v1` handler: routing, the per-IP rate limit, the edge cache with coalescing, and a `Host` over Workers `fetch`, `AbortController`, `waitUntil` and D1. Its cron handler runs the indexer. `auth.rs` is [sign-in](#sign-in), with the only cryptography in the project (secp256k1 signer recovery, Keccak-256, HMAC-SHA256) and the QR encoder, so none of it ships to browsers. |
 | `allthing-web` | wasm32 (browser) | The Leptos app (client-side rendering): routes, pages, components, the media viewer, the HLS player, prefetching and scroll restoration. With the `static-host` feature it builds payloads in-process through a browser `Host`. |
 | `xtask` | native | `cargo xtask dist` builds `dist/`; `cargo xtask pages` builds the static copy in `dist-pages/`. |
 
@@ -39,7 +43,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
 
 ## The API
 
-All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the API sends no CORS headers.
+All endpoints are `GET` (`HEAD` also works), except the [sign-in](#sign-in) endpoints under `/api/v1/auth/`, which take same-origin `POST`s. Any other method gets 405, and the API sends no CORS headers.
 
 | Endpoint | Payload | Built from |
 |---|---|---|
@@ -60,6 +64,10 @@ All endpoints are `GET` (`HEAD` also works). Any other method gets 405, and the 
 | `/api/v1/vote?fid=<fid>` | `VotePayload`: the account's NS vote ([VOTE.md](VOTE.md)) | Base `eth_call` to the opt-in NFT, farcaster.xyz `user-by-fid` |
 | `/api/v1/status` | isolate and upstream-guard state, how fresh the cached "new" and trending lists are, and the index's rankings and progress | two cache reads and the indexer's state in D1; no upstream calls |
 | `/version` (and `/api/v1/version`) | `{"name","version","commit"}` | nothing |
+| `POST /api/v1/auth/start` | `Started`: a nonce, the site's domain and address; the nonce also goes into a signed cookie | nothing |
+| `POST /api/v1/auth/qr` | `QrCode`: a Farcaster sign-in link (`https://farcaster.xyz/~/siwf?channelToken=…`, and no other) as one SVG path | nothing |
+| `POST /api/v1/auth/verify` | `SignedIn`: the account that signed the message, with the session cookies | one batched OP Mainnet `eth_call` pair (+ 1 fallback RPC), `user/bulk` |
+| `POST /api/v1/auth/signout` | `{}`, clearing the session cookies | nothing |
 
 Paths are relative to `https://haatz.quilibrium.com/v2/farcaster/` (Hypersnap's Neynar-compatible API). Payloads carry `Meta` (backend, fetch time, staleness) and `Annotations`, shared by every cast on the page:
 
@@ -155,11 +163,27 @@ A static host can't run the Worker, so `cargo xtask pages` builds a second varia
 
 Annotations memoized in the page (origins, apps) carry over between pages during a visit. There is no shared cache, so each visitor's browser makes its own upstream reads, and the module is about 30% larger because it carries the builders. The Farcaster app's API sends no CORS headers, so the browser can't read it: channel pages show Hypersnap's data alone, and votes recorded only by the app are unknown. The Cloudflare deployment is the primary one. This copy keeps the project usable from any static host.
 
+## Sign-in
+
+Readers sign in with Farcaster by QR code, through the Farcaster app on their phone ([Sign In With Farcaster](https://docs.farcaster.xyz/developers/siwf/), over Farcaster's AuthKit relay). There is no other way to sign in: no wallet connection, password or email. Signing in only says who is reading; it gives Allthing no signer, and nothing is posted.
+
+1. **Start.** The header's "Sign in" button opens a dialog, which asks `POST /api/v1/auth/start` for a nonce. The Worker makes 16 random bytes into a 32-character hex nonce and puts it, with an expiry 10 minutes away, in the `__Host-allthing-siwf` cookie, signed with HMAC-SHA256 (HttpOnly, Secure, SameSite=Strict).
+2. **Channel.** The browser opens a channel on `relay.farcaster.xyz` with that nonce, this site's domain and its address, as AuthKit does, so the relay sees the reader's browser. It answers with a channel token and the link the Farcaster app opens.
+3. **QR code.** The Worker draws the link as a QR code (`POST /api/v1/auth/qr`, error correction level M), sent as one SVG path that the app renders inline, so browsers ship no QR encoder. It draws only Farcaster's sign-in links. On a phone, a link under the code opens the Farcaster app instead.
+4. **Approval.** The browser polls the relay's channel status every 1.5 s for up to 5 minutes. The person scans the code and approves in the Farcaster app, which signs a Sign-In with Ethereum (EIP-4361) message. When the status is `completed`, the browser sends the message and signature to `POST /api/v1/auth/verify`.
+5. **Verify.** The Worker checks what `@farcaster/auth-client` checks (`allthing_core::siwf`, `allthing-worker/src/auth.rs`):
+   - the message: the statement "Farcaster Auth", chain id 10, exactly one `farcaster://fid/<fid>` resource, this site's domain and address, the nonce in this browser's cookie, and its expiration and not-before times;
+   - the signature: the address that signed it (EIP-191 `personal_sign`, recovered with secp256k1 and Keccak-256) is the message's;
+   - the signer: on OP Mainnet, in one batched request, the address is the account's custody address (`IdRegistry.idOf`) or one of its auth addresses (`KeyRegistry.keyDataOf`, an added key of type 2).
+6. **Session.** The Worker sets `__Host-allthing-session`, `<fid>.<expiry>` signed with HMAC-SHA256 (HttpOnly, Secure, SameSite=Lax, 30 days), and `__Host-allthing-user`, the account's name and picture, which the header reads to show who is signed in without an API call. It is only a label: the HttpOnly cookie is the session. "Sign out" in the account menu (`POST /api/v1/auth/signout`) clears both.
+
+The secret that signs the cookies is the Worker secret `SESSION_SECRET` ([DEPLOY.md](DEPLOY.md#secrets)); without it, `start` and `verify` answer 503. Sessions are stateless: no store holds them, and changing the secret signs everyone out. Every `/api/v1/auth/` call must be a POST whose `Origin` is the site's own, so other sites can't start, finish or end a sign-in, and its answers are never cached. The static copy has no Worker and so no sign-in; its header says it only reads.
+
 ## Security and privacy
 
-- **Read-only**: there are no accounts, cookies, keys, signers or write paths. The Worker accepts only `GET` and `HEAD`.
-- **Credentials**: Farcaster and the public RPCs need no key. The optional keyed Solana RPC URL lives in the Worker's `SOLANA_RPC_URL` secret; new wallet payloads omit its transport and parse diagnostics. Previously cached copies are checked at the public response boundary too, retaining their counts and cache lifetimes while removing opaque diagnostics. `/status` reports only its host. The Workers Builds token lives in Cloudflare, never in the repository.
-- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. The one exception is `static.cloudflareinsights.com`, for Cloudflare Web Analytics, which Cloudflare injects when it is switched on for the zone. It is cookieless, and turning it off in the dashboard removes the script. Its POST of page timings to `/cdn-cgi/rum`, handled by Cloudflare rather than the Worker, is the only non-GET request a page makes. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted. There is no `unsafe-eval` and no framing of the site, and the only inline scripts are the early data request and the speculation rules in `web/index.html`, each allowed by its hash.
+- **Reads only**: there are no signers, keys or write paths, and nothing is posted. The one exchange that isn't a read is [sign-in](#sign-in): its endpoints take same-origin POSTs, and its session is an HMAC-signed, HttpOnly cookie. Every other endpoint accepts only `GET` and `HEAD`.
+- **Credentials**: Farcaster and the public RPCs need no key. The key that signs session cookies lives in the Worker's `SESSION_SECRET` secret. The optional keyed Solana RPC URL lives in the Worker's `SOLANA_RPC_URL` secret; new wallet payloads omit its transport and parse diagnostics. Previously cached copies are checked at the public response boundary too, retaining their counts and cache lifetimes while removing opaque diagnostics. `/status` reports only its host. The Workers Builds token lives in Cloudflare, never in the repository.
+- **Content Security Policy** (`web/_headers`): scripts are self-hosted, with `'wasm-unsafe-eval'` for WebAssembly only. The one exception is `static.cloudflareinsights.com`, for Cloudflare Web Analytics, which Cloudflare injects when it is switched on for the zone. It is cookieless, and turning it off in the dashboard removes the script. Its POST of page timings to `/cdn-cgi/rum`, handled by Cloudflare rather than the Worker, is the only non-GET request a page makes. Frames are limited to the four video providers. `connect-src` allows any https origin, because HLS playlists are fetched from wherever a video is hosted (it also covers Farcaster's sign-in relay, which the browser polls). There is no `unsafe-eval` and no framing of the site, and the only inline scripts are the early data request and the speculation rules in `web/index.html`, each allowed by its hash.
 - **Links** in casts get `rel="noopener noreferrer nofollow ugc"`. Cast text is tokenized and rendered as text nodes, never as HTML.
 - **Abuse**: a per-IP rate limit (`API_LIMITER`, 120 a minute), the caching above, and guards that refuse to send rather than queue. See [BUDGET.md](BUDGET.md).
 

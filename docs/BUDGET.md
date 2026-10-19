@@ -36,6 +36,8 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
 | Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `7d`, `30d`, `365d` or `all`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
+| Being signed in | **0**: the header reads who is signed in from a cookie | none |
+| Signing in | 3 (`/api/v1/auth/start`, `/qr`, `/verify`); waiting for the Farcaster app polls Farcaster's relay from the browser, never the Worker. Signing out: 1 | none |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
 Images and videos never touch the Worker. They load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.
@@ -106,6 +108,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | engagement | cache read 1 + one `reactions/cast` read per list ≤12 (six cards, likes and recasts; six at a time) + cache write 1 (≤ 14) |
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤6 + cache write 1 (≤ 9) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
+| sign-in `verify` | one batched OP Mainnet `eth_call` pair 1 (custody and auth address; + 1 fallback RPC) + the account's name and picture (`user/bulk`) 1 (≤ 3); never cached |
+| sign-in `start`, `qr`, `signout` | 0 |
 | `/version` | 0 |
 
 **Preloaded previews** (`/engagement`) give way to page builds. As each list's read starts, the batch checks the isolate's Hypersnap bucket and reads only while it holds more than 16 tokens, likes first. Lists left out make the batch partial: it is cached for 15 s, then rebuilt, and the client loads those lists when their popover opens. With no room at all it answers 503, and the client does the same. A batch's cache key is its sorted hashes, and batches follow the list (cards 1–6, 7–12, …), so readers of the same feed share each batch's edge cache entry.
@@ -135,6 +139,8 @@ A feed build also parses its quoted casts: one bulk read, usually a handful of c
 
 Profile cards (`notes.users`) come from objects a build has already parsed. For a live trending feed of 100 casts by 78 accounts (222 KB), collecting the cards, cutting each bio to 160 characters and serializing them took **0.10 to 0.13 ms**, measured natively at `opt-level = "z"` on a busier machine than the numbers above, where the whole build took 1.6 to 2.0 ms: about 6% of the build. The payload grew from 67.4 KB to 80.1 KB of JSON, about half of it the bios (73 characters on average), and from 23.6 KB to 29.0 KB gzipped.
 
+Signing in costs little CPU, measured the same way: a `verify` parses the message (under 0.001 ms), recovers its signer with secp256k1 (**0.10 ms**) and signs the session cookie (0.001 ms); drawing a sign-in QR code takes **0.86 ms**, most of it scoring the code's eight masks. Even at several times slower as WebAssembly, that is about 0.5 ms and 2 to 4 ms.
+
 WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. A Solana history read (up to 1,000 signatures per address, about 200 KB) is parsed without keeping its entries.
 
 ## 5. Load on upstreams
@@ -163,7 +169,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 
 - **Per-client limit**: the `API_LIMITER` rate-limiting binding allows 120 API calls a minute per IP per Cloudflare location, and answers 429 with `Retry-After: 60` beyond that. It is a backstop; normal browsing uses a few calls a minute.
 - **Batches**: one `/api/v1/engagement` request can cost up to 12 upstream reads, but only while the isolate's Hypersnap bucket holds more than 16 tokens. A flood of batches for made-up combinations of casts gets 503s once it reaches that floor, and page builds keep the rest.
-- **Read-only**: anything but GET or HEAD on `/api/*` gets 405. The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
+- **Reads only**: anything but GET or HEAD on `/api/*` gets 405, except the sign-in endpoints (`/api/v1/auth/*`), which take only POSTs whose `Origin` is the site's own and are under the same per-IP limit. A sign-in's checks run only for a browser holding the signed nonce cookie its `start` set, and a `verify` costs at most 3 upstream calls under the OP Mainnet RPC's own bucket (burst 10, 2 a second). The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
 - **The browser app** never polls; it makes one API call per page, caches answers for 5 minutes, prefetches within the caps above, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
 - **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`, `/wasm/*`) get 429 until 00:00 UTC. Static assets keep being served free, and `boot.js` then loads the static copy of the module from `/assets/`, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
 - **Optional, set up in the dashboard**: a WAF rate-limiting rule on `/api/` and Bot Fight Mode stop abusive traffic *before* it reaches the Worker, so it doesn't count against the daily allowance.

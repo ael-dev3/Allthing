@@ -373,6 +373,34 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
     Ok(Raw { at: js_sys::Date::now(), status: response.status(), body: text.into(), age, stale, retry_after })
 }
 
+/// POST `body` as JSON to a Worker endpoint and read its JSON answer. For
+/// signing in: never cached, and never the static copy's.
+#[cfg(not(feature = "static-host"))]
+pub async fn post<B: serde::Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result<T, Failure> {
+    let failed = |_| Failure::Failed("Network error: could not reach Allthing's API".into());
+    let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
+    let init = web_sys::RequestInit::new();
+    init.set_method("POST");
+    let headers = web_sys::Headers::new().map_err(failed)?;
+    headers.set("content-type", "application/json").map_err(failed)?;
+    init.set_headers(&headers);
+    let json = serde_json::to_string(body).map_err(|e| Failure::Failed(e.to_string()))?;
+    init.set_body(&wasm_bindgen::JsValue::from_str(&json));
+    let response = JsFuture::from(window.fetch_with_str_and_init(path, &init)).await.map_err(failed)?;
+    let response: web_sys::Response = response.dyn_into().map_err(failed)?;
+    let retry_after = response.headers().get("retry-after").ok().flatten().and_then(|a| a.parse().ok());
+    let text = JsFuture::from(response.text().map_err(failed)?).await.map_err(failed)?.as_string().unwrap_or_default();
+    let raw = Raw {
+        at: js_sys::Date::now(),
+        status: response.status(),
+        body: text.into(),
+        age: 0,
+        stale: false,
+        retry_after,
+    };
+    Arc::into_inner(decode::<T>(&raw)?.data).ok_or_else(|| Failure::Failed("unreadable response".into()))
+}
+
 fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
     let error_message = || {
         serde_json::from_str::<ApiError>(&raw.body).map(|e| e.error).unwrap_or_else(|_| format!("HTTP {}", raw.status))

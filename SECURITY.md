@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Security policy
 
-Allthing is a read-only client. It has no accounts, sessions, cookies, keys or write paths, and the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, and deployment credentials live in Cloudflare Workers Builds.
+Allthing is a client for reading Farcaster. It has no signers, keys or write paths and posts nothing. Readers can sign in with Farcaster by QR code ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sign-in)), which only says who is reading: the Worker checks the signed message, then keeps a stateless session in an HMAC-signed, HttpOnly, Secure cookie. Apart from the sign-in endpoints, which take same-origin `POST`s, the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, the session key is the Worker secret `SESSION_SECRET`, and deployment credentials live in Cloudflare Workers Builds.
 
 ## Supported versions
 
@@ -21,6 +21,7 @@ Particularly relevant:
 - script injection through cast text, embeds, profile fields or channel data;
 - weaknesses in the Content Security Policy (`web/_headers`), or ways to frame or redirect the site;
 - ways to make the Worker hammer an upstream, exceed its subrequest or CPU budget, or poison the edge cache for other readers;
+- ways to sign in as an account without its Farcaster app's approval, to forge, replay or steal a session cookie, or to sign someone in or out from another site;
 - anything that would let Allthing write to Farcaster or act on a user's behalf.
 
 Problems in the services Allthing reads from (Hypersnap, farcaster.xyz, the public RPCs) or in Cloudflare's platform are best reported to their operators. Content posted on Farcaster, such as spam, isn't a vulnerability in Allthing.
@@ -31,3 +32,4 @@ Problems in the services Allthing reads from (Hypersnap, farcaster.xyz, the publ
 - Third-party video players load only after a click, and their iframes are limited by `frame-src`.
 - Media is loaded straight from its host. The Worker never proxies media.
 - The API sends no CORS headers, rate-limits per client and refuses other methods with 405.
+- Sign-in follows Farcaster's rules as `@farcaster/auth-client` checks them: a nonce bound to the browser that started it, the site's own domain, and a signer that OP Mainnet's registries confirm. The session cookie is HttpOnly, Secure and SameSite, and its key never leaves Cloudflare.

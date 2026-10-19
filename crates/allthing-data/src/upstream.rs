@@ -18,6 +18,8 @@ pub enum Upstream {
     Hypersnap,
     /// Base JSON-RPC, for the NS vote read onchain.
     BaseRpc,
+    /// OP Mainnet JSON-RPC, for Farcaster's registries when someone signs in.
+    OptimismRpc,
     /// A chain's public JSON-RPC, for wallet activity.
     Chain(&'static str),
     /// The farcaster.xyz app's public read API (vote status, channel details).
@@ -34,6 +36,7 @@ impl Upstream {
         match self {
             Upstream::Hypersnap => "hypersnap",
             Upstream::BaseRpc => "base-rpc",
+            Upstream::OptimismRpc => "optimism-rpc",
             Upstream::Chain(slug) => slug,
             Upstream::FarcasterApp => "farcaster-app",
             Upstream::Fnames => "fnames",
@@ -45,7 +48,7 @@ impl Upstream {
     fn rate(self) -> (u32, f64) {
         match self {
             Upstream::Hypersnap => (40, 10.0),
-            Upstream::BaseRpc => (10, 2.0),
+            Upstream::BaseRpc | Upstream::OptimismRpc => (10, 2.0),
             Upstream::Chain("solana") => (4, 0.4),
             // A keyed endpoint serves more requests a second than the public one.
             Upstream::Chain("solana-keyed") => (10, 5.0),

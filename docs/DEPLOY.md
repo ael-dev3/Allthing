@@ -75,7 +75,8 @@ With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.soci
 
 ## Secrets
 
-- **`SOLANA_RPC_URL`** (optional): a keyed Solana RPC endpoint, with its key in the URL, for Solana wallet counts. Set it once in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*), or with `npx wrangler secret put SOLANA_RPC_URL`. It is never committed. Without it, a Solana read shows as unread (see [WALLETS.md](WALLETS.md)). For local development, put it in `crates/allthing-worker/.dev.vars` (git-ignored), not in the repository. To check that the deployed Worker has it, open `/api/v1/status`: `solana_rpc.keyed` is `true` and `solana_rpc.host` names the provider's host (never the key).
+- **`SESSION_SECRET`** (needed for sign-in): the key that signs sign-in cookies ([ARCHITECTURE.md](ARCHITECTURE.md#sign-in)), at least 32 characters, random. Make one with `openssl rand -base64 48` and set it once with `npx wrangler secret put SESSION_SECRET`, or in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*). It is never committed, logged or sent anywhere. Without it, "Sign in" says sign-in isn't set up, and everything else works. Changing it signs everyone out. For local development, put a different random value in a `.dev.vars` file next to `wrangler.toml` (git-ignored) as `SESSION_SECRET=…`. `wrangler dev` presents requests to the Worker at the route's host, so a sign-in started locally names `allthing.social` (over http).
+- **`SOLANA_RPC_URL`** (optional): a keyed Solana RPC endpoint, with its key in the URL, for Solana wallet counts. Set it once in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*), or with `npx wrangler secret put SOLANA_RPC_URL`. It is never committed. Without it, a Solana read shows as unread (see [WALLETS.md](WALLETS.md)). For local development, put it in `.dev.vars` next to `wrangler.toml` (git-ignored), not in the repository. To check that the deployed Worker has it, open `/api/v1/status`: `solana_rpc.keyed` is `true` and `solana_rpc.host` names the provider's host (never the key).
 
 ## Local development
 
@@ -89,4 +90,4 @@ npx wrangler dev                       # http://127.0.0.1:8787, with a local Cac
 
 ## Limits to keep in mind
 
-See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 1.1 MB (360 KB compressed, limit 3 MB), and `dist/` holds about 50 files (limit 20,000, each up to 25 MiB).
+See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 2.0 MB (620 KB compressed, limit 3 MB; sign-in's cryptography and QR encoder are about 210 KB of it, 77 KB compressed), and `dist/` holds about 50 files (limit 20,000, each up to 25 MiB).

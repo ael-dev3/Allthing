@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Roadmap
 
-Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); details per release are in the [changelog](../CHANGELOG.md). Allthing stays read-only throughout; participation would need its own scope decision.
+Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); details per release are in the [changelog](../CHANGELOG.md). Allthing reads; the owner has since scoped a second phase, one feature at a time: Sign In With Farcaster by QR code first, then a post and reply composer.
 
 ## Done
 
@@ -37,6 +37,8 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
 
 ## Next
 
+- **Phase 2: participating.** Sign In With Farcaster by QR code through the Farcaster app ([ARCHITECTURE.md](ARCHITECTURE.md#sign-in)); next, a post and reply composer with a GIF picker (search and trending, from a free GIF API). Posting needs a signer the account approves in the Farcaster app, and that scope comes with the composer.
+
 - **A second backend.** Read the same casts from a Snapchain node (or a second Hypersnap operator). Show which backends returned a cast, and let readers pick the source. Reconcile by message hash, not by text.
 - **Smaller app.** The WebAssembly module is about 410 KB compressed, mostly the Leptos runtime and `serde_json`. Candidates: a leaner JSON decoder for payloads, splitting rarely used views, and trimming web-sys features.
 - **Solana activity.** Find a keyless source of Solana address history that allows browser or Worker requests, or document a key-based option that keeps the key out of the repository.
@@ -47,4 +49,4 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
 
 ## Not planned
 
-Sign-in, posting, reactions, wallets that sign, and anything that hides content based on who posted it.
+Ways to sign in other than Farcaster's QR code, wallets that sign, and anything that hides content based on who posted it.
