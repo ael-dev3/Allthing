@@ -581,7 +581,7 @@ pub fn SignInDialog() -> impl IntoView {
                             <p class="signin-status" class:error=stuck role="status">
                                 {status}
                             </p>
-                            <p class="signin-note muted small">"Signing in only tells Allthing who you are. It can't post or change anything for you."</p>
+                            <p class="signin-note muted small">"Signing in tells Allthing who you are, nothing more. Liking, recasting and posting take a key you approve once, in the Farcaster app."</p>
                         </div>
                     </div>
                 </div>
