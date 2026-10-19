@@ -213,11 +213,7 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
             // The Worker's own time for this answer: a cache read, or the
             // build a miss waited for. Clocks only advance across I/O, so it
             // counts waiting on the cache and upstream, not CPU.
-            // Temporary: the build's stages follow the total, as cumulative
-            // durations of each stage (see `Invocation::mark`).
-            let stages: String =
-                inv.stage_durations(started).iter().map(|(name, took)| format!(", {name};dur={took:.0}")).collect();
-            headers.set("server-timing", &format!("{};dur={:.0}{stages}", served.label(), inv.now() - started))?;
+            headers.set("server-timing", &format!("{};dur={:.0}", served.label(), inv.now() - started))?;
             let age = ((inv.now() - entry.fetched_at) / 1000.0).max(0.0);
             headers.set("x-allthing-age", &format!("{age:.0}"))?;
             if served == Served::StaleIfError {

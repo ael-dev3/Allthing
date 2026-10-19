@@ -267,11 +267,8 @@ pub async fn home(
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
         let (raw, casts) = ranked_casts(&inv, &hashes).await?;
-        inv.mark("ranked");
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
-        inv.mark("hidden");
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
-        inv.mark("annotate");
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
         let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
         let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index) };
@@ -563,7 +560,6 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     let Some(raw) = raw else {
         return Ok(Built::not_found("No such user"));
     };
-    inv.mark("lookup");
     let mut user = normalize::user(&raw);
     let fid = user.fid;
 
@@ -581,7 +577,6 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         async { if before_migration { Some(hypersnap::first_username_at(&inv, fid).await) } else { None } },
     )
     .await;
-    inv.mark("reads");
     // A failed read keeps what the previous copy knew, and this copy is
     // refreshed soon instead of in five minutes.
     let retry = matches!(first_username_at, Some(Err(_)));
@@ -602,7 +597,6 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
             notes.origins.insert(hash, origin);
         }
     }
-    inv.mark("attribute");
     // The link checks wait on the slowest link page: the quotes and app
     // names are read meanwhile, for every cast read, and what only the
     // hidden casts needed is dropped after. The checks are polled first, so
@@ -616,7 +610,6 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     let quote_links = std::mem::replace(&mut notes.links, links);
     notes.links.extend(quote_links);
     keep_shown(&mut notes, &pool);
-    inv.mark("annotate");
     // The casts are the account's own, whose card is the payload's `user`:
     // the notes carry cards for the authors of the casts they quote.
     let quoting: Vec<u64> = notes.quotes.values().map(|c| c.author.fid).collect();
