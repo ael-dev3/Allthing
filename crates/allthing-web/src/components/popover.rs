@@ -140,23 +140,40 @@ pub fn Popover(
         max_height.set(if open_below { below_room } else { above_room }.clamp(120.0, max_px));
         shift.set(0.0);
         if fixed {
-            let edge = if open_below { rect.bottom() + GAP_PX / 2.0 } else { rect.top() - GAP_PX / 2.0 };
-            let left = match outer_panel() {
-                Some(outer) => {
-                    // Beside the outer panel: to its right if the width fits
-                    // on screen, otherwise to its left. The width is the
-                    // panel's own, set in CSS and nudged in view below.
-                    let outer = outer.get_bounding_client_rect();
-                    let width = panel_width();
-                    let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
-                    if outer.right() + GAP_PX / 2.0 + width <= inner {
-                        outer.right() + GAP_PX / 2.0
+            let mut edge = if open_below { rect.bottom() + GAP_PX / 2.0 } else { rect.top() - GAP_PX / 2.0 };
+            let mut left = rect.left();
+            if let Some(outer) = outer_panel() {
+                // Beside the outer panel: to its right if the width fits on
+                // screen, otherwise to its left. The width is the panel's
+                // own, set in CSS and nudged in view below.
+                let opened_below = outer.class_list().contains("below");
+                let outer = outer.get_bounding_client_rect();
+                let width = panel_width();
+                let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
+                let side = if outer.right() + GAP_PX / 2.0 + width <= inner {
+                    Some(outer.right() + GAP_PX / 2.0)
+                } else {
+                    Some(outer.left() - GAP_PX / 2.0 - width).filter(|x| *x >= 0.0)
+                };
+                // Level with the outer panel, the way it opened: from its
+                // top down, or from its bottom up. Placed by the name it
+                // came from, it hung below the list and the card the list
+                // belongs to. Without room at either side (a phone), it
+                // stays by that name, which it then leaves in view.
+                if let Some(side) = side {
+                    left = side;
+                    edge = if opened_below { outer.top() } else { outer.bottom() };
+                    let room = if opened_below {
+                        viewport - outer.top() - GAP_PX
                     } else {
-                        outer.left() - GAP_PX / 2.0 - width
-                    }
+                        outer.bottom() - HEADER_PX - GAP_PX
+                    };
+                    below.set(opened_below);
+                    max_height.set(room.clamp(120.0, max_px));
+                } else {
+                    left = outer.left() - GAP_PX / 2.0 - width;
                 }
-                None => rect.left(),
-            };
+            }
             fixed_at.set((left, edge));
         }
     };
