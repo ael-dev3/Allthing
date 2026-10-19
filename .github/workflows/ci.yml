@@ -54,6 +54,9 @@ jobs:
         with:
           # A manual run measures production main, even when dispatched from another ref.
           ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.sha }}
+          # The history the deploy wait needs to tell whether a later live
+          # commit includes this one.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22

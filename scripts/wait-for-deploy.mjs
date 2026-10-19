@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const sha = /^[a-f0-9]{40}$/i;
 const deployedSha = /^[a-f0-9]{7,40}$/i;
@@ -11,12 +13,39 @@ export function revisionMatches(actual, expected) {
     && expected.toLowerCase().startsWith(actual.toLowerCase());
 }
 
+/**
+ * Whether a deployed commit includes `expected`, from the local clone's
+ * history: Workers Builds skips a commit that a newer push supersedes, so a
+ * commit may only ever be live as part of a later one. A deployed commit
+ * the clone doesn't know yet is fetched with `remote`'s `branch` first.
+ * Settled answers are kept, since a commit's history never changes.
+ */
+export function gitIncludes({ cwd = process.cwd(), remote = "origin", branch = "main", timeoutMs = 60_000 } = {}) {
+  const run = promisify(execFile);
+  const git = (...args) => run("git", args, { cwd, timeout: timeoutMs }).then(() => true, () => false);
+  const known = sha => git("cat-file", "-e", `${sha}^{commit}`);
+  const settled = new Map();
+  return async (deployed, expected) => {
+    const key = `${deployed} ${expected}`;
+    if (settled.has(key)) return settled.get(key);
+    if (!(await known(deployed)) && !((await git("fetch", "--quiet", remote, branch)) && (await known(deployed)))) {
+      return false;
+    }
+    const answer = await git("merge-base", "--is-ancestor", expected, deployed);
+    settled.set(key, answer);
+    return answer;
+  };
+}
+
 // Workers Builds takes 6 to 16 minutes from a push to main until the commit
 // is live, and about 25 when a second merge queues behind the first.
+// `includes(deployed, expected)`, when given, also accepts a later deployed
+// commit that contains the expected one (see `gitIncludes`).
 export async function waitForDeploy(baseURL, expected, {
   timeoutMs = 1_800_000,
   pollIntervalMs = 10_000,
   requestTimeoutMs = 5000,
+  includes = null,
   log = () => {},
 } = {}) {
   if (typeof expected !== "string" || !sha.test(expected)) throw new TypeError("Expected a full 40-digit Git commit");
@@ -43,6 +72,11 @@ export async function waitForDeploy(baseURL, expected, {
           log(`Deployment ${body.commit} is live`);
           return body.commit;
         }
+        if (includes && typeof body?.commit === "string" && deployedSha.test(body.commit)
+          && await includes(body.commit, expected)) {
+          log(`Deployment ${body.commit} is live, and includes ${expected.slice(0, 7)}`);
+          return body.commit;
+        }
         last = typeof body?.commit === "string" && deployedSha.test(body.commit)
           ? `commit ${body.commit}` : "unrecognized version response";
       }
@@ -63,7 +97,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = 1;
   } else {
     try {
-      await waitForDeploy(baseURL, expected, { log: console.log });
+      await waitForDeploy(baseURL, expected, { log: console.log, includes: gitIncludes() });
     } catch (error) {
       console.error(error.message);
       process.exitCode = 1;
