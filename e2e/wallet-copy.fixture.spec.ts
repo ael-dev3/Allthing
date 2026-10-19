@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { activateVisible } from "./helpers/pointer";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 type ClipboardWindow = Window & { finishCopy: () => void; copyCalls: number };
@@ -13,6 +14,15 @@ test.beforeEach(async ({ page }) => {
   } }));
 });
 
+async function openWallets(page: Page) {
+  await page.goto("/u/fixture");
+  // These fixture endpoints return 404. Let their loading rows settle
+  // before opening a fixed panel beside a trigger they would otherwise move.
+  await expect(page.locator(".profile-wallets")).toContainText("Wallet activity is unavailable right now.");
+  await expect(page.locator(".vote-loading")).toHaveCount(0);
+  await activateVisible(page.getByRole("button", { name: "Show 1 verified wallet", exact: true }));
+}
+
 test("copy feedback waits for the clipboard write", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
@@ -22,11 +32,11 @@ test("copy feedback waits for the clipboard write", async ({ page }) => {
       },
     } });
   });
-  await page.goto("/u/fixture");
-  await page.getByRole("button", { name: "Show 1 verified wallet", exact: true }).click();
+  await openWallets(page);
   const dialog = page.getByRole("dialog", { name: "Verified wallets" });
   const copy = dialog.getByRole("button", { name: `Copy ${address}`, exact: true });
-  await copy.click();
+  await expect(copy).toBeInViewport({ ratio: 1 });
+  await activateVisible(copy);
   await expect(copy).toHaveText("Copying…");
   await expect(copy).toBeDisabled();
   await expect(copy).toBeFocused();
@@ -45,18 +55,18 @@ test("a refused clipboard write can be retried without false success", async ({ 
       writeText: async () => { if (++attempts === 1) throw new DOMException("Denied", "NotAllowedError"); },
     } });
   });
-  await page.goto("/u/fixture");
-  await page.getByRole("button", { name: "Show 1 verified wallet", exact: true }).click();
+  await openWallets(page);
   const dialog = page.getByRole("dialog", { name: "Verified wallets" });
   const copy = dialog.getByRole("button", { name: `Copy ${address}`, exact: true });
-  await copy.click();
+  await expect(copy).toBeInViewport({ ratio: 1 });
+  await activateVisible(copy);
   await expect(dialog).toContainText("Could not copy. Select and copy the address manually.");
   await expect(copy).not.toHaveText("Copied");
   await expect(dialog.locator(".wallet-copy-error code")).toHaveText(address);
   const box = await dialog.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
-  await copy.click();
+  await activateVisible(copy);
   await expect(copy).toHaveText("Copied");
 });
 
@@ -64,9 +74,10 @@ test("an unavailable clipboard API exposes the full address for manual copy", as
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
   });
-  await page.goto("/u/fixture");
-  await page.getByRole("button", { name: "Show 1 verified wallet", exact: true }).click();
+  await openWallets(page);
   const dialog = page.getByRole("dialog", { name: "Verified wallets" });
-  await dialog.getByRole("button", { name: `Copy ${address}`, exact: true }).click();
+  const copy = dialog.getByRole("button", { name: `Copy ${address}`, exact: true });
+  await expect(copy).toBeInViewport({ ratio: 1 });
+  await activateVisible(copy);
   await expect(dialog.locator(".wallet-copy-error code")).toHaveText(address);
 });
