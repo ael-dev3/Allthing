@@ -35,6 +35,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Provenance.** Each cast names the app that registered its signing key. [docs/PROVENANCE.md](docs/PROVENANCE.md) studies what Snapchain and Hypersnap record, and proposes how a node, and then the protocol, could record the client and the entry point verifiably.
 - **Less noise, judged by content.** Casts that embed or link to mini apps or frames, which Allthing doesn't run, and spam caught by a few fixed content rules are left out by the Worker. Nothing is hidden because of who posted it.
 - **Fast and frugal.** Each page makes one API call (profiles, and profile cards as they open, also look up wallets and the vote). Posts open instantly from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. The Worker caches every payload at the edge, so the whole site runs on the Cloudflare Workers Free plan.
+- **Sign in with Farcaster.** Scan a QR code with the Farcaster app on your phone (or, on the phone, open the app from a link) and approve: your picture appears in the header, with your profile and Sign out in its menu. Signing in only says who is reading; Allthing gets no signer and posts nothing.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
 ## Architecture
@@ -95,7 +96,7 @@ Playwright starts `wrangler dev` on port 8787 by itself. CI runs `check.sh` and 
 
 ## Contributing
 
-Bug reports, fixes and focused improvements are welcome, as long as Allthing stays read-only. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules, the workflow and the checks, and follow the [code of conduct](CODE_OF_CONDUCT.md). Commits and pull request titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), each change a reader or operator would notice gets a line in the [changelog](CHANGELOG.md), and versions follow [Semantic Versioning](https://semver.org) ([docs/RELEASING.md](docs/RELEASING.md)).
+Bug reports, fixes and focused improvements are welcome, within Allthing's scope: it reads, and its one sign-in is Farcaster's. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules, the workflow and the checks, and follow the [code of conduct](CODE_OF_CONDUCT.md). Commits and pull request titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), each change a reader or operator would notice gets a line in the [changelog](CHANGELOG.md), and versions follow [Semantic Versioning](https://semver.org) ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ## Security
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Allthing's Cloudflare Worker: a read-only, edge-cached API over Hypersnap
-//! and keyless public chain RPCs, built for the Workers Free plan.
+//! and keyless public chain RPCs, built for the Workers Free plan, and Sign
+//! In With Farcaster (`auth`), which says who is reading and posts nothing.
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; `/api/*` runs here, and
@@ -10,6 +11,7 @@
 //! stale-while-revalidate, and every upstream call goes through a per-isolate
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
 
+mod auth;
 mod cache;
 mod host;
 mod index;
@@ -68,6 +70,15 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
     if !url.path().starts_with("/api/") {
         return error(404, "Not found", None);
+    }
+    // Signing in is the one exchange that isn't a read (POST, never cached).
+    if let Some(name) = url.path().strip_prefix("/api/v1/auth/") {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        let host = WorkerHost::new(Lifetime::Request(ctx), None, None);
+        let inv = Rc::new(Invocation::new(Rc::new(host), SUBREQUEST_BUDGET));
+        return auth::handle(name, req, &env, inv).await;
     }
     if !matches!(req.method(), Method::Get | Method::Head) {
         return error(405, "Allthing's API is read-only", None);

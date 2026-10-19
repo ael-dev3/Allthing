@@ -32,11 +32,28 @@ pub fn SiteHeader() -> impl IntoView {
                     <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
                 </nav>
                 <SearchBox/>
-                <span class="readonly-pill" title="Allthing only reads public Farcaster data. There is no sign-in and nothing is ever posted.">"read-only"</span>
+                {account()}
             </div>
             <div class="portal-line" aria-hidden="true"></div>
         </header>
     }
+}
+
+/// Sign-in, or who is signed in: in front of the Worker only.
+#[cfg(not(feature = "static-host"))]
+fn account() -> AnyView {
+    view! { <crate::components::signin::Account/> }.into_any()
+}
+
+/// The static copy has no Worker to sign in with: it says it only reads.
+#[cfg(feature = "static-host")]
+fn account() -> AnyView {
+    view! {
+        <span class="readonly-pill" title="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
+            "read-only"
+        </span>
+    }
+    .into_any()
 }
 
 #[component]

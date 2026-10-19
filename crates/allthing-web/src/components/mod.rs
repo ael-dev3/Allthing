@@ -12,6 +12,8 @@ pub mod popover;
 pub mod profile_card;
 pub mod quote;
 pub mod search;
+#[cfg(not(feature = "static-host"))]
+pub mod signin;
 pub mod text;
 pub mod thread;
 pub mod who;

@@ -55,6 +55,8 @@ pub fn start() {
 fn App() -> impl IntoView {
     provide_context(Viewer::new());
     provide_context(WhoList::new());
+    #[cfg(not(feature = "static-host"))]
+    provide_context(components::signin::Session::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>
@@ -75,7 +77,18 @@ fn App() -> impl IntoView {
             <SiteFooter/>
             <Lightbox/>
             <WhoDialog/>
+            {sign_in_dialog()}
             <nav::ScrollMemory/>
         </Router>
     }
 }
+
+/// The sign-in dialog, in front of the Worker.
+#[cfg(not(feature = "static-host"))]
+fn sign_in_dialog() -> impl IntoView {
+    view! { <components::signin::SignInDialog/> }
+}
+
+/// The static copy has no Worker to sign in with.
+#[cfg(feature = "static-host")]
+fn sign_in_dialog() -> impl IntoView {}

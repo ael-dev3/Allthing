@@ -990,7 +990,7 @@ test.describe("threads and navigation", () => {
     }
   });
 
-  test("read-only: no sign-in, no writes", async ({ page }) => {
+  test("reads only: a page posts nothing, and the one sign-in is Farcaster's", async ({ page }) => {
     const writes: string[] = [];
     page.on("request", (r) => {
       const url = new URL(r.url());
@@ -1001,7 +1001,11 @@ test.describe("threads and navigation", () => {
     });
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
-    await expect(page.locator("header, .side, footer").getByText(/sign in|log in|connect wallet/i)).toHaveCount(0);
+    // Sign In With Farcaster where the Worker is; no other sign-in, and none
+    // in the static copy.
+    await expect(page.locator("header, .side, footer").getByText(/log in|connect wallet|sign up/i)).toHaveCount(0);
+    await expect(page.locator("header, .side, footer").getByText(/sign in/i)).toHaveCount(PAGES ? 0 : 1);
+    if (!PAGES) await expect(page.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
     expect(writes).toHaveLength(0);
     if (!PAGES) {
       const response = await page.request.post("/api/v1/home", { data: {} });
