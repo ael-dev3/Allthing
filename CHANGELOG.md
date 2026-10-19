@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- A speed report: `e2e/speed-report.spec.ts`, run by CI's `speed report` job on a manual run, loads the front page of allthing.social cold seven times at 1280 px (10 Mbps) and at 390 px (slow 4G, CPU slowed 4×), and prints the medians of time to first byte, WebAssembly and data arrival, first cast, LCP and the slowest interaction. See docs/PERFORMANCE.md.
 - Names in a Liked by or Recasted by list open their profile card beside the list on hover, keyboard focus or tap, as names elsewhere do; the list stays open, and a tap opens the card instead of the profile.
 - `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.
 - The usage bar filters the feed: each app is a link to its casts, the filter is a removable chip, and "Other apps" lists the smaller clients. The filter stays in the URL with the sort and time range.

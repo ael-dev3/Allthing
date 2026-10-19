@@ -4,6 +4,8 @@
 # (native and wasm32), unit tests and the dependency license audit. `perf`,
 # on pushes to main: the performance budget against the live site.
 # `browser`: deterministic fixture regressions against the local build.
+# `speed`, on manual runs only: the speed report's load times at 1280 and
+# 390 px on the live site, for before/after numbers.
 # Cloudflare Workers Builds deploys the site, so nothing here deploys; the
 # full live-data suite runs locally or against https://allthing.social.
 name: ci
@@ -61,6 +63,28 @@ jobs:
       - run: npx playwright test e2e/perf.spec.ts
         env:
           E2E_BASE_URL: https://allthing.social
+
+  speed:
+    # The speed report (docs/PERFORMANCE.md#speed-report): load times of the
+    # front page on the live site as deployed, at 1280 and 390 px under fixed
+    # network and CPU profiles. It reports numbers and fails only if the page
+    # doesn't load.
+    name: speed report (allthing.social)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test e2e/speed-report.spec.ts
+        env:
+          E2E_BASE_URL: https://allthing.social
+          E2E_SPEED: "1"
 
   browser:
     name: browser regressions (fixtures)

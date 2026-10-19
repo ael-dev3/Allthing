@@ -129,3 +129,44 @@ In 0.2.0 a post waited for its API call. In 0.3.0 the post renders from the feed
 The production LCP samples vary with the sandbox's proxy and with how warm each data center's edge cache is. The 1,872 ms outlier was a cold load through the proxy. The budget applies to the median.
 
 Interaction latency was 312–1,088 ms before sorting became reactive, because each sort change rebuilt the page.
+
+### Speed report
+
+`e2e/speed-report.spec.ts` loads the front page cold, seven times per profile, under fixed network and CPU profiles, and prints the medians. It reports and asserts nothing about the budget, which `e2e/perf.spec.ts` checks:
+
+| Profile | Viewport | Network | CPU |
+|---|---|---|---|
+| Desktop | 1280 × 900 | 10 Mbps down, 40 ms RTT | as is |
+| Phone ("slow 4G") | 390 × 844, touch | 1.6 Mbps down, 150 ms RTT | slowed 4× |
+
+It measures time to first byte, when the WebAssembly and the front page's data are in (and how many KB the WebAssembly took on the wire), the first cast card, LCP (the later of the LCP entry and the first card, as the budget counts it), and the slowest of two sort-tab switches (Event Timing). It records the deployed commit before and after its runs, and fails if a deploy landed in between.
+
+CI runs it on a manual run of the workflow (the `speed report` job, against https://allthing.social); locally:
+
+```sh
+E2E_SPEED=1 E2E_BASE_URL=https://allthing.social npx playwright test e2e/speed-report.spec.ts
+```
+
+A cloud sandbox's network and CPU stall often enough to make these numbers meaningless there; a CI runner's samples agree within about 20 ms.
+
+**WebAssembly with type-erased views (#140), 19 October 2026.** Production, before (29c7ade) and after (040d095) the change, median of 7 on a CI runner:
+
+| Desktop, 1280 px | Before | After |
+|---|---|---|
+| WebAssembly on the wire | 431.4 KB | 384.5 KB |
+| In by | 571 ms | 510 ms |
+| First cast | 649 ms | 563 ms |
+| LCP | 1,196 ms | 992 ms |
+| Slowest interaction | 56 ms | 40 ms |
+
+The phone run before the change overlapped its deploy, so the phone's before and after were measured side by side instead: main built with and without `--cfg erase_components`, each served from the runner as the Worker serves it (the brotli WebAssembly at `/wasm/`, the API passed through to production), three alternating rounds of three:
+
+| | Desktop before | Desktop after | Phone before | Phone after |
+|---|---|---|---|---|
+| WebAssembly on the wire | 431.4 KB | 384.9 KB | 431.4 KB | 384.9 KB |
+| In by | 573 ms | 530 ms | 3,295 ms | 3,062 ms |
+| First cast | 628 ms | 586 ms | 3,540 ms | 3,306 ms |
+| LCP | 1,120 ms | 1,076 ms | 3,540 ms | 3,306 ms |
+| Slowest interaction | 40 ms | 32 ms | 112 ms | 112 ms |
+
+On the phone profile the front page shows its first cast about 0.23 s sooner, the time 47 KB takes at 1.6 Mbps. Production's phone numbers after the change match: first cast 3,052 ms (samples 3,040–3,070), slowest interaction 104 ms.
