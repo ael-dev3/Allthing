@@ -115,9 +115,10 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   await expect(dialog).toBeHidden();
   expect(calls.polls).toBe(3);
   expect(calls.verify).toEqual([SIGNED]);
-  const account = page.getByRole("button", { name: "Signed in as @alice: account menu" });
+  const account = page.getByRole("link", { name: "Signed in as @alice: your profile" });
   await expect(account).toBeVisible();
   await expect(account).toBeFocused();
+  await expect(account).toHaveAttribute("href", "/u/alice");
   await expect(account.locator("img.avatar")).toHaveAttribute("src", /alice/);
   await expect(signIn).toHaveCount(0);
 
@@ -125,8 +126,16 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   await page.reload();
   await expect(account).toBeVisible();
 
-  // The account menu: who it is, their profile, and signing out.
+  // A click on the picture opens their own profile.
+  await page.mouse.move(5, 300);
   await account.click();
+  await expect(page).toHaveURL(/\/u\/alice$/);
+  await page.goBack();
+  await expect(account).toBeVisible();
+
+  // Hovering it shows the account menu: who it is, their profile, and signing out.
+  await page.mouse.move(5, 300);
+  await account.hover();
   const menu = page.getByRole("dialog", { name: "Your account" });
   await expect(menu).toContainText("Alice");
   await expect(menu).toContainText("@alice");
@@ -160,11 +169,15 @@ test("on a phone, the code fits the screen, with no link to the Farcaster app", 
   await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(dialog).toBeHidden();
   expect(calls.verify).toHaveLength(1);
-  const account = page.getByRole("button", { name: "Signed in as @alice: account menu" });
+  const account = page.getByRole("link", { name: "Signed in as @alice: your profile" });
   await expect(account).toBeInViewport({ ratio: 1 });
+  // On a touch screen, a tap on the picture opens the menu, which has the
+  // profile and Sign out, rather than following the link.
   await account.tap();
   const menu = page.getByRole("dialog", { name: "Your account" });
   await expect(menu).toBeInViewport({ ratio: 1 });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(menu.getByRole("link", { name: "Your profile" })).toHaveAttribute("href", "/u/alice");
   await menu.getByRole("button", { name: "Sign out" }).tap();
   await expect(signIn).toBeVisible();
   await context.close();
@@ -209,7 +222,7 @@ test("an expired code offers a new one, and a refused signature says why", async
   await expect(dialog.getByRole("status")).toHaveText("That address can't sign in as this Farcaster account");
   expect(calls.start).toBe(2);
   expect(calls.channel.map((c) => c.nonce)).toEqual(["nonce1abcdef012345", "nonce2abcdef012345"]);
-  await expect(page.getByRole("button", { name: /Signed in as/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Signed in as/ })).toHaveCount(0);
   // Escape closes the dialog and stops polling.
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();

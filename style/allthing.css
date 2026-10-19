@@ -279,8 +279,16 @@ code {
   margin-left: auto;
 }
 
+/* The signed-in account's picture: a link to their profile, whose menu
+   opens on hover, keyboard focus or a tap. */
 .account-button {
+  display: inline-flex;
   border-radius: 50%;
+}
+
+.account-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .account-button .avatar {
@@ -290,7 +298,7 @@ code {
 }
 
 .account-button:hover .avatar,
-.account-button[aria-expanded="true"] .avatar {
+.account:has(> .popover-panel) .account-button .avatar {
   box-shadow: 0 0 0 1px rgba(79, 67, 212, 0.35), 0 0 0 4px var(--accent-soft);
 }
 

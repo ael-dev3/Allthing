@@ -262,8 +262,9 @@ async fn relay(method: &str, path: &str, token: Option<&str>, body: Option<Strin
 
 const PERSON: &str = "M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4";
 
-/// The header's "Sign in" button, or the signed-in account's picture with
-/// its menu: who it is, their profile, and signing out.
+/// The header's "Sign in" button, or the signed-in account's picture: a
+/// link to their profile, whose menu (on hover, on keyboard focus, or on a
+/// tap on a touch screen) says who it is and signs out.
 #[component]
 pub fn Account() -> impl IntoView {
     let session = use_session();
@@ -278,23 +279,28 @@ pub fn Account() -> impl IntoView {
         .into_any(),
         Some(user) => {
             let pfp = user.pfp_url.clone();
-            let label = format!("Signed in as @{}: account menu", user.username);
-            let profile = (!user.username.starts_with("fid:")).then(|| user_href(&user.username));
+            let label = format!("Signed in as @{}: your profile", user.username);
+            let profile = user_href(&user.username);
             let (name, username) = (user.name().to_owned(), user.username.clone());
+            let link = profile.clone();
             view! {
                 <Popover
                     label="Your account"
-                    trigger_label=label
-                    trigger_class="account-button"
+                    hover=true
+                    links=true
                     class="account"
                     panel_class="account-menu"
-                    trigger=move || view! { <Avatar url=pfp.clone() size=32/> }
+                    trigger=move || view! {
+                        <a class="account-button" href=link.clone() aria-label=label.clone()>
+                            <Avatar url=pfp.clone() size=32/>
+                        </a>
+                    }
                     content=move || view! {
                         <p class="account-who">
                             <strong>{name.clone()}</strong>
                             <span class="muted">"@"{username.clone()}</span>
                         </p>
-                        {profile.clone().map(|href| view! { <a class="account-link" href=href>"Your profile"</a> })}
+                        <a class="account-link" href=profile.clone()>"Your profile"</a>
                         <button type="button" class="account-link sign-out" on:click=move |_| session.sign_out()>"Sign out"</button>
                     }
                 />
