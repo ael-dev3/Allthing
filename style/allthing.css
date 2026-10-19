@@ -2749,6 +2749,12 @@ code {
   right: 0;
 }
 
+/* A fixed wallet list is placed by its trigger, not pinned to the card's
+   right edge. */
+.wallets .popover-panel.fixed {
+  right: auto;
+}
+
 @keyframes pop-in {
   from {
     opacity: 0;
