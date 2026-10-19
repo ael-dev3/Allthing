@@ -14,9 +14,10 @@ use leptos_router::hooks::use_query_map;
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
-use crate::components::clients::ClientShareBar;
+use crate::components::clients::{ClientChip, ClientShareBar, client_param};
 use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice, TimeFilter};
 use crate::util::{href, set_title, with_query};
+use allthing_core::clients::from_client;
 
 /// The trending list ends after this many casts.
 const LAST_OFFSET: u32 = 900;
@@ -80,10 +81,17 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
         Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
         Some(Ok(Fetched { data, stale, .. })) => {
             let notes = Arc::new(data.notes.clone());
+            let query = use_query_map();
+            let client = client_param(&query.read());
             let casts = top_level(&data.pool);
+            let casts = match client {
+                Some(fid) => from_client(casts, &notes, fid),
+                None => casts,
+            };
             view! {
                 <Columns>
                     <Heading sort range/>
+                    {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
                     <CastList casts=Signal::stored(casts) notes=Signal::stored(notes)/>
                 </Columns>
@@ -232,6 +240,8 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 });
                 let pool = top_level(&payload.pool);
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
+                let query = use_query_map();
+                let client = Memo::new(move |_| client_param(&query.read()));
                 // Re-sorting reorders the list in place instead of rebuilding the page.
                 let casts = Memo::new(move |_| {
                     let order = sort.get();
@@ -243,13 +253,18 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                             );
                         }
                     });
-                    all
+                    match client.get() {
+                        Some(fid) => from_client(all, &notes.get(), fid),
+                        None => all,
+                    }
                 });
+                let chip_notes = Arc::new(payload.notes.clone());
                 view! {
                     <Columns>
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
                         <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown/>
+                        {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
@@ -265,15 +280,18 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
 fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     // "new" is newest first, whatever the range.
     let ranged = move || sort.get() != Sort::New;
+    let query = use_query_map();
     view! {
         <div class="listing-head">
             <h1 class="visually-hidden">"Trending on Farcaster"</h1>
             {move || {
                 let t = (range.get() != TimeRange::default()).then(|| range.get().as_str().to_owned());
+                // The client filter stays when the reader changes sort or range.
+                let client = client_param(&query.read()).map(|fid| fid.to_string());
                 view! {
                     <div class="sort-row">
-                        <SortTabs path=with_query(&href("/"), &[("t", t)]) current=sort.get()/>
-                        {ranged().then(|| view! { <TimeFilter path=href("/") sort=sort.get() current=range.get()/> })}
+                        <SortTabs path=with_query(&href("/"), &[("t", t), ("client", client.clone())]) current=sort.get()/>
+                        {ranged().then(|| view! { <TimeFilter path=with_query(&href("/"), &[("client", client)]) sort=sort.get() current=range.get()/> })}
                     </div>
                 }
             }}

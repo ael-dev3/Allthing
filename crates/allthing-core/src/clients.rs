@@ -27,6 +27,8 @@ pub fn client_profile(app: &UserSummary) -> String {
 pub struct ClientShare {
     /// The app's account; `None` for the remaining apps together.
     pub app: Option<UserSummary>,
+    /// The app's fid, `None` for the remaining apps together.
+    pub fid: Option<u64>,
     pub name: String,
     pub casts: u64,
     /// Whole percent; a list's shares sum to 100.
@@ -71,11 +73,11 @@ pub fn client_shares(casts: &[Cast], notes: &Annotations, top: usize, min: u64) 
         .map(|&(fid, casts)| {
             let app = notes.apps.get(&fid).cloned();
             let name = app.as_ref().map_or_else(|| format!("app fid {fid}"), |a| client_name(a).to_owned());
-            ClientShare { app, name, casts, percent: 0 }
+            ClientShare { app, fid: Some(fid), name, casts, percent: 0 }
         })
         .collect();
     if rest > 0 {
-        shares.push(ClientShare { app: None, name: "Other apps".into(), casts: rest, percent: 0 });
+        shares.push(ClientShare { app: None, fid: None, name: "Other apps".into(), casts: rest, percent: 0 });
     }
     let split = percents(&shares.iter().map(|s| s.casts).collect::<Vec<_>>());
     for (share, percent) in shares.iter_mut().zip(split) {
@@ -84,9 +86,36 @@ pub fn client_shares(casts: &[Cast], notes: &Annotations, top: usize, min: u64) 
     Some(shares)
 }
 
+/// The apps past the first `top` of `casts`' shares, each with its own
+/// share of the known casts, largest first: what "Other apps" holds.
+pub fn other_clients(casts: &[Cast], notes: &Annotations, top: usize) -> Vec<ClientShare> {
+    let mut counts: BTreeMap<u64, u64> = BTreeMap::new();
+    for fid in casts.iter().filter_map(|c| notes.origins.get(&c.hash)?.app_fid) {
+        *counts.entry(fid).or_default() += 1;
+    }
+    let mut apps: Vec<(u64, u64)> = counts.into_iter().collect();
+    apps.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let rest: Vec<(u64, u64)> = apps.into_iter().skip(top).collect();
+    let split = percents(&rest.iter().map(|&(_, n)| n).collect::<Vec<_>>());
+    rest.into_iter()
+        .zip(split)
+        .map(|((fid, casts), percent)| {
+            let app = notes.apps.get(&fid).cloned();
+            let name = app.as_ref().map_or_else(|| format!("app fid {fid}"), |a| client_name(a).to_owned());
+            ClientShare { app, fid: Some(fid), name, casts, percent }
+        })
+        .collect()
+}
+
+/// The casts posted from app `fid`, in their order.
+pub fn from_client(casts: Vec<Cast>, notes: &Annotations, fid: u64) -> Vec<Cast> {
+    casts.into_iter().filter(|c| notes.origins.get(&c.hash).and_then(|o| o.app_fid) == Some(fid)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provenance::Origin;
 
     #[test]
     fn the_farcaster_app_is_linked_by_fid_not_its_old_name() {
@@ -96,7 +125,6 @@ mod tests {
         let other = UserSummary { fid: 309857, username: "baseapp".into(), display_name: String::new(), pfp_url: None };
         assert_eq!(client_profile(&other), "baseapp");
     }
-    use crate::provenance::Origin;
 
     fn app(fid: u64, username: &str, display_name: &str) -> UserSummary {
         UserSummary { fid, username: username.into(), display_name: display_name.into(), pfp_url: None }
@@ -126,6 +154,26 @@ mod tests {
         assert_eq!(client_name(&app(9152, "warpcast", "Warpcast")), "Farcaster");
         assert_eq!(client_name(&app(309857, "baseapp.base.eth", "Base App")), "Base App");
         assert_eq!(client_name(&app(42, "someapp", "")), "someapp");
+    }
+
+    #[test]
+    fn other_clients_lists_the_apps_past_the_top_and_a_filter_keeps_one_app() {
+        let casts: Vec<Cast> = (0..11).map(|i| cast(&format!("0x{i}"))).collect();
+        let mut notes = Annotations::default();
+        let apps = [9152, 9152, 9152, 9152, 9152, 309857, 309857, 309857, 7, 8];
+        for (i, fid) in apps.iter().enumerate() {
+            notes.origins.insert(format!("0x{i}"), Origin { signer: "0x01".into(), app_fid: Some(*fid) });
+        }
+        notes.apps.insert(9152, app(9152, "warpcast", "Warpcast"));
+        // Top two are 9152 and 309857; the rest are 7 and 8, one cast each.
+        let rest = other_clients(&casts, &notes, 2);
+        assert_eq!(rest.iter().map(|s| s.fid).collect::<Vec<_>>(), [Some(7), Some(8)]);
+        assert_eq!(rest.iter().map(|s| s.casts).collect::<Vec<_>>(), [1, 1]);
+        assert_eq!(rest[0].name, "app fid 7");
+        // Filtering keeps only that app's casts, in order.
+        let only = from_client(casts.clone(), &notes, 309857);
+        assert_eq!(only.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0x5", "0x6", "0x7"]);
+        assert!(from_client(casts, &notes, 404).is_empty());
     }
 
     #[test]
