@@ -197,6 +197,7 @@ fn cache_key(url: &Url, name: &str) -> String {
 }
 
 async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Result<Response> {
+    let wallets = matches!(endpoint.as_ref(), Endpoint::Wallets(_));
     let build: cache::Builder = Rc::new(move |inv, previous| {
         let endpoint = endpoint.clone();
         async move { endpoint.build(inv, previous).await }.boxed_local()
@@ -222,7 +223,17 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
             if served == Served::StaleIfError {
                 headers.set("x-allthing-stale", "1")?;
             }
-            Ok(Response::from_bytes(entry.body.as_ref().clone())?.with_status(entry.status).with_headers(headers))
+            // Also protect copies cached before private RPC errors were redacted.
+            // Their good counts remain available for the next rebuild to carry.
+            let body = if wallets && entry.status == 200 {
+                match pages::public_wallet_body(entry.body.as_ref()) {
+                    Ok(body) => body.into_owned(),
+                    Err(failure) => return error(failure.status, &failure.message, failure.retry_after),
+                }
+            } else {
+                entry.body.as_ref().clone()
+            };
+            Ok(Response::from_bytes(body)?.with_status(entry.status).with_headers(headers))
         }
         Err(Failure { status, message, retry_after }) => error(status, &message, retry_after),
     }

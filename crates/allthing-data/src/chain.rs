@@ -11,6 +11,43 @@ use crate::Invocation;
 use crate::upstream::{Upstream, UpstreamError, rpc};
 
 const BASE_RPCS: &[&str] = &["https://mainnet.base.org", "https://base-rpc.publicnode.com"];
+const SOLANA_NETWORK_ERROR: &str = "Solana RPC request failed";
+const SOLANA_PARSE_ERROR: &str = "Solana RPC returned an invalid response";
+
+/// An older cached wallet error may hold private diagnostics. Only complete
+/// known public messages are safe to keep; opaque details become constants.
+pub(crate) fn public_solana_error(error: &str) -> std::borrow::Cow<'_, str> {
+    let detail = error
+        .strip_prefix("upstream unreachable: not measured (")
+        .and_then(|detail| detail.strip_suffix(')'))
+        .unwrap_or(error);
+    let status = detail
+        .strip_prefix("upstream returned HTTP ")
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|code| (100..=599).contains(&code));
+    let busy = detail
+        .strip_prefix("upstream busy, retry in ")
+        .and_then(|seconds| seconds.strip_suffix('s'))
+        .is_some_and(|seconds| !seconds.is_empty() && seconds.bytes().all(|b| b.is_ascii_digit()));
+    if status
+        || busy
+        || matches!(
+            detail,
+            "upstream timed out"
+                | "request budget exhausted"
+                | "upstream unreachable: Solana RPC request failed"
+                | "unexpected upstream response: Solana RPC returned an invalid response"
+        )
+    {
+        return std::borrow::Cow::Borrowed(error);
+    }
+    let public = if detail.starts_with("unexpected upstream response:") {
+        UpstreamError::Parse(SOLANA_PARSE_ERROR.into())
+    } else {
+        UpstreamError::Network(SOLANA_NETWORK_ERROR.into())
+    };
+    format!("upstream unreachable: not measured ({public})").into()
+}
 
 #[derive(Deserialize)]
 struct RpcResponse {
@@ -149,8 +186,8 @@ async fn solana_keyed_count(inv: &Invocation, url: &str, addresses: &[String]) -
             // errors may quote provider content. Wallet errors are public.
             let page: SignaturesResponse =
                 rpc(inv, Upstream::Chain("solana-keyed"), url, &body).await.map_err(|error| match error {
-                    UpstreamError::Network(_) => UpstreamError::Network("Solana RPC request failed".into()),
-                    UpstreamError::Parse(_) => UpstreamError::Parse("Solana RPC returned an invalid response".into()),
+                    UpstreamError::Network(_) => UpstreamError::Network(SOLANA_NETWORK_ERROR.into()),
+                    UpstreamError::Parse(_) => UpstreamError::Parse(SOLANA_PARSE_ERROR.into()),
                     other => other,
                 })?;
             let signatures =
