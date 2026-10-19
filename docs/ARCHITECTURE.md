@@ -176,7 +176,7 @@ Readers sign in with Farcaster by QR code, through the Farcaster app on their ph
    - the message: the statement "Farcaster Auth", chain id 10, exactly one `farcaster://fid/<fid>` resource, this site's domain and address, the nonce in this browser's cookie, and its expiration and not-before times;
    - the signature: the address that signed it (EIP-191 `personal_sign`, recovered with secp256k1 and Keccak-256) is the message's;
    - the signer: on OP Mainnet, in one batched request, the address is the account's custody address (`IdRegistry.idOf`) or one of its auth addresses (`KeyRegistry.keyDataOf`, an added key of type 2).
-6. **Session.** The Worker sets `__Host-allthing-session`, `<fid>.<expiry>` signed with HMAC-SHA256 (HttpOnly, Secure, SameSite=Lax, 30 days), and `__Host-allthing-user`, the account's name and picture, which the header reads to show who is signed in without an API call. It is only a label: the HttpOnly cookie is the session. "Sign out" in the account menu (`POST /api/v1/auth/signout`) clears both.
+6. **Session.** The Worker sets `__Host-allthing-session`, `<fid>.<expiry>` signed with HMAC-SHA256 (HttpOnly, Secure, SameSite=Lax, 30 days), and `__Host-allthing-user`, the account's name and picture, which the header reads to show who is signed in without an API call. It is only a label: the HttpOnly cookie is the session. The header's picture links to the account's profile; hovering it, keyboard focus resting on it, or a tap on a touch screen opens the account menu, whose "Sign out" (`POST /api/v1/auth/signout`) clears both cookies.
 
 ### Writing a cast
 
