@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Feed refreshes retain all three levels of already loaded quotes. They no longer reread known nested quotes or collapse them to links when the provider is unavailable or the request budget is tight.
+
 ### Added
 
 - `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.

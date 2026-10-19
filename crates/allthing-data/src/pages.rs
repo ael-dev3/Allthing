@@ -17,7 +17,7 @@ use allthing_core::normalize::{self, RawAppChannel, RawCast};
 use allthing_core::params::fid_username;
 use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
-use allthing_core::quotes;
+use allthing_core::quotes::{self, QUOTE_DEPTH};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{
     flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, reply_preview, without_hidden,
@@ -40,9 +40,6 @@ const ORIGIN_AUTHORS: usize = 12;
 /// Subrequests that reading a listing's quoted casts leaves to the rest of
 /// the build: app names and the cache write.
 const QUOTES_RESERVE: u32 = 2;
-/// How many levels of quotes a listing carries: a quote of a quote of a
-/// quote, and no further (its quote shows as a link).
-const QUOTE_DEPTH: usize = 3;
 /// Preloaded previews never take Hypersnap's per-isolate bucket (40 tokens)
 /// below this, so page builds in the same isolate keep their share: two
 /// full batches (12 reads each) fit above it.
@@ -1460,6 +1457,61 @@ mod quote_tests {
         let (quotes, _) = quoted_casts(&inv, &pool, carried).now_or_never().unwrap();
         assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
         assert_eq!(*host.requests.borrow(), 2, "0xc1 and 0xd1, one read each");
+    }
+
+    fn nested_carried() -> BTreeMap<String, Cast> {
+        BTreeMap::from([
+            ("0xb1".to_owned(), cast("0xb1", &["0xc1"])),
+            ("0xc1".to_owned(), cast("0xc1", &["0xd1"])),
+            ("0xd1".to_owned(), cast("0xd1", &["0xe1"])),
+            ("0xe1".to_owned(), cast("0xe1", &[])),
+            ("0xold".to_owned(), cast("0xold", &[])),
+        ])
+    }
+
+    #[test]
+    fn all_carried_quote_levels_survive_an_unavailable_provider_without_reads() {
+        let host = Bulk::new(true);
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1"])];
+        let (quotes, cards) = quoted_casts(&inv, &pool, nested_carried()).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert!(cards.is_empty());
+        assert!(host.requests.borrow().is_empty(), "retained quotes need no bulk read");
+        assert_eq!(inv.remaining_subrequests(), 45);
+    }
+
+    #[test]
+    fn all_carried_quote_levels_survive_a_tight_budget() {
+        let host = Bulk::new(false);
+        let inv = Invocation::new(host.clone(), QUOTES_RESERVE);
+        let pool = [cast("0x01", &["0xb1"])];
+        let (quotes, _) = quoted_casts(&inv, &pool, nested_carried()).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert!(host.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_refresh_reuses_all_carried_quote_levels_without_bulk_reads() {
+        let host = Rc::new(Chain {
+            next: BTreeMap::from([("0xb1", "0xc1"), ("0xc1", "0xd1"), ("0xd1", "0xe1")]),
+            requests: RefCell::new(0),
+        });
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1"])];
+        let (quotes, _) = quoted_casts(&inv, &pool, nested_carried()).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert_eq!(*host.requests.borrow(), 0, "a refresh must reuse the two nested levels too");
+    }
+
+    #[test]
+    fn a_missing_sibling_does_not_discard_carried_nested_quotes() {
+        let host = Bulk::new(true);
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1", "0xmissing"])];
+        let (quotes, _) = quoted_casts(&inv, &pool, nested_carried()).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert_eq!(host.asked(), [["0xmissing"]]);
     }
 
     #[test]
