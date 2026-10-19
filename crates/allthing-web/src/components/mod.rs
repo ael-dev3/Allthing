@@ -4,6 +4,8 @@
 pub mod cast;
 pub mod chips;
 pub mod clients;
+#[cfg(not(feature = "static-host"))]
+pub mod compose;
 pub mod facts;
 pub mod layout;
 pub mod media;

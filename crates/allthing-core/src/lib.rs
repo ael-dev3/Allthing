@@ -11,6 +11,7 @@
 pub mod api;
 pub mod channels;
 pub mod clients;
+pub mod compose;
 pub mod embeds;
 pub mod format;
 pub mod guard;

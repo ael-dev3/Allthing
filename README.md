@@ -16,7 +16,7 @@
   <a href="https://github.com/ael-dev3/Allthing/releases"><img src="https://img.shields.io/github/v/release/ael-dev3/Allthing?sort=semver" alt="Latest release"></a>
 </p>
 
-Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. Nobody signs in and nothing is ever posted: it only reads the public network.
+Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. No account is needed to read, and Allthing posts nothing itself: a signed-in reader's cast opens in the Farcaster app, which posts it.
 
 **Live at [allthing.social](https://allthing.social).**
 
@@ -36,6 +36,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Less noise, judged by content.** Casts that embed or link to mini apps or frames, which Allthing doesn't run, and spam caught by a few fixed content rules are left out by the Worker. Nothing is hidden because of who posted it.
 - **Fast and frugal.** Each page makes one API call (profiles, and profile cards as they open, also look up wallets and the vote). Posts open instantly from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. The Worker caches every payload at the edge, so the whole site runs on the Cloudflare Workers Free plan.
 - **Sign in with Farcaster.** Scan a QR code with the Farcaster app on your phone (or, on the phone, open the app from a link) and approve: your picture appears in the header, with your profile and Sign out in its menu. Signing in only says who is reading; Allthing gets no signer and posts nothing.
+- **Write, with a GIF.** Signed in, the header's Cast button and Reply under a post open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)). Post in Farcaster opens the draft in the Farcaster app, ready to post.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
 ## Architecture

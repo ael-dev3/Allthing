@@ -57,6 +57,8 @@ fn App() -> impl IntoView {
     provide_context(WhoList::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
+    #[cfg(not(feature = "static-host"))]
+    provide_context(components::compose::Composer::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>
@@ -83,10 +85,13 @@ fn App() -> impl IntoView {
     }
 }
 
-/// The sign-in dialog, in front of the Worker.
+/// The sign-in dialog and the composer, in front of the Worker.
 #[cfg(not(feature = "static-host"))]
 fn sign_in_dialog() -> impl IntoView {
-    view! { <components::signin::SignInDialog/> }
+    view! {
+        <components::signin::SignInDialog/>
+        <components::compose::ComposerDialog/>
+    }
 }
 
 /// The static copy has no Worker to sign in with.

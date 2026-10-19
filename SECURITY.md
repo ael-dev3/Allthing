@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Security policy
 
-Allthing is a client for reading Farcaster. It has no signers, keys or write paths and posts nothing. Readers can sign in with Farcaster by QR code ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sign-in)), which only says who is reading: the Worker checks the signed message, then keeps a stateless session in an HMAC-signed, HttpOnly, Secure cookie. Apart from the sign-in endpoints, which take same-origin `POST`s, the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, the session key is the Worker secret `SESSION_SECRET`, and deployment credentials live in Cloudflare Workers Builds.
+Allthing is a client for reading Farcaster. It has no signers or write paths and posts nothing: a cast written in it opens in the Farcaster app, which posts it. Readers can sign in with Farcaster by QR code ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sign-in)), which only says who is reading: the Worker checks the signed message, then keeps a stateless session in an HMAC-signed, HttpOnly, Secure cookie. Apart from the sign-in endpoints, which take same-origin `POST`s, the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, the session key is the Worker secret `SESSION_SECRET`, KLIPY's app key for GIF search is the Worker secret `KLIPY_API_KEY` (handed to signed-in browsers, which KLIPY requires to call it themselves), and deployment credentials live in Cloudflare Workers Builds.
 
 ## Supported versions
 

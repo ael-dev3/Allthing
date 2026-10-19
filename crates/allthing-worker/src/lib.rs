@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError};
+use allthing_core::compose::gif_key_path;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::ranking::TrendingWindow;
@@ -28,7 +29,7 @@ use allthing_data::{Endpoint, Failure, Invocation, upstream};
 use allthing_data::{indexer, pages};
 use futures::future::FutureExt;
 use worker::{
-    Context, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
+    Context, Date, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
     ScheduleContext, ScheduledEvent, Url, console_error, console_log, event,
 };
 
@@ -86,6 +87,10 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     if let Some(limited) = rate_limited(&req, &env).await {
         return Ok(limited);
     }
+    // The GIF picker's key, for a signed-in session: no subrequest.
+    if url.path() == gif_key_path() {
+        return auth::gif_key(&req, &env, (Date::now().as_millis() / 1000) as i64);
+    }
 
     let index = D1Index::new(&env).map(Rc::new);
     let host = WorkerHost::new(Lifetime::Request(ctx), index, solana_rpc(&env));
@@ -96,7 +101,7 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         }
     });
     REQUESTS.with(|r| r.set(r.get() + 1));
-    route(&inv, &url).await
+    route(&inv, &url, &env).await
 }
 
 /// The cron trigger in wrangler.toml that stores the newest casts. It fires
@@ -187,12 +192,12 @@ fn query(url: &Url, key: &str) -> Option<String> {
     url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned())
 }
 
-async fn route(inv: &Rc<Invocation>, url: &Url) -> Result<Response> {
+async fn route(inv: &Rc<Invocation>, url: &Url, env: &Env) -> Result<Response> {
     let Some(name) = url.path().strip_prefix(API_PREFIX) else {
         return error(404, "Unknown API version", None);
     };
     if name == "/status" {
-        return status(inv, url).await;
+        return status(inv, url, env).await;
     }
     let endpoint = match Endpoint::parse(name, |key| query(url, key)) {
         Ok(endpoint) => Rc::new(endpoint),
@@ -270,7 +275,7 @@ fn version() -> Result<Response> {
 /// cached "new" and trending lists are, and the cron's stored copy of the
 /// newest casts. Makes no upstream calls: it reads the two lists from the
 /// edge cache and the copy from D1.
-async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
+async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
     let now = inv.now();
     let stored = async {
         let index = inv.index()?;
@@ -308,6 +313,9 @@ async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
             }),
             None => serde_json::json!({ "keyed": false }),
         },
+        // Whether the GIF picker has KLIPY's key (the KLIPY_API_KEY
+        // secret), never the key.
+        "gifs": { "keyed": auth::klipy_key(env).is_some() },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

@@ -98,6 +98,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     <div class="comment-foot">
                         <Engagement cast=cast.clone()/>
                         <a class="permalink" href=href.clone()>"permalink"</a>
+                        {reply_button(&cast)}
                     </div>
                     {(!node.children.is_empty()).then(|| view! {
                         <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid/></div>
@@ -110,4 +111,16 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
         </div>
     }
     .into_any()
+}
+
+/// Reply, under a post or a reply, for the signed-in reader.
+#[cfg(not(feature = "static-host"))]
+pub fn reply_button(cast: &allthing_core::model::Cast) -> AnyView {
+    view! { <crate::components::compose::ReplyButton cast=cast.clone()/> }.into_any()
+}
+
+/// The static copy has no sign-in, and no Reply.
+#[cfg(feature = "static-host")]
+pub fn reply_button(_: &allthing_core::model::Cast) -> AnyView {
+    ().into_any()
 }

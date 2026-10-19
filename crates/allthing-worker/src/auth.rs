@@ -14,11 +14,13 @@
 //! `signout` clears it.
 //!
 //! Sessions are stateless: changing `SESSION_SECRET` signs everyone out.
-//! Nothing here posts anything; signing in only says who is reading.
+//! Nothing here posts anything; signing in only says who is reading. A
+//! session also gets the GIF picker's key (`gif_key`).
 
 use std::fmt::Write as _;
 use std::rc::Rc;
 
+use allthing_core::compose::GifKey;
 use allthing_core::model::UserSummary;
 use allthing_core::normalize;
 use allthing_core::siwf::{
@@ -115,13 +117,54 @@ fn pending_nonce(secret: &[u8], value: &str, now: i64) -> Option<String> {
     (fresh && is_nonce(nonce)).then(|| nonce.to_owned())
 }
 
-/// The account a session cookie signs in, if it is ours and current: what
-/// endpoints that act for the signed-in account will check (none does yet).
-#[cfg(test)]
+/// The account a session cookie signs in, if it is ours and current.
 fn session_fid(secret: &[u8], value: &str, now: i64) -> Option<u64> {
     let (fid, expires) = open(secret, SESSION, value)?.split_once('.')?;
     let current = expires.parse::<i64>().ok().is_some_and(|at| now < at);
     fid.parse().ok().filter(|fid| current && *fid > 0)
+}
+
+/// `GET /api/v1/gifs/key`: KLIPY's app key, from the `KLIPY_API_KEY`
+/// secret, for a signed-in reader's GIF picker. KLIPY requires its API and
+/// its media to be reached from the reader's browser, never through a
+/// partner's server, so the browser holds the key, which every request it
+/// makes to KLIPY carries anyway; the Worker hands it only to a session.
+/// 404 when the secret is unset: the composer then has no GIF button. It
+/// makes no subrequest.
+pub fn gif_key(req: &Request, env: &Env, now: i64) -> Result<Response> {
+    let cookies = req.headers().get("cookie")?.unwrap_or_default();
+    let signed_in = session_secret(env).is_some_and(|secret| {
+        cookie(&cookies, SESSION_COOKIE).and_then(|value| session_fid(secret.as_bytes(), value, now)).is_some()
+    });
+    let (status, key, cache) = gif_key_answer(signed_in, klipy_key(env));
+    let headers = Headers::new();
+    headers.set("content-type", "application/json; charset=utf-8")?;
+    headers.set("cache-control", cache)?;
+    let response = match key {
+        Some(key) => Response::from_json(&key)?,
+        None => {
+            let message =
+                if status == 401 { "Sign in to search GIFs" } else { "GIF search isn't set up on this server" };
+            Response::from_json(&allthing_core::api::ApiError { error: message.to_owned(), retry_after: None })?
+        }
+    };
+    Ok(response.with_status(status).with_headers(headers))
+}
+
+/// What `/api/v1/gifs/key` answers: its status, the key, and how long the
+/// browser may keep the answer (an hour for the key, which a signed-out
+/// browser's cached copy can't misuse: KLIPY's key is public by design).
+fn gif_key_answer(signed_in: bool, key: Option<String>) -> (u16, Option<GifKey>, &'static str) {
+    match (signed_in, key) {
+        (false, _) => (401, None, "no-store"),
+        (true, None) => (404, None, "no-store"),
+        (true, Some(key)) => (200, Some(GifKey { key }), "private, max-age=3600"),
+    }
+}
+
+/// KLIPY's app key, from the `KLIPY_API_KEY` Worker secret, if it is set.
+pub fn klipy_key(env: &Env) -> Option<String> {
+    env.secret("KLIPY_API_KEY").ok().map(|s| s.to_string().trim().to_owned()).filter(|s| !s.is_empty())
 }
 
 async fn verify(req: &mut Request, url: &Url, secret: &[u8], inv: &Rc<Invocation>, now: i64) -> Result<Response> {
@@ -367,6 +410,15 @@ mod tests {
         assert_eq!(pending_nonce(SECRET, &pending, 1999).as_deref(), Some("8f3c2a1b9d7e4f60"));
         assert_eq!(pending_nonce(SECRET, &pending, 2000), None, "expired");
         assert_eq!(pending_nonce(SECRET, &session, 1999), None);
+    }
+
+    #[test]
+    fn the_gif_key_goes_only_to_a_session() {
+        let key = || Some("k3y".to_owned());
+        assert_eq!(gif_key_answer(false, key()), (401, None, "no-store"));
+        assert_eq!(gif_key_answer(false, None), (401, None, "no-store"), "nothing said of the secret");
+        assert_eq!(gif_key_answer(true, None), (404, None, "no-store"));
+        assert_eq!(gif_key_answer(true, key()), (200, Some(GifKey { key: "k3y".into() }), "private, max-age=3600"));
     }
 
     #[test]
