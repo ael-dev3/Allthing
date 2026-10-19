@@ -1707,6 +1707,18 @@ code {
   box-shadow: var(--shadow);
 }
 
+/* Inside the profile header, wallet activity is a divider and a chart, not a
+   card of its own. */
+.profile-wallets {
+  margin-top: 16px;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .wallets h2 {
   font: 400 24px/1.1 var(--font-display);
   margin: 0 0 12px;
