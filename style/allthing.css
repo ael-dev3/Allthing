@@ -1777,6 +1777,73 @@ code {
   color: var(--ink-2);
 }
 
+/* A legend app is a link that filters the feed. */
+.client-legend a,
+.client-other {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.client-legend a:hover,
+.client-legend a:focus-visible,
+.client-legend a[aria-current="true"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.client-rest {
+  list-style: none;
+  margin: 0;
+  padding: 6px 4px;
+  display: grid;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.client-rest a {
+  color: inherit;
+  text-decoration: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-rest a:hover,
+.client-rest a:focus-visible {
+  text-decoration: underline;
+}
+
+/* An active client filter, removable: a link back to the unfiltered feed. */
+.client-chip-row {
+  margin: 0 0 10px;
+}
+
+.client-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.client-chip:hover,
+.client-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .client-legend li {
   display: inline-flex;
   align-items: center;
