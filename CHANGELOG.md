@@ -7,6 +7,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Profile-card vote and wallet prefetches resume when foreground reads finish or fail, so navigating with pending profile facts no longer leaves the next feed's cards waiting for another interaction.
 
+- Keyed Solana RPC failures keep the private endpoint and provider content out of public wallet error responses, while preserving status, timeout and request-budget diagnostics.
+
 ### Added
 
 - `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.
@@ -16,6 +18,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - A profile, feed or post that isn't cached yet builds faster: it checks at most six unknown links for mini apps per build, in one parallel batch, instead of twelve in two batches. The second batch waited for the first's slowest page; on cold profiles it took 1.2 to 1.8 s of 1.6 to 2.6 s. Links left unchecked keep their casts listed until the next refresh checks them.
+- A profile that isn't cached yet builds faster again: its quoted casts and app names are read while its links are checked for mini apps, instead of after the check. On 19 October 2026 the check took up to 1.4 s of an uncached profile's build, and the reads after it another 0.1 to 0.2 s. What only a hidden cast needed (its quotes, its origin) is left out of the payload, as before.
 - Nothing on screen calls a post or an account spam. A hidden reply says "Post hidden", a hidden quoted cast "Quoted cast hidden", and a filtered post opened by its link says which kinds of links Allthing leaves out. What is left out is unchanged; mini app posts still say they are mini apps.
 - Solana wallet counts are real when the `SOLANA_RPC_URL` secret is set: each verified Solana address is paged through its history (up to 5,000 signatures, shown as "5,000+"), from a keyed RPC endpoint. Without the secret, a Solana read that fails says it couldn't be read just now, instead of blaming the public RPC. See the Secrets section of docs/DEPLOY.md.
 - A quote of a quote shows inline, up to three levels: a quoted cast that quotes another shows that quote as a card, and so on. A quote beyond the third is a link, as before. Each level costs one bulk read in a listing's build, made while the build has budget to spare.
@@ -34,6 +37,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Wallet activity no longer swings when a chain can't be read: that chain keeps its last good count from the previous read of the same addresses, and the chart says some counts are from an earlier read. Before, it was left out and the other chains shared its part (0xael.eth showed Optimism 58% and Monad 41% while Base, its main chain, was unread), and that copy was kept for six hours. A copy still missing an EVM chain is now read again within minutes.
 - Search and the channel directory's search no longer show a channel count that contradicts the channel's page: Hypersnap's channel search can return a different record of the same channel, so /farcaster showed "23 casters" in search while its page shows 445,633 followers. Search rows now show the channel without a count.
+- A post's meta line names the app it was posted from once ("via Farcaster"), not twice: the feed card's "via" chip had stayed next to the post's own linked one since the app moved into the meta line.
 - Taps, clicks and keystrokes show their result sooner on every page: about 16–32 ms instead of 40–64 ms after the input in a headless browser without a GPU. The line of light drifting along the header animated its background, which repainted the header in every frame while it ran (always), and the next frame after an input waited behind that work. It now slides by transform, which the compositor animates without repainting; it looks the same and still stops under reduced motion.
 - The changelog's 0.4.0 entries are under their headings: sixteen fixes had landed above them, and four additions were filed as fixes. Two missing entries are back (the sound badge's quick second tap, and cards outside the window skipping layout), and the Solana entry says that allthing.social couldn't read Solana.
 - Wallet activity by chain follows the current rules even when the edge serves a payload it cached under older ones, which it keeps for hours. For up to a day after 0.4.0, a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.3% of its transactions). The browser now works out the shares from the counts itself.
