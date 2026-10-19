@@ -13,8 +13,6 @@ The relevant Free plan limits, as of October 2026:
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
 
-The production performance CI job checks `/version` before measuring a deployment: one Worker request every five seconds for at most five minutes (at most 60 requests per run), with no upstream calls. It usually finishes on the first check after the build tools and browser are installed.
-
 ## 1. What a page view costs
 
 The browser app is static. A page view runs the Worker for its one API call and nothing else:
@@ -53,6 +51,8 @@ The front page fills the space near the end of the list even when filtering leav
 A reader who opens posts they hovered spends nothing extra; idle viewport prefetches cost at most 6 requests a minute per active reader, and preloaded previews at most 4 per feed view (one for a reader who doesn't scroll). Hovering a preloaded count then costs nothing.
 
 **Capacity:** about **43,000 page views a day** with a typical mix, including prefetches, popovers and preloaded previews (about 2.3 Worker requests per view). That assumes about half of all views are feeds read with a mouse, each adding one or two batches. That is before counting views that cost nothing (sorting, back/forward, revisits). `MAX_BATCHES` in `crates/allthing-web/src/preload.rs` trades preloaded cards for capacity: without preloads it is about 60,000 (about 1.6 requests per view). Each profile card a reader opens adds up to 2 more, and nothing for that account again within 5 minutes.
+
+The production performance CI job checks `/version` before measuring a deployment: one Worker request every five seconds for at most five minutes (at most 60 requests per run), with no upstream calls. It usually finishes on the first check after the build tools and browser are installed.
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby
 
