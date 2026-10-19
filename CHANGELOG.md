@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Wallets distinguish unread chains from measured zero activity, and keep the earlier-read notice when carried counts are zero.
+
 ### Added
 
 - `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.
