@@ -281,6 +281,15 @@ async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
         },
         "upstreams": upstream::guard_status(now),
         "subrequest_budget": SUBREQUEST_BUDGET,
+        // Whether Solana wallet counts have a keyed endpoint (the
+        // SOLANA_RPC_URL secret): its host only, never the key.
+        "solana_rpc": match inv.solana_rpc() {
+            Some(endpoint) => serde_json::json!({
+                "keyed": true,
+                "host": Url::parse(&endpoint).ok().and_then(|u| u.host_str().map(str::to_owned)),
+            }),
+            None => serde_json::json!({ "keyed": false }),
+        },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

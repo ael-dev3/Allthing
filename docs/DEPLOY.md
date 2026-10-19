@@ -75,7 +75,7 @@ With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.soci
 
 ## Secrets
 
-- **`SOLANA_RPC_URL`** (optional): a keyed Solana RPC endpoint, with its key in the URL, for Solana wallet counts. Set it once in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*), or with `npx wrangler secret put SOLANA_RPC_URL`. It is never committed. Without it, a Solana read shows as unread (see [WALLETS.md](WALLETS.md)). For local development, put it in `crates/allthing-worker/.dev.vars` (git-ignored), not in the repository.
+- **`SOLANA_RPC_URL`** (optional): a keyed Solana RPC endpoint, with its key in the URL, for Solana wallet counts. Set it once in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*), or with `npx wrangler secret put SOLANA_RPC_URL`. It is never committed. Without it, a Solana read shows as unread (see [WALLETS.md](WALLETS.md)). For local development, put it in `crates/allthing-worker/.dev.vars` (git-ignored), not in the repository. To check that the deployed Worker has it, open `/api/v1/status`: `solana_rpc.keyed` is `true` and `solana_rpc.host` names the provider's host (never the key).
 
 ## Local development
 
