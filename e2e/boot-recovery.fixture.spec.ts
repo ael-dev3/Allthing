@@ -10,7 +10,8 @@ for (const width of [1280, 390]) {
       let blocked = true;
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.route(`**/assets/allthing-*.${asset}`, (route) => blocked ? route.abort("failed") : route.continue());
+      // The module comes from the Worker at /wasm/ and, failing that, from /assets/.
+      await page.route(`**/{assets,wasm}/allthing-*.${asset}`, (route) => blocked ? route.abort("failed") : route.continue());
       await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
         pool: [], meta: { backend: "hypersnap", fetched_at: Date.now() },
       } }));
@@ -33,4 +34,44 @@ for (const width of [1280, 390]) {
       expect(errors).toEqual([]);
     });
   }
+}
+
+for (const width of [1280, 390]) {
+  test(`the app loads the static copy of its module when the Worker can't serve it at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const modules: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.endsWith(".wasm")) modules.push(path.split("/")[1]);
+    });
+    await page.route("**/wasm/**", (route) => route.fulfill({ status: 429, contentType: "text/plain", body: "Too many requests" }));
+    await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
+      pool: [], meta: { backend: "hypersnap", fetched_at: Date.now() },
+    } }));
+    await page.goto("/?sort=top&t=week");
+    await expect(page.getByRole("combobox", { name: "Search casts, people and channels", exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    expect(modules).toEqual(["wasm", "assets"]);
+    expect(errors).toEqual([]);
+  });
+
+  test(`the module comes from the Worker at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const modules: { path: string, status: number, type: string | undefined }[] = [];
+    page.on("response", (response) => {
+      const path = new URL(response.url()).pathname;
+      if (path.endsWith(".wasm")) modules.push({ path, status: response.status(), type: response.headers()["content-type"] });
+    });
+    await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
+      pool: [], meta: { backend: "hypersnap", fetched_at: Date.now() },
+    } }));
+    await page.goto("/");
+    await expect(page.getByRole("combobox", { name: "Search casts, people and channels", exact: true })).toBeVisible();
+    expect(modules).toHaveLength(1);
+    expect(modules[0].path).toMatch(/^\/wasm\/allthing-[0-9a-f]+\.wasm$/);
+    expect(modules[0].status).toBe(200);
+    expect(modules[0].type).toBe("application/wasm");
+  });
 }

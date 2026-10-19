@@ -7,6 +7,7 @@ Allthing is a read-only Farcaster client. It is one Cloudflare Worker that serve
  Browser                                   Cloudflare (one Worker, Free plan)            Upstreams
  ───────                                   ──────────────────────────────────            ─────────
  index.html, boot.js        ── static ──▶  Workers Static Assets (free, no Worker run)
+ /wasm/allthing-*.wasm      ── Worker ──▶  the module's brotli-11 copy from ASSETS (boot.js falls back to /assets/)
  allthing-*.wasm/.js/.css                  dist/: hashed, cached for a year
 
  one call per page          ── /api/* ──▶  allthing-worker (Rust, workers-rs)

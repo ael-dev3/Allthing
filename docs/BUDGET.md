@@ -7,7 +7,7 @@ The relevant Free plan limits, as of October 2026:
 
 | Limit | Value | Allthing's design |
 |---|---|---|
-| Worker requests | 100,000/day (resets 00:00 UTC) | Only `/api/*` and `/version` run the Worker; everything else is a static asset |
+| Worker requests | 100,000/day (resets 00:00 UTC) | `/api/*`, `/version` and `/wasm/*` run the Worker; everything else is a static asset. `/wasm/*` is the app's WebAssembly, fetched once per browser (it is cached for a year), so it adds one request to a first visit only |
 | Static asset requests | free and unlimited | The app, styles and fonts are all static |
 | CPU time | 10 ms per invocation | Payloads are parsed once per refresh and cached; cache hits copy bytes |
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
@@ -160,7 +160,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Batches**: one `/api/v1/engagement` request can cost up to 12 upstream reads, but only while the isolate's Hypersnap bucket holds more than 16 tokens. A flood of batches for made-up combinations of casts gets 503s once it reaches that floor, and page builds keep the rest.
 - **Read-only**: anything but GET or HEAD on `/api/*` gets 405. The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
 - **The browser app** never polls; it makes one API call per page, caches answers for 5 minutes, prefetches within the caps above, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
-- **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`) get 429 until 00:00 UTC. Static assets keep being served free, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
+- **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`, `/wasm/*`) get 429 until 00:00 UTC. Static assets keep being served free, and `boot.js` then loads the static copy of the module from `/assets/`, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
 - **Optional, set up in the dashboard**: a WAF rate-limiting rule on `/api/` and Bot Fight Mode stop abusive traffic *before* it reaches the Worker, so it doesn't count against the daily allowance.
 
 ## 7. The static copy

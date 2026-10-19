@@ -3,7 +3,9 @@
 //! and keyless public chain RPCs, built for the Workers Free plan.
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
-//! Workers Static Assets without invoking this code; only `/api/*` runs here.
+//! Workers Static Assets without invoking this code; `/api/*` runs here, and
+//! `/wasm/*`, the app's WebAssembly compressed at brotli's highest level
+//! (`wasm_module`).
 //! Every page costs one API call, every payload is edge-cached with
 //! stale-while-revalidate, and every upstream call goes through a per-isolate
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
@@ -24,8 +26,8 @@ use allthing_data::indexer;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
 use futures::future::FutureExt;
 use worker::{
-    Context, Env, Headers, Method, Request, Response, Result, ScheduleContext, ScheduledEvent, Url, console_error,
-    console_log, event,
+    Context, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
+    ScheduleContext, ScheduledEvent, Url, console_error, console_log, event,
 };
 
 use crate::cache::Served;
@@ -60,6 +62,9 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
     if url.path() == "/version" || url.path() == "/api/v1/version" {
         return version();
+    }
+    if let Some(name) = url.path().strip_prefix("/wasm/") {
+        return wasm_module(&req, &env, &url, name).await;
     }
     if !url.path().starts_with("/api/") {
         return error(404, "Not found", None);
@@ -96,6 +101,46 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
         Ok(report) => console_log!("indexer: {report:?}"),
         Err(error) => console_error!("indexer: {error}"),
     }
+}
+
+/// `/wasm/<name>`: the app's WebAssembly. For a browser that accepts brotli,
+/// the copy the build compressed at brotli's highest level
+/// (`/assets/<name>.br`), about a fifth smaller than the edge compresses the
+/// module on the fly; otherwise, or without that copy, the module itself.
+/// `boot.js` falls back to `/assets/<name>` if this fails, so the app still
+/// loads when the Worker can't answer.
+async fn wasm_module(req: &Request, env: &Env, url: &Url, name: &str) -> Result<Response> {
+    let ours = name.starts_with("allthing-")
+        && name.ends_with(".wasm")
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+    if !ours {
+        return error(404, "Not found", None);
+    }
+    let assets = env.assets("ASSETS")?;
+    let origin = url.origin().ascii_serialization();
+    // A missing file comes back as the app's index.html (single-page
+    // routing), which must never be sent as the module.
+    let found = |res: &Response| -> Result<bool> {
+        let html = res.headers().get("content-type")?.is_some_and(|t| t.starts_with("text/html"));
+        Ok(res.status_code() == 200 && !html)
+    };
+    let brotli = req.headers().get("accept-encoding")?.is_some_and(|accepted| {
+        accepted.split(',').any(|coding| coding.split(';').next().map(str::trim) == Some("br"))
+    });
+    if brotli {
+        let compressed = assets.fetch(format!("{origin}/assets/{name}.br"), None).await?;
+        if found(&compressed)? {
+            let headers = Headers::new();
+            headers.set("content-type", "application/wasm")?;
+            headers.set("content-encoding", "br")?;
+            headers.set("cache-control", "public, max-age=31536000, immutable")?;
+            headers.set("vary", "accept-encoding")?;
+            let body: ResponseBody = compressed.body().clone();
+            return Ok(ResponseBuilder::new().with_headers(headers).with_encode_body(EncodeBody::Manual).body(body));
+        }
+    }
+    let module = assets.fetch(format!("{origin}/assets/{name}"), None).await?;
+    if found(&module)? { Ok(module) } else { error(404, "Not found", None) }
 }
 
 /// Per-client limit from the `API_LIMITER` binding, when configured: a

@@ -32,7 +32,7 @@ Pushing to `main` then builds and deploys. The first deploy also:
 1. rustup and the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1 with the `wasm32-unknown-unknown` target);
 2. `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
 3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`;
-4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly, JS glue, CSS, fonts, `index.html`, `_headers`).
+4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly and its brotli-11 copy, written with Node's zlib, JS glue, CSS, fonts, `index.html`, `_headers`).
 
 A clean build on 2 CPUs takes about 5 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
 
