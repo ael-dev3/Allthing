@@ -464,6 +464,16 @@ pub fn Popover(
                     id=id.clone()
                     role="dialog"
                     aria-label=label.clone()
+                    // A link in the panel goes where it points, and the panel closes.
+                    on:click=move |ev: ev::MouseEvent| {
+                        let in_link = ev
+                            .target()
+                            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                            .is_some_and(|e| e.closest("a[href]").ok().flatten().is_some());
+                        if in_link {
+                            close();
+                        }
+                    }
                     // A click on the panel's text keeps focus inside, so a
                     // trigger link losing it doesn't close the panel.
                     tabindex=links.then_some("-1")
