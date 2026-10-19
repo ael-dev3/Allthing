@@ -125,7 +125,6 @@ mod tests {
         let other = UserSummary { fid: 309857, username: "baseapp".into(), display_name: String::new(), pfp_url: None };
         assert_eq!(client_profile(&other), "baseapp");
     }
-    use crate::provenance::Origin;
 
     fn app(fid: u64, username: &str, display_name: &str) -> UserSummary {
         UserSummary { fid, username: username.into(), display_name: display_name.into(), pfp_url: None }
