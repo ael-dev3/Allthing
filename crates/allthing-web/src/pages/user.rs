@@ -135,12 +135,15 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             <div class="profile-top">
                 <Avatar url=user.pfp_url.clone() size=88 large=true/>
                 <div class="profile-id">
-                    <h1 class="profile-name">{user.name().to_owned()}</h1>
+                    <div class="profile-name-row">
+                        <h1 class="profile-name">{user.name().to_owned()}</h1>
+                        {follow_button(user.fid, &user.username)}
+                    </div>
                     <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" · fid {}", user.fid)}</span></p>
                     {if has_card {
                         view! {
                             <p class="counts">
-                                <Count n=user.follower_count label="followers"/>
+                                {followers(user.fid, user.follower_count)}
                                 <span class="sep" aria-hidden="true">"·"</span>
                                 <Count n=user.following_count label="following"/>
                             </p>
@@ -165,6 +168,28 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             <WalletTile user=user.clone()/>
         </section>
     }
+}
+
+/// Follow, for a signed-in reader who can (not in the static copy).
+#[cfg(not(feature = "static-host"))]
+fn follow_button(fid: u64, username: &str) -> AnyView {
+    view! { <crate::components::writer::FollowButton fid username=username.to_owned()/> }.into_any()
+}
+
+#[cfg(feature = "static-host")]
+fn follow_button(_: u64, _: &str) -> AnyView {
+    ().into_any()
+}
+
+/// The follower count, with the reader's follow or unfollow here.
+#[cfg(not(feature = "static-host"))]
+fn followers(fid: u64, n: u64) -> AnyView {
+    view! { <crate::components::writer::FollowerCount fid n/> }.into_any()
+}
+
+#[cfg(feature = "static-host")]
+fn followers(_: u64, n: u64) -> AnyView {
+    view! { <Count n label="followers"/> }.into_any()
 }
 
 /// Wallet activity by chain, loaded separately because it queries many RPCs,

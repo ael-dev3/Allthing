@@ -153,3 +153,13 @@ export function approvedKey(page: Page, fid: number, ago: number) {
     { fid, approvedAt: Date.now() - ago },
   );
 }
+
+/** A follow (type 5), or an unfollow (6): its link type and target. */
+export function link(e: Envelope) {
+  return { type: buf(e.body, 1).toString("utf8"), target: num(e.body, 3) };
+}
+
+/** A deleted cast (type 2): the hash it takes back. */
+export function removed(e: Envelope) {
+  return hex(buf(e.body, 1));
+}

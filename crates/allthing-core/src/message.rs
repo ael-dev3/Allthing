@@ -335,6 +335,21 @@ pub fn reaction_url(fid: u64, kind: Reaction, target: &CastId) -> String {
     )
 }
 
+/// The reader's follow of `target`, if there is one.
+pub fn link_url(fid: u64, target: u64) -> String {
+    format!("{NODE}/v1/linkById?fid={fid}&target_fid={target}&link_type=follow")
+}
+
+/// Whether the answer to [`link_url`] says the reader follows the account:
+/// `None` when the node couldn't say.
+pub fn follows(status: u16, body: &str) -> Option<bool> {
+    if status == 200 {
+        let message = serde_json::from_str::<Value>(body).ok()?;
+        return Some(message.get("data")?.get("type")?.as_str() == Some("MESSAGE_TYPE_LINK_ADD"));
+    }
+    (status == 400 && body.contains("NotFound")).then_some(false)
+}
+
 /// Who a username (an fname, or an ENS name such as `dwr.eth`) belongs to,
 /// for a mention. Names are lowercase.
 pub fn username_url(name: &str) -> String {
@@ -665,5 +680,17 @@ mod tests {
         let missing = r#"{"error":"Failed to get username proof","error_detail":"status: NotFound, message: \"Username proof not found\""}"#;
         assert_eq!(username_fid(400, missing), Some(None));
         assert_eq!(username_fid(503, ""), None);
+    }
+
+    #[test]
+    fn whether_the_reader_follows_an_account() {
+        assert_eq!(link_url(3, 2), "https://haatz.quilibrium.com/v1/linkById?fid=3&target_fid=2&link_type=follow");
+        // As Hypersnap answered on 19 October 2026.
+        let found = r#"{"data":{"type":"MESSAGE_TYPE_LINK_ADD","fid":3,"timestamp":159794223,"network":"FARCASTER_NETWORK_MAINNET","linkBody":{"type":"follow","displayTimestamp":null,"targetFid":2}},"hash":"0xe0c3"}"#;
+        assert_eq!(follows(200, found), Some(true));
+        let missing =
+            r#"{"error":"Failed to get link","error_detail":"status: NotFound, message: \"cast not found\""}"#;
+        assert_eq!(follows(400, missing), Some(false));
+        assert_eq!(follows(500, ""), None);
     }
 }
