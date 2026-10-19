@@ -19,7 +19,7 @@ pub const FEED_QUOTE_CHARS: usize = 280;
 pub const POST_QUOTE_CHARS: usize = 400;
 /// Levels of quotes shown inline: a quote, a quote of it, and a quote of
 /// that. A quote beyond them is a link. The listing payload carries this many.
-pub const QUOTE_DEPTH: usize = 3;
+pub use allthing_core::quotes::QUOTE_DEPTH;
 
 /// The quotes a cast makes, one level down from `depth` (0 for a feed's
 /// cast): each carried quote as a card, its own quotes nested in turn, and a

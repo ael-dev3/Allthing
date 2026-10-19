@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::model::Cast;
 
+/// Levels of quotes carried and displayed inline. A deeper quote stays a link.
+pub const QUOTE_DEPTH: usize = 3;
+
 /// The hashes that `casts` quote and `known` lacks: each once, in the order
 /// the casts list them, and at most `limit`.
 pub fn missing<'a>(
@@ -25,11 +28,27 @@ pub fn missing<'a>(
         .collect()
 }
 
-/// Keep only the quoted casts that one of `casts` still quotes, as when a
-/// payload's quotes are carried into its next build.
+/// Keep the quotes still reachable from `casts`, including their nested
+/// quotes within [`QUOTE_DEPTH`], as a payload carries them into its next
+/// build. Unrelated quotes and those beyond the display depth are released.
 pub fn retain_quoted<'a>(quotes: &mut BTreeMap<String, Cast>, casts: impl IntoIterator<Item = &'a Cast>) {
-    let wanted: HashSet<&str> = casts.into_iter().flat_map(Cast::quoted).collect();
-    quotes.retain(|hash, _| wanted.contains(hash.as_str()));
+    let mut frontier: Vec<String> = casts.into_iter().flat_map(Cast::quoted).map(str::to_owned).collect();
+    let mut wanted = HashSet::new();
+    for _ in 0..QUOTE_DEPTH {
+        let mut next = Vec::new();
+        for hash in frontier {
+            if wanted.insert(hash.clone())
+                && let Some(quote) = quotes.get(&hash)
+            {
+                next.extend(quote.quoted().map(str::to_owned));
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    quotes.retain(|hash, _| wanted.contains(hash));
 }
 
 /// A quoted cast as a listing carries it. A hidden one (spam, a mini app)
@@ -91,6 +110,23 @@ mod tests {
         ]);
         retain_quoted(&mut quotes, &[cast("0x01", &["0xq1"]), cast("0x02", &["0xq2", "0xnew"])]);
         assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xq1", "0xq2"]);
+        retain_quoted(&mut quotes, &[] as &[Cast]);
+        assert!(quotes.is_empty());
+    }
+
+    #[test]
+    fn carried_nested_quotes_stay_within_the_display_depth() {
+        let mut quotes = BTreeMap::from([
+            ("0xa".into(), cast("0xa", &["0xb"])),
+            ("0xb".into(), cast("0xb", &["0xc"])),
+            ("0xc".into(), cast("0xc", &["0xd"])),
+            ("0xd".into(), cast("0xd", &[])),
+            ("0xold".into(), cast("0xold", &["0xolder"])),
+            ("0xolder".into(), cast("0xolder", &[])),
+        ]);
+        retain_quoted(&mut quotes, &[cast("0xroot", &["0xa"])]);
+        assert_eq!(quotes.keys().map(String::as_str).collect::<Vec<_>>(), ["0xa", "0xb", "0xc"]);
+        // Removing the root releases the whole graph, including descendants.
         retain_quoted(&mut quotes, &[] as &[Cast]);
         assert!(quotes.is_empty());
     }

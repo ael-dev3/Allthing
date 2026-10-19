@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Feed refreshes retain all three levels of already loaded quotes. They no longer reread known nested quotes or collapse them to links when the provider is unavailable or the request budget is tight.
+
 - Keyed Solana RPC failures keep the private endpoint and provider content out of public wallet error responses, while preserving status, timeout and request-budget diagnostics.
 
 ### Added
