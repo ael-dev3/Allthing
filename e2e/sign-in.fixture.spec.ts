@@ -22,12 +22,17 @@ const SIGNED = { message: "allthing.social wants you to sign in…", signature: 
 const USER_COOKIE = "__Host-allthing-user";
 
 type Calls = { start: number; channel: any[]; polls: number; verify: any[]; signout: number; origins: string[] };
+/** When the Worker says the signed message lapses: the nonce's expiry, on its clock. */
+const EXPIRES = "2026-10-19T12:10:00Z";
 
 /**
  * The page's stand-ins. `relay` decides each status poll's answer;
  * `verify` the Worker's answer to the signed message.
  */
-async function serve(page: Page, opts: { relay?: (poll: number) => [number, object]; verify?: [number, object] } = {}) {
+async function serve(
+  page: Page,
+  opts: { relay?: (poll: number) => [number, object]; verify?: [number, object] | ((call: number) => [number, object]) } = {},
+) {
   const calls: Calls = { start: 0, channel: [], polls: 0, verify: [], signout: 0, origins: [] };
   const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type" };
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
@@ -39,13 +44,16 @@ async function serve(page: Page, opts: { relay?: (poll: number) => [number, obje
     calls.start += 1;
     calls.origins.push(route.request().headers()["origin"] ?? "");
     const origin = new URL(page.url()).origin;
-    return route.fulfill({ json: { nonce: `nonce${calls.start}abcdef012345`, domain: new URL(origin).host, uri: origin } });
+    return route.fulfill({
+      json: { nonce: `nonce${calls.start}abcdef012345`, domain: new URL(origin).host, uri: origin, expiration_time: EXPIRES },
+    });
   });
   // The Worker draws the code itself.
   await page.route("**/api/v1/auth/qr", (route) => route.continue());
   await page.route("**/api/v1/auth/verify", (route) => {
     calls.verify.push(route.request().postDataJSON());
-    const [status, json] = opts.verify ?? [200, { user: alice }];
+    const verify = typeof opts.verify === "function" ? opts.verify(calls.verify.length) : opts.verify;
+    const [status, json] = verify ?? [200, { user: alice }];
     const cookie = encodeURIComponent(JSON.stringify(alice));
     const headers: Record<string, string> =
       status === 200 ? { "set-cookie": `${USER_COOKIE}=${cookie}; Path=/; Max-Age=600; Secure; SameSite=Lax` } : {};
@@ -73,7 +81,9 @@ async function serve(page: Page, opts: { relay?: (poll: number) => [number, obje
 
 /** The relay: pending for two polls, then the app's approval. */
 const approvedOnThirdPoll = (poll: number): [number, object] =>
-  poll < 3 ? [202, { state: "pending" }] : [200, { state: "completed", ...SIGNED, fid: alice.fid }];
+  poll < 3
+    ? [202, { state: "pending" }]
+    : [200, { state: "completed", ...SIGNED, fid: alice.fid, username: alice.username, pfpUrl: alice.pfp_url }];
 
 async function phone(browser: Browser, testInfo: TestInfo, width = 390, height = 844) {
   const context = await browser.newContext({
@@ -105,8 +115,9 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   await expect(dialog.getByRole("status")).toHaveText("Waiting for you to approve in Farcaster…");
   // The channel carries the Worker's nonce, this site and its address.
   const origin = new URL(page.url()).origin;
+  // The signed message lapses with the nonce, as the Worker dates it.
   expect(calls.channel).toEqual([
-    { siweUri: origin, domain: new URL(origin).host, nonce: "nonce1abcdef012345", acceptAuthAddress: true },
+    { siweUri: origin, domain: new URL(origin).host, nonce: "nonce1abcdef012345", expirationTime: EXPIRES, acceptAuthAddress: true },
   ]);
   expect(calls.origins).toEqual([origin]);
 
@@ -206,22 +217,27 @@ test("at 393 px, a tap on the sign-in icon opens the dialog", async ({ browser }
   await context.close();
 });
 
-test("an expired code offers a new one, and a refused signature says why", async ({ page }) => {
-  const calls = await serve(page, {
-    relay: (poll) => (poll === 1 ? [401, { error: "Unauthorized" }] : approvedOnThirdPoll(poll)),
+test("a code that runs out is renewed twice, then offered anew; a refused signature says why", async ({ page }) => {
+  // The first three codes run out at once; the fourth is approved.
+  const expired = (): [number, object] => [401, { error: "Unauthorized" }];
+  let calls: Calls;
+  calls = await serve(page, {
+    relay: () => (calls.channel.length <= 3 ? expired() : approvedOnThirdPoll(3)),
     verify: [401, { error: "That address can't sign in as this Farcaster account" }],
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
   const dialog = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  // Two new codes came by themselves; the third that ran out is offered anew.
   await expect(dialog.getByRole("status")).toHaveText("This code has expired. Get a new one to sign in.");
+  expect(calls.start).toBe(3);
   await expect(dialog.getByRole("img", { name: "Sign-in QR code" })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Get a new code" }).click();
   // A new nonce and channel; this time the app approves, but the Worker
   // refuses the signature.
   await expect(dialog.getByRole("status")).toHaveText("That address can't sign in as this Farcaster account");
-  expect(calls.start).toBe(2);
-  expect(calls.channel.map((c) => c.nonce)).toEqual(["nonce1abcdef012345", "nonce2abcdef012345"]);
+  expect(calls.start).toBe(4);
+  expect(calls.channel.map((c) => c.nonce)).toEqual(["nonce1", "nonce2", "nonce3", "nonce4"].map((n) => `${n}abcdef012345`));
   await expect(page.getByRole("link", { name: /Signed in as/ })).toHaveCount(0);
   // Escape closes the dialog and stops polling.
   await page.keyboard.press("Escape");
@@ -229,6 +245,88 @@ test("an expired code offers a new one, and a refused signature says why", async
   const polls = calls.polls;
   await page.waitForTimeout(2000);
   expect(calls.polls).toBe(polls);
+});
+
+test("an approval Optimism can't check just now is checked again, with no new code", async ({ page }) => {
+  const busy: [number, object] = [503, { error: "Couldn't check the account on Optimism; try again" }];
+  const calls = await serve(page, { relay: approvedOnThirdPoll, verify: (call) => (call <= 2 ? busy : [200, { user: alice }]) });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  const dialog = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  // Who approved shows while the Worker checks.
+  await expect(dialog.getByRole("status")).toHaveText("@alice approved. Signing you in…");
+  await expect(dialog.locator(".qr-approver img.avatar")).toHaveAttribute("src", /alice/);
+  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  await expect(page.getByRole("link", { name: "Signed in as @alice: your profile" })).toBeVisible();
+  expect(calls.verify).toEqual([SIGNED, SIGNED, SIGNED]);
+  expect(calls.start).toBe(1);
+});
+
+test("when Optimism stays unreachable, Try again checks the same approval", async ({ page }) => {
+  let reachable = false;
+  const calls = await serve(page, {
+    relay: approvedOnThirdPoll,
+    verify: () => (reachable ? [200, { user: alice }] : [503, { error: "Couldn't check the account on Optimism; try again" }]),
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  const dialog = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  // Checked four times (at once, then after 1, 2 and 4 s), then left to the reader.
+  await expect(dialog.getByRole("status")).toHaveText("You approved, but Allthing couldn't confirm it on Optimism just now.", { timeout: 15_000 });
+  expect(calls.verify).toHaveLength(4);
+  reachable = true;
+  await dialog.getByRole("button", { name: "Try again" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("link", { name: "Signed in as @alice: your profile" })).toBeVisible();
+  // The same approval: no new code, nothing more to scan.
+  expect(calls.verify).toEqual(Array(5).fill(SIGNED));
+  expect(calls.start).toBe(1);
+});
+
+test("a hidden page stops asking the relay, and asks at once when back", async ({ page }) => {
+  await page.addInitScript(() => {
+    let hidden = false;
+    Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: () => hidden });
+    Object.defineProperty(Document.prototype, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+    (window as any).__setHidden = (value: boolean) => {
+      hidden = value;
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+    };
+  });
+  const calls = await serve(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  await expect.poll(() => calls.polls).toBeGreaterThanOrEqual(2);
+  await page.evaluate(() => (window as any).__setHidden(true));
+  await page.waitForTimeout(500);
+  const polls = calls.polls;
+  await page.waitForTimeout(3500);
+  expect(calls.polls).toBe(polls);
+  // Back in view: asked within a fraction of the 1.5 s between polls.
+  await page.evaluate(() => (window as any).__setHidden(false));
+  const back = Date.now();
+  await expect.poll(() => calls.polls, { timeout: 5_000 }).toBeGreaterThan(polls);
+  expect(Date.now() - back).toBeLessThan(1_000);
+});
+
+test("signing in or out in one tab shows in the others", async ({ context }) => {
+  const first = await context.newPage();
+  const second = await context.newPage();
+  await serve(first, { relay: approvedOnThirdPoll });
+  await serve(second);
+  await first.goto("/");
+  await second.goto("/");
+  await second.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  await expect(second.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeVisible();
+  // Signed in in the first tab: the second's header follows, and its dialog closes.
+  await first.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  await expect(first.getByRole("link", { name: "Signed in as @alice: your profile" })).toBeVisible();
+  await expect(second.getByRole("link", { name: "Signed in as @alice: your profile" })).toBeVisible();
+  await expect(second.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeHidden();
+  // Signed out in the second: the first follows.
+  await second.getByRole("link", { name: "Signed in as @alice: your profile" }).hover();
+  await second.getByRole("dialog", { name: "Your account" }).getByRole("button", { name: "Sign out" }).click();
+  await expect(first.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
 });
 
 test("a server without SESSION_SECRET says sign-in isn't set up", async ({ page }) => {
