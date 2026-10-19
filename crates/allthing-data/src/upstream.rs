@@ -47,6 +47,8 @@ impl Upstream {
             Upstream::Hypersnap => (40, 10.0),
             Upstream::BaseRpc => (10, 2.0),
             Upstream::Chain("solana") => (4, 0.4),
+            // A keyed endpoint serves more requests a second than the public one.
+            Upstream::Chain("solana-keyed") => (10, 5.0),
             Upstream::FarcasterApp => (6, 1.0),
             Upstream::Fnames => (6, 1.0),
             Upstream::LinkPage => (12, 2.0),

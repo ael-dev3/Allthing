@@ -21,7 +21,7 @@ const solana = {
   error: "upstream unreachable: not measured (upstream returned HTTP 403)",
 };
 const base = { chain: "base", name: "Base", kind: "evm", count: 120, capped: false, percent: 100 };
-const note = "Solana isn't counted: its public RPC refuses Allthing's requests.";
+const note = "Solana couldn't be read just now, so its wallets aren't counted.";
 
 async function serve(page: Page, chains: object[]) {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));

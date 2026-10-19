@@ -152,7 +152,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
 - **Profile cards read votes and wallets more often** than profile views alone would: the first card opened for an account in a data center builds its `/vote` (fresh for an hour) and `/wallets` (fresh for 6 hours). The chain buckets above still cap the wallet reads. A chain refused while its bucket is empty is left out of that copy of the account's shares, as it would be on a profile.
-- **Solana activity** is one `getSignaturesForAddress` call per verified address (at most 2, up to 1,000 signatures each) to Solana's public RPC, under its own bucket (burst 4, two calls every 5 s). The RPC refuses browsers (any `Origin`) and, so far, Cloudflare Workers' addresses (HTTP 403), so both the static copy and allthing.social usually report Solana as not counted.
+- **Solana activity** with the `SOLANA_RPC_URL` secret set: `getSignaturesForAddress` per verified address (at most 2), paged 1,000 at a time for up to 5 pages each, so at most 10 calls per wallet read, under the keyed endpoint's own bucket (burst 10, 5 a second). Without the secret, one call per address to Solana's public RPC (burst 4, two calls every 5 s), which refuses Cloudflare Workers' addresses (HTTP 403).
 
 ## 6. Abuse and the daily request limit
 

@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Solana wallet counts are real when the `SOLANA_RPC_URL` secret is set: each verified Solana address is paged through its history (up to 5,000 signatures, shown as "5,000+"), from a keyed RPC endpoint. Without the secret, a Solana read that fails says it couldn't be read just now, instead of blaming the public RPC. See the Secrets section of docs/DEPLOY.md.
 - A quote of a quote shows inline, up to three levels: a quoted cast that quotes another shows that quote as a card, and so on. A quote beyond the third is a link, as before. Each level costs one bulk read in a listing's build, made while the build has budget to spare.
 - The Wallets button on a profile opens its list of verified addresses on hover or keyboard focus, on screens that hover, as the other popovers do. A tap or click still toggles it.
 - Wallet activity by chain sits in the profile header, under the joined date and NS vote, instead of a sidebar card. It is the same chart and Wallets list, at the same width as the rest of the profile on phones.

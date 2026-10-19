@@ -76,6 +76,11 @@ pub trait Host {
     fn index(&self) -> Option<Rc<dyn Index>> {
         None
     }
+    /// A keyed Solana RPC endpoint, where the runtime has one: full history
+    /// for wallet counts. The public endpoints can't serve Workers.
+    fn solana_rpc(&self) -> Option<String> {
+        None
+    }
 }
 
 /// One request's view of the runtime: its host and its subrequest budget.
@@ -88,6 +93,11 @@ pub struct Invocation {
 impl Invocation {
     pub fn new(host: Rc<dyn Host>, budget: u32) -> Invocation {
         Invocation { host, budget: Cell::new(budget), link_checks: Cell::new(miniapps::MAX_CHECKS) }
+    }
+
+    /// The keyed Solana RPC endpoint, if the runtime has one.
+    pub fn solana_rpc(&self) -> Option<String> {
+        self.host.solana_rpc()
     }
 
     /// Unix milliseconds.

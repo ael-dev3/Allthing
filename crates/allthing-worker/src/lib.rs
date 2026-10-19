@@ -77,7 +77,8 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
 
     let index = D1Index::new(&env).map(Rc::new);
-    let inv = Rc::new(Invocation::new(Rc::new(WorkerHost::new(Lifetime::Request(ctx), index)), SUBREQUEST_BUDGET));
+    let host = WorkerHost::new(Lifetime::Request(ctx), index, solana_rpc(&env));
+    let inv = Rc::new(Invocation::new(Rc::new(host), SUBREQUEST_BUDGET));
     STARTED.with(|s| {
         if s.get() == 0.0 {
             s.set(inv.now());
@@ -95,13 +96,19 @@ const LATEST_CRON: &str = "*/1 * * * *";
 /// The cron triggers in wrangler.toml, every minute: the indexer (one page
 /// of casts into Allthing's index, see `allthing_core::index`), and the
 /// stored copy of the newest casts (see `pages::store_latest`).
+/// The keyed Solana RPC, from the `SOLANA_RPC_URL` secret. Unset, Solana's
+/// wallet counts are read from the public endpoint, which usually refuses.
+fn solana_rpc(env: &Env) -> Option<String> {
+    env.secret("SOLANA_RPC_URL").ok().map(|s| s.to_string()).filter(|u| !u.is_empty())
+}
+
 #[event(scheduled)]
 pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
     let Some(index) = D1Index::new(&env).map(Rc::new) else {
         console_error!("cron: no INDEX binding");
         return;
     };
-    let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()));
+    let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()), solana_rpc(&env));
     let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
     if event.cron() == LATEST_CRON {
         match pages::store_latest(Rc::new(inv)).await {

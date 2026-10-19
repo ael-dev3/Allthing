@@ -807,8 +807,8 @@ fn wallet_sources(evm: bool, solana: bool, chains: &[ChainActivity]) -> Vec<Stri
     if solana {
         let unread = chains.iter().any(|c| c.kind == ChainKind::Solana && c.error.is_some());
         sources.push(if unread {
-            "Solana: not counted. Solana's public RPC (api.mainnet-beta.solana.com) refuses requests from browsers \
-             and, so far, from Cloudflare Workers, and the keyless alternatives keep only recent history."
+            "Solana: couldn't be read just now, so its wallets aren't counted. The read failed or its RPC endpoint \
+             isn't configured."
                 .to_owned()
         } else {
             format!(
