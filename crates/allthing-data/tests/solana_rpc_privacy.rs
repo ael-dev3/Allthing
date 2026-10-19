@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -104,4 +105,76 @@ fn keyed_timeout_remains_available_without_the_endpoint() {
 #[test]
 fn keyed_budget_failure_remains_available_without_the_endpoint() {
     assert!(wallet_error(Fault::Network, 1).contains("request budget exhausted"));
+}
+
+fn cached(error: serde_json::Value) -> serde_json::Value {
+    json!({"fid":42,"addresses":[],"chains":[
+        {"chain":"base","kind":"evm","name":"Base","count":33000,"percent":100,"carried":true},
+        {"chain":"solana","kind":"solana","name":"Solana","count":0,"error":error}
+    ],"total":33000,"sources":["fixture source"],"fetched_at":123,
+    "extra":{"counter":u64::MAX,"record":"preserve unknown metadata"}})
+}
+
+#[test]
+fn cached_legacy_diagnostics_are_redacted_without_losing_counts_or_metadata() {
+    for detail in [
+        format!("upstream unreachable: failed fetching {KEYED}"),
+        format!("unexpected upstream response: invalid result {KEYED}"),
+        format!("upstream returned HTTP 503; request {KEYED}"),
+        format!("upstream busy, retry in 5s; request {KEYED}"),
+        "upstream unreachable: rejected fixture-private-token".into(),
+    ] {
+        let mut original = cached(json!(format!("upstream unreachable: not measured ({detail})")));
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let public = pages::public_wallet_body(&bytes).unwrap();
+        let text = std::str::from_utf8(&public).unwrap();
+        assert!(!text.contains(KEYED) && !text.contains("fixture-private-token"));
+        let mut after: serde_json::Value = serde_json::from_slice(&public).unwrap();
+        assert!(after["chains"][1]["error"].as_str().unwrap().contains("Solana RPC"));
+        original["chains"][1].as_object_mut().unwrap().remove("error");
+        after["chains"][1].as_object_mut().unwrap().remove("error");
+        assert_eq!(after, original, "counts, carried flags and unknown metadata must survive");
+    }
+}
+
+#[test]
+fn cached_safe_diagnostics_remain_useful_and_byte_identical() {
+    for detail in [
+        "upstream returned HTTP 503",
+        "upstream timed out",
+        "request budget exhausted",
+        "upstream busy, retry in 5s",
+        "upstream unreachable: Solana RPC request failed",
+        "unexpected upstream response: Solana RPC returned an invalid response",
+    ] {
+        let body =
+            serde_json::to_vec(&cached(json!(format!("upstream unreachable: not measured ({detail})")))).unwrap();
+        let public = pages::public_wallet_body(&body).unwrap();
+        assert!(matches!(public, Cow::Borrowed(_)));
+        assert_eq!(public.as_ref(), body);
+    }
+}
+
+#[test]
+fn cached_successful_counts_keep_the_byte_copy_path() {
+    let mut payload = cached(serde_json::Value::Null);
+    payload["chains"][1].as_object_mut().unwrap().remove("error");
+    let body = serde_json::to_vec(&payload).unwrap();
+    assert!(matches!(pages::public_wallet_body(&body).unwrap(), Cow::Borrowed(_)));
+}
+
+#[test]
+fn cached_unknown_error_shapes_do_not_echo_provider_content() {
+    let body = serde_json::to_vec(&cached(json!({"message":KEYED}))).unwrap();
+    let public = pages::public_wallet_body(&body).unwrap();
+    let text = std::str::from_utf8(&public).unwrap();
+    assert!(!text.contains(KEYED) && !text.contains("fixture-private-token"));
+}
+
+#[test]
+fn cached_malformed_payloads_fail_without_echoing_the_body() {
+    for body in [format!("{{\"error\":\"{KEYED}\"}}"), format!("{{\"error\":\"{KEYED}\"")] {
+        let failure = pages::public_wallet_body(body.as_bytes()).err().expect("do not serve an unrecognized body");
+        assert!(!failure.message.contains(KEYED) && !failure.message.contains("fixture-private-token"));
+    }
 }

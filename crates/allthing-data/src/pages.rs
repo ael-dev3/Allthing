@@ -847,6 +847,35 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64, previous: Option<Rc<Vec<u8>>
     Built::json(&activity, policy)
 }
 
+/// A wallet response at the public boundary, including older cache entries.
+/// Successful payloads keep the byte-copy path. Failed chains are checked
+/// so private Solana diagnostics cannot survive a deploy in a cached body.
+pub fn public_wallet_body(body: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, Failure> {
+    use serde_json::Value;
+    use std::borrow::Cow;
+
+    if !body.windows(b"\"error\"".len()).any(|word| word == b"\"error\"") {
+        return Ok(Cow::Borrowed(body));
+    }
+    let invalid = || Failure::internal("Cached wallet data could not be read");
+    let mut payload: Value = serde_json::from_slice(body).map_err(|_| invalid())?;
+    let chains = payload.get_mut("chains").and_then(Value::as_array_mut).ok_or_else(invalid)?;
+    let mut changed = false;
+    for chain in chains {
+        if chain.get("kind").and_then(Value::as_str) != Some("solana") {
+            continue;
+        }
+        let Some(error) = chain.get_mut("error").filter(|error| !error.is_null()) else { continue };
+        let public = chain::public_solana_error(error.as_str().unwrap_or_default());
+        if error.as_str() != Some(public.as_ref()) {
+            let public = public.into_owned();
+            *error = Value::String(public);
+            changed = true;
+        }
+    }
+    if changed { serde_json::to_vec(&payload).map(Cow::Owned).map_err(|_| invalid()) } else { Ok(Cow::Borrowed(body)) }
+}
+
 /// Where each kind of count was read, or that Solana's couldn't be.
 fn wallet_sources(evm: bool, solana: bool, keyed: bool, chains: &[ChainActivity]) -> Vec<String> {
     let mut sources = Vec::new();

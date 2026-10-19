@@ -120,6 +120,8 @@ A quote's linked pages use the shared link-page quota above before hidden conten
 
 ## 4. CPU time
 
+Wallet responses containing failed chains are checked once before they are sent, including cache hits, to remove private Solana diagnostics from older copies. This parses only the small wallet payload and takes no subrequest. Successful wallet payloads keep the byte-copy path; counts and cache lifetimes are unchanged.
+
 Parsing is the main CPU cost, and it happens only when a payload is (re)built. Measured natively at `opt-level = "z"`, the full parse, normalize and serialize step takes:
 
 - trending feed, 100 casts (206 KB of JSON): **0.74 ms**
