@@ -12,7 +12,7 @@ Navigation should feel instant: a post opens as soon as it is clicked, the feed 
 | Interaction to Next Paint (slowest interaction) | **< 100 ms** | `e2e/perf.spec.ts` (Event Timing entries with an `interactionId`) |
 | API response from the edge cache | < 50 ms server time | the `Server-Timing` header of `x-allthing-cache: fresh` responses |
 
-The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after every push to `main` (and on demand through `workflow_dispatch`), so a regression in production shows up as a red check.
+The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after every push to `main` (and on demand through `workflow_dispatch`). Before measuring, it waits for `/version` to report the checked-out commit: the triggering commit for a push, or current `main` for a manual run. It polls every five seconds for at most five minutes, aborts an individual version read after five seconds, and fails without benchmarking if that release never arrives. This keeps a pending deployment from passing the budget with the previous release's results.
 
 ## How the app meets it
 

@@ -13,6 +13,8 @@ The relevant Free plan limits, as of October 2026:
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
 
+The production performance CI job checks `/version` before measuring a deployment: one Worker request every five seconds for at most five minutes (at most 60 requests per run), with no upstream calls. It usually finishes on the first check after the build tools and browser are installed.
+
 ## 1. What a page view costs
 
 The browser app is static. A page view runs the Worker for its one API call and nothing else:
