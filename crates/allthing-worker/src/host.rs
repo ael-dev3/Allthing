@@ -60,13 +60,18 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         let body = if !(200..300).contains(&status) {
             None
         } else if let Some(max) = request.max_bytes {
-            // Stop reading at the cap: servers may ignore the Range header.
+            // Stop reading at the cap (servers may ignore the Range header),
+            // or once the request has what it needs.
             let mut stream = response.stream().map_err(network)?;
             let mut body = Vec::new();
             while body.len() < max as usize {
+                let seen = body.len();
                 match stream.next().await {
                     Some(chunk) => body.extend(chunk.map_err(network)?),
                     None => break,
+                }
+                if request.stop_at.is_some_and(|enough| enough(&body, seen)) {
+                    break;
                 }
             }
             body.truncate(max as usize);

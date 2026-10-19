@@ -78,6 +78,16 @@ impl Upstream {
             _ => None,
         }
     }
+
+    /// A link page is read up to the end of its `<head>`, not the rest of
+    /// the 128 KB: a large page from a slow server spent the read's timeout
+    /// on the body.
+    fn stop_at(self) -> Option<fn(&[u8], usize) -> bool> {
+        match self {
+            Upstream::LinkPage => Some(allthing_core::embeds::head_ended),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -226,6 +236,7 @@ pub async fn send(
         timeout_ms: upstream.timeout_ms(),
         accept: upstream.accept(),
         max_bytes: upstream.max_bytes(),
+        stop_at: upstream.stop_at(),
     };
     let (outcome, retry_after) = match inv.fetch(request).await {
         Ok(response) => match (response.status, response.body) {
