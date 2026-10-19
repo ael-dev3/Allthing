@@ -74,8 +74,9 @@ pub fn QuoteCard(
     let href = cast_href(&cast.hash);
     let click = card_click(href.clone());
     let body = if cast.hidden() {
-        let reason = if cast.spam { "spam" } else { "mini app" };
-        view! { <p class="quote-hidden">"Quoted cast hidden: "{reason}</p> }.into_any()
+        // No label on the cast itself: a mini app is a format, said as such.
+        let note = if cast.spam { "Quoted cast hidden" } else { "Quoted cast hidden: mini app" };
+        view! { <p class="quote-hidden">{note}</p> }.into_any()
     } else {
         let text = truncate_title(&cast.text, max_chars);
         view! {

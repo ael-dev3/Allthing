@@ -171,7 +171,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             </header>
             {if cast.hidden() {
                 let note = if cast.spam {
-                    "Hidden as spam: Allthing leaves out links to vercel.app apps, gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions."
+                    "Post hidden: Allthing leaves out posts with links to vercel.app apps, gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions."
                 } else {
                     "Mini app post hidden: Allthing does not run mini apps or frames."
                 };
