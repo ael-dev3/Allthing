@@ -18,7 +18,7 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
-use crate::components::chips::{Avatar, Engagement, OriginChip, TimeAgo};
+use crate::components::chips::{Avatar, Engagement, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::profile_card::ProfileHover;
@@ -192,7 +192,6 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                 <time datetime=allthing_core::time::iso_utc(cast.ts)>{format_date_time(cast.ts)}</time>
                 " · "<TimeAgo ts=cast.ts/>
                 <ChannelLink cast=cast.clone()/>
-                <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
                 <PostedVia cast=cast.clone() notes=notes.clone()/>
             </p>
             <footer class="cast-foot">

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Keyless public JSON-RPC reads: the NS vote (onchain on Base) and
+//! JSON-RPC reads: the NS vote (onchain on Base) and
 //! EVM and Solana transaction counts.
 
 use allthing_core::vote::{MINT_GENERATION_SELECTOR, MINTED_SELECTOR, OnchainVote, VOTE_CONTRACT, encode_fid_call};
@@ -145,7 +145,14 @@ async fn solana_keyed_count(inv: &Invocation, url: &str, addresses: &[String]) -
             let body = json!({ "jsonrpc": "2.0", "id": 0, "method": "getSignaturesForAddress",
                                "params": [address, options] })
             .to_string();
-            let page: SignaturesResponse = rpc(inv, Upstream::Chain("solana-keyed"), url, &body).await?;
+            // Transport diagnostics may contain the keyed URL, and parse
+            // errors may quote provider content. Wallet errors are public.
+            let page: SignaturesResponse =
+                rpc(inv, Upstream::Chain("solana-keyed"), url, &body).await.map_err(|error| match error {
+                    UpstreamError::Network(_) => UpstreamError::Network("Solana RPC request failed".into()),
+                    UpstreamError::Parse(_) => UpstreamError::Parse("Solana RPC returned an invalid response".into()),
+                    other => other,
+                })?;
             let signatures =
                 page.result.ok_or_else(|| UpstreamError::Parse("getSignaturesForAddress failed".into()))?;
             count += signatures.len() as u64;
