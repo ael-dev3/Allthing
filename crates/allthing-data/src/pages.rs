@@ -114,22 +114,25 @@ async fn quoted_casts(
     // quotes of the one before, so a quote inside a quote shows inline. Each
     // level is one bulk read, made only while the build's budget keeps
     // [`QUOTES_RESERVE`].
-    let mut from: Vec<Cast> = Vec::new();
-    for level in 0..QUOTE_DEPTH {
-        let sources: &[Cast] = if level == 0 { casts } else { &from };
-        let missing = quotes::missing(sources, &known, hypersnap::MAX_BULK_CASTS);
-        if missing.is_empty() || inv.remaining_subrequests() <= QUOTES_RESERVE {
+    // Each level's sources are the quotes of the level before, read or
+    // carried: a carried quote still has quotes of its own to find.
+    let mut sources: Vec<Cast> = casts.to_vec();
+    for _ in 0..QUOTE_DEPTH {
+        let missing = quotes::missing(&sources, &known, hypersnap::MAX_BULK_CASTS);
+        if !missing.is_empty() && inv.remaining_subrequests() > QUOTES_RESERVE {
+            let Ok(found) = hypersnap::casts_bulk(inv, &missing).await else { break };
+            for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
+                let quote = quotes::as_quote(cast);
+                known.insert(quote.hash.clone(), quote);
+            }
+            cards.extend(normalize::author_cards(&found));
+        }
+        let children: Vec<Cast> =
+            sources.iter().flat_map(Cast::quoted).filter_map(|hash| known.get(hash).cloned()).collect();
+        if children.is_empty() {
             break;
         }
-        let Ok(found) = hypersnap::casts_bulk(inv, &missing).await else { break };
-        let mut added = Vec::new();
-        for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
-            let quote = quotes::as_quote(cast);
-            known.insert(quote.hash.clone(), quote.clone());
-            added.push(quote);
-        }
-        cards.extend(normalize::author_cards(&found));
-        from = added;
+        sources = children;
     }
     (known, cards)
 }
@@ -1389,6 +1392,22 @@ mod quote_tests {
         let (quotes, _) = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
         assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
         assert_eq!(*host.requests.borrow(), 3, "one bulk read per level");
+    }
+
+    #[test]
+    fn a_carried_quote_still_has_its_quotes_read() {
+        // 0xb1 is carried from the previous payload, so nothing is missing at
+        // level one; its quote 0xc1 and then 0xd1 must still be read.
+        let host = Rc::new(Chain {
+            next: BTreeMap::from([("0xb1", "0xc1"), ("0xc1", "0xd1"), ("0xd1", "0xe1")]),
+            requests: RefCell::new(0),
+        });
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1"])];
+        let carried = BTreeMap::from([("0xb1".to_owned(), cast("0xb1", &["0xc1"]))]);
+        let (quotes, _) = quoted_casts(&inv, &pool, carried).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert_eq!(*host.requests.borrow(), 2, "0xc1 and 0xd1, one read each");
     }
 
     #[test]
