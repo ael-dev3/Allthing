@@ -20,9 +20,11 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 worker = { workspace = true, features = ["d1"] }
-# Sign In With Farcaster (src/auth.rs), in the Worker only, never in the
-# browser app: the signer of a signed-in message (secp256k1 recovery and
-# Keccak-256), the session cookie's HMAC, and the sign-in QR code.
+# Sign In With Farcaster (src/auth.rs) and the endorsement of readers' app
+# keys (src/app_key.rs), in the Worker only, never in the browser app: the
+# signer of a signed-in message (secp256k1 recovery and Keccak-256), the
+# endorsement's EIP-712 signature (secp256k1), the session cookie's HMAC,
+# and the QR codes.
 hmac = "0.13"
 k256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
 qrcode = { version = "0.14", default-features = false }

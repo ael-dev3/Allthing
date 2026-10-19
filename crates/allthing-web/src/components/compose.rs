@@ -33,7 +33,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::signin::use_session;
-use crate::util::{BASE, document};
+use crate::util::{BASE, document, trap_tab};
 
 /// How long typing pauses before a search is sent.
 const DEBOUNCE: Duration = Duration::from_millis(350);
@@ -257,26 +257,8 @@ pub fn ComposerDialog() -> impl IntoView {
             }
             // Focus stays in the dialog.
             "Tab" => {
-                let Some(root) = dialog.get_untracked() else { return };
-                let Ok(nodes) = root.query_selector_all("button:not([disabled]), a[href], textarea, input") else {
-                    return;
-                };
-                let first = nodes.get(0).and_then(|n| n.dyn_into::<HtmlElement>().ok());
-                let last = nodes.get(nodes.length().saturating_sub(1)).and_then(|n| n.dyn_into::<HtmlElement>().ok());
-                let active = document().active_element();
-                let at = |el: &Option<HtmlElement>| {
-                    el.as_ref().map(|e| e.unchecked_ref::<web_sys::Element>().clone()) == active
-                };
-                if ev.shift_key() && at(&first) {
-                    ev.prevent_default();
-                    if let Some(last) = last {
-                        let _ = last.focus();
-                    }
-                } else if !ev.shift_key() && at(&last) {
-                    ev.prevent_default();
-                    if let Some(first) = first {
-                        let _ = first.focus();
-                    }
+                if let Some(root) = dialog.get_untracked() {
+                    trap_tab(&root, &ev, "button:not([disabled]), a[href], textarea, input");
                 }
             }
             _ => {}

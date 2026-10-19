@@ -152,6 +152,18 @@ fn ParentContext(parent: Cast) -> impl IntoView {
 
 #[component]
 fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
+    // Whether the reader liked and recasted this cast, which may be older
+    // than their latest likes and recasts.
+    #[cfg(not(feature = "static-host"))]
+    if let (Some(writer), Some(target)) =
+        (crate::components::writer::use_writer(), allthing_core::message::CastId::new(cast.author.fid, &cast.hash))
+    {
+        Effect::new(move |_| {
+            if writer.ready() {
+                writer.look_up(target);
+            }
+        });
+    }
     let author = cast.author.clone();
     let href = user_href(&author.username);
     let (pfp, name, username) = (author.pfp_url.clone(), author.name().to_owned(), author.username.clone());

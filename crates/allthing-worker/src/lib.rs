@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Allthing's Cloudflare Worker: a read-only, edge-cached API over Hypersnap
-//! and keyless public chain RPCs, built for the Workers Free plan, and Sign
-//! In With Farcaster (`auth`), which says who is reading and posts nothing.
+//! and keyless public chain RPCs, built for the Workers Free plan; Sign In
+//! With Farcaster (`auth`), which says who is reading; and the endorsement
+//! of a reader's app key (`app_key`), which their browser keeps and signs
+//! their likes and recasts with. The Worker itself posts nothing.
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; `/api/*` runs here, and
@@ -11,6 +13,7 @@
 //! stale-while-revalidate, and every upstream call goes through a per-isolate
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
 
+mod app_key;
 mod auth;
 mod cache;
 mod host;
@@ -20,6 +23,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::api::{API_PREFIX, ApiError};
+use allthing_core::app_key::writes_path;
 use allthing_core::compose::gif_key_path;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
@@ -90,6 +94,10 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     // The GIF picker's key, for a signed-in session: no subrequest.
     if url.path() == gif_key_path() {
         return auth::gif_key(&req, &env, (Date::now().as_millis() / 1000) as i64);
+    }
+    // Whether a signed-in session can like and recast: no subrequest.
+    if url.path() == writes_path() {
+        return auth::writes(&req, &env, (Date::now().as_millis() / 1000) as i64);
     }
 
     let index = D1Index::new(&env).map(Rc::new);
@@ -316,6 +324,13 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // Whether the GIF picker has KLIPY's key (the KLIPY_API_KEY
         // secret), never the key.
         "gifs": { "keyed": auth::klipy_key(env).is_some() },
+        // Whether readers can approve an app key to like and recast with
+        // (the ALLTHING_FID and ALLTHING_CUSTODY_KEY secrets), and which
+        // account asks; never the key.
+        "writes": match app_key::app(env) {
+            Some(app) => serde_json::json!({ "ready": true, "app_fid": app.fid, "sponsored": app.sponsors() }),
+            None => serde_json::json!({ "ready": false }),
+        },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

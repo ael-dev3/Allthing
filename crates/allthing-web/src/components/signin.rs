@@ -24,7 +24,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::popover::Popover;
-use crate::util::{document, user_href};
+use crate::util::{document, trap_tab, user_href};
 
 /// How often the dialog asks the relay whether the app has answered, and
 /// how long a code lasts.
@@ -452,6 +452,7 @@ pub fn Account() -> impl IntoView {
                             <span class="muted">"@"{username.clone()}</span>
                         </p>
                         <a class="account-link" href=profile.clone()>"Your profile"</a>
+                        <crate::components::writer::WriterMenuItem/>
                         <button type="button" class="account-link sign-out" on:click=move |_| session.sign_out()>"Sign out"</button>
                     }
                 />
@@ -493,24 +494,8 @@ pub fn SignInDialog() -> impl IntoView {
             }
             // Focus stays in the dialog.
             "Tab" => {
-                let Some(root) = dialog.get_untracked() else { return };
-                let Ok(nodes) = root.query_selector_all("button, a[href]") else { return };
-                let first = nodes.get(0).and_then(|n| n.dyn_into::<HtmlElement>().ok());
-                let last = nodes.get(nodes.length().saturating_sub(1)).and_then(|n| n.dyn_into::<HtmlElement>().ok());
-                let active = document().active_element();
-                let at = |el: &Option<HtmlElement>| {
-                    el.as_ref().map(|e| e.unchecked_ref::<web_sys::Element>().clone()) == active
-                };
-                if ev.shift_key() && at(&first) {
-                    ev.prevent_default();
-                    if let Some(last) = last {
-                        let _ = last.focus();
-                    }
-                } else if !ev.shift_key() && at(&last) {
-                    ev.prevent_default();
-                    if let Some(first) = first {
-                        let _ = first.focus();
-                    }
+                if let Some(root) = dialog.get_untracked() {
+                    trap_tab(&root, &ev, "button, a[href]");
                 }
             }
             _ => {}

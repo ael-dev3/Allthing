@@ -13,5 +13,7 @@ authors.workspace = true
 # Compiled into the browser app and the Worker, so it stays dependency-light:
 # no regex, url or date crates.
 [dependencies]
+# The hash of a Farcaster message a signed-in reader writes (`message.rs`).
+blake3 = { version = "1.8", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
