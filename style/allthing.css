@@ -3109,9 +3109,17 @@ code {
   text-align: right;
 }
 
+/* A card keeps one size whatever its facts say, and whenever they come
+   (components/profile_card.rs): the vote is a 20 px pill, its placeholder
+   or "Unknown", and the wallets one 38 px block below. */
 .profile-card .vote {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
   font-size: 12px;
-  padding: 2px 8px;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .profile-card .vote-loading {
@@ -3120,9 +3128,45 @@ code {
 }
 
 .profile-card-wallets {
+  position: relative;
   margin: 6px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+/* The bar and one line of legend, or a message of two lines at most. */
+.profile-card .share-body {
+  height: 38px;
+  overflow: hidden;
+}
+
+.profile-card-wallets p.share-message {
+  margin: 0;
+}
+
+.share-list-loading {
+  width: 62%;
+  height: 10px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--paper-2), var(--line), var(--paper-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Why a card's shares are partial, or from an earlier read: a word on the
+   label's line, explained on hover and read out. */
+.share-note {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
 }
 
 /* The wallet notes in a card, with room between them. */
@@ -3144,13 +3188,29 @@ code {
   height: 8px;
 }
 
-/* The legend runs inline in a card. */
+/* The legend runs inline in a card, on one line: two chains by name, and
+   how many more. */
 .profile-card .share-list {
   display: flex;
   flex-wrap: wrap;
   gap: 3px 12px;
   margin: 8px 0 0;
   font-size: 12.5px;
+}
+
+.profile-card .share-list.compact {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.profile-card .share-list.compact li {
+  min-width: 0;
+}
+
+.share-more {
+  color: var(--ink-3);
+  font-weight: 600;
 }
 
 .profile-card .share-list li {
@@ -3901,7 +3961,8 @@ code {
   animation: shimmer 1.4s ease-in-out infinite;
 }
 
-.vote-none {
+.vote-none,
+.vote-unknown {
   color: var(--ink-3);
   background: var(--paper-2);
 }
