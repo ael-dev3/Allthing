@@ -94,6 +94,28 @@ async fn drop_hidden(
     without_hidden(casts)
 }
 
+/// Keep what a listing's notes need for the casts it shows, once the hidden
+/// ones are left out: the quotes those casts reach (at any depth), their
+/// origins, and the apps of those origins.
+fn keep_shown(notes: &mut api::Annotations, shown: &[Cast]) {
+    let mut reached: HashSet<String> = HashSet::new();
+    let mut level: Vec<&Cast> = shown.iter().collect();
+    while !level.is_empty() {
+        level = level
+            .iter()
+            .flat_map(|c| c.quoted())
+            .filter(|hash| reached.insert((*hash).to_owned()))
+            .filter_map(|hash| notes.quotes.get(hash))
+            .collect();
+    }
+    notes.quotes.retain(|hash, _| reached.contains(hash));
+    let listed: HashSet<&str> = shown.iter().map(|c| c.hash.as_str()).collect();
+    notes.origins.retain(|hash, _| listed.contains(hash.as_str()));
+    let apps: HashSet<u64> = notes.origins.values().filter_map(|o| o.app_fid).collect();
+    notes.apps.retain(|fid, _| apps.contains(fid));
+    notes.pending = shown.iter().filter(|c| !notes.origins.contains_key(&c.hash)).count() as u32;
+}
+
 /// The casts that `casts` quote, by hash, so their cards show them at once:
 /// the `known` ones (carried from the previous payload) still quoted, and
 /// the rest from one bulk read, made only while the build's budget keeps
@@ -570,19 +592,30 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
-    let casts = casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect();
-    let pool = newest_unique(drop_hidden(&inv, casts, &mut notes, &known_links).await, POOL_SIZE as usize);
-    inv.mark("hidden");
+    let mut casts =
+        newest_unique(casts.map_err(Failure::upstream)?.iter().map(normalize::cast).collect(), POOL_SIZE as usize);
     let active = signers.ok().map(|apps| annotate::remember_signers(&inv, fid, apps));
     if let Ok(recent) = recent {
         let cast_signers: Vec<(String, String)> =
-            pool.iter().filter_map(|c| recent.get(&c.hash).map(|s| (c.hash.clone(), s.clone()))).collect();
+            casts.iter().filter_map(|c| recent.get(&c.hash).map(|s| (c.hash.clone(), s.clone()))).collect();
         for (hash, origin) in annotate::attribute(&inv, fid, &cast_signers, active).await {
             notes.origins.insert(hash, origin);
         }
     }
     inv.mark("attribute");
-    let quoted = annotate_listing(&inv, &mut notes, &pool, 2, &known_links).await;
+    // The link checks wait on the slowest link page: the quotes and app
+    // names are read meanwhile, for every cast read, and what only the
+    // hidden casts needed is dropped after. The checks are polled first, so
+    // they take their share of the budget before the quotes and origins
+    // size theirs, as when they ran first.
+    let (links, quoted) =
+        join(miniapps::check(&inv, &casts, &known_links), annotate_listing(&inv, &mut notes, &casts, 2, &known_links))
+            .await;
+    mark_mini_apps(&mut casts, &links);
+    let pool = without_hidden(casts);
+    let quote_links = std::mem::replace(&mut notes.links, links);
+    notes.links.extend(quote_links);
+    keep_shown(&mut notes, &pool);
     inv.mark("annotate");
     // The casts are the account's own, whose card is the payload's `user`:
     // the notes carry cards for the authors of the casts they quote.
@@ -1534,6 +1567,33 @@ mod quote_tests {
     }
 
     #[test]
+    fn a_hidden_cast_leaves_nothing_behind_in_the_notes() {
+        use allthing_core::provenance::Origin;
+        let app =
+            |fid: u64| UserSummary { fid, username: format!("app{fid}"), display_name: String::new(), pfp_url: None };
+        let origin = |app_fid: u64| Origin { signer: format!("0x{app_fid:064x}"), app_fid: Some(app_fid) };
+        // 0x01 is shown and quotes 0xb1, which quotes 0xc1. 0x02 was read
+        // with it, then hidden: its quote, origin and app go.
+        let shown = [cast("0x01", &["0xb1"])];
+        let mut notes = api::Annotations {
+            quotes: BTreeMap::from([
+                ("0xb1".to_owned(), cast("0xb1", &["0xc1"])),
+                ("0xc1".to_owned(), cast("0xc1", &[])),
+                ("0xb2".to_owned(), cast("0xb2", &[])),
+            ]),
+            origins: BTreeMap::from([("0x01".to_owned(), origin(9152)), ("0x02".to_owned(), origin(309_857))]),
+            apps: BTreeMap::from([(9152, app(9152)), (309_857, app(309_857))]),
+            pending: 1,
+            ..Default::default()
+        };
+        keep_shown(&mut notes, &shown);
+        assert_eq!(notes.quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1"]);
+        assert_eq!(notes.origins.keys().collect::<Vec<_>>(), ["0x01"]);
+        assert_eq!(notes.apps.keys().collect::<Vec<_>>(), [&9152]);
+        assert_eq!(notes.pending, 0);
+    }
+
+    #[test]
     fn quotes_beyond_one_bulk_read_wait_for_a_later_build() {
         let host = Bulk::new(false);
         let inv = Invocation::new(host.clone(), 45);
@@ -1850,6 +1910,109 @@ mod engagement_tests {
         assert_eq!(host.sent(), 24);
         // Page builds still have the reserve.
         assert_eq!(upstream::spare(&Invocation::new(host.clone(), 45), Upstream::Hypersnap, 0), PREVIEW_RESERVE);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use std::cell::{Cell, RefCell};
+    use std::future::Future;
+    use std::task::{Context, Poll};
+
+    use futures::future::{FutureExt, LocalBoxFuture, poll_fn};
+    use serde_json::json;
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// Alice's newest cast links a mini app and quotes 0xb2; her other cast
+    /// quotes 0xb1. The mini app's page answers only once the quotes have
+    /// been asked for (or, after 1000 polls, not at all): a build that read
+    /// the quotes after its link checks would never learn it is a mini app.
+    #[derive(Default)]
+    struct Hub {
+        quotes_asked: Rc<Cell<bool>>,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for Hub {
+        fn now(&self) -> f64 {
+            1_800_000_000_000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let url = request.url.clone();
+            self.requests.borrow_mut().push(url.clone());
+            if url.starts_with("https://app.example/") {
+                let asked = self.quotes_asked.clone();
+                let mut polls = 0;
+                return poll_fn(move |_| {
+                    polls += 1;
+                    if asked.get() {
+                        let page = r#"<html><head><meta name="fc:miniapp" content="{}"></head></html>"#;
+                        Poll::Ready(Ok(HttpResponse { status: 200, retry_after: None, body: Some(page.into()) }))
+                    } else if polls > 1000 {
+                        Poll::Ready(Err(FetchError::Network("the quotes were never asked for".into())))
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .boxed_local();
+            }
+            let alice = json!({ "fid": 42, "username": "alice" });
+            let body = if url.contains("/v2/farcaster/user/by_username?") {
+                Some(json!({ "user": alice }))
+            } else if url.contains("/v2/farcaster/feed/user/casts?") {
+                Some(json!({ "casts": [
+                    { "hash": "0x02", "author": alice, "text": "Play my game", "timestamp": "2026-10-18T10:00:00Z",
+                      "embeds": [{ "url": "https://app.example/game" }, { "cast_id": { "hash": "0xb2", "fid": 2 } }] },
+                    { "hash": "0x01", "author": alice, "text": "Worth reading", "timestamp": "2026-10-18T09:00:00Z",
+                      "embeds": [{ "cast_id": { "hash": "0xb1", "fid": 2 } }] },
+                ] }))
+            } else if let Some((_, list)) = url.split_once("/v2/farcaster/casts?casts=") {
+                self.quotes_asked.set(true);
+                let casts: Vec<serde_json::Value> = list
+                    .split("%2C")
+                    .map(|hash| {
+                        json!({ "hash": hash, "author": { "fid": 2, "username": "quoted" }, "text": format!("quoted {hash}"),
+                                "timestamp": "2026-10-17T00:00:00Z" })
+                    })
+                    .collect();
+                Some(json!({ "casts": casts }))
+            } else {
+                None
+            };
+            let response = match body {
+                Some(body) => {
+                    HttpResponse { status: 200, retry_after: None, body: Some(serde_json::to_vec(&body).unwrap()) }
+                }
+                None => HttpResponse { status: 404, retry_after: None, body: None },
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    #[test]
+    fn quotes_are_read_while_the_link_checks_wait_and_a_hidden_cast_leaves_nothing_behind() {
+        let hub = Rc::new(Hub::default());
+        let inv = Rc::new(Invocation::new(hub.clone(), 45));
+        let mut build = Box::pin(user(inv, "alice".into(), None));
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        let built = loop {
+            if let Poll::Ready(built) = build.as_mut().poll(&mut cx) {
+                break built.unwrap();
+            }
+        };
+        let payload: UserPayload = serde_json::from_slice(&built.body).unwrap();
+        // The mini app's cast is left out, and with it the quote it alone needed.
+        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0x01"]);
+        assert_eq!(payload.notes.links, BTreeMap::from([("https://app.example/game".to_owned(), true)]));
+        assert_eq!(payload.notes.quotes.keys().collect::<Vec<_>>(), ["0xb1"]);
+        assert_eq!(payload.notes.quotes["0xb1"].text, "quoted 0xb1");
+        // One bulk read brought both quotes.
+        assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 1);
     }
 }
 
