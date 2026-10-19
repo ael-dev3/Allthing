@@ -35,7 +35,11 @@ impl Drop for CappedReader {
     }
 }
 
-async fn read_body(response: &web_sys::Response, max: Option<u32>) -> Result<Vec<u8>, JsValue> {
+async fn read_body(
+    response: &web_sys::Response,
+    max: Option<u32>,
+    stop_at: Option<fn(&[u8], usize) -> bool>,
+) -> Result<Vec<u8>, JsValue> {
     let Some(max) = max else {
         let buffer = JsFuture::from(response.array_buffer()?).await?;
         return Ok(js_sys::Uint8Array::new(&buffer).to_vec());
@@ -51,7 +55,11 @@ async fn read_body(response: &web_sys::Response, max: Option<u32>) -> Result<Vec
         }
         let chunk = js_sys::Reflect::get(&item, &JsValue::from_str("value"))?.dyn_into::<js_sys::Uint8Array>()?;
         let take = (max - bytes.len()).min(chunk.length() as usize);
+        let seen = bytes.len();
         bytes.extend_from_slice(&chunk.subarray(0, take as u32).to_vec());
+        if stop_at.is_some_and(|enough| enough(&bytes, seen)) {
+            break;
+        }
     }
     Ok(bytes)
 }
@@ -80,8 +88,11 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
             JsFuture::from(window.fetch_with_request(&outgoing)).await.map_err(failed)?.dyn_into().map_err(failed)?;
         let status = response.status();
         let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body =
-            if response.ok() { Some(read_body(&response, request.max_bytes).await.map_err(failed)?) } else { None };
+        let body = if response.ok() {
+            Some(read_body(&response, request.max_bytes, request.stop_at).await.map_err(failed)?)
+        } else {
+            None
+        };
         Ok(HttpResponse { status, retry_after, body })
     };
     let timeout = crate::video::sleep(i32::try_from(request.timeout_ms).unwrap_or(i32::MAX));

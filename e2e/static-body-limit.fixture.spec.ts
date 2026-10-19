@@ -20,6 +20,10 @@ async function provider(page: Page, mode: string) {
       if (mode === "large-chunk") {
         chunk.set(encoder.encode("<html><head>"));
         chunk.set(encoder.encode("<meta name='fc:frame' content='vNext'></head>"), size - 100);
+      } else if (mode === "error") {
+        // The head hasn't ended when the body fails, so the read goes on to
+        // the failing pull: a read stops at `</head>`.
+        chunk.set(encoder.encode("<html><head><meta name='fc:frame' content='vNext'>"));
       } else {
         chunk.set(encoder.encode("<html><head><meta name='fc:frame' content='vNext'></head>"));
       }

@@ -131,6 +131,16 @@ pub fn worth_checking_for_mini_app(url: &str) -> bool {
     classify_url(url, None) == MediaKind::Link && !is_mini_app_url(url) && !skipped
 }
 
+/// Whether the start of a page read so far reaches the end of its `<head>`,
+/// where any mini app meta tags have all been: reading can stop there. Only
+/// the bytes from `from` on (what arrived since the last look) are searched,
+/// with the few before them that a `</head` could straddle.
+pub fn head_ended(page: &[u8], from: usize) -> bool {
+    const END: &[u8] = b"</head";
+    let start = from.min(page.len()).saturating_sub(END.len() - 1);
+    page[start..].windows(END.len()).any(|w| w.eq_ignore_ascii_case(END))
+}
+
 /// Whether a page's HTML declares a Farcaster mini app or frame in its
 /// `<head>`: an `fc:miniapp` or `fc:frame` meta tag, the older `fc:frame:*`
 /// tags, or an Open Frame's `of:*` tags.
@@ -373,6 +383,19 @@ mod tests {
         assert!(!html_declares_mini_app(r#"<head><meta name name='fc:frame'></head>"#));
         assert!(html_declares_mini_app(r#"<head><meta content="a > b" name="fc:frame"></head>"#));
         assert!(!html_declares_mini_app(r#"<head><meta content="<meta name='fc:frame'>"></head>"#));
+    }
+
+    #[test]
+    fn a_page_head_ends_at_its_closing_tag_even_across_chunks() {
+        let page = b"<html><head><meta name=\"fc:miniapp\" content=\"{}\"></HEAD><body>";
+        assert!(head_ended(page, 0));
+        let split = page.iter().position(|&b| b == b'H').unwrap() + 2;
+        // The first chunk ends inside the tag; the next look starts there.
+        assert!(!head_ended(&page[..split], 0));
+        assert!(head_ended(page, split));
+        assert!(!head_ended(b"<html><head><title>x</title>", 0));
+        assert!(!head_ended(b"", 0));
+        assert!(!head_ended(b"</hea", 99));
     }
 
     #[test]

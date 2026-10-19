@@ -47,6 +47,10 @@ pub struct HttpRequest {
     /// Read at most this many bytes of the body (asked for with `Range`, and
     /// cut if the server sends more).
     pub max_bytes: Option<u32>,
+    /// With `max_bytes`: stop reading as soon as this says the body read so
+    /// far is enough (a page's `<head>` has ended, say). It is given the body
+    /// and how much of it it was shown before.
+    pub stop_at: Option<fn(&[u8], usize) -> bool>,
 }
 
 pub struct HttpResponse {
