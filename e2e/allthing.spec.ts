@@ -623,6 +623,7 @@ test.describe("threads and navigation", () => {
     await expect(via).toContainText("via ");
     await expect(via).not.toContainText("Warpcast");
     await expect(via).toHaveAttribute("title", /Signed with key 0x[0-9a-f]{4}…[0-9a-f]{4}/);
+    expect((await page.locator(".post .post-meta").innerText()).match(/\bvia\b/g)).toHaveLength(1);
     await expect(page.getByText(/Hypersnap|view on farcaster/i)).toHaveCount(0);
     await shoot(page, "post");
   });
