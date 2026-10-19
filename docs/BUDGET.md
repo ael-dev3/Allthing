@@ -88,17 +88,17 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Build | Calls |
 |---|---|
 | Any cache hit | 1 (cache read) |
-| home | cache read 1 + trending casts 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
+| home | cache read 1 + trending casts 1 + link pages ≤12 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + origins ≤36 (12 authors × at most 3) + app names ≤1 + cache write 1 |
 | home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
 | the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1 |
-| latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + quoted casts ≤1 + origins ≤36 + app names ≤1 + cache write 1 |
+| latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤12 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
-| channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤1 + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
+| channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + link pages ≤12 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
 | cast | cache read 1 + conversation 1 + link pages ≤12 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
-| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤12 + quoted casts ≤1 + apps ≤1 + cache write 1 (≤ 25) |
+| user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤12 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + apps ≤1 + cache write 1 (≤ 25) |
 | wallets | cache read 1 + user 1 + 9 EVM chains, one batched JSON-RPC call each (+ up to 5 fallback endpoints) + cache write 1 (≤ 17) |
 | channels | 3 |
-| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + quoted casts ≤1 + cache write 1 (≤ 19) |
+| search | cache read 1 + casts, users, channels 3 (in parallel) + bulk cast hydrate 1 + link pages ≤12 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + cache write 1 (≤ 19) |
 | reactions | cache read 1 + reactions 1 + cache write 1 (≤ 3) |
 | engagement | cache read 1 + one `reactions/cast` read per list ≤12 (six cards, likes and recasts; six at a time) + cache write 1 (≤ 14) |
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤12 + cache write 1 (≤ 15) |

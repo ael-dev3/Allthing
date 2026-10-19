@@ -8,7 +8,7 @@ use crate::Notes;
 use crate::api;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
-use crate::components::quote::{QuoteCard, quote_chip};
+use crate::components::quote::nested_quotes;
 use crate::components::text::CastText;
 use crate::nav::card_click;
 use crate::util::{cast_href, channel_href};
@@ -45,16 +45,7 @@ pub fn CastCard(
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     // Quoted casts the payload carries show as cards; others as links.
-    let quotes: Vec<AnyView> = cast
-        .quoted()
-        .map(|hash| match notes.quotes.get(hash) {
-            Some(quoted) => {
-                let author_card = notes.users.get(&quoted.author.fid).cloned();
-                view! { <QuoteCard cast=quoted.clone() author_card/> }.into_any()
-            }
-            None => quote_chip(hash),
-        })
-        .collect();
+    let quotes: Vec<AnyView> = nested_quotes(&cast, Some(&notes), 0);
     let parent = show_parent.then(|| cast.parent_hash.clone()).flatten();
     let data_path = cast_path(&cast.hash);
     let warm = move || api::prefetch(&data_path);

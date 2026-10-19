@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- A quote of a quote shows inline, up to three levels: a quoted cast that quotes another shows that quote as a card, and so on. A quote beyond the third is a link, as before. Each level costs one bulk read in a listing's build, made while the build has budget to spare.
 - The Wallets button on a profile opens its list of verified addresses on hover or keyboard focus, on screens that hover, as the other popovers do. A tap or click still toggles it.
 - Opening a post, a profile or a channel directly (from a link elsewhere, or a reload) starts its data request as soon as the page arrives, alongside the app's download, as the front page already did. Before, it waited for the app to boot, about 450 ms on production. It is still one API call.
 - A profile opened from a feed shows its header at once: the picture, names and fid from the casts the page showed, and the start of the bio, the follower counts and the join date from the profile card its payload carried. The casts load behind it, as a post's replies do. Where nothing was known about the account's bio and counts, they show placeholders, and a join date the profile would correct (an account from before November 2023) waits for the profile. Before, the page stayed a grey placeholder until the whole profile arrived, which took seconds when it wasn't cached.
