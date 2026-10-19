@@ -49,6 +49,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- The sign-in dialog no longer says Allthing can't post or change anything for the reader, which stopped being the whole story once it could like, recast and post. It says that signing in tells Allthing who they are, nothing more, and that liking, recasting and posting take a key they approve once in the Farcaster app.
 - The production performance check also accepts a deployment of a later commit that includes the pushed one. Workers Builds skips a commit that a newer push supersedes, so after a docs-only merge (which runs no CI) the pushed commit itself could never go live, and the check would wait out its 30 minutes and fail.
 - The production performance check waits up to 30 minutes for the pushed commit to go live, not five. Workers Builds takes 6 to 16 minutes, and about 25 when two merges queue, so since the wait was added the check failed on every push to `main` without measuring anything.
 - A profile card opened from a Liked by or Recasted by list shows the person's bio, follower and following counts and join date, like cards elsewhere, instead of "The bio and follower counts are on the profile". The lists carry them, from the user objects that come with the reactions: no extra request, and the preloaded lists bring them too.

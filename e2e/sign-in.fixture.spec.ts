@@ -112,6 +112,8 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   expect(await code.locator("path").getAttribute("d")).toMatch(/^M4 4h7v1h-7z/);
   // The code, and nothing else to choose: no link to the Farcaster app.
   await expect(dialog.getByRole("link")).toHaveCount(0);
+  // What signing in does, and what writing takes.
+  await expect(dialog.locator(".signin-note")).toHaveText("Signing in tells Allthing who you are, nothing more. Liking, recasting and posting take a key you approve once, in the Farcaster app.");
   await expect(dialog.getByRole("status")).toHaveText("Waiting for you to approve in Farcaster…");
   // The channel carries the Worker's nonce, this site and its address.
   const origin = new URL(page.url()).origin;
