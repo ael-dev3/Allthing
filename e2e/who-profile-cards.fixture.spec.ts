@@ -70,6 +70,9 @@ test.describe("profile cards in the who-list", () => {
       return !!el?.closest(".profile-card");
     }, [cardBox!.x + cardBox!.width / 2, cardBox!.y + cardBox!.height / 2]);
     expect(topmost).toBe(true);
+    // Level with the list, the way it opened, not hanging from the name.
+    const level = Math.abs(cardBox!.y - listBox!.y) < 2 || Math.abs(cardBox!.y + cardBox!.height - (listBox!.y + listBox!.height)) < 2;
+    expect(level).toBe(true);
     const background = await profile.evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(background).not.toMatch(/rgba\(.*,\s*0\)|transparent/);
     // Moving into the card keeps both open.
