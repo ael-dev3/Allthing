@@ -479,11 +479,16 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     if mine {
         IN_FLIGHT.with(|f| f.borrow_mut().remove(path));
     }
-    let raw = raw?;
-    let result = decode::<T>(&raw);
-    if result.is_ok() || raw.status == 404 {
-        remember(path, raw, now);
-    }
+    let result = raw.and_then(|raw| {
+        let result = decode::<T>(&raw);
+        if result.is_ok() || raw.status == 404 {
+            remember(path, raw, now);
+        }
+        result
+    });
+    // Foreground reads share the prefetch slots. Release queued card facts
+    // after either success or failure, once any reusable answer is filed.
+    pump_cards();
     result
 }
 

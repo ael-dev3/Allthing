@@ -5,6 +5,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+- Profile-card vote and wallet prefetches resume when foreground reads finish or fail, so navigating with pending profile facts no longer leaves the next feed's cards waiting for another interaction.
+
 ### Added
 
 - `/api/v1/status` says whether Solana wallet counts have a keyed RPC endpoint (`solana_rpc.keyed`, and the endpoint's host, never its key), so a deploy can be checked after setting the `SOLANA_RPC_URL` secret.
