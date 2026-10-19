@@ -16,8 +16,9 @@ use crate::upstream::{self, Upstream, UpstreamError};
 use crate::{HttpMethod, Invocation};
 
 /// Link pages fetched while building one payload, at most; the rest are
-/// checked on a later refresh.
-pub const MAX_CHECKS: usize = 12;
+/// checked on a later refresh. One batch of [`PARALLEL`]: a second batch
+/// waited for the first's slowest page, and doubled a cold build's wait.
+pub const MAX_CHECKS: usize = PARALLEL;
 /// Subrequests left for the rest of the build (origins, app names, the cache
 /// write): checks never take these.
 const RESERVE: usize = 10;
