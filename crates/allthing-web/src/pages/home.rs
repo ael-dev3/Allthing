@@ -295,6 +295,7 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                     </div>
                 }
             }}
+            {crate::components::layout::cast_pill()}
         </div>
     }
 }

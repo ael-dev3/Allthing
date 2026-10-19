@@ -89,13 +89,15 @@ fn App() -> impl IntoView {
     }
 }
 
-/// The sign-in dialog and the composer, in front of the Worker.
+/// The sign-in dialog and the composer, and Cast's button on phones, in
+/// front of the Worker.
 #[cfg(not(feature = "static-host"))]
 fn sign_in_dialog() -> impl IntoView {
     view! {
         <components::signin::SignInDialog/>
         <components::compose::ComposerDialog/>
         <components::writer::WriterDialog/>
+        <components::compose::CastFab/>
     }
 }
 

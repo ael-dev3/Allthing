@@ -39,17 +39,28 @@ pub fn SiteHeader() -> impl IntoView {
     }
 }
 
-/// Sign-in, or who is signed in and their Cast button: in front of the
-/// Worker only.
+/// Sign-in, or who is signed in: in front of the Worker only. Cast is at
+/// the top of the feeds (`cast_pill`).
 #[cfg(not(feature = "static-host"))]
 fn account() -> AnyView {
     view! {
         <div class="header-actions">
-            <crate::components::compose::ComposeButton/>
             <crate::components::signin::Account/>
         </div>
     }
     .into_any()
+}
+
+/// Cast, at the top right of a feed, for the signed-in reader.
+#[cfg(not(feature = "static-host"))]
+pub fn cast_pill() -> AnyView {
+    view! { <crate::components::compose::CastPill/> }.into_any()
+}
+
+/// The static copy has no sign-in, so no Cast.
+#[cfg(feature = "static-host")]
+pub fn cast_pill() -> AnyView {
+    ().into_any()
 }
 
 /// The static copy has no Worker to sign in with: it says it only reads.

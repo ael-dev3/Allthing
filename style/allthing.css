@@ -2283,6 +2283,19 @@ code {
 
 .channel-names {
   min-width: 0;
+  flex: 1;
+}
+
+/* The channel's name, and Cast at the top right beside it. */
+.channel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.channel-hero.has-banner .channel-names {
+  align-self: stretch;
 }
 
 .channel-handle {
@@ -3318,7 +3331,7 @@ code {
   overflow: auto;
 }
 
-/* The signed-in reader's Cast button and account, at the header's end. */
+/* The signed-in reader's account, at the header's end. */
 .header-actions {
   margin-left: auto;
   display: flex;
@@ -3326,7 +3339,6 @@ code {
   gap: 10px;
 }
 
-.compose-button,
 .reply-button {
   display: inline-flex;
   align-items: center;
@@ -3336,21 +3348,63 @@ code {
   white-space: nowrap;
 }
 
-.compose-button {
+/* Cast, at the top right of the front page's feed and a channel's
+   (components/compose.rs): a pill in Allthing's indigo accent, turning to
+   the portal cyan as the wordmark's sheen does, lettered in the wordmark's
+   serif. On a phone, a round button over the feed instead. */
+.cast-pill,
+.cast-fab {
+  align-items: center;
+  justify-content: center;
   color: #fff;
-  padding: 8px 14px 8px 11px;
+  border: 0;
+  cursor: pointer;
+  background: linear-gradient(115deg, var(--accent) 0%, var(--accent) 38%, #3260bd 72%, #0b7c91 100%);
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.12), 0 10px 24px -12px rgba(79, 67, 212, 0.7);
+  -webkit-tap-highlight-color: transparent;
+  transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease);
+}
+
+.cast-pill {
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+  padding: 8px 19px 9px 15px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--accent);
-  transition: box-shadow 0.2s var(--ease), background 0.2s var(--ease);
+  font: 400 20px/1 var(--font-display);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.compose-button:hover {
-  background: #4337c4;
-  box-shadow: 0 0 0 4px var(--accent-soft);
+.cast-pill:hover {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 12px 28px -12px rgba(79, 67, 212, 0.75);
 }
 
-.compose-button .icon,
+.cast-pill:active,
+.cast-fab:active {
+  transform: scale(0.97);
+}
+
+.cast-pill:focus-visible,
+.cast-fab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.cast-fab {
+  display: none;
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 35;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(27, 34, 51, 0.16), 0 14px 30px -10px rgba(79, 67, 212, 0.75);
+}
+
+.cast-pill .icon,
+.cast-fab .icon,
 .reply-button .icon,
 .compose-post .icon {
   width: 16px;
@@ -3654,12 +3708,24 @@ code {
     gap: 8px;
   }
 
-  .compose-button {
-    padding: 8px;
+  /* Cast floats over the feed, in reach of a thumb, and notices sit above
+     it. */
+  .cast-pill {
+    display: none;
   }
 
-  .compose-label {
-    display: none;
+  .cast-fab {
+    display: inline-flex;
+  }
+
+  .cast-fab .icon {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.6;
+  }
+
+  .toast {
+    bottom: calc(88px + env(safe-area-inset-bottom));
   }
 
   .compose-body {

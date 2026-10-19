@@ -54,7 +54,7 @@ async function serve(target: Page, { key = KEY as string | null, signedIn = true
     route.fulfill({ json: { thread: { cast, children: [{ cast: reply, children: [] }] }, notes: {}, meta } }),
   );
   await target.route("**/api/v1/channel?*", (route) =>
-    route.fulfill({ json: { channel: { id: "dev", name: "Dev", follower_count: 10 }, pool: [cast], notes: {}, meta } }),
+    route.fulfill({ json: { channel: { id: "dev", name: "Dev", parent_url: "chain://eip155:1/erc721:0xdev", follower_count: 10 }, pool: [cast], notes: {}, meta } }),
   );
   await target.route("**/api/v1/gifs/key", (route) => {
     calls.key += 1;
@@ -184,6 +184,42 @@ test("without a GIF key there is no GIF button, and a cast still hands off", asy
   expect(calls.klipy).toEqual([]);
 });
 
+test("Cast is a serif pill at the top right of the feed and of a channel, and nowhere else", async ({ page }) => {
+  await serve(page);
+  await page.goto("/");
+  await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
+  // Not in the header any more, and only one: the floating one is for phones.
+  await expect(page.locator(".site-header").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(1);
+  const head = page.locator(".listing-head");
+  const pill = head.getByRole("button", { name: "Write a cast" });
+  await expect(pill).toHaveText("Cast");
+  // At the top right of the feed, level with the sort tabs.
+  const [box, row, tabs] = await Promise.all([pill.boundingBox(), head.boundingBox(), page.locator(".sort-tabs").boundingBox()]);
+  expect(Math.abs(box!.x + box!.width - (row!.x + row!.width))).toBeLessThan(1);
+  expect(Math.abs(box!.y + box!.height / 2 - (tabs!.y + tabs!.height / 2))).toBeLessThan(4);
+  // Allthing's serif, and its indigo accent turning to the portal cyan, not
+  // Farcaster's purple.
+  const look = await pill.evaluate((el) => ({ font: getComputedStyle(el).fontFamily, fill: getComputedStyle(el).backgroundImage }));
+  expect(look.font).toContain("Instrument Serif");
+  expect(look.fill).toContain("rgb(79, 67, 212)");
+  expect(look.fill).toContain("rgb(11, 124, 145)");
+  expect(look.fill).not.toMatch(/rgb\((124, 101, 193|133, 93, 205|138, 99, 210)\)/);
+  // A channel's: at the top right, beside its name.
+  await page.goto("/c/dev");
+  const title = page.locator(".channel-title-row");
+  const channelPill = title.getByRole("button", { name: "Write a cast" });
+  await expect(channelPill).toBeVisible();
+  const [p, h, r] = await Promise.all([channelPill.boundingBox(), title.locator("h1").boundingBox(), title.boundingBox()]);
+  expect(Math.abs(p!.x + p!.width - (r!.x + r!.width))).toBeLessThan(1);
+  expect(Math.abs(p!.y + p!.height / 2 - (h!.y + h!.height / 2))).toBeLessThan(6);
+  expect(p!.x).toBeGreaterThan(h!.x + h!.width);
+  // A post has none: Reply and Quote are there instead.
+  await page.goto(`/p/${cast.hash}`);
+  await expect(page.locator(".post")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+});
+
 test("Reply answers the post, or a reply, with its hash", async ({ page }) => {
   await serve(page);
   await page.goto(`/p/${cast.hash}`);
@@ -267,8 +303,15 @@ test("on a phone, the composer and its picker fit the screen", async ({ browser 
   await page.goto("/");
   const write = page.getByRole("button", { name: "Write a cast" });
   await expect(write).toBeVisible();
-  // Only its icon in the header.
-  await expect(write.locator(".compose-label")).toBeHidden();
+  // A round button floating over the feed at the bottom right, in reach of
+  // a thumb; the pill and the header have none.
+  const fab = (await write.boundingBox())!;
+  expect([Math.round(fab.width), Math.round(fab.height)]).toEqual([56, 56]);
+  expect(Math.abs(fab.x + fab.width - (390 - 16))).toBeLessThan(1);
+  expect(Math.abs(fab.y + fab.height - (844 - 16))).toBeLessThan(1);
+  expect(await write.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+  await expect(page.locator(".listing-head .cast-pill")).toBeHidden();
+  await expect(page.locator(".site-header").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
   await write.tap();
   const dialog = page.getByRole("dialog", { name: "New cast" });
   await expect(dialog).toBeInViewport({ ratio: 1 });
@@ -285,6 +328,13 @@ test("on a phone, the composer and its picker fit the screen", async ({ browser 
   await expect(dialog.getByRole("link", { name: /Post in Farcaster/ })).toBeInViewport();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
+  // A channel's feed has it too; a post doesn't (Reply and Quote are there).
+  await page.keyboard.press("Escape");
+  await page.goto("/c/dev");
+  await expect(page.getByRole("button", { name: "Write a cast" })).toBeInViewport();
+  await page.goto(`/p/${cast.hash}`);
+  await expect(page.locator(".post")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(0);
   await context.close();
 });
 
