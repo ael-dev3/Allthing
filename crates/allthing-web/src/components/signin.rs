@@ -14,7 +14,8 @@ use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::hooks::use_location;
-use serde::Deserialize;
+use serde::de::IgnoredAny;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
@@ -100,7 +101,7 @@ impl Session {
 
     fn sign_out(self) {
         spawn_local(async {
-            let _ = api::post::<_, serde_json::Value>(&siwf::sign_out_path(), &serde_json::json!({})).await;
+            let _ = api::post::<_, IgnoredAny>(&siwf::sign_out_path(), &Nothing {}).await;
         });
         // Signed out here even if the request doesn't get through.
         let _ = js_sys::Reflect::set(
@@ -156,6 +157,22 @@ fn begin(session: Session) {
     });
 }
 
+/// An empty JSON body (`{}`).
+#[derive(Serialize)]
+struct Nothing {}
+
+/// What the relay opens a channel with, as AuthKit sends it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelRequest<'a> {
+    siwe_uri: &'a str,
+    domain: &'a str,
+    nonce: &'a str,
+    /// The Worker accepts an auth address as the signer, as well as the
+    /// custody address.
+    accept_auth_address: bool,
+}
+
 /// The relay's new channel.
 #[derive(Deserialize)]
 struct Channel {
@@ -174,16 +191,15 @@ struct Status {
 
 async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> {
     let failed = |failure: api::Failure| failure.message();
-    let started: Started = api::post(&siwf::start_path(), &serde_json::json!({})).await.map_err(failed)?;
-    // The Worker accepts an auth address as the signer, as well as the
-    // custody address.
-    let request = serde_json::json!({
-        "siweUri": started.uri,
-        "domain": started.domain,
-        "nonce": started.nonce,
-        "acceptAuthAddress": true,
-    });
-    let (status, body) = relay("POST", "channel", None, Some(request.to_string())).await?;
+    let started: Started = api::post(&siwf::start_path(), &Nothing {}).await.map_err(failed)?;
+    let request = ChannelRequest {
+        siwe_uri: &started.uri,
+        domain: &started.domain,
+        nonce: &started.nonce,
+        accept_auth_address: true,
+    };
+    let request = serde_json::to_string(&request).map_err(|_| RELAY_DOWN.to_owned())?;
+    let (status, body) = relay("POST", "channel", None, Some(request)).await?;
     let channel = serde_json::from_str::<Channel>(&body)
         .ok()
         .filter(|c| (200..300).contains(&status) && siwf::is_app_link(&c.url))
