@@ -1,3 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 [alias]
 xtask = "run --quiet --release --package xtask --"
+
+[target.wasm32-unknown-unknown]
+# Experiment: Leptos erases component types, for a smaller module.
+rustflags = ["--cfg", "erase_components"]
