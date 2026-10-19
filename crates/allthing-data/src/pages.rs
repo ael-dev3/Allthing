@@ -722,23 +722,36 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
     .await;
     let mut chains = measured;
     let total = wallet::apportion(&mut chains);
+    let sources = wallet_sources(!evm.is_empty(), !solana.is_empty(), &chains);
+    let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
+    Built::json(&activity, api::WALLET_CACHE)
+}
+
+/// Where each kind of count was read, or that Solana's couldn't be.
+fn wallet_sources(evm: bool, solana: bool, chains: &[ChainActivity]) -> Vec<String> {
     let mut sources = Vec::new();
-    if !evm.is_empty() {
+    if evm {
         sources.push(
             "EVM chains: transactions sent by each verified address (its account nonce), read from keyless public RPCs \
              (mainnet.base.org, publicnode.com, the chains' own endpoints)."
                 .to_owned(),
         );
     }
-    if !solana.is_empty() {
-        sources.push(format!(
-            "Solana: transactions involving each verified address (its signatures, up to {} each), read from \
-             Solana's public RPC (api.mainnet-beta.solana.com).",
-            chain::SOLANA_PAGE
-        ));
+    if solana {
+        let unread = chains.iter().any(|c| c.kind == ChainKind::Solana && c.error.is_some());
+        sources.push(if unread {
+            "Solana: not counted. Solana's public RPC (api.mainnet-beta.solana.com) refuses requests from browsers \
+             and, so far, from Cloudflare Workers, and the keyless alternatives keep only recent history."
+                .to_owned()
+        } else {
+            format!(
+                "Solana: transactions involving each verified address (its signatures, up to {} each), read from \
+                 Solana's public RPC (api.mainnet-beta.solana.com).",
+                chain::SOLANA_PAGE
+            )
+        });
     }
-    let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
-    Built::json(&activity, api::WALLET_CACHE)
+    sources
 }
 
 #[cfg(test)]
@@ -1479,5 +1492,30 @@ mod engagement_tests {
         assert_eq!(host.sent(), 24);
         // Page builds still have the reserve.
         assert_eq!(upstream::spare(&Invocation::new(host.clone(), 45), Upstream::Hypersnap, 0), PREVIEW_RESERVE);
+    }
+}
+
+#[cfg(test)]
+mod wallet_tests {
+    use super::*;
+
+    #[test]
+    fn wallet_sources_say_when_solana_went_uncounted() {
+        let solana = |error: Option<&str>| ChainActivity {
+            chain: "solana".into(),
+            name: "Solana".into(),
+            kind: ChainKind::Solana,
+            count: 0,
+            capped: false,
+            percent: 0,
+            error: error.map(str::to_owned),
+        };
+        let unread = wallet_sources(true, true, &[solana(Some("upstream returned HTTP 403"))]);
+        assert_eq!(unread.len(), 2);
+        assert!(unread[1].starts_with("Solana: not counted."), "{}", unread[1]);
+        let read = wallet_sources(false, true, &[solana(None)]);
+        assert_eq!(read.len(), 1);
+        assert!(read[0].contains("read from Solana's public RPC"), "{}", read[0]);
+        assert!(wallet_sources(false, false, &[]).is_empty());
     }
 }
