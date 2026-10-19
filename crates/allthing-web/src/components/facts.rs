@@ -26,14 +26,29 @@ pub fn JoinedFact(joined: Joined) -> impl IntoView {
     }
 }
 
+/// An account's vote, read when it is asked for (at once from the client
+/// cache when preloaded).
+pub type VoteData = LocalResource<Result<api::Fetched<VotePayload>, api::Failure>>;
+/// An account's wallet activity, read when it is asked for.
+pub type WalletData = LocalResource<Result<api::Fetched<WalletActivity>, api::Failure>>;
+
+pub fn vote_data(fid: u64) -> VoteData {
+    LocalResource::new(move || async move { api::get::<VotePayload>(&vote_path(fid)).await })
+}
+
+pub fn wallet_data(fid: u64) -> WalletData {
+    LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await })
+}
+
 /// What the NS vote is, for the tooltip.
 const NS_VOTE_TIP: &str = "NS vote: how this account answered farcaster.xyz's vote after Network School took over Farcaster. Stayed (yes), left (no), or didn't vote.";
 
 /// How the account voted when farcaster.xyz asked everyone to stay (yes) or
-/// leave (no), loaded when shown. Left out when the sources can't settle it.
+/// leave (no), loaded when shown, or from `data` that a profile card reads
+/// itself. Left out when the sources can't settle it.
 #[component]
-pub fn VoteFact(fid: u64) -> impl IntoView {
-    let data = LocalResource::new(move || async move { api::get::<VotePayload>(&vote_path(fid)).await });
+pub fn VoteFact(fid: u64, #[prop(optional)] data: Option<VoteData>) -> impl IntoView {
+    let data = data.unwrap_or_else(|| vote_data(fid));
     let row = |answer: AnyView| {
         view! {
             <div class="fact vote-fact">
@@ -62,12 +77,13 @@ pub fn VoteFact(fid: u64) -> impl IntoView {
     }
 }
 
-/// Wallet activity by chain, loaded when shown: it is read from many RPCs,
-/// so it has an endpoint of its own, cached for hours.
+/// Wallet activity by chain, loaded when shown (or from `data`, as for
+/// [`VoteFact`]): it is read from many RPCs, so it has an endpoint of its
+/// own, cached for hours.
 #[component]
-pub fn WalletShares(fid: u64) -> impl IntoView {
+pub fn WalletShares(fid: u64, #[prop(optional)] data: Option<WalletData>) -> impl IntoView {
     let ready = api::ready::<WalletActivity>(&wallets_path(fid));
-    let data = LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await });
+    let data = data.unwrap_or_else(|| wallet_data(fid));
     // Prefetched (see `api::prefetch_card_facts`): shown in the first frame.
     move || match data.get().or_else(|| ready.clone().map(Ok)) {
         None => view! { <div class="share-bar loading" aria-label="Loading wallet activity"></div> }.into_any(),
