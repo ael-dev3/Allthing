@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Writing a cast or a reply, with a GIF, for the signed-in reader.
-//! Allthing doesn't post: "Post in Farcaster" opens the draft in the
-//! Farcaster app, through farcaster.xyz's compose link, and the reader posts
-//! it there (`allthing_core::compose`). The header's Cast button starts a
-//! cast, in the channel being read on a channel page; Reply under a post or
-//! a reply starts a reply to it.
+//! Writing a cast, a reply or a quote, with a GIF, for the signed-in reader.
+//! The header's Cast button starts a cast, in the channel being read on a
+//! channel page; Reply and Quote under a post or a reply start a reply to
+//! it or a cast that quotes it.
+//!
+//! Where the reader can like and recast here (`components::writer`), the
+//! draft is posted with their key: "@name"s become mentions, and the cast
+//! goes to the node from their browser (`allthing_core::compose::Draft::
+//! new_cast`). Elsewhere, and on request, "Post in Farcaster" opens the
+//! draft in the Farcaster app, through farcaster.xyz's compose link, and the
+//! reader posts it there.
 //!
 //! GIFs come from KLIPY. Its terms ask that the browser reach its API and
 //! its media itself, never through Allthing's server, and that results show
@@ -19,9 +24,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
-use allthing_core::compose::{Draft, Gif, GifKey, GifPage, SEARCH_PLACEHOLDER, gif_key_path, gifs_url};
+use allthing_core::compose::{Draft, Gif, GifKey, GifPage, Quoted, SEARCH_PLACEHOLDER, gif_key_path, gifs_url};
+use allthing_core::message::MAX_CAST_BYTES;
 use allthing_core::model::Cast;
+use allthing_core::text::mention_names;
 use allthing_core::text::truncate_title;
 use leptos::ev;
 use leptos::prelude::*;
@@ -33,6 +41,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::signin::use_session;
+use crate::components::writer::{Writer, fids_of, use_writer};
 use crate::util::{BASE, document, trap_tab};
 
 /// How long typing pauses before a search is sent.
@@ -45,6 +54,9 @@ const MIN_QUERY: usize = 2;
 const PEN: &str = "M10.5 3.2l2.3 2.3M3 13l.6-2.9 7.5-7.5a1.2 1.2 0 0 1 1.7 0l.6.6a1.2 1.2 0 0 1 0 1.7l-7.5 7.5z";
 const REPLY: &str = "M6.5 4L3 7.5 6.5 11M3.5 7.5h6a3.5 3.5 0 0 1 3.5 3.5v1";
 const OUT: &str = "M9 3h4v4M13 3L7.5 8.5M11.5 9.5v3h-8v-8h3";
+const QUOTE: &str = "M3.5 4.5h9v6h-5l-2.5 2v-2h-1.5zM6 7.5h4";
+/// The text's length starts showing at this many bytes.
+const COUNT_FROM: usize = 280;
 
 /// A page of KLIPY's GIFs, and whether there are more.
 type Found = Rc<(Vec<Gif>, bool)>;
@@ -56,12 +68,25 @@ thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
 }
 
-/// What a reply answers.
+/// The cast a reply answers or a quote quotes.
 #[derive(Clone, Debug, PartialEq)]
-struct ReplyTo {
+struct Other {
     hash: String,
+    /// Its author.
+    fid: u64,
     username: String,
     excerpt: String,
+}
+
+impl Other {
+    fn of(cast: &Cast) -> Other {
+        Other {
+            hash: cast.hash.clone(),
+            fid: cast.author.fid,
+            username: cast.author.username.clone(),
+            excerpt: truncate_title(cast.text.trim(), 90),
+        }
+    }
 }
 
 /// What a draft is for.
@@ -69,7 +94,8 @@ struct ReplyTo {
 enum Target {
     /// A cast, in a channel or not.
     Cast(Option<String>),
-    Reply(ReplyTo),
+    Reply(Other),
+    Quote(Other),
 }
 
 /// The composer, held by the app: whether it is open, what the draft is
@@ -81,6 +107,9 @@ pub struct Composer {
     text: RwSignal<String>,
     gif: RwSignal<Option<Gif>>,
     picking: RwSignal<bool>,
+    /// Being posted with the reader's key, and why it didn't go out.
+    posting: RwSignal<bool>,
+    error: RwSignal<Option<String>>,
 }
 
 impl Composer {
@@ -91,6 +120,8 @@ impl Composer {
             text: RwSignal::new(String::new()),
             gif: RwSignal::new(None),
             picking: RwSignal::new(false),
+            posting: RwSignal::new(false),
+            error: RwSignal::new(None),
         }
     }
 
@@ -103,12 +134,14 @@ impl Composer {
             self.clear();
         }
         self.picking.set(false);
+        self.error.set(None);
         self.open.set(true);
     }
 
     fn clear(self) {
         self.text.set(String::new());
         self.gif.set(None);
+        self.error.set(None);
     }
 
     /// Close, keeping the draft, and return focus to where it was.
@@ -121,12 +154,56 @@ impl Composer {
     }
 
     fn draft(self) -> Draft {
-        let (parent_hash, channel) = match self.target.get() {
-            Target::Reply(to) => (Some(to.hash), None),
-            Target::Cast(channel) => (None, channel),
-        };
         let embeds = self.gif.with(|gif| gif.iter().map(|g| g.embed.url.clone()).collect());
-        Draft { text: self.text.get(), embeds, parent_hash, channel }
+        let mut draft = Draft { text: self.text.get(), embeds, ..Draft::default() };
+        match self.target.get() {
+            Target::Reply(to) => {
+                draft.parent_hash = Some(to.hash);
+                draft.parent_fid = Some(to.fid);
+            }
+            Target::Quote(of) => draft.quote = Some(Quoted { fid: of.fid, hash: of.hash, username: of.username }),
+            Target::Cast(Some(channel)) => {
+                // The channel page's own payload, which the browser holds.
+                draft.channel_url = api::peek::<ChannelPayload>(&channel_path(&channel))
+                    .and_then(Result::ok)
+                    .map(|page| page.data.channel.parent_url.clone())
+                    .filter(|url| !url.is_empty());
+                draft.channel = Some(channel);
+            }
+            Target::Cast(None) => {}
+        }
+        draft
+    }
+
+    /// Post the draft with the reader's key, once they have one: its
+    /// mentions are looked up, and a cast that goes out closes the composer
+    /// and says so; one that doesn't stays, with why.
+    fn post(self, writer: Writer) {
+        if self.posting.get_untracked() {
+            return;
+        }
+        writer.when_ready(move || {
+            self.posting.set(true);
+            self.error.set(None);
+            let draft = self.draft();
+            spawn_local(async move {
+                let fids = fids_of(&mention_names(&draft.text)).await;
+                let cast = draft.new_cast(|name| fids.get(name).copied());
+                let outcome = match cast.check() {
+                    Ok(()) => writer.cast(cast).await,
+                    Err(why) => Err(why.to_owned()),
+                };
+                self.posting.set(false);
+                match outcome {
+                    Ok(hash) => {
+                        self.clear();
+                        self.close();
+                        writer.posted(&hash);
+                    }
+                    Err(why) => self.error.set(Some(why)),
+                }
+            });
+        });
     }
 }
 
@@ -193,11 +270,7 @@ pub fn ComposeButton() -> impl IntoView {
 pub fn ReplyButton(cast: Cast) -> impl IntoView {
     let session = use_session();
     let composer = use_composer();
-    let to = ReplyTo {
-        hash: cast.hash.clone(),
-        username: cast.author.username.clone(),
-        excerpt: truncate_title(cast.text.trim(), 90),
-    };
+    let to = Other::of(&cast);
     move || {
         session.user.get().is_some().then(|| {
             let label = format!("Reply to @{}", to.username);
@@ -213,6 +286,34 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
                 >
                     <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
                     "Reply"
+                </button>
+            }
+        })
+    }
+}
+
+/// Quote, under a post or a reply, for the signed-in reader: a cast that
+/// embeds this one.
+#[component]
+pub fn QuoteButton(cast: Cast) -> impl IntoView {
+    let session = use_session();
+    let composer = use_composer();
+    let of = Other::of(&cast);
+    move || {
+        session.user.get().is_some().then(|| {
+            let label = format!("Quote @{}'s cast", of.username);
+            let of = of.clone();
+            view! {
+                <button
+                    type="button"
+                    class="reply-button quote-button"
+                    aria-label=label
+                    on:pointerenter=move |_| warm()
+                    on:focus=move |_| warm()
+                    on:click=move |_| composer.start(Target::Quote(of.clone()))
+                >
+                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=QUOTE/></svg>
+                    "Quote"
                 </button>
             }
         })
@@ -241,7 +342,9 @@ pub fn ComposerDialog() -> impl IntoView {
         }
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
-        if !composer.open.get_untracked() {
+        // The key dialog, over the composer for a first post, has the keys.
+        let key_open = document().document_element().is_some_and(|root| root.class_list().contains("key-open"));
+        if !composer.open.get_untracked() || key_open {
             return;
         }
         match ev.key().as_str() {
@@ -287,12 +390,25 @@ pub fn ComposerDialog() -> impl IntoView {
                         </p>
                     }.into_any()),
                 ),
+                Target::Quote(of) => (
+                    "Quote",
+                    "Add your thoughts",
+                    Some(view! {
+                        <p class="compose-context">
+                            "Quoting "<strong>"@"{of.username}</strong>
+                            {(!of.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt">{of.excerpt}</span> })}
+                        </p>
+                    }.into_any()),
+                ),
                 Target::Cast(channel) => (
                     "New cast",
                     "What's happening?",
                     channel.map(|id| view! { <p class="compose-context">"In "<strong>"/"{id}</strong></p> }.into_any()),
                 ),
             };
+            let writer = use_writer().filter(|w| w.can_post());
+            // The text's length, in bytes, as a cast counts it.
+            let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
             let picked = Callback::new(move |gif: Gif| {
                 composer.gif.set(Some(gif));
                 composer.picking.set(false);
@@ -330,6 +446,7 @@ pub fn ComposerDialog() -> impl IntoView {
                                 </figure>
                             })}
                             {move || composer.picking.get().then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
+                            {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
                         </div>
                         // Below what scrolls, so the picker never hides it.
                         <footer class="compose-foot">
@@ -344,9 +461,29 @@ pub fn ComposerDialog() -> impl IntoView {
                                         on:click=move |_| composer.picking.update(|p| *p = !*p)
                                     >"GIF"</button>
                                 })}
-                                <PostLink composer/>
+                                {move || (used.get() > COUNT_FROM).then(|| view! {
+                                    <span class="compose-count" class:over=move || { used.get() > MAX_CAST_BYTES }>
+                                        {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
+                                    </span>
+                                })}
+                                {match writer {
+                                    Some(writer) => view! { <PostButton composer writer/> }.into_any(),
+                                    None => view! { <PostLink composer/> }.into_any(),
+                                }}
                             </div>
-                            <p class="compose-note muted small">"Allthing doesn't post: this opens the Farcaster app with your cast ready to post."</p>
+                            {match writer {
+                                Some(_) => view! {
+                                    <p class="compose-note muted small">
+                                        "Posted from this browser, with your key. "
+                                        <a class="compose-elsewhere" href=move || composer.draft().compose_url() target="_blank" rel="noopener noreferrer">
+                                            "Post in the Farcaster app instead"
+                                        </a>
+                                    </p>
+                                }.into_any(),
+                                None => view! {
+                                    <p class="compose-note muted small">"Allthing doesn't post: this opens the Farcaster app with your cast ready to post."</p>
+                                }.into_any(),
+                            }}
                         </footer>
                     </div>
                 </div>
@@ -355,11 +492,40 @@ pub fn ComposerDialog() -> impl IntoView {
     }
 }
 
+/// Cast, Reply or Quote, with the reader's key: their first post opens the
+/// dialog that approves one.
+#[component]
+fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
+    let blocked = Memo::new(move |_| {
+        let empty = composer.text.with(|t| t.trim().is_empty())
+            && composer.gif.with(Option::is_none)
+            && !matches!(composer.target.get(), Target::Quote(_));
+        empty || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES)
+    });
+    let label = move || match (composer.posting.get(), composer.target.get()) {
+        (true, _) => "Posting…",
+        (false, Target::Reply(_)) => "Reply",
+        (false, Target::Quote(_)) => "Quote",
+        (false, Target::Cast(_)) => "Cast",
+    };
+    view! {
+        <button
+            type="button"
+            class="button compose-post"
+            disabled=move || blocked.get() || composer.posting.get()
+            aria-busy=move || composer.posting.get().then_some("true")
+            on:click=move |_| composer.post(writer)
+        >
+            {label}
+        </button>
+    }
+}
+
 /// "Post in Farcaster": the draft's compose link, opened in a new tab (or
 /// the Farcaster app, on a phone). The draft is the app's from there on.
 #[component]
 fn PostLink(composer: Composer) -> impl IntoView {
-    let empty = Memo::new(move |_| composer.text.with(|t| t.trim().is_empty()) && composer.gif.with(Option::is_none));
+    let empty = Memo::new(move |_| composer.draft().is_empty());
     move || {
         if empty.get() {
             view! { <button type="button" class="button compose-post" disabled=true>"Post in Farcaster"</button> }

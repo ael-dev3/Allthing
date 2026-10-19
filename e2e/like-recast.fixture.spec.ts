@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createPublicKey, verify } from "node:crypto";
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
+import { approvedKey as seedKey, envelope, kept as keptFor, reaction, signIn as signInAs } from "./helpers/farcaster";
 
 /*
  * Liking and recasting from Allthing with a key the reader approves by QR
@@ -39,57 +39,10 @@ type Options = {
   liked?: string[];
 };
 
-/** Varint and length-delimited protobuf fields, by number. */
-function fields(bytes: Buffer): Map<number, (bigint | Buffer)[]> {
-  const out = new Map<number, (bigint | Buffer)[]>();
-  let at = 0;
-  const varint = () => {
-    let value = 0n;
-    for (let shift = 0n; ; shift += 7n) {
-      const byte = bytes[at++];
-      value |= BigInt(byte & 0x7f) << shift;
-      if (byte < 0x80) return value;
-    }
-  };
-  while (at < bytes.length) {
-    const tag = Number(varint());
-    const [field, wire] = [tag >> 3, tag & 7];
-    if (wire !== 0 && wire !== 2) throw new Error(`wire type ${wire}`);
-    let value: bigint | Buffer;
-    if (wire === 0) {
-      value = varint();
-    } else {
-      const length = Number(varint());
-      value = bytes.subarray(at, at + length);
-      at += length;
-    }
-    out.set(field, [...(out.get(field) ?? []), value]);
-  }
-  return out;
-}
-const num = (f: Map<number, (bigint | Buffer)[]>, n: number) => Number((f.get(n)?.[0] as bigint | undefined) ?? 0n);
-const buf = (f: Map<number, (bigint | Buffer)[]>, n: number) => (f.get(n)?.[0] as Buffer | undefined) ?? Buffer.alloc(0);
-
-/** A message the node was given: its signature checked, its data read. */
+/** A like or recast the node was given: its signature checked, its data read. */
 function decode(body: Buffer): Sent {
-  const message = fields(body);
-  const [hash, signature, signer, data] = [buf(message, 2), buf(message, 4), buf(message, 6), buf(message, 7)];
-  expect(hash).toHaveLength(20);
-  expect([num(message, 3), num(message, 5)]).toEqual([1, 1]); // BLAKE3, Ed25519
-  const key = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), signer]), format: "der", type: "spki" });
-  expect(verify(null, hash, key, signature)).toBe(true);
-  const fieldsOf = fields(data);
-  const reaction = fields(buf(fieldsOf, 7));
-  const target = fields(buf(reaction, 2));
-  return {
-    type: num(fieldsOf, 1),
-    fid: num(fieldsOf, 2),
-    at: num(fieldsOf, 3),
-    network: num(fieldsOf, 4),
-    reaction: num(reaction, 1),
-    target: { fid: num(target, 1), hash: `0x${buf(target, 2).toString("hex")}` },
-    signer: `0x${signer.toString("hex")}`,
-  };
+  const e = envelope(body);
+  return { type: e.type, fid: e.fid, at: e.at, network: e.network, ...reaction(e), signer: e.signer };
 }
 
 /** A node message saying the reader reacted to `hash`. */
@@ -152,56 +105,9 @@ async function serve(page: Page, options: Options = {}) {
   return calls;
 }
 
-/** Signed in as `me`, as the Worker's user cookie says. */
-async function signIn(page: Page) {
-  await page.addInitScript((user) => {
-    document.cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify(user))}; Path=/; Secure; SameSite=Lax`;
-  }, me);
-}
-
-/** The key this browser keeps for `fid`, as IndexedDB holds it. */
-function kept(page: Page, fid = me.fid) {
-  return page.evaluate(
-    (fid) =>
-      new Promise<null | { key: string; extractable: boolean; algorithm: string; approved: boolean; token: string | null }>((resolve, reject) => {
-        const open = indexedDB.open("allthing-keys", 1);
-        open.onupgradeneeded = () => open.result.createObjectStore("keys", { keyPath: "fid" });
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const get = open.result.transaction("keys").objectStore("keys").get(fid);
-          get.onsuccess = () => {
-            const r = get.result;
-            open.result.close();
-            resolve(r ? { key: r.key, extractable: r.private.extractable, algorithm: r.private.algorithm.name, approved: Boolean(r.approvedAt), token: r.token ?? null } : null);
-          };
-        };
-      }),
-    fid,
-  );
-}
-
-/** An approved key, as if the reader had approved one `ago` ms back. */
-async function approvedKey(page: Page, ago: number) {
-  return page.evaluate(async (approvedAt) => {
-    const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"])) as CryptoKeyPair;
-    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
-    const key = `0x${[...raw].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
-    await new Promise((resolve, reject) => {
-      const open = indexedDB.open("allthing-keys", 1);
-      open.onupgradeneeded = () => open.result.createObjectStore("keys", { keyPath: "fid" });
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const tx = open.result.transaction("keys", "readwrite");
-        tx.objectStore("keys").put({ fid: 1234, key, private: pair.privateKey, approvedAt });
-        tx.oncomplete = () => {
-          open.result.close();
-          resolve(null);
-        };
-      };
-    });
-    return key;
-  }, Date.now() - ago);
-}
+const signIn = (page: Page) => signInAs(page, me);
+const kept = (page: Page) => keptFor(page, me.fid);
+const approvedKey = (page: Page, ago: number) => seedKey(page, me.fid, ago);
 
 const card = (page: Page, cast: { hash: string }) => page.locator(`.cast-card[data-hash="${cast.hash}"]`);
 

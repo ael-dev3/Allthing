@@ -1366,6 +1366,13 @@ code {
 .toast.shown {
   opacity: 1;
   transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.toast a {
+  color: #fff;
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .toast:empty {
@@ -3337,7 +3344,7 @@ code {
   stroke-linejoin: round;
 }
 
-/* Reply, at the end of a post's or a reply's counts. */
+/* Reply and Quote, at the end of a post's or a reply's counts. */
 .reply-button {
   margin-left: auto;
   color: var(--ink-2);
@@ -3494,6 +3501,39 @@ code {
 
 .compose-note {
   margin: 0;
+}
+
+.quote-button {
+  margin-left: 0;
+}
+
+/* How long the text is, as it nears what a cast takes. */
+.compose-count {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-count.over {
+  color: #a3322a;
+  font-weight: 600;
+}
+
+.compose-count + .compose-post {
+  margin-left: 0;
+}
+
+/* Why a post didn't go out; the draft stays. */
+.compose-error {
+  margin: 10px 0 0;
+  color: #a3322a;
+  font-size: 14px;
+}
+
+.compose-elsewhere {
+  color: inherit;
+  text-decoration: underline;
 }
 
 /* The GIF picker: KLIPY's results, in its order, in a grid of their own. */

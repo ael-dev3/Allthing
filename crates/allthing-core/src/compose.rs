@@ -13,7 +13,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::api::API_PREFIX;
+use crate::message::{CastId, Embed, NewCast, Parent};
 use crate::params::percent_encode;
+use crate::text::split_mentions;
 
 /// Where the Farcaster app opens a draft, ready to post.
 pub const COMPOSE_URL: &str = "https://farcaster.xyz/~/compose";
@@ -38,23 +40,61 @@ pub fn gif_key_path() -> String {
     format!("{API_PREFIX}/gifs/key")
 }
 
-/// A cast to post, as the Farcaster app opens it.
+/// A cast to post: signed with the reader's key ([`Draft::new_cast`]), or
+/// opened in the Farcaster app ([`Draft::compose_url`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Draft {
     pub text: String,
-    /// Media and links to embed: a cast takes two.
+    /// Media and links to embed: a cast takes two, a quoted cast included.
     pub embeds: Vec<String>,
-    /// The cast it replies to.
+    /// The cast it quotes.
+    pub quote: Option<Quoted>,
+    /// The cast it replies to, and that cast's author.
     pub parent_hash: Option<String>,
-    /// The channel it goes to (an id, such as "farcaster"). A reply goes
-    /// where its parent is.
+    pub parent_fid: Option<u64>,
+    /// The channel it goes to (an id, such as "farcaster"), and the parent
+    /// URL that puts a cast in it. A reply goes where its parent is.
     pub channel: Option<String>,
+    pub channel_url: Option<String>,
+}
+
+/// A cast a draft quotes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Quoted {
+    pub fid: u64,
+    pub hash: String,
+    pub username: String,
+}
+
+impl Quoted {
+    /// Its link in the Farcaster app, which quotes it when a draft opens
+    /// there: its author's name and its hash's first eight digits.
+    pub fn url(&self) -> String {
+        format!(
+            "https://farcaster.xyz/{}/{}",
+            percent_encode(&self.username),
+            self.hash.get(..10).unwrap_or(&self.hash)
+        )
+    }
 }
 
 impl Draft {
-    /// Something to post: text or an embed.
+    /// Something to post: text, an embed or a quote.
     pub fn is_empty(&self) -> bool {
-        self.text.trim().is_empty() && self.embeds.is_empty()
+        self.text.trim().is_empty() && self.embeds.is_empty() && self.quote.is_none()
+    }
+
+    /// The cast to sign: the text, with each "@name" that `fid_of` knows
+    /// as a mention, its embeds, and its parent.
+    pub fn new_cast(&self, fid_of: impl Fn(&str) -> Option<u64>) -> NewCast {
+        let (text, mentions) = split_mentions(self.text.trim(), fid_of);
+        let mut embeds: Vec<Embed> = self.embeds.iter().map(|url| Embed::Url(url.clone())).collect();
+        embeds.extend(self.quote.as_ref().and_then(|q| CastId::new(q.fid, &q.hash)).map(Embed::Cast));
+        let parent = match (&self.parent_hash, self.parent_fid) {
+            (Some(hash), Some(fid)) => CastId::new(fid, hash).map(Parent::Cast),
+            _ => self.channel_url.clone().map(Parent::Url),
+        };
+        NewCast { text, mentions, embeds, parent }
     }
 
     /// The compose link that opens this draft in the Farcaster app.
@@ -64,7 +104,8 @@ impl Draft {
         if !text.is_empty() {
             query.push(format!("text={}", percent_encode(text)));
         }
-        for embed in self.embeds.iter().take(2) {
+        let quote = self.quote.as_ref().map(Quoted::url);
+        for embed in self.embeds.iter().chain(quote.as_ref()).take(2) {
             query.push(format!("embeds[]={}", percent_encode(embed)));
         }
         match (&self.parent_hash, &self.channel) {
@@ -208,6 +249,7 @@ mod tests {
             embeds: vec![gif.into()],
             parent_hash: Some("0x09455067393562d3296bcbc2ec1c2d6bba8ac1f1".into()),
             channel: Some("farcaster".into()),
+            ..Draft::default()
         };
         assert_eq!(
             reply.compose_url(),
@@ -301,5 +343,54 @@ mod tests {
             let page: GifPage = serde_json::from_str(body).unwrap();
             assert_eq!(page.gifs(), (Vec::new(), false));
         }
+    }
+
+    #[test]
+    fn a_draft_becomes_the_cast_to_sign() {
+        let gif = "https://static.klipy.com/ii/abc/14/af/cat.gif";
+        let hash = "0x09455067393562d3296bcbc2ec1c2d6bba8ac1f1";
+        let quote = Quoted { fid: 3, hash: hash.into(), username: "dwr".into() };
+        let fids = |name: &str| (name == "dwr").then_some(3);
+        // A reply, quoting a cast, mentioning @dwr, with a GIF.
+        let reply = Draft {
+            text: "  yes @dwr, this \n".into(),
+            embeds: vec![gif.into()],
+            quote: Some(quote.clone()),
+            parent_hash: Some("0x0102030405060708090a0b0c0d0e0f1011121314".into()),
+            parent_fid: Some(42),
+            channel: Some("farcaster".into()),
+            channel_url: Some("https://farcaster.xyz/~/channel/farcaster".into()),
+        };
+        assert_eq!(
+            reply.new_cast(fids),
+            NewCast {
+                text: "yes , this".into(),
+                mentions: vec![(3, 4)],
+                embeds: vec![Embed::Url(gif.into()), Embed::Cast(CastId::new(3, hash).unwrap())],
+                parent: Some(Parent::Cast(CastId::new(42, "0x0102030405060708090a0b0c0d0e0f1011121314").unwrap())),
+            },
+            "a reply goes where its parent is, not to a channel"
+        );
+        // A cast in a channel, quoting alone; in the Farcaster app, the
+        // quote is its link.
+        let in_channel = Draft {
+            quote: Some(quote.clone()),
+            channel: Some("dev".into()),
+            channel_url: Some("chain://eip155:1/erc721:0xabc".into()),
+            ..Draft::default()
+        };
+        assert!(!in_channel.is_empty());
+        let cast = in_channel.new_cast(fids);
+        assert_eq!(cast.parent, Some(Parent::Url("chain://eip155:1/erc721:0xabc".into())));
+        assert_eq!(cast.embeds, vec![Embed::Cast(CastId::new(3, hash).unwrap())]);
+        assert_eq!(cast.check(), Ok(()));
+        assert_eq!(quote.url(), "https://farcaster.xyz/dwr/0x09455067");
+        assert_eq!(
+            in_channel.compose_url(),
+            "https://farcaster.xyz/~/compose?embeds[]=https%3A%2F%2Ffarcaster.xyz%2Fdwr%2F0x09455067&channelKey=dev"
+        );
+        // Unknown names stay as written.
+        let plain = Draft { text: "hi @nobody".into(), ..Draft::default() }.new_cast(fids);
+        assert_eq!((plain.text.as_str(), plain.mentions.len(), plain.parent), ("hi @nobody", 0, None));
     }
 }
