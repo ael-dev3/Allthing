@@ -85,6 +85,14 @@ jobs:
       - run: npm run test:tools
       - run: npx playwright install --with-deps chromium
       - run: bash scripts/build.sh
+      - name: Experiment sizes
+        run: find dist -type f \( -name '*.wasm*' -o -name '*.js' -o -name '*.br' \) -printf '%s %p\n' | sort -k2
+      - name: Upload dist (experiment)
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+          retention-days: 2
       - name: Test the local build without live data
         run: npx playwright test '\.fixture\.spec\.ts$'
       - name: Test static payloads
