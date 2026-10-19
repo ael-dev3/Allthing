@@ -72,9 +72,11 @@ fn heading(kind: ReactionKind) -> &'static str {
     }
 }
 
-/// People who reacted, each linking to their profile. In the full list
-/// (`cards`), each also shows the person's profile card. The short list is a
-/// hover preview itself: a card there would cover the names being pointed at.
+/// People who reacted, each linking to their profile, and each showing the
+/// person's profile card: in the full list, in its dialog; in the short
+/// list, beside the preview's panel, so the card never covers the names. A
+/// card reads its vote and wallets when it opens, as cards elsewhere do: a
+/// list of ten names preloading theirs would cost twenty requests a hover.
 #[component]
 fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bool) -> impl IntoView {
     view! {
@@ -93,7 +95,8 @@ fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bo
                     view! { <li><ProfileHover user=u.clone() in_dialog=true class="who-links">{row()}</ProfileHover></li> }
                         .into_any()
                 } else {
-                    view! { <li>{row()}</li> }.into_any()
+                    view! { <li><ProfileHover user=u.clone() beside=true class="who-links">{row()}</ProfileHover></li> }
+                        .into_any()
                 }
             }).collect_view()}
         </ul>

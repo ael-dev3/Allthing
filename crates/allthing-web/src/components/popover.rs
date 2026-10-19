@@ -67,6 +67,11 @@ pub fn Popover(
     /// dialog's list, say) does not cut it off. Anything scrolling closes it.
     #[prop(optional)]
     fixed: bool,
+    /// With `fixed`, inside another popover's panel: the panel opens beside
+    /// that panel rather than over the trigger, so it covers the list it
+    /// came from.
+    #[prop(optional)]
+    beside: bool,
     /// How tall the panel may be, in pixels, room permitting.
     #[prop(optional)]
     max_px: Option<f64>,
@@ -108,6 +113,22 @@ pub fn Popover(
             button.get_untracked().map(|b| b.unchecked_into())
         }
     };
+    // The popover this one sits in, when it's `beside` that one's panel.
+    let outer_panel = move || {
+        if !beside {
+            return None;
+        }
+        let root = root.get_untracked()?;
+        root.closest(".popover-panel").ok().flatten()?.dyn_into::<web_sys::HtmlElement>().ok()
+    };
+    // The width the panel will take, which CSS sets: measured from the
+    // element once it exists, else the CSS default for profile cards.
+    let panel_width = move || {
+        panel.get_untracked().map_or(300.0, |p| {
+            let width = p.get_bounding_client_rect().width();
+            if width > 0.0 { width } else { 300.0 }
+        })
+    };
     let place = move || {
         let Some(anchor) = anchor() else { return };
         let rect = anchor.get_bounding_client_rect();
@@ -120,13 +141,32 @@ pub fn Popover(
         shift.set(0.0);
         if fixed {
             let edge = if open_below { rect.bottom() + GAP_PX / 2.0 } else { rect.top() - GAP_PX / 2.0 };
-            fixed_at.set((rect.left(), edge));
+            let left = match outer_panel() {
+                Some(outer) => {
+                    // Beside the outer panel: to its right if the width fits
+                    // on screen, otherwise to its left. The width is the
+                    // panel's own, set in CSS and nudged in view below.
+                    let outer = outer.get_bounding_client_rect();
+                    let width = panel_width();
+                    let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
+                    if outer.right() + GAP_PX / 2.0 + width <= inner {
+                        outer.right() + GAP_PX / 2.0
+                    } else {
+                        outer.left() - GAP_PX / 2.0 - width
+                    }
+                }
+                None => rect.left(),
+            };
+            fixed_at.set((left, edge));
         }
     };
     let inside_panel =
         move |node: &web_sys::Node| panel.try_get_untracked().flatten().is_some_and(|p| p.contains(Some(node)));
-    let inside_root =
-        move |node: &web_sys::Node| root.try_get_untracked().flatten().is_some_and(|r| r.contains(Some(node)));
+    // A panel placed `beside` is still this popover's: its pointer, clicks and
+    // focus count as inside.
+    let inside_root = move |node: &web_sys::Node| {
+        root.try_get_untracked().flatten().is_some_and(|r| r.contains(Some(node))) || inside_panel(node)
+    };
     // Text selected in the panel: the reader is copying from it.
     let selected_in_panel = move || {
         window()
@@ -416,8 +456,13 @@ pub fn Popover(
                 "position: fixed; left: {left:.0}px; top: {edge:.0}px; bottom: auto; translate: {}px {lift}",
                 shift.get()
             ));
-        } else {
-            style.push_str(&format!("translate: {}px 0", shift.get()));
+        } else if shift.get() != 0.0 {
+            // Margins, not a transform: a transform, even `translate: 0`,
+            // would hold the fixed panels inside this one (a profile card
+            // opened from a who-list) and clip them to its scroll box. The
+            // pair moves a panel pinned by its left edge or by its right.
+            let s = shift.get();
+            style.push_str(&format!("margin-left: {s}px; margin-right: {}px", -s));
         }
         style
     };
@@ -456,6 +501,7 @@ pub fn Popover(
             <Show when=move || state.get() != State::Closed>
                 <div
                     class=format!("popover-panel {panel_class}")
+                    class:beside=beside
                     class:closing=move || state.get() == State::Closing
                     class:below=move || below.get()
                     class:fixed=fixed
@@ -464,13 +510,15 @@ pub fn Popover(
                     id=id.clone()
                     role="dialog"
                     aria-label=label.clone()
-                    // A link in the panel goes where it points, and the panel closes.
+                    // A link in the panel goes where it points, and the panel
+                    // closes. A tap that opened a name's own card instead (its
+                    // link not followed) leaves it open.
                     on:click=move |ev: ev::MouseEvent| {
                         let in_link = ev
                             .target()
                             .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
                             .is_some_and(|e| e.closest("a[href]").ok().flatten().is_some());
-                        if in_link {
+                        if in_link && !ev.default_prevented() {
                             close();
                         }
                     }
