@@ -748,6 +748,10 @@ pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure
     let mut notes = api::Annotations::default();
     let replies = root.direct_replies.iter().flatten().map(normalize::cast).collect();
     let replies = reply_preview(drop_hidden(&inv, replies, &mut notes, &BTreeMap::new()).await);
+    // The authors' profile cards, from the user objects that come with the
+    // replies: no request.
+    let authors: Vec<u64> = replies.iter().map(|c: &Cast| c.author.fid).collect();
+    notes.keep_users(normalize::author_cards(root.direct_replies.iter().flatten()), authors);
     Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)
 }
 

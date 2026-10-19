@@ -254,7 +254,12 @@ impl RepliesPayload {
         RepliesPayload {
             hash: post.thread.cast.hash.clone(),
             replies: crate::thread::reply_preview(replies),
-            notes: Annotations { links: post.notes.links.clone(), ..Annotations::default() },
+            // The replies' links, and the profile cards of their authors.
+            notes: Annotations {
+                links: post.notes.links.clone(),
+                users: post.notes.users.clone(),
+                ..Annotations::default()
+            },
             meta: post.meta.clone(),
         }
     }

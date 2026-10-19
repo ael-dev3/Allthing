@@ -2985,16 +2985,14 @@ code {
   white-space: nowrap;
 }
 
-.reply-item {
+.reply-items > li {
   display: grid;
   gap: 4px;
   padding: 8px 6px;
   border-radius: 8px;
-  color: var(--ink);
-  text-decoration: none;
 }
 
-.reply-item:hover {
+.reply-items > li:hover {
   background: var(--accent-soft);
 }
 
@@ -3002,6 +3000,38 @@ code {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.reply-author {
+  min-width: 0;
+}
+
+.reply-author-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.reply-author-link strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-time {
+  flex: none;
+  text-decoration: none;
+}
+
+.reply-item {
+  display: grid;
+  gap: 4px;
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .reply-text {
@@ -3014,11 +3044,13 @@ code {
   gap: 5px;
 }
 
+/* A thumbnail's box shows its place while the image loads. */
 .reply-thumbs img {
   width: 56px;
   height: 56px;
   object-fit: cover;
   border-radius: 6px;
+  background: var(--paper-2);
 }
 
 /* Full who-list dialog. */
