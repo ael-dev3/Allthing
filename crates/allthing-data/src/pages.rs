@@ -595,13 +595,21 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     Built::json(&UserPayload { user, pool, notes, meta: meta(&inv) }, policy)
 }
 
+/// A channel as Hypersnap's channel search returns it, without its count:
+/// search can return a different record of the same channel than the
+/// channel page reads (/farcaster: 23 against 94,568 on 19 October 2026), so
+/// its count would contradict the page it links to.
+fn searched_channel(raw: &normalize::RawChannel) -> Channel {
+    Channel { casters: None, ..normalize::channel(raw) }
+}
+
 pub async fn channels(inv: Rc<Invocation>, query: Option<String>) -> Result<Built, Failure> {
     let channels = match &query {
         Some(q) => hypersnap::search_channels(&inv, q, 50)
             .await
             .map_err(Failure::upstream)?
             .iter()
-            .map(normalize::channel)
+            .map(searched_channel)
             .take(50)
             .collect(),
         None => with_defaults(trending_channels(&inv).await, 50),
@@ -629,7 +637,7 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     let mut notes = api::Annotations::default();
     let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes, &BTreeMap::new()).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
-    let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(normalize::channel).take(10).collect();
+    let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(searched_channel).take(10).collect();
     let (quotes, quoted) = quoted_casts(&inv, &casts, BTreeMap::new()).await;
     notes.quotes = quotes;
     notes.links.extend(check_quotes(&inv, notes.quotes.values_mut(), &BTreeMap::new()).await);
@@ -1253,6 +1261,27 @@ mod channel_tests {
         assert_eq!(payload.channel.member_count, Some(1));
         // So is its author's card.
         assert!(!payload.notes.users.contains_key(&37));
+    }
+}
+
+#[cfg(test)]
+mod search_channel_tests {
+    use super::*;
+
+    /// Hypersnap's channel search for "farcaster" on 19 October 2026: a
+    /// record with 23 "members", while the channel page reads 94,568.
+    #[test]
+    fn a_searched_channel_carries_no_count() {
+        let raw: normalize::RawChannel = serde_json::from_value(serde_json::json!({
+            "id": "farcaster", "name": "farcaster", "member_count": 23,
+            "parent_url": "https://warpcast.com/~/channel/farcaster"
+        }))
+        .unwrap();
+        assert_eq!(normalize::channel(&raw).casters, Some(23));
+        let searched = searched_channel(&raw);
+        assert_eq!(searched.casters, None);
+        assert!(searched.counts().is_empty());
+        assert_eq!(searched.id, "farcaster");
     }
 }
 
