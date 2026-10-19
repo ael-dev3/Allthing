@@ -62,4 +62,6 @@ test("the posting app's link is underlined, not told apart by color alone", asyn
   const link = page.locator(".post-via a").first();
   await expect(link).toBeVisible();
   expect(await link.evaluate((a) => getComputedStyle(a).textDecorationLine)).toContain("underline");
+  // The posting app is named once: the feed's "via" chip isn't repeated here.
+  expect((await page.locator(".post .post-meta").innerText()).match(/\bvia\b/g)).toHaveLength(1);
 });
