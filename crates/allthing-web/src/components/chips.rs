@@ -25,12 +25,28 @@ pub fn TimeAgo(ts: i64) -> impl IntoView {
 
 #[component]
 pub fn Avatar(url: Option<String>, #[prop(default = 24)] size: u32, #[prop(optional)] large: bool) -> impl IntoView {
-    let variant = if large { ImageSize::Thumb } else { ImageSize::Avatar };
     match url {
+        // A large picture (a profile card's, a post's or a profile's) shows
+        // the small one under it until it has loaded: the cards around it
+        // have most often loaded the small one already. It is in view as it
+        // appears, so it isn't left to lazy loading.
+        Some(url) if large => view! {
+            <img
+                class="avatar avatar-large"
+                src=resized_image_url(&url, ImageSize::Thumb)
+                style=format!("--small: url(\"{}\")", css_url(&resized_image_url(&url, ImageSize::Avatar)))
+                alt=""
+                width=size
+                height=size
+                decoding="async"
+                referrerpolicy="no-referrer"
+            />
+        }
+        .into_any(),
         Some(url) => view! {
             <img
                 class="avatar"
-                src=resized_image_url(&url, variant)
+                src=resized_image_url(&url, ImageSize::Avatar)
                 alt=""
                 width=size
                 height=size
@@ -42,6 +58,11 @@ pub fn Avatar(url: Option<String>, #[prop(default = 24)] size: u32, #[prop(optio
         .into_any(),
         None => view! { <span class="avatar avatar-empty" style:width=format!("{size}px") style:height=format!("{size}px")></span> }.into_any(),
     }
+}
+
+/// `url` as it can sit in a CSS `url("…")`.
+fn css_url(url: &str) -> String {
+    url.replace('\\', "%5C").replace('"', "%22").replace('\n', "%0A")
 }
 
 /// Profile picture, name and handle, linking to the profile. Hovering them,
