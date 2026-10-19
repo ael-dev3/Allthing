@@ -78,6 +78,11 @@ pub struct Started {
     pub nonce: String,
     pub domain: String,
     pub uri: String,
+    /// When the message the app signs lapses (RFC 3339): the nonce's
+    /// expiry, on the Worker's clock, so a device whose clock is wrong
+    /// can't cut the sign-in short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiration_time: Option<String>,
 }
 
 /// `POST /api/v1/auth/qr`'s body: the relay's link for the Farcaster app.

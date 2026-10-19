@@ -3597,6 +3597,36 @@ code {
   animation: pop-in 0.18s var(--ease) backwards;
 }
 
+/* Who approved, while the Worker checks it. */
+.qr-approver {
+  position: relative;
+  display: grid;
+  place-items: center;
+  animation: pop-in 0.18s var(--ease) backwards;
+}
+
+.qr-approver .avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.qr-approver-check {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: #fff;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .qr-frame.failed {
   background: var(--accent-soft);
   border-style: dashed;

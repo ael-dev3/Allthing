@@ -38,7 +38,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `7d`, `30d`, `365d` or `all`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Being signed in | **0**: the header reads who is signed in from a cookie | none |
-| Signing in | 3 (`/api/v1/auth/start`, `/qr`, `/verify`); waiting for the Farcaster app polls Farcaster's relay from the browser, never the Worker. Signing out: 1 | none |
+| Signing in | 3 (`/api/v1/auth/start`, `/qr`, `/verify`); waiting for the Farcaster app polls Farcaster's relay from the browser, never the Worker, and a hidden page doesn't poll. A code renewed when it runs out costs 2 more, at most twice; an approval the Worker can't check just now is sent up to 3 more times, then once per "Try again". Signing out: 1 | none |
 | Opening the composer (signed in: the header's Cast, or Reply) | **0** while its GIF key is kept; otherwise 1 (`/api/v1/gifs/key`: no subrequest, no cache call), asked for as the pointer reaches the button, then kept for 5 minutes by the app and an hour by the browser | none |
 | Searching GIFs, and the GIFs themselves | **0**: the browser asks KLIPY (`api.klipy.com`) and loads its media itself, as KLIPY requires. Trending once a visit, then one request per search once typing pauses for 350 ms (2 characters at least), each kept for 10 minutes. KLIPY limits a key in testing mode to 100 requests an hour, for all readers together | none |
 | Posting a cast or a reply | **0**: "Post in Farcaster" opens farcaster.xyz's compose link (or the Farcaster app) with the draft, and the reader posts it there | none |

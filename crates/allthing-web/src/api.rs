@@ -35,7 +35,22 @@ pub enum Failure {
     Failed(String),
 }
 
+/// What a request that never reached the API fails with.
+const UNREACHABLE: &str = "Network error: could not reach Allthing's API";
+
 impl Failure {
+    /// The server or the network may answer next time: busy, or not
+    /// reached, rather than a refusal. (Sign-in asks; the static copy has
+    /// none.)
+    #[cfg(not(feature = "static-host"))]
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Failure::Busy { .. } => true,
+            Failure::Failed(message) => message == UNREACHABLE,
+            Failure::NotFound(_) => false,
+        }
+    }
+
     pub fn message(&self) -> String {
         match self {
             Failure::NotFound(m) | Failure::Failed(m) => m.clone(),
@@ -413,9 +428,7 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
     }
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
     let request = early_response(path).unwrap_or_else(|| window.fetch_with_str(path));
-    let response = JsFuture::from(request)
-        .await
-        .map_err(|_| Failure::Failed("Network error: could not reach Allthing's API".into()))?;
+    let response = JsFuture::from(request).await.map_err(|_| Failure::Failed(UNREACHABLE.into()))?;
     let response: web_sys::Response = response.dyn_into().map_err(|_| Failure::Failed("bad response".into()))?;
     let header = |name: &str| response.headers().get(name).ok().flatten();
     let age = header("x-allthing-age").and_then(|a| a.parse().ok()).unwrap_or(0);
@@ -433,7 +446,7 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
 /// signing in: never cached, and never the static copy's.
 #[cfg(not(feature = "static-host"))]
 pub async fn post<B: serde::Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result<T, Failure> {
-    let failed = |_| Failure::Failed("Network error: could not reach Allthing's API".into());
+    let failed = |_| Failure::Failed(UNREACHABLE.into());
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
     let init = web_sys::RequestInit::new();
     init.set_method("POST");

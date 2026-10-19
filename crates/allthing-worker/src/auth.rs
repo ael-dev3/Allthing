@@ -27,6 +27,7 @@ use allthing_core::siwf::{
     Expected, PENDING_COOKIE, Proof, QrCode, QrRequest, SESSION_COOKIE, SESSION_TTL, SIGN_IN_TTL, SignInMessage,
     SignedIn, Started, USER_COOKIE, cookie, is_app_link, is_nonce, user_cookie_value,
 };
+use allthing_core::time::iso_utc;
 use allthing_data::{Invocation, chain, hypersnap};
 use hmac::{Hmac, KeyInit, Mac};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -105,7 +106,12 @@ fn domain(url: &Url) -> String {
 /// What `start` answers, and the cookie that holds its nonce for `verify`.
 fn start(url: &Url, secret: &[u8], nonce: &str, now: i64) -> (Started, String) {
     let pending = seal(secret, PENDING, &format!("{nonce}.{}", now + SIGN_IN_TTL));
-    let started = Started { nonce: nonce.to_owned(), domain: domain(url), uri: url.origin().ascii_serialization() };
+    let started = Started {
+        nonce: nonce.to_owned(),
+        domain: domain(url),
+        uri: url.origin().ascii_serialization(),
+        expiration_time: Some(iso_utc(now + SIGN_IN_TTL)),
+    };
     (started, set_cookie(PENDING_COOKIE, &pending, SIGN_IN_TTL, true, "Strict"))
 }
 
@@ -427,6 +433,8 @@ mod tests {
         let (started, cookie_header) = start(&url, SECRET, "8f3c2a1b9d7e4f60a5b3c1d2e0f9a8b7", 1000);
         assert_eq!(started.domain, "allthing.social");
         assert_eq!(started.uri, "https://allthing.social");
+        // The signed message lapses with the nonce, on the Worker's clock.
+        assert_eq!(started.expiration_time.as_deref(), Some("1970-01-01T00:26:40Z"));
         let (pair, attributes) = cookie_header.split_once("; ").unwrap();
         let value = pair.strip_prefix("__Host-allthing-siwf=").unwrap();
         assert_eq!(pending_nonce(SECRET, value, 1000).as_deref(), Some(started.nonce.as_str()));
