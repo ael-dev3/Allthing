@@ -225,6 +225,11 @@ pub struct ReactionsPayload {
     /// More reactors exist than are listed.
     #[serde(default)]
     pub more: bool,
+    /// Fid -> what the profile card of a person listed shows beyond their
+    /// picture and names (see [`crate::profile`]), from the user objects
+    /// that come with the reactions.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cards: BTreeMap<u64, UserCard>,
     pub meta: Meta,
 }
 
@@ -818,6 +823,7 @@ mod tests {
             kind,
             users,
             more,
+            cards: BTreeMap::new(),
             meta: meta(),
         };
         let batch = EngagementPayload {

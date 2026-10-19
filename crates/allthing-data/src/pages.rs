@@ -686,7 +686,8 @@ async fn reactors(
 ) -> Result<ReactionsPayload, UpstreamError> {
     let raw = hypersnap::reactions(inv, hash, kind.as_str(), 100).await?;
     let (users, more) = normalize::reactors(&raw, limit as usize);
-    Ok(ReactionsPayload { hash: hash.to_owned(), kind, users, more, meta: meta(inv) })
+    let cards = normalize::reactor_cards(&raw, &users);
+    Ok(ReactionsPayload { hash: hash.to_owned(), kind, users, more, cards, meta: meta(inv) })
 }
 
 /// Who liked or recasted a cast: a preview (`limit` 10) or the full list

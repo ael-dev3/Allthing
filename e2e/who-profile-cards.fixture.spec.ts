@@ -18,8 +18,11 @@ async function serve(page: Page) {
     const later = new URL(route.request().url()).searchParams.has("offset");
     return route.fulfill({ json: { pool: later ? [] : [cast], notes: { users: {} }, meta } });
   });
+  // The list carries its people's cards, as the Worker builds it from the
+  // user objects that come with the reactions.
   await page.route("**/api/v1/reactions?*", (route) => route.fulfill({ json: {
     hash: cast.hash, kind: "likes", users: [dave, erin], more: false, meta,
+    cards: { "7": { bio: "Dave's bio", followers: 1234, following: 56, registered_at: 1759222921 } },
   } }));
   await page.route("**/api/v1/vote?*", (route) => route.fulfill({ json: { fid: 7, onchain: "stay", app: "opted_in", meta } }));
   await page.route("**/api/v1/wallets?*", (route) => route.fulfill({ json: {
@@ -39,7 +42,7 @@ test.describe("profile cards in the who-list", () => {
   test("hovering a name in Liked by opens its card beside the list, which stays open", async ({ page }, testInfo: TestInfo) => {
     test.skip(Boolean(testInfo.project.use.hasTouch), "hover needs a mouse");
     await page.setViewportSize({ width: 1280, height: 900 });
-    await serve(page);
+    const requests = await serve(page);
     await page.goto("/");
     const card = page.locator(".cast-card:not(.skeleton)").first();
     await card.locator(".stat-likes").hover();
@@ -49,6 +52,14 @@ test.describe("profile cards in the who-list", () => {
     const profile = page.locator(".popover-panel.profile-card");
     await expect(profile).toBeVisible();
     await expect(profile).toContainText("@dave");
+    // Complete at once, from the list: bio, counts and join date, and no
+    // read of the profile.
+    await expect(profile.locator(".profile-card-bio")).toHaveText("Dave's bio");
+    await expect(profile.locator(".profile-card-counts")).toContainText("1,234 followers");
+    await expect(profile.locator(".profile-card-counts")).toContainText("56 following");
+    await expect(profile.locator(".fact", { hasText: "Joined" }).locator("dd")).toHaveText("30 Sep 2025");
+    await expect(profile).not.toContainText("on the profile");
+    expect(requests.user).toBe(0);
     // Beside the list: no overlap with it, and the card is what the pointer
     // reaches (nothing covers it), with a solid background.
     const [listBox, cardBox] = [await list.boundingBox(), await profile.boundingBox()];
@@ -65,6 +76,26 @@ test.describe("profile cards in the who-list", () => {
     await profile.hover();
     await expect(list).toBeVisible();
     await expect(profile).toBeVisible();
+  });
+
+  test("on a phone, a tap on a name in Liked by opens its complete card", async ({ browser }, testInfo: TestInfo) => {
+    const context = await browser.newContext({
+      baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+    });
+    const page = await context.newPage();
+    const requests = await serve(page);
+    await page.goto("/");
+    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes").tap();
+    const list = page.getByRole("dialog", { name: "Liked by" });
+    await expect(list).toBeVisible();
+    await list.getByRole("link", { name: /Dave/ }).tap();
+    const profile = page.locator(".popover-panel.profile-card");
+    await expect(profile.locator(".profile-card-bio")).toHaveText("Dave's bio");
+    await expect(profile.locator(".profile-card-counts")).toContainText("1,234 followers");
+    await expect(profile).toBeInViewport({ ratio: 1 });
+    await expect(page).toHaveURL(/\/$/);
+    expect(requests.user).toBe(0);
+    await context.close();
   });
 
   test("a tap on a name in Liked by opens its card and doesn't follow the link", async ({ page }, testInfo: TestInfo) => {

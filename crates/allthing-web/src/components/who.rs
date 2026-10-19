@@ -79,6 +79,9 @@ fn heading(kind: ReactionKind) -> &'static str {
 /// list of ten names preloading theirs would cost twenty requests a hover.
 #[component]
 fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bool) -> impl IntoView {
+    // Their bios, counts and join dates come with the list: a card opened
+    // from it shows them at once.
+    api::remember_cards(&payload.cards);
     view! {
         <ul class="who-list">
             {payload.users.iter().map(|u| {
