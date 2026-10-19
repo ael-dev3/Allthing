@@ -93,6 +93,16 @@ jobs:
           name: dist
           path: dist/
           retention-days: 2
+      - name: Experiment A/B, erase_components against the plain build (CPU 4x)
+        run: |
+          mkdir -p /tmp/ab && cp -r dist /tmp/ab/erase
+          python3 -c "p='.cargo/config.toml'; s=open(p).read(); open(p,'w').write(s[:s.index('\\n[target.wasm32-unknown-unknown]')]+'\\n')"
+          cat .cargo/config.toml
+          bash scripts/build.sh
+          cp -r dist /tmp/ab/base
+          ls -l /tmp/ab/*/assets/*.wasm
+          RUNS=9 CPU=4 node exp/ab.mjs
+          RUNS=9 CPU=1 node exp/ab.mjs
       - name: Test the local build without live data
         run: npx playwright test '\.fixture\.spec\.ts$'
       - name: Test static payloads
