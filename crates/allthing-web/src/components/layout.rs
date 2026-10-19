@@ -39,10 +39,17 @@ pub fn SiteHeader() -> impl IntoView {
     }
 }
 
-/// Sign-in, or who is signed in: in front of the Worker only.
+/// Sign-in, or who is signed in and their Cast button: in front of the
+/// Worker only.
 #[cfg(not(feature = "static-host"))]
 fn account() -> AnyView {
-    view! { <crate::components::signin::Account/> }.into_any()
+    view! {
+        <div class="header-actions">
+            <crate::components::compose::ComposeButton/>
+            <crate::components::signin::Account/>
+        </div>
+    }
+    .into_any()
 }
 
 /// The static copy has no Worker to sign in with: it says it only reads.

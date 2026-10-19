@@ -196,6 +196,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             </p>
             <footer class="cast-foot">
                 <Engagement cast=cast.clone()/>
+                {crate::components::thread::reply_button(&cast)}
             </footer>
         </article>
     }
