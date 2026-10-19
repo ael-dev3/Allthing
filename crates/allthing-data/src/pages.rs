@@ -789,13 +789,13 @@ pub async fn wallets(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
     .await;
     let mut chains = measured;
     let total = wallet::apportion(&mut chains);
-    let sources = wallet_sources(!evm.is_empty(), !solana.is_empty(), &chains);
+    let sources = wallet_sources(!evm.is_empty(), !solana.is_empty(), inv.solana_rpc().is_some(), &chains);
     let activity = WalletActivity { fid, addresses, chains, total, sources, fetched_at: inv.now() as i64 };
     Built::json(&activity, api::WALLET_CACHE)
 }
 
 /// Where each kind of count was read, or that Solana's couldn't be.
-fn wallet_sources(evm: bool, solana: bool, chains: &[ChainActivity]) -> Vec<String> {
+fn wallet_sources(evm: bool, solana: bool, keyed: bool, chains: &[ChainActivity]) -> Vec<String> {
     let mut sources = Vec::new();
     if evm {
         sources.push(
@@ -811,11 +811,19 @@ fn wallet_sources(evm: bool, solana: bool, chains: &[ChainActivity]) -> Vec<Stri
              isn't configured."
                 .to_owned()
         } else {
-            format!(
-                "Solana: transactions involving each verified address (its signatures, up to {} each), read from \
-                 Solana's public RPC (api.mainnet-beta.solana.com).",
-                chain::SOLANA_PAGE
-            )
+            if keyed {
+                format!(
+                    "Solana: transactions involving each verified address (its signatures, paged through its history \
+                     up to {} each, a count at the cap shows as more), read from the keyed Solana RPC endpoint.",
+                    chain::SOLANA_KEYED_PAGES as u64 * chain::SOLANA_PAGE
+                )
+            } else {
+                format!(
+                    "Solana: transactions involving each verified address (its signatures, up to {} each), read from \
+                     Solana's public RPC (api.mainnet-beta.solana.com).",
+                    chain::SOLANA_PAGE
+                )
+            }
         });
     }
     sources
@@ -1764,12 +1772,13 @@ mod wallet_tests {
             percent: 0,
             error: error.map(str::to_owned),
         };
-        let unread = wallet_sources(true, true, &[solana(Some("upstream returned HTTP 403"))]);
+        let unread = wallet_sources(true, true, false, &[solana(Some("upstream returned HTTP 403"))]);
         assert_eq!(unread.len(), 2);
-        assert!(unread[1].starts_with("Solana: not counted."), "{}", unread[1]);
-        let read = wallet_sources(false, true, &[solana(None)]);
-        assert_eq!(read.len(), 1);
+        assert!(unread[1].starts_with("Solana: couldn't be read just now"), "{}", unread[1]);
+        let read = wallet_sources(false, true, false, &[solana(None)]);
         assert!(read[0].contains("read from Solana's public RPC"), "{}", read[0]);
-        assert!(wallet_sources(false, false, &[]).is_empty());
+        let keyed = wallet_sources(false, true, true, &[solana(None)]);
+        assert!(keyed[0].contains("keyed Solana RPC endpoint"), "{}", keyed[0]);
+        assert!(wallet_sources(false, false, false, &[]).is_empty());
     }
 }
