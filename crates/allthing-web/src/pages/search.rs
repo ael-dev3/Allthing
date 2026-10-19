@@ -107,7 +107,7 @@ pub fn SearchPage() -> impl IntoView {
                                                 {c.image_url.clone().map(|src| view! { <img src=resized_image_url(&src, ImageSize::Avatar) alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"/> })}
                                                 <strong>"/"{c.id.clone()}</strong>
                                             </a>
-                                            // Search results come from Hypersnap, whose count is of casters: `counts` says so.
+                                            // Search results carry no count (see `pages::searched_channel`): the channel page has the real ones.
                                             {c.counts().first().map(|count| view! { <span class="muted small" title=count.describe()>{count.label()}</span> })}
                                         </li>
                                     }).collect_view()}
