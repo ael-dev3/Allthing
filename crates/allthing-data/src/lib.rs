@@ -14,7 +14,7 @@ pub mod miniapps;
 pub mod pages;
 pub mod upstream;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::rc::Rc;
 
@@ -88,11 +88,38 @@ pub struct Invocation {
     host: Rc<dyn Host>,
     budget: Cell<u32>,
     link_checks: Cell<usize>,
+    /// Stage marks, in order: each stage's name and the time it finished.
+    stages: RefCell<Vec<(&'static str, f64)>>,
 }
 
 impl Invocation {
     pub fn new(host: Rc<dyn Host>, budget: u32) -> Invocation {
-        Invocation { host, budget: Cell::new(budget), link_checks: Cell::new(miniapps::MAX_CHECKS) }
+        Invocation {
+            host,
+            budget: Cell::new(budget),
+            link_checks: Cell::new(miniapps::MAX_CHECKS),
+            stages: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Record that `stage` finished now, for the response's `Server-Timing`.
+    pub fn mark(&self, stage: &'static str) {
+        self.stages.borrow_mut().push((stage, self.now()));
+    }
+
+    /// The stage marks so far: each stage's name and how long it took after
+    /// the one before (the first after `start`).
+    pub fn stage_durations(&self, start: f64) -> Vec<(&'static str, f64)> {
+        let mut previous = start;
+        self.stages
+            .borrow()
+            .iter()
+            .map(|&(name, at)| {
+                let took = at - previous;
+                previous = at;
+                (name, took)
+            })
+            .collect()
     }
 
     /// The keyed Solana RPC endpoint, if the runtime has one.
