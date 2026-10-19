@@ -22,8 +22,8 @@ use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::time::iso_utc;
-use allthing_data::indexer;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
+use allthing_data::{indexer, pages};
 use futures::future::FutureExt;
 use worker::{
     Context, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
@@ -87,16 +87,29 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     route(&inv, &url).await
 }
 
-/// The indexer, run every minute by the cron trigger in wrangler.toml: one
-/// page of casts into Allthing's index (see `allthing_core::index`).
+/// The cron trigger in wrangler.toml that stores the newest casts. It fires
+/// every minute, as the indexer's does, but in an invocation of its own,
+/// with its own CPU time and subrequests.
+const LATEST_CRON: &str = "*/1 * * * *";
+
+/// The cron triggers in wrangler.toml, every minute: the indexer (one page
+/// of casts into Allthing's index, see `allthing_core::index`), and the
+/// stored copy of the newest casts (see `pages::store_latest`).
 #[event(scheduled)]
-pub async fn scheduled(_event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
+pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
     let Some(index) = D1Index::new(&env).map(Rc::new) else {
-        console_error!("indexer: no INDEX binding");
+        console_error!("cron: no INDEX binding");
         return;
     };
     let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()));
     let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
+    if event.cron() == LATEST_CRON {
+        match pages::store_latest(Rc::new(inv)).await {
+            Ok(()) => console_log!("latest: stored"),
+            Err(failure) => console_error!("latest: {}", failure.message),
+        }
+        return;
+    }
     match indexer::run(&inv, index.as_ref()).await {
         Ok(report) => console_log!("indexer: {report:?}"),
         Err(error) => console_error!("indexer: {error}"),
@@ -225,13 +238,19 @@ fn version() -> Result<Response> {
 }
 
 /// Health and guard state of the isolate that answers, and how fresh the
-/// cached "new" and trending lists are. Makes no upstream calls: it reads
-/// those two lists from the edge cache.
+/// cached "new" and trending lists are, and the cron's stored copy of the
+/// newest casts. Makes no upstream calls: it reads the two lists from the
+/// edge cache and the copy from D1.
 async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
     let now = inv.now();
-    let (new, trending) = futures::future::join(
+    let stored = async {
+        let index = inv.index()?;
+        index.snapshot(pages::LATEST_SNAPSHOT).await.ok().flatten()
+    };
+    let (new, trending, stored) = futures::future::join3(
         cache::peek(inv, &cache_key(url, &Endpoint::Latest.cache_name())),
         cache::peek(inv, &cache_key(url, &Endpoint::Home(0, TrendingWindow::Day).cache_name())),
+        stored,
     )
     .await;
     let freshness = |entry: Option<cache::Entry>| entry.and_then(|e| latest::freshness(&e.body, e.fetched_at, now));
@@ -239,6 +258,9 @@ async fn status(inv: &Invocation, url: &Url) -> Result<Response> {
         "freshness": {
             "new": freshness(new),
             "trending": freshness(trending),
+            // The cron's copy of "new", which a data center with no recent
+            // list of its own serves: null if there is none.
+            "new_stored": stored.and_then(|s| latest::freshness(s.body.as_bytes(), s.built, now)),
         },
         "index": index_status(inv).await,
         "ok": true,

@@ -109,8 +109,9 @@ async fn lookup(inv: &Invocation, key: &str) -> Option<Entry> {
 }
 
 async fn store(inv: &Invocation, key: &str, built: Built) -> Rc<Entry> {
-    let entry =
-        Rc::new(Entry { body: Rc::new(built.body), status: built.status, fetched_at: inv.now(), policy: built.policy });
+    // A stored copy is as old as when it was built, so it is refreshed soon.
+    let fetched_at = built.fetched_at.unwrap_or_else(|| inv.now());
+    let entry = Rc::new(Entry { body: Rc::new(built.body), status: built.status, fetched_at, policy: built.policy });
     if inv.take_subrequests(1) {
         let headers = Headers::new();
         let _ = headers.set("content-type", "application/json; charset=utf-8");

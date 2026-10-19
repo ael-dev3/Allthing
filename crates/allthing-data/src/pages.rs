@@ -28,6 +28,7 @@ use futures::future::{join, join_all, join3};
 use futures::stream::{self, StreamExt};
 
 use crate::annotate::{self, Target, annotate, carried};
+use crate::indexer::Snapshot;
 use crate::upstream::{self, Upstream, UpstreamError};
 use crate::{Built, Failure, Invocation};
 use crate::{chain, hypersnap, miniapps};
@@ -272,6 +273,11 @@ const EVENTS_PAGE: u32 = 1000;
 /// A buffer older than this starts over from the newest events: continuing
 /// from its cursors would leave a gap one page can't cover.
 const WARM_MS: f64 = 600_000.0;
+/// What the cron's copy of the newest casts is stored as.
+pub const LATEST_SNAPSHOT: &str = "latest";
+/// A data center whose own list of the newest casts is older than this
+/// reads the cron's stored copy, and serves it as it is if it's younger.
+const SNAPSHOT_SERVE_MS: f64 = 90_000.0;
 
 /// The newest casts on Farcaster, from Snapchain's event stream. Each build
 /// continues from the previous one's cursors, so it reads only the events
@@ -280,16 +286,57 @@ const WARM_MS: f64 = 600_000.0;
 /// are never skipped: if they can't be read now, the build fails, the
 /// previous copy is served, and the next build reads the same events again.
 pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
-    let warm = previous
-        .as_deref()
-        .and_then(|bytes| serde_json::from_slice::<LatestPayload>(bytes).ok())
-        .filter(|p| inv.now() - (p.meta.fetched_at as f64) < WARM_MS);
+    let mut warm = previous.as_deref().and_then(|bytes| serde_json::from_slice::<LatestPayload>(bytes).ok());
+    let built_at = |p: &LatestPayload| p.meta.fetched_at as f64;
+    // A data center that hasn't listed the newest casts lately (or ever)
+    // starts from the copy the cron stores every minute: served as it is
+    // while it's young, for one read and no upstream calls, or built on.
+    if warm.as_ref().is_none_or(|p| inv.now() - built_at(p) >= SNAPSHOT_SERVE_MS)
+        && let Some(stored) = stored(&inv, LATEST_SNAPSHOT).await
+        && warm.as_ref().is_none_or(|p| stored.built > built_at(p))
+    {
+        if inv.now() - stored.built < SNAPSHOT_SERVE_MS {
+            let body = stored.body.into_bytes();
+            return Ok(Built { body, status: 200, policy: api::LATEST_CACHE, fetched_at: Some(stored.built) });
+        }
+        warm = serde_json::from_str(&stored.body).ok();
+    }
+    build_latest(&inv, warm).await
+}
+
+/// The cron's turn: the newest casts, built on the stored copy and stored
+/// again, so that every data center has a copy at most about a minute old
+/// without a reader waiting for a build.
+pub async fn store_latest(inv: Rc<Invocation>) -> Result<(), Failure> {
+    let index = inv.index().ok_or_else(|| Failure::internal("no index to store the newest casts in"))?;
+    let warm = stored(&inv, LATEST_SNAPSHOT).await.and_then(|s| serde_json::from_str(&s.body).ok());
+    let built = build_latest(&inv, warm).await?;
+    let body = String::from_utf8(built.body).map_err(|e| Failure::internal(&e.to_string()))?;
+    if !inv.take_subrequests(1) {
+        return Err(Failure::internal("no subrequest left to store the newest casts"));
+    }
+    let snapshot = Snapshot { built: inv.now(), body };
+    index.save_snapshot(LATEST_SNAPSHOT, snapshot).await.map_err(|e| Failure::internal(&e.to_string()))
+}
+
+/// The copy of `name` the cron stores, if there is an index and it has one.
+/// Reading it takes one of the build's subrequests.
+async fn stored(inv: &Invocation, name: &'static str) -> Option<Snapshot> {
+    let index = inv.index()?;
+    if !inv.take_subrequests(1) {
+        return None;
+    }
+    index.snapshot(name).await.ok().flatten()
+}
+
+async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<Built, Failure> {
+    let warm = warm.filter(|p| inv.now() - (p.meta.fetched_at as f64) < WARM_MS);
     let (listed, cursors, mut notes) = match warm {
         Some(p) => (p.pool, p.cursors, p.notes),
         None => (Vec::new(), Vec::new(), Annotations::default()),
     };
     let cursor = |shard: u32| cursors.iter().find(|c| c.shard == shard).map(|c| c.event_id);
-    let pages = join_all(latest::SHARDS.map(|shard| hypersnap::events(&inv, shard, cursor(shard), EVENTS_PAGE))).await;
+    let pages = join_all(latest::SHARDS.map(|shard| hypersnap::events(inv, shard, cursor(shard), EVENTS_PAGE))).await;
     let (mut added, mut removed, mut next) = (Vec::new(), Vec::new(), Vec::new());
     let mut failure = None;
     let mut readable = 0;
@@ -318,18 +365,18 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
         return Err(failure.map(Failure::upstream).unwrap_or_else(|| Failure::internal("unreadable event stream")));
     }
     let hashes = latest::to_hydrate(&added, &listed, &removed, 100);
-    let raw = match hypersnap::casts_bulk(&inv, &hashes).await {
+    let raw = match hypersnap::casts_bulk(inv, &hashes).await {
         Ok(raw) => raw,
         Err(e) if !added.is_empty() => return Err(Failure::upstream(e)),
         Err(_) => Vec::new(),
     };
     let fresh = raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect();
     let known_links = std::mem::take(&mut notes.links);
-    let fresh = drop_hidden(&inv, fresh, &mut notes, &known_links).await;
+    let fresh = drop_hidden(inv, fresh, &mut notes, &known_links).await;
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
-    let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    let quoted = annotate_listing(inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
-    Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(&inv) }, api::LATEST_CACHE)
+    Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(inv) }, api::LATEST_CACHE)
 }
 
 /// The Farcaster app's record of a channel, when it has an id there and the
@@ -761,7 +808,10 @@ mod tests {
 
     use futures::future::{FutureExt, LocalBoxFuture};
 
+    use allthing_core::index::Entry;
+
     use super::*;
+    use crate::indexer::{Index, IndexError, Saved};
     use crate::{FetchError, Host, HttpRequest, HttpResponse};
 
     /// A hub with an event page per (shard, first event), the casts it can
@@ -772,6 +822,51 @@ mod tests {
         casts: HashMap<String, String>,
         bulk_fails: bool,
         requests: RefCell<Vec<String>>,
+        stored: Option<Rc<Stored>>,
+    }
+
+    /// The part of the index the newest casts use: the cron's stored copy.
+    #[derive(Default)]
+    struct Stored {
+        copy: RefCell<Option<Snapshot>>,
+        reads: std::cell::Cell<u32>,
+    }
+
+    impl Index for Stored {
+        fn ranking(&self, _: Span) -> LocalBoxFuture<'static, Result<Option<Ranking>, IndexError>> {
+            async { Ok(None) }.boxed_local()
+        }
+
+        fn load(&self) -> LocalBoxFuture<'static, Result<Saved, IndexError>> {
+            async { Ok(Saved::default()) }.boxed_local()
+        }
+
+        fn save(
+            &self,
+            _: Vec<Entry>,
+            _: Option<Span>,
+            _: String,
+            _: f64,
+        ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+            async { Ok(()) }.boxed_local()
+        }
+
+        fn snapshot(&self, name: &'static str) -> LocalBoxFuture<'static, Result<Option<Snapshot>, IndexError>> {
+            assert_eq!(name, LATEST_SNAPSHOT);
+            self.reads.set(self.reads.get() + 1);
+            let stored = self.copy.borrow().clone();
+            async move { Ok(stored) }.boxed_local()
+        }
+
+        fn save_snapshot(
+            &self,
+            name: &'static str,
+            snapshot: Snapshot,
+        ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+            assert_eq!(name, LATEST_SNAPSHOT);
+            *self.copy.borrow_mut() = Some(snapshot);
+            async { Ok(()) }.boxed_local()
+        }
     }
 
     fn param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
@@ -807,6 +902,10 @@ mod tests {
         }
 
         fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn index(&self) -> Option<Rc<dyn Index>> {
+            self.stored.clone().map(|stored| stored as Rc<dyn Index>)
+        }
     }
 
     fn add(id: u64, hash: &str, ts: i64, reply: bool) -> String {
@@ -914,6 +1013,72 @@ mod tests {
         let mut hub = Hub::default();
         hub.events.insert(("1".into(), "13".into()), page(&[r#"{"id":13}"#.into()]));
         let payload = build(Rc::new(hub), Some(previous_latest())).unwrap();
+        assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 13 }, Cursor { shard: 2, event_id: 22 }]);
+    }
+
+    /// The cron's copy, built `age_ms` ago, with cursors at events 12 and 22.
+    fn stored_copy(age_ms: f64) -> Rc<Stored> {
+        let mut payload: LatestPayload = serde_json::from_slice(&previous_latest()).unwrap();
+        payload.meta.fetched_at = (NOW - age_ms) as i64;
+        let body = serde_json::to_string(&payload).unwrap();
+        Rc::new(Stored { copy: RefCell::new(Some(Snapshot { built: NOW - age_ms, body })), ..Default::default() })
+    }
+
+    const NOW: f64 = 1_800_000_000_000.0;
+
+    #[test]
+    fn a_data_center_with_no_fresh_list_serves_the_crons_copy_without_building() {
+        let stored = stored_copy(40_000.0);
+        let hub = Rc::new(Hub { stored: Some(stored.clone()), ..Default::default() });
+        let inv = Rc::new(Invocation::new(hub.clone(), 45));
+        let built = latest(inv, None).now_or_never().unwrap().unwrap();
+        assert_eq!(built.body, stored.copy.borrow().as_ref().unwrap().body.as_bytes());
+        // It is as old as the copy, so the edge refreshes it soon.
+        assert_eq!(built.fetched_at, Some(NOW - 40_000.0));
+        assert!(hub.requests.borrow().is_empty(), "no upstream calls: {:?}", hub.requests.borrow());
+    }
+
+    #[test]
+    fn an_older_copy_of_the_crons_is_built_on_from_its_cursors() {
+        let mut hub = Hub { stored: Some(stored_copy(120_000.0)), ..Default::default() };
+        hub.events.insert(("1".into(), "13".into()), page(&[add(13, "0xd3", 110, false)]));
+        hub.events.insert(("2".into(), "23".into()), page(&[]));
+        hub.casts.insert("0xd3".into(), raw_cast("0xd3", "2026-01-01T00:01:50Z", 0));
+        // This data center's own list is older still.
+        let mut own: LatestPayload = serde_json::from_slice(&previous_latest()).unwrap();
+        own.meta.fetched_at = (NOW - 300_000.0) as i64;
+        own.cursors = vec![Cursor { shard: 1, event_id: 5 }, Cursor { shard: 2, event_id: 5 }];
+        let payload = build(Rc::new(hub), Some(serde_json::to_vec(&own).unwrap())).unwrap();
+        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0xd3"]);
+        assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 13 }, Cursor { shard: 2, event_id: 22 }]);
+    }
+
+    #[test]
+    fn a_fresh_list_of_its_own_needs_no_stored_copy() {
+        let stored = stored_copy(10_000.0);
+        let mut hub = Hub { stored: Some(stored.clone()), ..Default::default() };
+        hub.events.insert(("1".into(), "13".into()), page(&[]));
+        hub.events.insert(("2".into(), "23".into()), page(&[]));
+        // Its own list is 30 s old: built on, and the stored copy isn't read.
+        let inv = Rc::new(Invocation::new(Rc::new(hub), 45));
+        let built = latest(inv, Some(Rc::new(previous_latest()))).now_or_never().unwrap().unwrap();
+        assert_eq!(built.fetched_at, None);
+        assert_eq!(stored.reads.get(), 0);
+    }
+
+    #[test]
+    fn the_cron_builds_on_its_stored_copy_and_stores_the_result() {
+        let stored = stored_copy(60_000.0);
+        let mut hub = Hub { stored: Some(stored.clone()), ..Default::default() };
+        hub.events.insert(("1".into(), "13".into()), page(&[add(13, "0xd3", 110, false)]));
+        hub.events.insert(("2".into(), "23".into()), page(&[]));
+        hub.casts.insert("0xd3".into(), raw_cast("0xd3", "2026-01-01T00:01:50Z", 0));
+        let inv = Rc::new(Invocation::new(Rc::new(hub), 45));
+        store_latest(inv).now_or_never().unwrap().unwrap();
+        let saved = stored.copy.borrow().clone().unwrap();
+        assert_eq!(saved.built, NOW);
+        let payload: LatestPayload = serde_json::from_str(&saved.body).unwrap();
+        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0xd3"]);
         assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 13 }, Cursor { shard: 2, event_id: 22 }]);
     }
 }

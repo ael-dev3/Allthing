@@ -7,14 +7,15 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
-use allthing_data::indexer::{Index, IndexError, Saved};
+use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde::Deserialize;
 use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
-/// The schema, from the migration that also creates it.
-const SCHEMA: &str = include_str!("../../../migrations/0001_index.sql");
+/// The schema, from the migrations that also create it.
+const SCHEMA: [&str; 2] =
+    [include_str!("../../../migrations/0001_index.sql"), include_str!("../../../migrations/0002_snapshots.sql")];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
 /// points of those already indexed (and writing nothing when they are the same).
@@ -36,6 +37,8 @@ const RANKING: &str = "SELECT built, total, oldest, body FROM rankings WHERE nam
 const STATE: &str = "SELECT value FROM state WHERE key = 'indexer'";
 const METAS: &str = "SELECT name, built, total, floor FROM rankings";
 const SAVE_STATE: &str = "REPLACE INTO state (key, value) VALUES ('indexer', ?1)";
+const SNAPSHOT: &str = "SELECT built, body FROM snapshots WHERE name = ?1";
+const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
 
 thread_local! {
     /// Whether this isolate has made sure the tables exist.
@@ -47,6 +50,12 @@ struct RankingRow {
     built: f64,
     total: f64,
     oldest: Option<f64>,
+    body: String,
+}
+
+#[derive(Deserialize)]
+struct SnapshotRow {
+    built: f64,
     body: String,
 }
 
@@ -87,7 +96,7 @@ async fn ensure_schema(db: &D1Database) -> Result<(), IndexError> {
     if SCHEMA_READY.with(Cell::get) {
         return Ok(());
     }
-    let statements = sql_statements(SCHEMA).into_iter().map(|sql| db.prepare(sql)).collect();
+    let statements = SCHEMA.iter().flat_map(|script| sql_statements(script)).map(|sql| db.prepare(sql)).collect();
     db.batch(statements).await.map_err(failed)?;
     SCHEMA_READY.with(|ready| ready.set(true));
     Ok(())
@@ -155,6 +164,29 @@ impl Index for D1Index {
             }
             statements.push(db.prepare(SAVE_STATE).bind(&[state.into()]).map_err(failed)?);
             db.batch(statements).await.map_err(failed)?;
+            Ok(())
+        }
+        .boxed_local()
+    }
+
+    /// Before the cron first stores one, there is no table yet: that reads
+    /// as no copy.
+    fn snapshot(&self, name: &'static str) -> LocalBoxFuture<'static, Result<Option<Snapshot>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let statement = db.prepare(SNAPSHOT).bind(&[name.into()]).map_err(failed)?;
+            let row: Option<SnapshotRow> = statement.first(None).await.map_err(failed)?;
+            Ok(row.map(|r| Snapshot { built: r.built, body: r.body }))
+        }
+        .boxed_local()
+    }
+
+    fn save_snapshot(&self, name: &'static str, snapshot: Snapshot) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+        let db = self.db.clone();
+        async move {
+            ensure_schema(&db).await?;
+            let args = [name.into(), number(snapshot.built.floor()), snapshot.body.into()];
+            db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?.run().await.map_err(failed)?;
             Ok(())
         }
         .boxed_local()
