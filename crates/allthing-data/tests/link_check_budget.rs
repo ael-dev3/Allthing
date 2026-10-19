@@ -59,11 +59,11 @@ fn budget_is_shared_between_root_and_quoted_link_checks() {
     miniapps::check(&inv, &root, &BTreeMap::new()).now_or_never().unwrap();
     host.now.set(host.now.get() + 6000.0); // refill the upstream bucket
     miniapps::check(&inv, &quoted, &BTreeMap::new()).now_or_never().unwrap();
-    assert_eq!(host.requests.get(), 12, "one build checked more than twelve links");
+    assert_eq!(host.requests.get(), miniapps::MAX_CHECKS, "one build checked more links than its cap");
     host.now.set(host.now.get() + 6000.0);
     let next = Invocation::new(host.clone(), 45);
-    assert_eq!(miniapps::check(&next, &quoted, &BTreeMap::new()).now_or_never().unwrap().len(), 12);
-    assert_eq!(host.requests.get(), 24, "deferred links should remain eligible in a later build");
+    assert_eq!(miniapps::check(&next, &quoted, &BTreeMap::new()).now_or_never().unwrap().len(), miniapps::MAX_CHECKS);
+    assert_eq!(host.requests.get(), 2 * miniapps::MAX_CHECKS, "deferred links should remain eligible in a later build");
 }
 
 #[test]
@@ -87,15 +87,17 @@ fn budget_exhaustion_does_not_poison_deferred_links_for_an_hour() {
 #[test]
 fn an_empty_upstream_bucket_does_not_poison_deferred_links_for_an_hour() {
     let host = Rc::new(Pages::new(true));
-    let first = Invocation::new(host.clone(), 45);
-    let initial = casts("bucket-fill", 0);
-    miniapps::check(&first, &initial, &BTreeMap::new()).now_or_never().unwrap();
+    // Two builds empty the link-page bucket (a burst of 12), six links each.
+    for offset in [0, 6] {
+        let fill = Invocation::new(host.clone(), 45);
+        miniapps::check(&fill, &casts("bucket-fill", offset), &BTreeMap::new()).now_or_never().unwrap();
+    }
     let pool = casts("bucket-deferred", 0);
     let busy = Invocation::new(host.clone(), 45);
     assert!(miniapps::check(&busy, &pool, &BTreeMap::new()).now_or_never().unwrap().is_empty());
     assert_eq!(host.requests.get(), 12);
     host.now.set(host.now.get() + 6000.0);
     let next = Invocation::new(host.clone(), 45);
-    assert_eq!(miniapps::check(&next, &pool, &BTreeMap::new()).now_or_never().unwrap().len(), 12);
-    assert_eq!(host.requests.get(), 24);
+    assert_eq!(miniapps::check(&next, &pool, &BTreeMap::new()).now_or_never().unwrap().len(), miniapps::MAX_CHECKS);
+    assert_eq!(host.requests.get(), 12 + miniapps::MAX_CHECKS);
 }
