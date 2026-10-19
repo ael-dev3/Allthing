@@ -13,6 +13,8 @@ The relevant Free plan limits, as of October 2026:
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
 
+Wallet responses containing failed chains are checked once before they are sent, including cache hits, to remove private Solana diagnostics from older copies. This parses only the small wallet payload and takes no subrequest. Successful wallet payloads keep the byte-copy path; counts and cache lifetimes are unchanged.
+
 ## 1. What a page view costs
 
 The browser app is static. A page view runs the Worker for its one API call and nothing else:

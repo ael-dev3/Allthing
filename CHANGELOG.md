@@ -5,7 +5,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-- Keyed Solana RPC failures keep the private endpoint and provider content out of public wallet error responses, while preserving status, timeout and request-budget diagnostics.
+- Keyed Solana RPC failures keep the private endpoint and provider content out of new and previously cached public wallet responses, while preserving counts, cache lifetimes, status, timeout and request-budget diagnostics.
 
 ### Added
 
