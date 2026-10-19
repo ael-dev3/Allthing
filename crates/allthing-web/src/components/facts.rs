@@ -86,13 +86,12 @@ fn WalletBreakdown(mut activity: WalletActivity) -> impl IntoView {
     // Chains under 1% are left out, so every row has a whole percent. The
     // shares sum to 100, so one chain at 100% is the only row.
     let measured: Vec<_> = activity.chains.iter().filter(|c| c.error.is_none() && c.percent >= 1).cloned().collect();
-    // Solana's public RPC refuses browsers and, so far, Cloudflare Workers,
-    // so an account's Solana wallets usually go uncounted: say so.
+    // An account's Solana wallets go uncounted when Solana's read fails: say so.
     let solana_unread =
         activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Solana);
     let solana_note = move || {
         solana_unread.then(|| {
-            view! { <p class="muted small">"Solana isn't counted: its public RPC refuses Allthing's requests."</p> }
+            view! { <p class="muted small">"Solana couldn't be read just now, so its wallets aren't counted."</p> }
         })
     };
     if measured.is_empty() {

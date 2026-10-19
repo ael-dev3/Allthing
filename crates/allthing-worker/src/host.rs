@@ -22,11 +22,12 @@ pub enum Lifetime {
 pub struct WorkerHost {
     lifetime: Lifetime,
     index: Option<Rc<D1Index>>,
+    solana_rpc: Option<String>,
 }
 
 impl WorkerHost {
-    pub fn new(lifetime: Lifetime, index: Option<Rc<D1Index>>) -> WorkerHost {
-        WorkerHost { lifetime, index }
+    pub fn new(lifetime: Lifetime, index: Option<Rc<D1Index>>, solana_rpc: Option<String>) -> WorkerHost {
+        WorkerHost { lifetime, index, solana_rpc }
     }
 }
 
@@ -93,6 +94,10 @@ impl Host for WorkerHost {
 
     fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
         exchange(request).boxed_local()
+    }
+
+    fn solana_rpc(&self) -> Option<String> {
+        self.solana_rpc.clone()
     }
 
     fn spawn(&self, future: LocalBoxFuture<'static, ()>) {

@@ -7,7 +7,7 @@ The wallet chart on a profile (and on its hover card) shows where an account's v
 
 - **Verified addresses**: the account's verified Ethereum and Solana addresses, from Hypersnap's user record (`user/bulk`). Up to five EVM addresses are counted per account, and up to two Solana addresses.
 - **EVM chains** (Base, Ethereum, Optimism, Arbitrum, Polygon, Zora, Celo, Unichain, Monad): each chain's public JSON-RPC endpoints, as listed in `crates/allthing-core/src/wallet.rs`. One batched `eth_getTransactionCount` call per chain, at `latest`.
-- **Solana**: one `getSignaturesForAddress` call per address (up to 1,000 signatures) to Solana's public RPC. It refuses browsers and, from our tests, Cloudflare Workers' addresses (HTTP 403), so on the live site Solana usually goes uncounted, and the chart says so. The keyless RPCs that do answer Workers (publicnode.com, Pocket, Solana Tracker, LeoRPC) keep only recent history: on 18 October 2026 they returned no signatures for four of 0xael.eth's Solana addresses where Solana's own RPC returned 227 to 1,000, so they would undercount and are not used.
+- **Solana**: the signatures involving each verified address, read from a keyed RPC endpoint when the Worker has one (the `SOLANA_RPC_URL` secret, see [DEPLOY.md](DEPLOY.md#secrets)). It pages through the address's history, up to 5,000 signatures, and the count shows "5,000+" beyond that. Without the secret, Allthing reads one `getSignaturesForAddress` call (up to 1,000) from Solana's public RPC, which refuses Cloudflare Workers, so Solana then shows as unread and the chart says it couldn't be read just now.
 
 ## Method
 
