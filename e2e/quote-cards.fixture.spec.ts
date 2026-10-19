@@ -67,7 +67,7 @@ for (const layout of layouts) {
       await expect(fallback.locator(".quote-chip")).toHaveAttribute("href", `/p/${missing}`);
 
       const hidden = page.locator(`.cast-card[data-hash="${quotingSpam.hash}"] .quote`);
-      await expect(hidden.locator(".quote-hidden")).toHaveText("Quoted cast hidden: spam");
+      await expect(hidden.locator(".quote-hidden")).toHaveText("Quoted cast hidden");
       await expect(hidden.locator("a.when")).toHaveAttribute("href", `/p/${spam.hash}`);
 
       // Nothing sideways: the card and its long token fit the screen.
