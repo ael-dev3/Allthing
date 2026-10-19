@@ -40,7 +40,6 @@ enum Step {
     Starting,
     /// The code is up; the Farcaster app hasn't answered yet.
     Waiting {
-        link: String,
         code: QrCode,
     },
     /// The app approved; the Worker is checking what it signed.
@@ -208,7 +207,7 @@ async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> 
     if !current(run) {
         return Err(String::new());
     }
-    step.set(Step::Waiting { link: channel.url, code });
+    step.set(Step::Waiting { code });
     let proof = approved(run, &channel.token).await?;
     if !current(run) {
         return Err(String::new());
@@ -306,8 +305,8 @@ pub fn Account() -> impl IntoView {
     }
 }
 
-/// The sign-in dialog: the QR code to scan with the phone's camera, a link
-/// that opens the Farcaster app on this phone, and how it's going.
+/// The sign-in dialog: the QR code to scan with the phone's camera, and how
+/// it's going. A QR code only: there is no link to the Farcaster app.
 #[component]
 pub fn SignInDialog() -> impl IntoView {
     let session = use_session();
@@ -390,7 +389,7 @@ pub fn SignInDialog() -> impl IntoView {
                             <p class="signin-intro">"Scan the code with your phone's camera, then approve in the Farcaster app."</p>
                             <div class="qr-frame" class:failed=move || matches!(session.step.get(), Step::Failed(_))>
                                 {move || match session.step.get() {
-                                    Step::Waiting { code, .. } => view! {
+                                    Step::Waiting { code } => view! {
                                         <svg class="qr" viewBox=format!("0 0 {0} {0}", code.size) role="img" aria-label="Sign-in QR code" shape-rendering="crispEdges">
                                             <path d=code.path/>
                                         </svg>
@@ -407,14 +406,6 @@ pub fn SignInDialog() -> impl IntoView {
                             <p class="signin-status" class:error=move || matches!(session.step.get(), Step::Failed(_)) role="status">
                                 {status}
                             </p>
-                            {move || match session.step.get() {
-                                Step::Waiting { link, .. } => Some(view! {
-                                    <a class="signin-app" href=link target="_blank" rel="noopener noreferrer">
-                                        "On this phone? Open the Farcaster app"
-                                    </a>
-                                }),
-                                _ => None,
-                            }}
                             <p class="signin-note muted small">"Signing in only tells Allthing who you are. It can't post or change anything for you."</p>
                         </div>
                     </div>

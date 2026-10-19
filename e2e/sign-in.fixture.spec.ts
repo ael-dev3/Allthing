@@ -75,9 +75,9 @@ async function serve(page: Page, opts: { relay?: (poll: number) => [number, obje
 const approvedOnThirdPoll = (poll: number): [number, object] =>
   poll < 3 ? [202, { state: "pending" }] : [200, { state: "completed", ...SIGNED, fid: alice.fid }];
 
-async function phone(browser: Browser, testInfo: TestInfo) {
+async function phone(browser: Browser, testInfo: TestInfo, width = 390, height = 844) {
   const context = await browser.newContext({
-    baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+    baseURL: testInfo.project.use.baseURL, viewport: { width, height }, isMobile: true, hasTouch: true,
   });
   return { context, page: await context.newPage() };
 }
@@ -100,7 +100,8 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   expect(box.width).toBeGreaterThanOrEqual(240);
   expect(Math.abs(box.width - box.height)).toBeLessThan(1);
   expect(await code.locator("path").getAttribute("d")).toMatch(/^M4 4h7v1h-7z/);
-  await expect(dialog.getByRole("link", { name: /Open the Farcaster app/ })).toHaveAttribute("href", LINK);
+  // The code, and nothing else to choose: no link to the Farcaster app.
+  await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(dialog.getByRole("status")).toHaveText("Waiting for you to approve in Farcaster…");
   // The channel carries the Worker's nonce, this site and its address.
   const origin = new URL(page.url()).origin;
@@ -139,7 +140,7 @@ test("signs in by QR code with the Farcaster app, stays signed in, and signs out
   await expect(account).toHaveCount(0);
 });
 
-test("on a phone, the code fits the screen and the Farcaster app opens from a link", async ({ browser }, testInfo) => {
+test("on a phone, the code fits the screen, with no link to the Farcaster app", async ({ browser }, testInfo) => {
   const { context, page } = await phone(browser, testInfo);
   const calls = await serve(page, { relay: approvedOnThirdPoll });
   await page.goto("/");
@@ -156,9 +157,7 @@ test("on a phone, the code fits the screen and the Farcaster app opens from a li
   await expect(code).toBeVisible();
   await expect(dialog).toBeInViewport({ ratio: 1 });
   expect((await code.boundingBox())!.width).toBeGreaterThanOrEqual(220);
-  const app = dialog.getByRole("link", { name: /Open the Farcaster app/ });
-  await expect(app).toBeInViewport({ ratio: 1 });
-  await expect(app).toHaveAttribute("target", "_blank");
+  await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(dialog).toBeHidden();
   expect(calls.verify).toHaveLength(1);
   const account = page.getByRole("button", { name: "Signed in as @alice: account menu" });
@@ -168,6 +167,29 @@ test("on a phone, the code fits the screen and the Farcaster app opens from a li
   await expect(menu).toBeInViewport({ ratio: 1 });
   await menu.getByRole("button", { name: "Sign out" }).tap();
   await expect(signIn).toBeVisible();
+  await context.close();
+});
+
+test("at 393 px, a tap on the sign-in icon opens the dialog", async ({ browser }, testInfo) => {
+  // 393 × 852: an iPhone 15 or 16.
+  const { context, page } = await phone(browser, testInfo, 393, 852);
+  await serve(page);
+  await page.goto("/");
+  await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
+  const signIn = page.getByRole("button", { name: "Sign in with Farcaster" });
+  await expect(signIn).toBeInViewport({ ratio: 1 });
+  // Nothing covers it where a finger lands.
+  const box = (await signIn.boundingBox())!;
+  const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".sign-in-button") !== null, [
+    box.x + box.width / 2,
+    box.y + box.height / 2,
+  ]);
+  expect(hit).toBe(true);
+  await signIn.tap();
+  const dialog = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("img", { name: "Sign-in QR code" })).toBeVisible();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
   await context.close();
 });
 
