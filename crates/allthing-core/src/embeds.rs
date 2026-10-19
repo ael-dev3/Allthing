@@ -307,6 +307,26 @@ pub fn resized_image_url(url: &str, size: ImageSize) -> String {
     }
 }
 
+/// What a cast with no text of its own shows in a short list (a replies
+/// preview), where its images show as thumbnails: its first other embed, as
+/// a few words. `None` when it has only images, or nothing.
+pub fn embed_label(embeds: &[Embed]) -> Option<String> {
+    embeds.iter().find_map(|embed| match embed {
+        Embed::Image { .. } => None,
+        Embed::Video { .. } => Some("Video".to_owned()),
+        Embed::Link { url, title, .. } => Some(
+            title
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_owned)
+                .or_else(|| host_of(url).map(|host| host.trim_start_matches("www.").to_owned()))
+                .unwrap_or_else(|| "Link".to_owned()),
+        ),
+        Embed::Cast { .. } => Some("Quotes a cast".to_owned()),
+    })
+}
+
 /// Embeds worth rendering under a cast's text: media and quotes always,
 /// links only when the text doesn't already show the URL.
 pub fn visible_embeds<'a>(embeds: &'a [Embed], text: &str) -> Vec<&'a Embed> {
@@ -396,6 +416,25 @@ mod tests {
         assert!(!head_ended(b"<html><head><title>x</title>", 0));
         assert!(!head_ended(b"", 0));
         assert!(!head_ended(b"</hea", 99));
+    }
+
+    #[test]
+    fn a_textless_cast_is_named_by_its_first_embed_that_isnt_an_image() {
+        let image = Embed::Image { url: "https://i.imgur.com/a.png".into() };
+        let link = |title: Option<&str>| Embed::Link {
+            url: "https://www.example.com/post".into(),
+            image_url: None,
+            title: title.map(str::to_owned),
+        };
+        assert_eq!(embed_label(&[image.clone()]), None);
+        assert_eq!(embed_label(&[]), None);
+        assert_eq!(
+            embed_label(&[image.clone(), Embed::Video { url: "https://s/v.m3u8".into() }]).as_deref(),
+            Some("Video")
+        );
+        assert_eq!(embed_label(&[link(Some(" A post "))]).as_deref(), Some("A post"));
+        assert_eq!(embed_label(&[link(Some("  "))]).as_deref(), Some("example.com"));
+        assert_eq!(embed_label(&[Embed::Cast { hash: "0x01".into(), fid: None }]).as_deref(), Some("Quotes a cast"));
     }
 
     #[test]

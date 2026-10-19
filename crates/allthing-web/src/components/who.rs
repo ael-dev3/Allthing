@@ -14,7 +14,7 @@ use allthing_core::api::{
     CastPayload, REACTIONS_PREVIEW, ReactionKind, ReactionsPayload, RepliesPayload, cast_path, reactions_path,
     replies_path,
 };
-use allthing_core::embeds::{ImageSize, resized_image_url};
+use allthing_core::embeds::{ImageSize, embed_label, resized_image_url};
 use allthing_core::model::Embed;
 use allthing_core::text::truncate_title;
 use leptos::ev;
@@ -282,6 +282,9 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                 Some(Ok(fetched)) if fetched.data.replies.is_empty() => view! { <p class="muted small">"No replies to show."</p> }.into_any(),
                 Some(Ok(fetched)) => {
                     let payload = fetched.data.clone();
+                    // The authors' bios, counts and join dates come with the
+                    // replies: a card opened from a name shows them at once.
+                    api::remember_cards(&payload.notes.users);
                     view! {
                         <ul class="reply-items">
                             {payload.replies.iter().map(|reply| {
@@ -289,18 +292,31 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                                     Embed::Image { url } => Some(resized_image_url(url, ImageSize::Thumb)),
                                     _ => None,
                                 }).take(3).collect();
+                                let text = reply.text.trim();
+                                // A reply with no text says what it holds, so its row isn't blank.
+                                let label = if text.is_empty() { embed_label(&reply.embeds) } else { None };
+                                let author = reply.author.clone();
+                                let profile = user_href(&author.username);
+                                let post = cast_href(&reply.hash);
                                 view! {
                                     <li>
-                                        <a class="reply-item" href=cast_href(&reply.hash)>
-                                            <span class="reply-who">
-                                                <Avatar url=reply.author.pfp_url.clone() size=22/>
-                                                <strong>{reply.author.name().to_owned()}</strong>
-                                                <span class="muted small"><TimeAgo ts=reply.ts/></span>
-                                            </span>
-                                            <span class="reply-text">{truncate_title(&reply.text, 220)}</span>
+                                        <span class="reply-who">
+                                            <ProfileHover user=author.clone() beside=true class="reply-author">
+                                                <a class="reply-author-link" href=profile.clone()>
+                                                    <Avatar url=author.pfp_url.clone() size=22/>
+                                                    <strong>{author.name().to_owned()}</strong>
+                                                </a>
+                                            </ProfileHover>
+                                            <a class="reply-time muted small" href=post.clone()><TimeAgo ts=reply.ts/></a>
+                                        </span>
+                                        <a class="reply-item" href=post>
+                                            {(!text.is_empty()).then(|| view! { <span class="reply-text">{truncate_title(text, 220)}</span> })}
+                                            {label.map(|label| view! { <span class="reply-label muted small">{label}</span> })}
                                             {(!thumbs.is_empty()).then(|| view! {
                                                 <span class="reply-thumbs">
-                                                    {thumbs.into_iter().map(|src| view! { <img src=src alt="" loading="lazy" referrerpolicy="no-referrer"/> }).collect_view()}
+                                                    // In view as the preview opens: not left to lazy loading,
+                                                    // which left them blank there.
+                                                    {thumbs.into_iter().map(|src| view! { <img src=src alt="" decoding="async" referrerpolicy="no-referrer"/> }).collect_view()}
                                                 </span>
                                             })}
                                         </a>
