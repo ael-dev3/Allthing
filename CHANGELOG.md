@@ -43,6 +43,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- The production performance check waits up to 30 minutes for the pushed commit to go live, not five. Workers Builds takes 6 to 16 minutes, and about 25 when two merges queue, so since the wait was added the check failed on every push to `main` without measuring anything.
 - A profile card opened from a Liked by or Recasted by list shows the person's bio, follower and following counts and join date, like cards elsewhere, instead of "The bio and follower counts are on the profile". The lists carry them, from the user objects that come with the reactions: no extra request, and the preloaded lists bring them too.
 - In the Replies preview, each reply's author is a link to their profile, and hovering, focusing or tapping it opens their profile card beside the preview, as names in Liked by do, with the bio, counts and join date that come with the replies. The reply's own text still opens the reply.
 - A reply with no text no longer shows as a blank gap in the Replies preview: its image thumbnails load at once (they were left to lazy loading, which left them blank there), and a video, link or quoted cast is named in a few words.

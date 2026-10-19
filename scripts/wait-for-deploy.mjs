@@ -11,9 +11,11 @@ export function revisionMatches(actual, expected) {
     && expected.toLowerCase().startsWith(actual.toLowerCase());
 }
 
+// Workers Builds takes 6 to 16 minutes from a push to main until the commit
+// is live, and about 25 when a second merge queues behind the first.
 export async function waitForDeploy(baseURL, expected, {
-  timeoutMs = 300_000,
-  pollIntervalMs = 5000,
+  timeoutMs = 1_800_000,
+  pollIntervalMs = 10_000,
   requestTimeoutMs = 5000,
   log = () => {},
 } = {}) {

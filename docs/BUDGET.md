@@ -52,7 +52,7 @@ A reader who opens posts they hovered spends nothing extra; idle viewport prefet
 
 **Capacity:** about **43,000 page views a day** with a typical mix, including prefetches, popovers and preloaded previews (about 2.3 Worker requests per view). That assumes about half of all views are feeds read with a mouse, each adding one or two batches. That is before counting views that cost nothing (sorting, back/forward, revisits). `MAX_BATCHES` in `crates/allthing-web/src/preload.rs` trades preloaded cards for capacity: without preloads it is about 60,000 (about 1.6 requests per view). Each profile card a reader opens adds up to 2 more, and nothing for that account again within 5 minutes.
 
-The production performance CI job checks `/version` before measuring a deployment: one Worker request every five seconds for at most five minutes (at most 60 requests per run), with no upstream calls. It usually finishes on the first check after the build tools and browser are installed.
+The production performance CI job checks `/version` before measuring a deployment: one Worker request every 10 seconds until the commit is live, for at most 30 minutes (at most 180 requests per run), with no upstream calls. Workers Builds usually makes a commit live 6 to 16 minutes after the push, so a run usually checks 30 to 90 times.
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby
 
