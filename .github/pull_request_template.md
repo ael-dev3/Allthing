@@ -24,4 +24,4 @@
 - [ ] A line in `CHANGELOG.md` under `[Unreleased]`, if readers or operators would notice the change
 - [ ] `docs/BUDGET.md` updated, if request, subrequest or CPU costs changed
 - [ ] No secrets, tokens, `.env` or `.dev.vars` files, session URLs or personal data
-- [ ] Still read-only, and no content hidden because of a label
+- [ ] Writes only what a reader asks for, with a key they approved (the Worker posts nothing), and no content hidden because of a label

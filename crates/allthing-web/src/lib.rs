@@ -6,6 +6,8 @@ mod api;
 mod components;
 #[cfg(feature = "static-host")]
 mod host;
+#[cfg(not(feature = "static-host"))]
+mod keys;
 mod nav;
 mod pages;
 mod preload;
@@ -59,6 +61,8 @@ fn App() -> impl IntoView {
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::compose::Composer::new());
+    #[cfg(not(feature = "static-host"))]
+    provide_context(components::writer::Writer::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>
@@ -91,6 +95,7 @@ fn sign_in_dialog() -> impl IntoView {
     view! {
         <components::signin::SignInDialog/>
         <components::compose::ComposerDialog/>
+        <components::writer::WriterDialog/>
     }
 }
 

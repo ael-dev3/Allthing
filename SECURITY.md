@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Security policy
 
-Allthing is a client for reading Farcaster. It has no signers or write paths and posts nothing: a cast written in it opens in the Farcaster app, which posts it. Readers can sign in with Farcaster by QR code ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sign-in)), which only says who is reading: the Worker checks the signed message, then keeps a stateless session in an HMAC-signed, HttpOnly, Secure cookie. Apart from the sign-in endpoints, which take same-origin `POST`s, the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, the session key is the Worker secret `SESSION_SECRET`, KLIPY's app key for GIF search is the Worker secret `KLIPY_API_KEY` (handed to signed-in browsers, which KLIPY requires to call it themselves), and deployment credentials live in Cloudflare Workers Builds.
+Allthing is a client for reading Farcaster. Readers can sign in with Farcaster by QR code ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sign-in)), which only says who is reading: the Worker checks the signed message, then keeps a stateless session in an HMAC-signed, HttpOnly, Secure cookie. A signed-in reader can like and recast with an app key they approve in the Farcaster app ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#liking-and-recasting)): their browser makes and keeps it (WebCrypto Ed25519, not exportable), signs with it, and hands the messages to a Farcaster node; the Worker only endorses keys and never sees one. A cast written in Allthing opens in the Farcaster app, which posts it. Apart from the sign-in and endorsement endpoints, which take same-origin `POST`s, the deployed Worker accepts only `GET` and `HEAD`. The repository contains no secrets: upstream data sources are public and keyless, the session key is the Worker secret `SESSION_SECRET`, the custody key of Allthing's own Farcaster account (which endorses readers' keys) is the Worker secret `ALLTHING_CUSTODY_KEY`, KLIPY's app key for GIF search is the Worker secret `KLIPY_API_KEY` (handed to signed-in browsers, which KLIPY requires to call it themselves), and deployment credentials live in Cloudflare Workers Builds.
 
 ## Supported versions
 
@@ -22,7 +22,7 @@ Particularly relevant:
 - weaknesses in the Content Security Policy (`web/_headers`), or ways to frame or redirect the site;
 - ways to make the Worker hammer an upstream, exceed its subrequest or CPU budget, or poison the edge cache for other readers;
 - ways to sign in as an account without its Farcaster app's approval, to forge, replay or steal a session cookie, or to sign someone in or out from another site;
-- anything that would let Allthing write to Farcaster or act on a user's behalf.
+- anything that would let Allthing, or anyone else, write to Farcaster as a reader without their pressing a button, or with a key they didn't approve, or read a reader's key out of their browser.
 
 Problems in the services Allthing reads from (Hypersnap, farcaster.xyz, the public RPCs) or in Cloudflare's platform are best reported to their operators. Content posted on Farcaster, such as spam, isn't a vulnerability in Allthing.
 
@@ -32,4 +32,5 @@ Problems in the services Allthing reads from (Hypersnap, farcaster.xyz, the publ
 - Third-party video players load only after a click, and their iframes are limited by `frame-src`.
 - Media is loaded straight from its host. The Worker never proxies media.
 - The API sends no CORS headers, rate-limits per client and refuses other methods with 405.
+- A reader's app key is made by their browser, unexportable, and stays there. The Worker's custody key only endorses keys, for signed-in sessions, for an hour; the Worker never signs as a reader or submits anything to Farcaster.
 - Sign-in follows Farcaster's rules as `@farcaster/auth-client` checks them: a nonce bound to the browser that started it, the site's own domain, and a signer that OP Mainnet's registries confirm. The session cookie is HttpOnly, Secure and SameSite, and its key never leaves Cloudflare.

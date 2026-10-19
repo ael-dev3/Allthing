@@ -53,6 +53,27 @@ pub fn use_query_param(name: &'static str) -> Memo<Option<String>> {
     Memo::new(move |_| web_sys::UrlSearchParams::new_with_str(&location.search.get()).ok().and_then(|q| q.get(name)))
 }
 
+/// Keep Tab and Shift+Tab inside `root`, a modal dialog: from its last
+/// control (`controls`, a selector) round to its first, and back. (The
+/// static copy has no dialogs that need it.)
+#[cfg(not(feature = "static-host"))]
+pub fn trap_tab(root: &web_sys::Element, ev: &web_sys::KeyboardEvent, controls: &str) {
+    let Ok(nodes) = root.query_selector_all(controls) else { return };
+    let first = nodes.get(0).and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok());
+    let last = nodes.get(nodes.length().saturating_sub(1)).and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok());
+    let active = document().active_element();
+    let at = |el: &Option<web_sys::HtmlElement>| {
+        el.as_ref().map(|e| e.unchecked_ref::<web_sys::Element>().clone()) == active
+    };
+    let (from, to) = if ev.shift_key() { (&first, &last) } else { (&last, &first) };
+    if at(from) {
+        ev.prevent_default();
+        if let Some(to) = to {
+            let _ = to.focus();
+        }
+    }
+}
+
 pub fn element_by_id<T: JsCast>(id: &str) -> Option<T> {
     document().get_element_by_id(id)?.dyn_into::<T>().ok()
 }

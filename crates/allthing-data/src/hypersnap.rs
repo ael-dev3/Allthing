@@ -23,7 +23,8 @@ use serde::Deserialize;
 use crate::upstream::{self, Upstream, UpstreamError, get_json, url};
 use crate::{HttpMethod, Invocation};
 
-pub const BASE: &str = "https://haatz.quilibrium.com";
+/// The node the browser also submits readers' messages to.
+pub const BASE: &str = allthing_core::message::NODE;
 
 fn v2(path: &str, query: &[(&str, &str)]) -> String {
     url(BASE, &format!("v2/farcaster/{path}"), query)

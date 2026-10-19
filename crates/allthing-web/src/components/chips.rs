@@ -13,7 +13,7 @@ use leptos::prelude::*;
 
 use crate::components::popover::Popover;
 use crate::components::profile_card::ProfileHover;
-use crate::components::who::{RepliesPreview, WhoPreview, use_who_list};
+use crate::components::who::{RepliesPreview, WhoList, WhoPreview, use_who_list};
 use crate::util::{cast_href, now, user_href};
 use allthing_core::api::ReactionKind;
 use leptos_router::hooks::use_navigate;
@@ -119,32 +119,8 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
         full_number(cast.replies),
         full_number(pts)
     );
-    let cast_hash = cast.hash.clone();
-    let reaction = |kind: ReactionKind, n: u64, class: &'static str| {
-        let (icon, one, many) = match kind {
-            ReactionKind::Likes => (HEART, " like", " likes"),
-            ReactionKind::Recasts => (RECAST, " recast", " recasts"),
-        };
-        if n == 0 {
-            return view! { <span class=format!("stat {class}")>{stat_body(icon, n, one, many)}</span> }.into_any();
-        }
-        let hash = cast_hash.clone();
-        let preview_hash = hash.clone();
-        view! {
-            <Popover
-                label=match kind { ReactionKind::Likes => "Liked by", ReactionKind::Recasts => "Recasted by" }
-                trigger_label=format!("{}{}: show who", compact_number(n), many)
-                trigger_class=format!("stat {class}")
-                hover=true
-                on_activate=Callback::new(move |()| who.open(hash.clone(), kind))
-                trigger=move || stat_body(icon, n, one, many)
-                content=move || view! { <WhoPreview hash=preview_hash.clone() kind/> }
-            />
-        }
-        .into_any()
-    };
-    let likes = reaction(ReactionKind::Likes, cast.likes, "stat-likes");
-    let recasts = reaction(ReactionKind::Recasts, cast.recasts, "stat-recasts");
+    let likes = reaction_stat(&cast, ReactionKind::Likes, cast.likes, who);
+    let recasts = reaction_stat(&cast, ReactionKind::Recasts, cast.recasts, who);
     let replies = if cast.replies == 0 {
         view! { <span class="stat stat-replies">{stat_body(BUBBLE, 0, " reply", " replies")}</span> }.into_any()
     } else {
@@ -167,6 +143,107 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
     // The ranking note is for screen readers: a native tooltip on the row
     // would sit on top of the counts' own popovers.
     view! { <div class="engagement">{likes}{recasts}{replies}<span class="visually-hidden">{title}</span></div> }
+}
+
+/// A like or recast count: hovering it previews who, clicking opens the full
+/// list. Where the reader can like and recast from Allthing, its icon is
+/// the button that does, and the count follows what they do.
+fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList) -> AnyView {
+    #[cfg(not(feature = "static-host"))]
+    if let Some(writer) = crate::components::writer::use_writer()
+        && let Some(target) = allthing_core::message::CastId::new(cast.author.fid, &cast.hash)
+    {
+        return acting_stat(writer, target, cast.hash.clone(), kind, n, who);
+    }
+    count_stat(kind, n, cast.hash.clone(), who, true)
+}
+
+/// The icon and the words for each kind, and its class.
+fn reaction_words(kind: ReactionKind) -> (&'static str, &'static str, &'static str, &'static str) {
+    match kind {
+        ReactionKind::Likes => (HEART, " like", " likes", "stat-likes"),
+        ReactionKind::Recasts => (RECAST, " recast", " recasts", "stat-recasts"),
+    }
+}
+
+/// The count, with its icon or (beside a like or recast button) without.
+fn count_stat(kind: ReactionKind, n: u64, hash: String, who: WhoList, with_icon: bool) -> AnyView {
+    let (icon, one, many, class) = reaction_words(kind);
+    let class = if with_icon { format!("stat {class}") } else { "stat-count".to_owned() };
+    let body = move || {
+        view! {
+            {with_icon.then(|| view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> })}
+            <span class="n">{compact_number(n)}</span>
+            <span class="label">{if n == 1 { one } else { many }}</span>
+        }
+    };
+    if n == 0 {
+        return view! { <span class=class>{body()}</span> }.into_any();
+    }
+    let preview_hash = hash.clone();
+    view! {
+        <Popover
+            label=match kind { ReactionKind::Likes => "Liked by", ReactionKind::Recasts => "Recasted by" }
+            trigger_label=format!("{}{}: show who", compact_number(n), many)
+            trigger_class=class
+            hover=true
+            on_activate=Callback::new(move |()| who.open(hash.clone(), kind))
+            trigger=body
+            content=move || view! { <WhoPreview hash=preview_hash.clone() kind/> }
+        />
+    }
+    .into_any()
+}
+
+/// A like or recast button, pressed when the reader has, before the count.
+/// Until they can (the Worker endorses no keys, or they signed out), the
+/// plain count.
+#[cfg(not(feature = "static-host"))]
+fn acting_stat(
+    writer: crate::components::writer::Writer,
+    target: allthing_core::message::CastId,
+    hash: String,
+    kind: ReactionKind,
+    n: u64,
+    who: WhoList,
+) -> AnyView {
+    use allthing_core::message::Reaction;
+    let (icon, _, _, class) = reaction_words(kind);
+    let (reaction, action) = match kind {
+        ReactionKind::Likes => (Reaction::Like, "Like"),
+        ReactionKind::Recasts => (Reaction::Recast, "Recast"),
+    };
+    let key = hash.clone();
+    let mine = Memo::new(move |_| writer.reacted(&key, reaction));
+    let key = hash.clone();
+    let busy = Memo::new(move |_| writer.busy(&key, reaction));
+    let key = hash.clone();
+    let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
+    let buttons = Memo::new(move |_| writer.shows_buttons());
+    (move || {
+        if !buttons.get() {
+            return count_stat(kind, n, hash.clone(), who, true);
+        }
+        let hash = hash.clone();
+        view! {
+            <span class=move || format!("stat {class} acting{}", if mine.get() { " mine" } else { "" })>
+                <button
+                    type="button"
+                    class="act"
+                    aria-label=action
+                    title=action
+                    aria-pressed=move || mine.get().to_string()
+                    aria-busy=move || busy.get().then_some("true")
+                    on:click=move |_| writer.toggle(target, reaction)
+                >
+                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
+                </button>
+                {move || count_stat(kind, shown.get(), hash.clone(), who, false)}
+            </span>
+        }
+        .into_any()
+    })
+    .into_any()
 }
 
 /// "via Farcaster", from the app that requested the cast's signer key.

@@ -8,7 +8,7 @@
   </a>
 </p>
 
-<p align="center"><strong>A quiet, read-only window onto Farcaster.</strong></p>
+<p align="center"><strong>A quiet window onto Farcaster, made for reading.</strong></p>
 
 <p align="center">
   <a href="https://github.com/ael-dev3/Allthing/actions/workflows/ci.yml"><img src="https://github.com/ael-dev3/Allthing/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -16,7 +16,7 @@
   <a href="https://github.com/ael-dev3/Allthing/releases"><img src="https://img.shields.io/github/v/release/ael-dev3/Allthing?sort=semver" alt="Latest release"></a>
 </p>
 
-Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. No account is needed to read, and Allthing posts nothing itself: a signed-in reader's cast opens in the Farcaster app, which posts it.
+Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. No account is needed to read. A signed-in reader can like and recast with a key they approve in the Farcaster app, which stays in their browser; a cast they write opens in the Farcaster app, which posts it.
 
 **Live at [allthing.social](https://allthing.social).**
 
@@ -35,7 +35,8 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Provenance.** Each cast names the app that registered its signing key. [docs/PROVENANCE.md](docs/PROVENANCE.md) studies what Snapchain and Hypersnap record, and proposes how a node, and then the protocol, could record the client and the entry point verifiably.
 - **Less noise, judged by content.** Casts that embed or link to mini apps or frames, which Allthing doesn't run, and spam caught by a few fixed content rules are left out by the Worker. Nothing is hidden because of who posted it.
 - **Fast and frugal.** Each page makes one API call (profiles, and profile cards as they open, also look up wallets and the vote). Posts open instantly from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. The Worker caches every payload at the edge, so the whole site runs on the Cloudflare Workers Free plan.
-- **Sign in with Farcaster.** Scan a QR code with your phone's camera and approve in the Farcaster app: your picture appears in the header. A click on it opens your profile; hovering it shows a menu with Sign out. Signing in only says who is reading; Allthing gets no signer and posts nothing.
+- **Sign in with Farcaster.** Scan a QR code with your phone's camera and approve in the Farcaster app: your picture appears in the header. A click on it opens your profile; hovering it shows a menu with Sign out. Signing in only says who is reading.
+- **Like and recast.** Signed in, the first like or recast asks for a key once: scan a QR code and approve Allthing in the Farcaster app. The key stays in your browser, where it signs; Allthing's servers never see it. From then on, the heart and recast icons under each cast like and recast, and undo it. Signing out deletes the key.
 - **Write, with a GIF.** Signed in, the header's Cast button and Reply under a post open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)). Post in Farcaster opens the draft in the Farcaster app, ready to post.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
@@ -97,7 +98,7 @@ Playwright starts `wrangler dev` on port 8787 by itself. CI runs `check.sh` and 
 
 ## Contributing
 
-Bug reports, fixes and focused improvements are welcome, within Allthing's scope: it reads, and its one sign-in is Farcaster's. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules, the workflow and the checks, and follow the [code of conduct](CODE_OF_CONDUCT.md). Commits and pull request titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), each change a reader or operator would notice gets a line in the [changelog](CHANGELOG.md), and versions follow [Semantic Versioning](https://semver.org) ([docs/RELEASING.md](docs/RELEASING.md)).
+Bug reports, fixes and focused improvements are welcome, within Allthing's scope: it reads, its one sign-in is Farcaster's, and it writes only what a reader asks for, with a key they approved. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules, the workflow and the checks, and follow the [code of conduct](CODE_OF_CONDUCT.md). Commits and pull request titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), each change a reader or operator would notice gets a line in the [changelog](CHANGELOG.md), and versions follow [Semantic Versioning](https://semver.org) ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ## Security
 

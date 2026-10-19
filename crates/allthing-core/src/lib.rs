@@ -9,6 +9,7 @@
 //! avoids heavy dependencies (no regex, URL or date crates).
 
 pub mod api;
+pub mod app_key;
 pub mod channels;
 pub mod clients;
 pub mod compose;
@@ -19,6 +20,7 @@ pub mod hls;
 pub mod index;
 pub mod latest;
 pub mod listing;
+pub mod message;
 pub mod model;
 pub mod normalize;
 pub mod params;

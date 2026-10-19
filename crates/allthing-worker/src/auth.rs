@@ -15,11 +15,14 @@
 //!
 //! Sessions are stateless: changing `SESSION_SECRET` signs everyone out.
 //! Nothing here posts anything; signing in only says who is reading. A
-//! session also gets the GIF picker's key (`gif_key`).
+//! session also gets the GIF picker's key (`gif_key`), and the Worker's
+//! endorsement of an app key its browser made (`signer`, see
+//! `crate::app_key`), which the reader then approves in their Farcaster app.
 
 use std::fmt::Write as _;
 use std::rc::Rc;
 
+use allthing_core::app_key::{ENDORSEMENT_TTL, Endorse, Writes, is_key_request_link, parse_public_key};
 use allthing_core::compose::GifKey;
 use allthing_core::model::UserSummary;
 use allthing_core::normalize;
@@ -37,7 +40,7 @@ use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 use worker::{Env, Headers, Method, Request, Response, Result, Url};
 
-use crate::error;
+use crate::{app_key, error};
 
 /// What a session cookie's and a pending sign-in's signatures are for, so
 /// one can never stand in for the other.
@@ -64,12 +67,22 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
     let now = (inv.now() / 1000.0) as i64;
     match name {
         "qr" => match read_json::<QrRequest>(&mut req).await {
-            Some(QrRequest { url }) if is_app_link(&url) => match qr_code(&url) {
+            Some(QrRequest { url }) if is_app_link(&url) || is_key_request_link(&url) => match qr_code(&url) {
                 Some(code) => json(&code, &[]),
                 None => error(400, "That link is too long for a QR code", None),
             },
-            _ => error(400, "Expected {\"url\": a Farcaster sign-in link}", None),
+            _ => error(400, "Expected {\"url\": a Farcaster sign-in or key request link}", None),
         },
+        "signer" => {
+            if signed_in_fid(&req, env, now)?.is_none() {
+                return error(401, "Sign in to like and recast from Allthing", None);
+            }
+            let Some(app) = app_key::app(env) else { return error(404, WRITES_UNSET, None) };
+            match read_json::<Endorse>(&mut req).await.and_then(|asked| parse_public_key(&asked.key)) {
+                Some(key) => json(&app.endorse(&key, (now + ENDORSEMENT_TTL) as u64), &[]),
+                None => error(400, "Expected {\"key\": an Ed25519 public key, 0x and 64 hex digits}", None),
+            }
+        }
         "signout" => json(&serde_json::json!({}), &[&clear(SESSION_COOKIE), &clear(USER_COOKIE)]),
         "start" | "verify" => {
             let Some(secret) = session_secret(env) else {
@@ -130,6 +143,38 @@ fn session_fid(secret: &[u8], value: &str, now: i64) -> Option<u64> {
     fid.parse().ok().filter(|fid| current && *fid > 0)
 }
 
+/// Who the request's session cookie signs in, if anyone.
+fn signed_in_fid(req: &Request, env: &Env, now: i64) -> Result<Option<u64>> {
+    let cookies = req.headers().get("cookie")?.unwrap_or_default();
+    Ok(session_secret(env).and_then(|secret| {
+        cookie(&cookies, SESSION_COOKIE).and_then(|value| session_fid(secret.as_bytes(), value, now))
+    }))
+}
+
+const WRITES_UNSET: &str = "Liking and recasting from Allthing isn't set up on this server";
+
+/// `GET /api/v1/signer`: whether this server endorses app keys, so a
+/// signed-in reader's casts show the like and recast buttons, and for which
+/// account. 404 without the `ALLTHING_FID` and `ALLTHING_CUSTODY_KEY`
+/// secrets, and then there are none. It makes no subrequest.
+pub fn writes(req: &Request, env: &Env, now: i64) -> Result<Response> {
+    let signed_in = signed_in_fid(req, env, now)?.is_some();
+    let app_fid = app_key::app(env).map(|app| app.fid);
+    let (status, cache, message) = match (signed_in, app_fid) {
+        (false, _) => (401, "no-store", "Sign in to like and recast from Allthing"),
+        (true, None) => (404, "no-store", WRITES_UNSET),
+        (true, Some(_)) => (200, "private, max-age=3600", ""),
+    };
+    let headers = Headers::new();
+    headers.set("content-type", "application/json; charset=utf-8")?;
+    headers.set("cache-control", cache)?;
+    let response = match app_fid.filter(|_| status == 200) {
+        Some(app_fid) => Response::from_json(&Writes { app_fid })?,
+        None => Response::from_json(&allthing_core::api::ApiError { error: message.to_owned(), retry_after: None })?,
+    };
+    Ok(response.with_status(status).with_headers(headers))
+}
+
 /// `GET /api/v1/gifs/key`: KLIPY's app key, from the `KLIPY_API_KEY`
 /// secret, for a signed-in reader's GIF picker. KLIPY requires its API and
 /// its media to be reached from the reader's browser, never through a
@@ -138,10 +183,7 @@ fn session_fid(secret: &[u8], value: &str, now: i64) -> Option<u64> {
 /// 404 when the secret is unset: the composer then has no GIF button. It
 /// makes no subrequest.
 pub fn gif_key(req: &Request, env: &Env, now: i64) -> Result<Response> {
-    let cookies = req.headers().get("cookie")?.unwrap_or_default();
-    let signed_in = session_secret(env).is_some_and(|secret| {
-        cookie(&cookies, SESSION_COOKIE).and_then(|value| session_fid(secret.as_bytes(), value, now)).is_some()
-    });
+    let signed_in = signed_in_fid(req, env, now)?.is_some();
     let (status, key, cache) = gif_key_answer(signed_in, klipy_key(env));
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

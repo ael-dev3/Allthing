@@ -19,3 +19,5 @@ pub mod signin;
 pub mod text;
 pub mod thread;
 pub mod who;
+#[cfg(not(feature = "static-host"))]
+pub mod writer;
