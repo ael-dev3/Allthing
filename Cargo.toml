@@ -35,7 +35,7 @@ worker = "0.8"
 
 # Both WebAssembly targets ship over the network: optimize for size.
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
