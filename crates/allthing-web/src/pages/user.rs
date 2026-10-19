@@ -200,6 +200,9 @@ fn WalletsButton(addresses: Vec<(&'static str, String)>) -> impl IntoView {
             label="Verified wallets"
             trigger_label=format!("Show {count} verified wallet{}", if count == 1 { "" } else { "s" })
             trigger_class="wallets-button"
+            // Hover and keyboard focus open it on screens that hover; a tap
+            // or click still toggles it.
+            hover=true
             trigger=move || view! { "Wallets" <span class="badge">{count}</span> }
             content=move || view! {
                 <ul class="wallet-list">
