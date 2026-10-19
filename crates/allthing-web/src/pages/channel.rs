@@ -85,15 +85,15 @@ pub fn ChannelPage() -> impl IntoView {
                 let pool: Vec<Cast> =
                     top_level(&payload.pool).into_iter().filter(|c| Some(&c.hash) != pinned_hash.as_ref()).collect();
                 let casts = Signal::derive(move || sorted(&pool, sort.get()));
-                // Hypersnap's count of casters, when the header shows the
-                // Farcaster app's member and follower counts instead.
+                // The count of accounts that have cast here, when the header
+                // shows the Farcaster app's member and follower counts instead.
                 let casters =
                     channel.casters.filter(|_| channel.follower_count.is_some() || channel.member_count.is_some());
                 let feed = channel.parent_url.clone();
                 let side = view! {
                     <SideBox title="About this channel">
                         {casters.map(|n| view! {
-                            <p title="Counted by Hypersnap from the channel's casts.">
+                            <p>
                                 <strong>{full_number(n)}</strong>{if n == 1 { " account has cast here" } else { " accounts have cast here" }}
                             </p>
                         })}
