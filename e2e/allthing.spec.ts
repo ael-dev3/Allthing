@@ -552,7 +552,7 @@ test.describe("profiles", () => {
     await expect(page.locator(".profile .fact", { hasText: "Joined" }).locator("dd")).toHaveText("18 Nov 2022");
 
     // The side area holds only the wallet infographic.
-    const wallets = page.locator(".side .wallets");
+    const wallets = page.locator(".profile-wallets");
     await expect(wallets.locator(".share-bar")).toBeVisible();
     await expect(wallets.locator(".share-list li").first()).toContainText(/%/);
     await expect(wallets.locator(".share-list")).toContainText("Base");

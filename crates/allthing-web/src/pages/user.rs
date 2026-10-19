@@ -64,10 +64,9 @@ pub fn UserPage() -> impl IntoView {
                 // An account a page showed: its header at once, from what the
                 // visit knows; its casts once the payload arrives.
                 Some(preview) => {
-                    let side = view! { <WalletPanel user=preview.user.clone()/> }.into_any();
                     let path = user_href(&preview.user.username);
                     view! {
-                        <Columns side class="profile-columns">
+                        <Columns class="profile-columns">
                             <ProfileHeader user=preview.user has_card=preview.has_card joined=preview.joined/>
                             <ProfileTabs path replies_tab sort/>
                             <CastSkeletons count=3/>
@@ -96,9 +95,8 @@ pub fn UserPage() -> impl IntoView {
                 let casts = Signal::derive(move || {
                     if replies_tab.get() { replies_only(&pool) } else { sorted(&top_level(&pool), sort.get()) }
                 });
-                let side = view! { <WalletPanel user=user.clone()/> }.into_any();
                 view! {
-                    <Columns side class="profile-columns">
+                    <Columns class="profile-columns">
                         <ProfileHeader user=user.clone() has_card=true joined=user.joined()/>
                         <ProfileTabs path replies_tab sort/>
                         <StaleNotice stale/>
@@ -164,14 +162,16 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid=user.fid/>
             </dl>
+            <WalletTile user=user.clone()/>
         </section>
     }
 }
 
 /// Wallet activity by chain, loaded separately because it queries many RPCs,
-/// with the account's verified addresses one click away.
+/// with the account's verified addresses one click away. It sits with the
+/// profile's facts.
 #[component]
-fn WalletPanel(user: User) -> impl IntoView {
+fn WalletTile(user: User) -> impl IntoView {
     let fid = user.fid;
     let addresses: Vec<(&'static str, String)> = user
         .eth_addresses
@@ -180,7 +180,7 @@ fn WalletPanel(user: User) -> impl IntoView {
         .chain(user.sol_addresses.iter().map(|a| ("SOL", a.clone())))
         .collect();
     view! {
-        <section class="wallets side-box" aria-label="Wallet activity by chain">
+        <section class="wallets profile-wallets" aria-label="Wallet activity by chain">
             <div class="wallets-head">
                 <h2>"Wallet activity"</h2>
                 {(!addresses.is_empty()).then(|| view! { <WalletsButton addresses=addresses.clone()/> })}
