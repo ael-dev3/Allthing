@@ -5,7 +5,9 @@
 //! A preview whose data the client cache already holds renders it in the
 //! frame it opens, without "Loading…": feeds preload who liked and recasted
 //! the cards in view (`crate::preload`), and hovering a card prefetches its
-//! post, whose thread holds the replies.
+//! post, whose thread holds the replies. Once the reader shows interest in
+//! a preview's list, the votes and wallets of the people it names load too,
+//! so a card opened from a row is complete at once.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -26,7 +28,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::{Avatar, TimeAgo};
 use crate::components::profile_card::ProfileHover;
-use crate::util::{cast_href, user_href};
+use crate::util::{can_hover, cast_href, user_href};
 
 /// The open full who-list, if any: (cast hash, which reactions).
 #[derive(Clone, Copy)]
@@ -72,18 +74,42 @@ fn heading(kind: ReactionKind) -> &'static str {
     }
 }
 
+/// What starts loading the votes and wallets of the people a preview lists
+/// (`api::prefetch_row_facts`): the reader's pointer or keyboard focus
+/// coming into the list, once, rather than every list a passing pointer
+/// opens; on a touch screen, where a tap opened the list, at once.
+fn row_interest(fids: Vec<u64>) -> Callback<()> {
+    let done = StoredValue::new(false);
+    let preload = Callback::new(move |()| {
+        if !done.get_value() {
+            done.set_value(true);
+            api::prefetch_row_facts(&fids);
+        }
+    });
+    if !can_hover() {
+        preload.run(());
+    }
+    preload
+}
+
 /// People who reacted, each linking to their profile, and each showing the
 /// person's profile card: in the full list, in its dialog; in the short
-/// list, beside the preview's panel, so the card never covers the names. A
-/// card reads its vote and wallets when it opens, as cards elsewhere do: a
-/// list of ten names preloading theirs would cost twenty requests a hover.
+/// list, beside the preview's panel, so the card never covers the names.
+/// The short list's people have their votes and wallets preloaded
+/// ([`row_interest`]); the full list's cards read theirs when they open.
 #[component]
 fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bool) -> impl IntoView {
     // Their bios, counts and join dates come with the list: a card opened
     // from it shows them at once.
     api::remember_cards(&payload.cards);
+    let interest = (!cards).then(|| row_interest(payload.users.iter().map(|u| u.fid).collect()));
+    let interested = move || {
+        if let Some(interest) = interest {
+            interest.run(());
+        }
+    };
     view! {
-        <ul class="who-list">
+        <ul class="who-list" on:pointerenter=move |_| interested() on:focusin=move |_| interested()>
             {payload.users.iter().map(|u| {
                 let href = user_href(&u.username);
                 let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
@@ -283,10 +309,18 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                 Some(Ok(fetched)) => {
                     let payload = fetched.data.clone();
                     // The authors' bios, counts and join dates come with the
-                    // replies: a card opened from a name shows them at once.
+                    // replies: a card opened from a name shows them at once,
+                    // and so do their votes and wallets, once preloaded.
                     api::remember_cards(&payload.notes.users);
+                    let mut authors: Vec<u64> = Vec::new();
+                    for reply in &payload.replies {
+                        if !authors.contains(&reply.author.fid) {
+                            authors.push(reply.author.fid);
+                        }
+                    }
+                    let interest = row_interest(authors);
                     view! {
-                        <ul class="reply-items">
+                        <ul class="reply-items" on:pointerenter=move |_| interest.run(()) on:focusin=move |_| interest.run(())>
                             {payload.replies.iter().map(|reply| {
                                 let thumbs: Vec<String> = reply.embeds.iter().filter_map(|e| match e {
                                     Embed::Image { url } => Some(resized_image_url(url, ImageSize::Thumb)),

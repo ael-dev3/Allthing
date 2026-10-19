@@ -2899,6 +2899,14 @@ code {
   padding: 14px 14px 10px;
   line-height: 1.45;
   white-space: normal;
+  transition: opacity 0.12s ease;
+}
+
+/* A card whose vote and wallets are still on their way stays out of sight
+   for a moment (half a second at most), so it never shows them loading or
+   grows when they come. */
+.popover-panel.profile-card:has(> .profile-card-body.settling) {
+  opacity: 0;
 }
 
 .profile-card-head {

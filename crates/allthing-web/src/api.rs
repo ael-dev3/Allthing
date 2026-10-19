@@ -89,6 +89,9 @@ thread_local! {
     /// Accounts whose card facts were queued this visit, and when the count
     /// last started over.
     static CARD_ACCOUNTS: RefCell<(f64, std::collections::HashSet<u64>)> = RefCell::new((0.0, std::collections::HashSet::new()));
+    /// The people of likes, recasts and replies previews whose card facts
+    /// were queued, apart from feed authors', and when the count started.
+    static ROW_ACCOUNTS: RefCell<(f64, std::collections::HashSet<u64>)> = RefCell::new((0.0, std::collections::HashSet::new()));
     /// Casts already shown in a feed, so their post page can render at once.
     static SEEN_CASTS: RefCell<HashMap<String, allthing_core::model::Cast>> = RefCell::new(HashMap::new());
     /// Profile cards of the accounts pages have shown (fid -> card), for
@@ -324,6 +327,59 @@ pub fn prefetch_card_facts(fid: u64) {
         });
         pump_cards();
     }
+}
+
+/// The people of likes, recasts and replies previews whose card facts are
+/// preloaded per 5 minutes, at most, on top of feed authors'.
+const ROW_ACCOUNTS_PER_WINDOW: usize = 20;
+
+/// Load the vote and wallet activity of the people a likes, recasts or
+/// replies preview lists, so a card opened from one of its rows is complete
+/// at once. They go ahead of feed authors' in the card queue, in the list's
+/// order, two in flight; anyone whose facts are kept or on their way is
+/// skipped, at most [`ROW_ACCOUNTS_PER_WINDOW`] people are queued per five
+/// minutes, and none on Save-Data or 2g. Unlike feed authors', they load on
+/// touch screens too: a list opened with a tap is a reader about to tap a
+/// name. Both endpoints are edge-cached for an hour or more.
+pub fn prefetch_row_facts(fids: &[u64]) {
+    if constrained_network() {
+        return;
+    }
+    let now = js_sys::Date::now();
+    let mut wanted = Vec::new();
+    for &fid in fids {
+        let paths = [allthing_core::api::vote_path(fid), allthing_core::api::wallets_path(fid)];
+        // Queued already (as a feed author's, say): moved to the front.
+        let missing: Vec<String> = paths.into_iter().filter(|path| !kept_or_loading(path, now)).collect();
+        if fid == 0 || missing.is_empty() {
+            continue;
+        }
+        let allowed = ROW_ACCOUNTS.with(|a| {
+            let mut a = a.borrow_mut();
+            if now - a.0 > CARD_WINDOW_MS {
+                *a = (now, std::collections::HashSet::new());
+            }
+            a.1.contains(&fid) || (a.1.len() < ROW_ACCOUNTS_PER_WINDOW && a.1.insert(fid))
+        });
+        if !allowed {
+            break;
+        }
+        wanted.extend(missing);
+    }
+    CARD_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        q.retain(|path| !wanted.contains(path));
+        for path in wanted.into_iter().rev() {
+            q.push_front(path);
+        }
+    });
+    pump_cards();
+}
+
+/// Whether `path` is kept fresh or being read.
+fn kept_or_loading(path: &str, now: f64) -> bool {
+    CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < ttl(path) && r.status == 200))
+        || IN_FLIGHT.with(|f| f.borrow().contains(path))
 }
 
 /// Start queued card reads while prefetch slots are free.
