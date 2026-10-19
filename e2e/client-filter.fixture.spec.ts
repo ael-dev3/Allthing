@@ -57,4 +57,6 @@ test("Other apps lists the smaller clients, and each one filters", async ({ page
   await expect(page).toHaveURL(/client=7777/);
   await expect(page.locator(".cast-card:not(.skeleton)")).toHaveCount(2);
   await expect(page.locator(".client-chip")).toContainText("Tiny app");
+  // The list closes after a pick, so it doesn't cover the chip.
+  await expect(list).toBeHidden();
 });
