@@ -37,6 +37,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Removed
 
+- The temporary per-stage marks in API answers' `Server-Timing` header, added to measure uncached profile builds, are gone now that the measuring is done. The header still carries the Worker's total time and how the answer was served.
 - Profiles and profile cards no longer show the Farcaster app's spam label for an account ("Labeled likely spam", "Not labeled spam", "Nerfed", "no label") or the note that came with it. The label shards the build compacted from that app's public dataset are gone too, with the `cargo xtask labels` task, and builds no longer download the 125 MB dataset. Leaving out spam by a cast's content is unchanged.
 
 ### Fixed
