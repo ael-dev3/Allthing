@@ -565,7 +565,8 @@ fn GifTile(gif: Gif, picked: Callback<Gif>) -> impl IntoView {
     view! {
         <li>
             <button type="button" class="gif-tile" title=title.clone() aria-label=title on:click=move |_| picked.run(gif.clone())>
-                <img src=src width=width height=height alt="" loading="lazy" decoding="async"/>
+                // In view as the picker opens: not left to lazy loading.
+                <img src=src width=width height=height alt="" decoding="async"/>
             </button>
         </li>
     }
