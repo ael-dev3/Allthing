@@ -325,16 +325,20 @@ impl RawUserSearch {
     }
 }
 
-/// Only the fields a [`UserSummary`] shows. A reaction list holds up to 100
-/// full user objects (about 1.2 KB each, with bios and addresses), and a
-/// batch of previews reads up to 16 lists: declaring just these keeps
-/// parsing them cheap.
+/// Only the fields a [`UserSummary`] and a profile card ([`UserCard`]) show.
+/// A reaction list holds up to 100 full user objects (about 1.2 KB each,
+/// most of it addresses and verifications), and a batch of previews reads up
+/// to 12 lists: declaring just these keeps parsing them cheap.
 #[derive(Debug, Default, Deserialize)]
 pub struct RawUserSummary {
     pub fid: u64,
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub pfp_url: Option<String>,
+    pub profile: Option<RawProfile>,
+    pub follower_count: Option<u64>,
+    pub following_count: Option<u64>,
+    pub registered_at: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -430,15 +434,38 @@ pub fn user(raw: &RawUser) -> User {
 /// object that comes with each cast. `None` when it carries none of them,
 /// rather than a card claiming no followers.
 pub fn user_card(raw: &RawUser) -> Option<UserCard> {
-    let bio = raw.profile.as_ref().and_then(|p| p.bio.as_ref()).and_then(|b| b.text.as_deref());
-    if bio.is_none() && raw.follower_count.is_none() && raw.following_count.is_none() && raw.registered_at.is_none() {
+    card(raw.profile.as_ref(), raw.follower_count, raw.following_count, raw.registered_at.as_deref())
+}
+
+/// Profile cards for the people a reactions list names (`listed`), from the
+/// user objects the reactions come with: no request of their own.
+pub fn reactor_cards(raw: &[RawReaction], listed: &[UserSummary]) -> BTreeMap<u64, UserCard> {
+    raw.iter()
+        .filter_map(|reaction| reaction.user.as_ref())
+        .filter(|user| listed.iter().any(|u| u.fid == user.fid))
+        .filter_map(|user| {
+            let card =
+                card(user.profile.as_ref(), user.follower_count, user.following_count, user.registered_at.as_deref());
+            Some((user.fid, card?))
+        })
+        .collect()
+}
+
+fn card(
+    profile: Option<&RawProfile>,
+    followers: Option<u64>,
+    following: Option<u64>,
+    registered_at: Option<&str>,
+) -> Option<UserCard> {
+    let bio = profile.and_then(|p| p.bio.as_ref()).and_then(|b| b.text.as_deref());
+    if bio.is_none() && followers.is_none() && following.is_none() && registered_at.is_none() {
         return None;
     }
     Some(UserCard {
         bio: bio.map(|b| bio_excerpt(b, CARD_BIO_CHARS)).unwrap_or_default(),
-        followers: raw.follower_count.unwrap_or(0),
-        following: raw.following_count.unwrap_or(0),
-        registered_at: raw.registered_at.as_deref().and_then(parse_rfc3339),
+        followers: followers.unwrap_or(0),
+        following: following.unwrap_or(0),
+        registered_at: registered_at.and_then(parse_rfc3339),
         first_username_at: None,
     })
 }
@@ -796,6 +823,30 @@ mod tests {
         let (all, more) = reactors(&raw.reactions, 100);
         assert_eq!((all.len(), more), (13, false));
         assert_eq!(all.last().map(|u| u.username.as_str()), Some("shiory"));
+    }
+
+    #[test]
+    fn a_reactions_list_carries_the_cards_of_the_people_it_names() {
+        let raw: RawReactionList = serde_json::from_str(&fixture("hypersnap-reactions-likes.json")).unwrap();
+        let (newest, _) = reactors(&raw.reactions, 5);
+        let cards = reactor_cards(&raw.reactions, &newest);
+        // The five listed, not the others, each with what its user object says.
+        let listed: Vec<u64> = newest.iter().map(|u| u.fid).collect();
+        assert_eq!(cards.len(), 5);
+        assert!(cards.keys().all(|fid| listed.contains(fid)));
+        let chiilla = newest.iter().find(|u| u.username == "chiilla").unwrap();
+        assert!(cards[&chiilla.fid].followers > 0 && cards[&chiilla.fid].registered_at.is_some());
+
+        let with_bio: RawReactionList = serde_json::from_str(
+            r#"{"reactions":[{"reaction_timestamp":"2026-10-17T10:00:00.000Z","user":{"fid":7,"username":"seven",
+                "profile":{"bio":{"text":"Reads conversations."}},"follower_count":12,"following_count":3,
+                "registered_at":"2024-02-05T12:56:57.000Z","verified_addresses":{"eth_addresses":["0x01"]}}}]}"#,
+        )
+        .unwrap();
+        let (listed, _) = reactors(&with_bio.reactions, 10);
+        let card = &reactor_cards(&with_bio.reactions, &listed)[&7];
+        assert_eq!((card.bio.as_str(), card.followers, card.following), ("Reads conversations.", 12, 3));
+        assert_eq!(card.registered_at, Some(1_707_137_817));
     }
 
     #[test]
