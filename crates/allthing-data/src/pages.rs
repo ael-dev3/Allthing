@@ -40,6 +40,9 @@ const ORIGIN_AUTHORS: usize = 12;
 /// Subrequests that reading a listing's quoted casts leaves to the rest of
 /// the build: app names and the cache write.
 const QUOTES_RESERVE: u32 = 2;
+/// How many levels of quotes a listing carries: a quote of a quote of a
+/// quote, and no further (its quote shows as a link).
+const QUOTE_DEPTH: usize = 3;
 /// Preloaded previews never take Hypersnap's per-isolate bucket (40 tokens)
 /// below this, so page builds in the same isolate keep their share: two
 /// full batches (12 reads each) fit above it.
@@ -106,15 +109,29 @@ async fn quoted_casts(
     mut known: BTreeMap<String, Cast>,
 ) -> (BTreeMap<String, Cast>, BTreeMap<u64, UserCard>) {
     quotes::retain_quoted(&mut known, casts);
-    let missing = quotes::missing(casts, &known, hypersnap::MAX_BULK_CASTS);
-    if missing.is_empty() || inv.remaining_subrequests() <= QUOTES_RESERVE {
-        return (known, BTreeMap::new());
+    let mut cards = BTreeMap::new();
+    // Level one is the quotes of the listed casts; each later level is the
+    // quotes of the one before, so a quote inside a quote shows inline. Each
+    // level is one bulk read, made only while the build's budget keeps
+    // [`QUOTES_RESERVE`].
+    let mut from: Vec<Cast> = Vec::new();
+    for level in 0..QUOTE_DEPTH {
+        let sources: &[Cast] = if level == 0 { casts } else { &from };
+        let missing = quotes::missing(sources, &known, hypersnap::MAX_BULK_CASTS);
+        if missing.is_empty() || inv.remaining_subrequests() <= QUOTES_RESERVE {
+            break;
+        }
+        let Ok(found) = hypersnap::casts_bulk(inv, &missing).await else { break };
+        let mut added = Vec::new();
+        for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
+            let quote = quotes::as_quote(cast);
+            known.insert(quote.hash.clone(), quote.clone());
+            added.push(quote);
+        }
+        cards.extend(normalize::author_cards(&found));
+        from = added;
     }
-    let Ok(found) = hypersnap::casts_bulk(inv, &missing).await else { return (known, BTreeMap::new()) };
-    for cast in found.iter().map(normalize::cast).filter(|c| missing.contains(&c.hash)) {
-        known.insert(cast.hash.clone(), quotes::as_quote(cast));
-    }
-    (known, normalize::author_cards(&found))
+    (known, cards)
 }
 
 /// Check a quote's own links before stripping hidden content. The outer
@@ -1319,6 +1336,59 @@ mod quote_tests {
         let (again, cards) = quoted_casts(&inv, &pool, quotes.clone()).now_or_never().unwrap();
         assert_eq!((again, cards), (quotes, BTreeMap::new()));
         assert_eq!(host.requests.borrow().len(), 1);
+    }
+
+    /// Serves casts whose embeds quote the next cast of a chain: each hash
+    /// quotes the one in `next`, if any.
+    struct Chain {
+        next: BTreeMap<&'static str, &'static str>,
+        requests: RefCell<usize>,
+    }
+
+    impl Host for Chain {
+        fn now(&self) -> f64 {
+            1000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            *self.requests.borrow_mut() += 1;
+            let casts: Vec<serde_json::Value> = requested(&request.url)
+                .into_iter()
+                .map(|hash| {
+                    let embeds: Vec<serde_json::Value> = self
+                        .next
+                        .get(hash)
+                        .map(|quoted| vec![json!({ "cast_id": { "hash": quoted, "fid": 2 } })])
+                        .unwrap_or_default();
+                    json!({
+                        "hash": hash,
+                        "text": format!("cast {hash}"),
+                        "timestamp": "2026-10-17T00:00:00Z",
+                        "author": { "fid": 2, "username": "quoted" },
+                        "embeds": embeds,
+                    })
+                })
+                .collect();
+            let body = serde_json::to_vec(&json!({ "casts": casts })).unwrap();
+            let response = Ok(HttpResponse { status: 200, retry_after: None, body: Some(body) });
+            async move { response }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    #[test]
+    fn a_quote_of_a_quote_comes_along_to_three_levels_and_no_further() {
+        // 0x01 quotes 0xb1, which quotes 0xc1, which quotes 0xd1, which quotes 0xe1.
+        let host = Rc::new(Chain {
+            next: BTreeMap::from([("0xb1", "0xc1"), ("0xc1", "0xd1"), ("0xd1", "0xe1")]),
+            requests: RefCell::new(0),
+        });
+        let inv = Invocation::new(host.clone(), 45);
+        let pool = [cast("0x01", &["0xb1"])];
+        let (quotes, _) = quoted_casts(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
+        assert_eq!(quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xc1", "0xd1"]);
+        assert_eq!(*host.requests.borrow(), 3, "one bulk read per level");
     }
 
     #[test]

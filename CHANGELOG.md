@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- A quote of a quote shows inline, up to three levels: a quoted cast that quotes another shows that quote as a card, and so on. A quote beyond the third is a link, as before. Each level costs one bulk read in a listing's build, made while the build has budget to spare.
 - The Wallets button on a profile opens its list of verified addresses on hover or keyboard focus, on screens that hover, as the other popovers do. A tap or click still toggles it.
 - Wallet activity by chain sits in the profile header, under the joined date and NS vote, instead of a sidebar card. It is the same chart and Wallets list, at the same width as the rest of the profile on phones.
 - Opening a post, a profile or a channel directly (from a link elsewhere, or a reload) starts its data request as soon as the page arrives, alongside the app's download, as the front page already did. Before, it waited for the app to boot, about 450 ms on production. It is still one API call.

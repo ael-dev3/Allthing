@@ -6,6 +6,7 @@ use allthing_core::profile::UserCard;
 use allthing_core::text::truncate_title;
 use leptos::prelude::*;
 
+use crate::Notes;
 use crate::components::chips::{TimeAgo, UserChip};
 use crate::components::media::MediaGrid;
 use crate::components::text::CastText;
@@ -16,6 +17,27 @@ use crate::util::cast_href;
 pub const FEED_QUOTE_CHARS: usize = 280;
 /// How much of it the post page shows.
 pub const POST_QUOTE_CHARS: usize = 400;
+/// Levels of quotes shown inline: a quote, a quote of it, and a quote of
+/// that. A quote beyond them is a link. The listing payload carries this many.
+pub const QUOTE_DEPTH: usize = 3;
+
+/// The quotes a cast makes, one level down from `depth` (0 for a feed's
+/// cast): each carried quote as a card, its own quotes nested in turn, and a
+/// link where the payload does not carry the quote or the depth is spent.
+pub fn nested_quotes(cast: &Cast, notes: Option<&Notes>, depth: usize) -> Vec<AnyView> {
+    cast.quoted()
+        .map(|hash| match notes.and_then(|n| n.quotes.get(hash).map(|q| (n, q))) {
+            Some((notes, quoted)) if depth < QUOTE_DEPTH => {
+                let author_card = notes.users.get(&quoted.author.fid).cloned();
+                view! {
+                    <QuoteCard cast=quoted.clone() author_card notes=Some(notes.clone()) depth=depth + 1/>
+                }
+                .into_any()
+            }
+            _ => quote_chip(hash),
+        })
+        .collect()
+}
 
 /// A link to a quoted cast that isn't shown as a card: one the payload
 /// doesn't carry, or a quote inside a quote.
@@ -42,6 +64,12 @@ pub fn QuoteCard(
     /// profile card.
     #[prop(optional_no_strip)]
     author_card: Option<UserCard>,
+    /// The payload's quotes, so a quote inside this one shows inline.
+    #[prop(optional_no_strip)]
+    notes: Option<Notes>,
+    /// This card's level: 1 for a quote of a listed cast.
+    #[prop(default = 1)]
+    depth: usize,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     let click = card_click(href.clone());
@@ -55,7 +83,7 @@ pub fn QuoteCard(
                 <div class="quote-text"><CastText text mentions=cast.mentions.clone()/></div>
             })}
             <MediaGrid cast=cast.clone() open_on_click/>
-            {cast.quoted().map(quote_chip).collect_view()}
+            {nested_quotes(&cast, notes.as_ref(), depth)}
         }
         .into_any()
     };

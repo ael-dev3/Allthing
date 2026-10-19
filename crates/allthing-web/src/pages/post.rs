@@ -184,7 +184,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             <LinkCards cast=cast.clone()/>
             {payload.quotes.iter().map(|quote| match &quote.cast {
                 Some(q) => view! {
-                    <QuoteCard cast=q.clone() open_on_click=true max_chars=POST_QUOTE_CHARS author_card=notes.users.get(&q.author.fid).cloned()/>
+                    <QuoteCard cast=q.clone() open_on_click=true max_chars=POST_QUOTE_CHARS author_card=notes.users.get(&q.author.fid).cloned() notes=Some(notes.clone())/>
                 }.into_any(),
                 None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
             }).collect_view()}
