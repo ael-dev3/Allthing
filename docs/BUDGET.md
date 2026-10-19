@@ -13,8 +13,6 @@ The relevant Free plan limits, as of October 2026:
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
 
-Wallet responses containing failed chains are checked once before they are sent, including cache hits, to remove private Solana diagnostics from older copies. This parses only the small wallet payload and takes no subrequest. Successful wallet payloads keep the byte-copy path; counts and cache lifetimes are unchanged.
-
 ## 1. What a page view costs
 
 The browser app is static. A page view runs the Worker for its one API call and nothing else:
@@ -121,6 +119,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 A quote's linked pages use the shared link-page quota above before hidden content is stripped. Feed quotes are checked alongside origins, and a busy build may defer their unknown links until a later refresh. Payloads carry only verdicts for the current ordinary and quoted links, while retaining a still-quoted cast's known verdict without another fetch. A hidden quote keeps its author and time; it does not hide the ordinary cast quoting it.
 
 ## 4. CPU time
+
+Wallet responses containing failed chains are checked once before they are sent, including cache hits, to remove private Solana diagnostics from older copies. This parses only the small wallet payload and takes no subrequest. Successful wallet payloads keep the byte-copy path; counts and cache lifetimes are unchanged.
 
 Parsing is the main CPU cost, and it happens only when a payload is (re)built. Measured natively at `opt-level = "z"`, the full parse, normalize and serialize step takes:
 

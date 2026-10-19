@@ -5,7 +5,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-- Keyed Solana RPC failures keep the private endpoint and provider content out of new and previously cached public wallet responses, while preserving counts, cache lifetimes, status, timeout and request-budget diagnostics.
+- Keyed Solana RPC failures keep the private endpoint and provider content out of public wallet error responses, while preserving status, timeout and request-budget diagnostics.
 
 ### Added
 
@@ -40,6 +40,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - The changelog's 0.4.0 entries are under their headings: sixteen fixes had landed above them, and four additions were filed as fixes. Two missing entries are back (the sound badge's quick second tap, and cards outside the window skipping layout), and the Solana entry says that allthing.social couldn't read Solana.
 - Wallet activity by chain follows the current rules even when the edge serves a payload it cached under older ones, which it keeps for hours. For up to a day after 0.4.0, a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.3% of its transactions). The browser now works out the shares from the counts itself.
 - Wallet activity says when Solana isn't counted. Solana's public RPC refuses Allthing's requests (from browsers, and so far from Cloudflare Workers), so an account's Solana wallets were left out of the chart without a word; an account whose only wallets are on Solana read "No onchain activity". The chart now says "Solana isn't counted: its public RPC refuses Allthing's requests", and the wallet payload's `sources` no longer claims Solana was read.
+- Older cached wallet responses also redact private Solana RPC diagnostics without losing counts, carried flags or cache policy.
 
 ## [0.4.0] - 2026-10-18
 
