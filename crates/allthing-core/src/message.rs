@@ -65,9 +65,120 @@ impl Reaction {
     }
 }
 
+/// The longest text a cast may have, in bytes. Over 320 bytes it is a
+/// "long cast", which every account may post; over 1,024 only Farcaster
+/// Pro's 10,000-byte casts, which Allthing doesn't offer.
+pub const MAX_CAST_BYTES: usize = 1024;
+const SHORT_CAST_BYTES: usize = 320;
+/// The most embeds (links and quoted casts) and mentions a cast may carry.
+pub const MAX_EMBEDS: usize = 2;
+pub const MAX_MENTIONS: usize = 10;
+/// The longest embedded link, in bytes.
+pub const MAX_URL_BYTES: usize = 256;
+
+/// What a cast embeds: a link (an image, a GIF, a page), or another cast,
+/// which it quotes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Embed {
+    Url(String),
+    Cast(CastId),
+}
+
+/// What a cast belongs to: the cast it replies to, or a channel's URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Parent {
+    Cast(CastId),
+    Url(String),
+}
+
+/// A new cast, as Farcaster stores it: its text without the accounts it
+/// mentions, which are listed apart with the byte offset each stood at, in
+/// order (`crate::text::split_mentions`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NewCast {
+    pub text: String,
+    pub mentions: Vec<(u64, u32)>,
+    pub embeds: Vec<Embed>,
+    pub parent: Option<Parent>,
+}
+
+impl NewCast {
+    /// Why the network would refuse it, if it would, in words a reader can
+    /// act on.
+    pub fn check(&self) -> Result<(), &'static str> {
+        if self.text.trim().is_empty() && self.embeds.is_empty() && self.mentions.is_empty() {
+            return Err("Write something, or add a GIF.");
+        }
+        if self.text.len() > MAX_CAST_BYTES {
+            return Err("That's too long for a cast: 1,024 bytes at most.");
+        }
+        if self.embeds.len() > MAX_EMBEDS {
+            return Err("A cast can carry two embeds at most.");
+        }
+        if self.mentions.len() > MAX_MENTIONS {
+            return Err("A cast can mention ten accounts at most.");
+        }
+        let urls = self.embeds.iter().filter_map(|e| match e {
+            Embed::Url(url) => Some(url),
+            Embed::Cast(_) => None,
+        });
+        let parent_url = match &self.parent {
+            Some(Parent::Url(url)) => Some(url),
+            _ => None,
+        };
+        if urls.chain(parent_url).any(|url| url.is_empty() || url.len() > MAX_URL_BYTES) {
+            return Err("A link in it is too long for a cast.");
+        }
+        let in_order = self.mentions.windows(2).all(|w| w[0].1 <= w[1].1);
+        if !in_order || self.mentions.iter().any(|(fid, at)| *fid == 0 || *at as usize > self.text.len()) {
+            return Err("Its mentions are out of place.");
+        }
+        Ok(())
+    }
+
+    /// `CastAddBody`, fields in order.
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if !self.mentions.is_empty() {
+            // Packed, as proto3 writes repeated numbers.
+            let mut fids = Vec::new();
+            for (fid, _) in &self.mentions {
+                varint(&mut fids, *fid);
+            }
+            nested(&mut out, 2, &fids);
+        }
+        if let Some(Parent::Cast(id)) = &self.parent {
+            nested(&mut out, 3, &cast_id(id));
+        }
+        bytes(&mut out, 4, self.text.as_bytes());
+        if !self.mentions.is_empty() {
+            let mut positions = Vec::new();
+            for (_, at) in &self.mentions {
+                varint(&mut positions, u64::from(*at));
+            }
+            nested(&mut out, 5, &positions);
+        }
+        for embed in &self.embeds {
+            let mut one = Vec::new();
+            match embed {
+                Embed::Url(url) => bytes(&mut one, 1, url.as_bytes()),
+                Embed::Cast(id) => nested(&mut one, 2, &cast_id(id)),
+            }
+            nested(&mut out, 6, &one);
+        }
+        if let Some(Parent::Url(url)) = &self.parent {
+            bytes(&mut out, 7, url.as_bytes());
+        }
+        // `CastType`: CAST (0, left out) or LONG_CAST (1).
+        uint(&mut out, 8, u64::from(self.text.len() > SHORT_CAST_BYTES));
+        out
+    }
+}
+
 /// What a message does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Body {
+    CastAdd(NewCast),
     ReactionAdd(Reaction, CastId),
     ReactionRemove(Reaction, CastId),
     Follow(u64),
@@ -80,6 +191,7 @@ impl Body {
     /// Its `MessageType`.
     fn message_type(&self) -> u64 {
         match self {
+            Body::CastAdd(_) => 1,
             Body::CastRemove(_) => 2,
             Body::ReactionAdd(..) => 3,
             Body::ReactionRemove(..) => 4,
@@ -92,6 +204,7 @@ impl Body {
     fn encode(&self) -> (u64, Vec<u8>) {
         let mut out = Vec::new();
         match self {
+            Body::CastAdd(cast) => (5, cast.encode()),
             Body::ReactionAdd(kind, target) | Body::ReactionRemove(kind, target) => {
                 uint(&mut out, 1, *kind as u64);
                 nested(&mut out, 2, &cast_id(target));
@@ -196,8 +309,13 @@ pub fn submitted(status: u16, body: &str) -> Submitted {
     } else if detail.contains("duplicate") {
         Submitted::Duplicate
     } else {
-        // Its message, without the gRPC framing around it.
+        // Its message, without the gRPC framing around it or Snapchain's
+        // code before it ("bad_request.validation_failure/").
         let message = detail.split("message: \"").nth(1).and_then(|m| m.split('"').next()).unwrap_or(&detail);
+        let message = match message.split_once('/') {
+            Some((code, words)) if code.starts_with("bad_request.") => words,
+            _ => message,
+        };
         Submitted::Refused(message.trim().to_owned())
     }
 }
@@ -215,6 +333,22 @@ pub fn reaction_url(fid: u64, kind: Reaction, target: &CastId) -> String {
         target.fid,
         percent_encode(&hex_encode(&target.hash))
     )
+}
+
+/// Who a username (an fname, or an ENS name such as `dwr.eth`) belongs to,
+/// for a mention. Names are lowercase.
+pub fn username_url(name: &str) -> String {
+    format!("{NODE}/v1/userNameProofByName?name={}", percent_encode(name))
+}
+
+/// The account in an answer to [`username_url`]: `Some(None)` when the name
+/// is no one's, `None` when the node couldn't say.
+pub fn username_fid(status: u16, body: &str) -> Option<Option<u64>> {
+    if status == 200 {
+        let proof = serde_json::from_str::<Value>(body).ok()?;
+        return Some(proof.get("fid").and_then(Value::as_u64).filter(|fid| *fid > 0));
+    }
+    (status == 400 && body.contains("NotFound")).then_some(None)
 }
 
 /// The account's registered keys.
@@ -439,11 +573,97 @@ mod tests {
         let unknown = r#"{"error":"Failed to submit message","error_detail":"status: InvalidArgument, message: \"bad_request.validation_failure/invalid signer\", details: [], metadata: MetadataMap { headers: {\"x-err-code\": \"bad_request.validation_failure\"} }"}"#;
         assert_eq!(submitted(400, unknown), Submitted::UnknownKey);
         let bad = unknown.replace("invalid signer", "invalid signature");
-        assert_eq!(submitted(400, &bad), Submitted::Refused("bad_request.validation_failure/invalid signature".into()));
+        assert_eq!(submitted(400, &bad), Submitted::Refused("invalid signature".into()));
+        let link =
+            unknown.replace("bad_request.validation_failure/invalid signer", "embed https://a.co/b is not allowed");
+        assert_eq!(submitted(400, &link), Submitted::Refused("embed https://a.co/b is not allowed".into()));
         let duplicate = unknown.replace("validation_failure/invalid signer", "duplicate");
         assert_eq!(submitted(400, &duplicate), Submitted::Duplicate);
         assert_eq!(submitted(502, "<html>Bad gateway</html>"), Submitted::Unavailable);
         assert_eq!(submitted(429, r#"{"error":"rate limited"}"#), Submitted::Unavailable);
         assert_eq!(submitted(400, "not json"), Submitted::Refused(String::new()));
+    }
+
+    // CastAddBody { mentions = 2 (packed), parent_cast_id = 3, text = 4,
+    // mentions_positions = 5 (packed), embeds = 6, parent_url = 7, type = 8 };
+    // Embed { url = 1, cast_id = 2 }; MessageData's cast_add_body is 5.
+
+    #[test]
+    fn a_cast_is_encoded_as_message_proto_says() {
+        let cast = NewCast { text: "gm".into(), ..NewCast::default() };
+        assert_eq!(
+            MessageData::new(7, EPOCH + 2, Body::CastAdd(cast)).encode(),
+            unhex("08 01  10 07  18 02  20 01  2a 04  22 02 676d")
+        );
+    }
+
+    #[test]
+    fn a_reply_with_a_mention_a_gif_and_a_quote() {
+        // "hi  and you": @alice (fid 300) at byte 3.
+        let cast = NewCast {
+            text: "hi  and you".into(),
+            mentions: vec![(300, 3)],
+            embeds: vec![Embed::Url("https://g.co/a.gif".into()), Embed::Cast(CastId::new(3, CAST).unwrap())],
+            parent: Some(Parent::Cast(CastId::new(2, CAST).unwrap())),
+        };
+        assert_eq!(cast.check(), Ok(()));
+        let body = unhex(
+            "12 02 ac 02
+             1a 18 08 02 12 14 0102030405060708090a0b0c0d0e0f1011121314
+             22 0b 6869202061 6e6420796f75
+             2a 01 03
+             32 14 0a 12 68747470733a2f2f672e636f2f612e676966
+             32 1a 12 18 08 03 12 14 0102030405060708090a0b0c0d0e0f1011121314",
+        );
+        let mut expected = unhex("08 01  10 07  18 02  20 01  2a");
+        expected.push(body.len() as u8);
+        expected.extend_from_slice(&body);
+        assert_eq!(MessageData::new(7, EPOCH + 2, Body::CastAdd(cast)).encode(), expected);
+    }
+
+    #[test]
+    fn a_cast_in_a_channel_and_a_long_cast() {
+        let url = "https://farcaster.xyz/~/channel/dev";
+        let cast = NewCast { text: "x".into(), parent: Some(Parent::Url(url.into())), ..NewCast::default() };
+        let mut expected = unhex("22 01 78 3a");
+        expected.push(url.len() as u8);
+        expected.extend_from_slice(url.as_bytes());
+        assert_eq!(cast.encode(), expected);
+        // Over 320 bytes: a long cast (type 1); at 320, a cast.
+        let short = NewCast { text: "a".repeat(320), ..NewCast::default() };
+        assert!(!short.encode().ends_with(&[0x40, 0x01]));
+        let long = NewCast { text: "a".repeat(321), ..NewCast::default() };
+        assert!(long.encode().ends_with(&[0x40, 0x01]));
+        assert_eq!(long.check(), Ok(()));
+    }
+
+    #[test]
+    fn a_cast_the_network_would_refuse_is_caught_first() {
+        let empty = NewCast { text: "  ".into(), ..NewCast::default() };
+        assert!(empty.check().is_err());
+        let gif_only = NewCast { embeds: vec![Embed::Url("https://g.co/a.gif".into())], ..NewCast::default() };
+        assert_eq!(gif_only.check(), Ok(()));
+        assert!(NewCast { text: "a".repeat(1025), ..NewCast::default() }.check().is_err());
+        let three = vec![Embed::Url("https://a.co".into()); 3];
+        assert!(NewCast { text: "x".into(), embeds: three, ..NewCast::default() }.check().is_err());
+        let long_url = vec![Embed::Url(format!("https://a.co/{}", "x".repeat(250)))];
+        assert!(NewCast { text: "x".into(), embeds: long_url, ..NewCast::default() }.check().is_err());
+        let unordered = NewCast { text: "a  b".into(), mentions: vec![(1, 3), (2, 1)], ..NewCast::default() };
+        assert!(unordered.check().is_err());
+        let beyond = NewCast { text: "a".into(), mentions: vec![(1, 2)], ..NewCast::default() };
+        assert!(beyond.check().is_err());
+        let many = NewCast { text: "x".into(), mentions: vec![(1, 0); 11], ..NewCast::default() };
+        assert!(many.check().is_err());
+    }
+
+    #[test]
+    fn a_username_is_looked_up_for_a_mention() {
+        assert_eq!(username_url("dwr.eth"), "https://haatz.quilibrium.com/v1/userNameProofByName?name=dwr.eth");
+        // As Hypersnap answered on 19 October 2026.
+        let found = r#"{"timestamp":1623910375,"name":"dwr","owner":"0x74232bf61e994655592747e20bdf6fa9b9476f79","signature":"6+jZ","fid":3,"type":"USERNAME_TYPE_FNAME"}"#;
+        assert_eq!(username_fid(200, found), Some(Some(3)));
+        let missing = r#"{"error":"Failed to get username proof","error_detail":"status: NotFound, message: \"Username proof not found\""}"#;
+        assert_eq!(username_fid(400, missing), Some(None));
+        assert_eq!(username_fid(503, ""), None);
     }
 }

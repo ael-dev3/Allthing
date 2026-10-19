@@ -98,6 +98,62 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')
 }
 
+/// Where `text` names an account as "@name": each mention's byte range,
+/// with the name in lowercase. An "@" right after a letter, a digit, "_"
+/// or "/" (an email address, a link) names no one.
+fn mention_spans(text: &str) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(at) = text[i..].find('@').map(|n| n + i) {
+        let prev = text[..at].chars().next_back();
+        let rest = &text[at + 1..];
+        let end = rest.find(|c: char| !is_name_char(c)).unwrap_or(rest.len());
+        let name = rest[..end].trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+        let free = !prev.is_some_and(|p| p.is_alphanumeric() || p == '_' || p == '/');
+        if free && name.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+            out.push((at, at + 1 + name.len(), name.to_ascii_lowercase()));
+            i = at + 1 + name.len();
+        } else {
+            i = at + 1;
+        }
+    }
+    out
+}
+
+/// The accounts a draft names as "@name", in lowercase, each once and in
+/// order, as many as a cast can mention: the names to look up before it is
+/// posted.
+pub fn mention_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (_, _, name) in mention_spans(text) {
+        if !names.contains(&name) && names.len() < crate::message::MAX_MENTIONS {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// A draft's text as Farcaster stores a cast's: each "@name" whose account
+/// `fid_of` knows taken out, and listed with that account and the byte
+/// offset where it stood, in order (as many as a cast can mention). Names
+/// it doesn't know stay in the text as they are.
+pub fn split_mentions(text: &str, fid_of: impl Fn(&str) -> Option<u64>) -> (String, Vec<(u64, u32)>) {
+    let mut out = String::with_capacity(text.len());
+    let mut mentions = Vec::new();
+    let mut last = 0;
+    for (start, end, name) in mention_spans(text) {
+        if mentions.len() == crate::message::MAX_MENTIONS {
+            break;
+        }
+        let Some(fid) = fid_of(&name) else { continue };
+        out.push_str(&text[last..start]);
+        mentions.push((fid, out.len() as u32));
+        last = end;
+    }
+    out.push_str(&text[last..]);
+    (out, mentions)
+}
+
 /// Split cast text into plain text, URLs, mentions and /channel references.
 /// Only "@names" that the cast actually mentions become mention tokens.
 pub fn tokenize(text: &str, mentions: &[Mention]) -> Vec<Token> {
@@ -284,5 +340,32 @@ mod tests {
         assert_eq!(paragraphs("a\nb\n\n\nc\n"), vec!["a\nb".to_string(), "c".to_string()]);
         assert_eq!(paragraphs("a\n \nb"), vec!["a".to_string(), "b".to_string()]);
         assert!(paragraphs("\n\n").is_empty());
+    }
+
+    #[test]
+    fn a_drafts_mentions_are_found_and_taken_out() {
+        let text = "gm @Alice and @bob.eth, cc @alice. mail me@example.com or see https://x.com/@carol @nobody";
+        assert_eq!(mention_names(text), ["alice", "bob.eth", "nobody"]);
+        let fids = |name: &str| match name {
+            "alice" => Some(1),
+            "bob.eth" => Some(2),
+            _ => None,
+        };
+        let (out, mentions) = split_mentions(text, fids);
+        assert_eq!(out, "gm  and , cc . mail me@example.com or see https://x.com/@carol @nobody");
+        assert_eq!(mentions, [(1, 3), (2, 8), (1, 13)]);
+        // The offsets are where splice_mentions puts the names back.
+        let named = |fid, username: &str| Mention { fid, username: username.into() };
+        let back = splice_mentions(
+            &out,
+            &[named(1, "alice"), named(2, "bob.eth"), named(1, "alice")],
+            &mentions.iter().map(|(_, at)| (*at, *at)).collect::<Vec<_>>(),
+        );
+        assert_eq!(back, "gm @alice and @bob.eth, cc @alice. mail me@example.com or see https://x.com/@carol @nobody");
+        // UTF-8 offsets are in bytes; a cast mentions ten at most.
+        assert_eq!(split_mentions("héllo @alice", fids), ("héllo ".to_owned(), vec![(1, 7)]));
+        let crowd = "@a @b @c @d @e @f @g @h @i @j @k @l";
+        assert_eq!(mention_names(crowd).len(), 10);
+        assert_eq!(split_mentions(crowd, |_| Some(9)).1.len(), 10);
     }
 }

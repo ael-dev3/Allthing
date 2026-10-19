@@ -113,10 +113,14 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
     .into_any()
 }
 
-/// Reply, under a post or a reply, for the signed-in reader.
+/// Reply and Quote, under a post or a reply, for the signed-in reader.
 #[cfg(not(feature = "static-host"))]
 pub fn reply_button(cast: &allthing_core::model::Cast) -> AnyView {
-    view! { <crate::components::compose::ReplyButton cast=cast.clone()/> }.into_any()
+    view! {
+        <crate::components::compose::ReplyButton cast=cast.clone()/>
+        <crate::components::compose::QuoteButton cast=cast.clone()/>
+    }
+    .into_any()
 }
 
 /// The static copy has no sign-in, and no Reply.

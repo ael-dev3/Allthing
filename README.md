@@ -16,7 +16,7 @@
   <a href="https://github.com/ael-dev3/Allthing/releases"><img src="https://img.shields.io/github/v/release/ael-dev3/Allthing?sort=semver" alt="Latest release"></a>
 </p>
 
-Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. No account is needed to read. A signed-in reader can like and recast with a key they approve in the Farcaster app, which stays in their browser; a cast they write opens in the Farcaster app, which posts it.
+Allthing is an independent Farcaster client, written in Rust, that shows trending casts, channels, threads and profiles with honest engagement counts, media that plays in place, and the app each cast was posted from. No account is needed to read. A signed-in reader can like, recast and post with a key they approve in the Farcaster app, which stays in their browser.
 
 **Live at [allthing.social](https://allthing.social).**
 
@@ -37,7 +37,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Fast and frugal.** Each page makes one API call (profiles, and profile cards as they open, also look up wallets and the vote). Posts open instantly from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. The Worker caches every payload at the edge, so the whole site runs on the Cloudflare Workers Free plan.
 - **Sign in with Farcaster.** Scan a QR code with your phone's camera and approve in the Farcaster app: your picture appears in the header. A click on it opens your profile; hovering it shows a menu with Sign out. Signing in only says who is reading.
 - **Like and recast.** Signed in, the first like or recast asks for a key once: scan a QR code and approve Allthing in the Farcaster app. The key stays in your browser, where it signs; Allthing's servers never see it. From then on, the heart and recast icons under each cast like and recast, and undo it. Signing out deletes the key.
-- **Write, with a GIF.** Signed in, the header's Cast button and Reply under a post open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)). Post in Farcaster opens the draft in the Farcaster app, ready to post.
+- **Write, with a GIF.** Signed in, the header's Cast button, and Reply and Quote under a post, open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)). With your key, Cast posts it from your browser, @mentions included; without one, or if you'd rather, Post in Farcaster opens the draft in the Farcaster app.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
 ## Architecture

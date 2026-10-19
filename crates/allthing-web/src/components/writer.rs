@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use allthing_core::app_key::{
     self, Endorse, KeyState, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
-use allthing_core::message::{self, Body, CastId, MessageData, Reaction, Submitted};
+use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Reaction, Submitted};
 use allthing_core::provenance::hex_encode;
 use allthing_core::siwf::{self, QrCode, QrRequest};
 use leptos::ev;
@@ -32,7 +32,7 @@ use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
-use crate::util::{document, trap_tab};
+use crate::util::{cast_href, document, trap_tab};
 
 /// How often the dialog asks the Farcaster app's API about the request (as
 /// Farcaster's own example does), and how often the node is asked whether
@@ -114,7 +114,14 @@ impl Mine {
     }
 }
 
-/// The reader's likes and recasts, held by the app.
+/// A short word for the reader, with a link to follow, perhaps.
+#[derive(Clone, PartialEq)]
+struct Notice {
+    text: String,
+    link: Option<(String, &'static str)>,
+}
+
+/// The reader's likes, recasts and casts, held by the app.
 #[derive(Clone, Copy)]
 pub struct Writer {
     session: Session,
@@ -122,7 +129,7 @@ pub struct Writer {
     open: RwSignal<bool>,
     step: RwSignal<Step>,
     mine: RwSignal<Mine>,
-    notice: RwSignal<Option<String>>,
+    notice: RwSignal<Option<Notice>>,
 }
 
 thread_local! {
@@ -133,8 +140,11 @@ thread_local! {
     static RUN: Cell<u64> = const { Cell::new(0) };
     /// Which check of the reader's state is current.
     static CHECK: Cell<u64> = const { Cell::new(0) };
-    /// The like or recast that opened the dialog: done once it's approved.
-    static WAITING: RefCell<Option<(CastId, Reaction)>> = const { RefCell::new(None) };
+    /// What opened the dialog (a like, a recast, a cast): done once the
+    /// key is approved.
+    static WAITING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    /// Usernames looked up for mentions this visit, and whose they are.
+    static NAMES: RefCell<HashMap<String, Option<u64>>> = RefCell::new(HashMap::new());
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
     /// The last timestamp each like or recast was sent with: a message that
     /// undoes another goes out at least a second later, so it wins.
@@ -206,14 +216,9 @@ impl Writer {
         if self.mine.with_untracked(|m| m.busy.contains(&key)) {
             return;
         }
-        match self.can.get_untracked() {
-            Can::Yes => {}
-            Can::Approve => {
-                WAITING.with(|w| *w.borrow_mut() = Some((target, kind)));
-                self.connect();
-                return;
-            }
-            Can::No | Can::Checking => return,
+        if self.can.get_untracked() != Can::Yes {
+            self.when_ready(move || self.toggle(target, kind));
+            return;
         }
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
         let before = self.mine.with_untracked(|m| m.changed.get(&key).copied());
@@ -224,7 +229,7 @@ impl Writer {
         });
         spawn_local(async move {
             let body = if on { Body::ReactionAdd(kind, target) } else { Body::ReactionRemove(kind, target) };
-            let outcome = send(&stored, body, &key).await;
+            let outcome = send(&stored, body, Some(&key)).await;
             self.mine.update(|m| {
                 m.busy.remove(&key);
                 if outcome.is_err() {
@@ -235,11 +240,51 @@ impl Writer {
                 }
             });
             match outcome {
-                Ok(()) => {}
-                Err(Unsent::KeyGone) => self.key_gone(stored.fid),
+                Ok(_) => {}
+                Err(Unsent::KeyGone) => {
+                    self.forget_key(stored.fid);
+                    self.say(KEY_GONE.to_owned());
+                }
                 Err(Unsent::Failed(message)) => self.say(message),
             }
         });
+    }
+
+    /// Whether the reader can post here, with a key they have or will
+    /// approve.
+    pub fn can_post(self) -> bool {
+        self.shows_buttons()
+    }
+
+    /// Run `then` with the reader's key: at once, or when they have
+    /// approved one, for which the dialog opens. Nothing where they can't.
+    pub fn when_ready(self, then: impl FnOnce() + 'static) {
+        match self.can.get_untracked() {
+            Can::Yes => then(),
+            Can::Approve => {
+                WAITING.with(|w| *w.borrow_mut() = Some(Box::new(then)));
+                self.connect();
+            }
+            Can::No | Can::Checking => {}
+        }
+    }
+
+    /// Post `cast` with the reader's key: its hash, or why it didn't go out.
+    pub async fn cast(self, cast: NewCast) -> Result<String, String> {
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return Err(KEY_GONE.into()) };
+        match send(&stored, Body::CastAdd(cast), None).await {
+            Ok(hash) => Ok(hex_encode(&hash)),
+            Err(Unsent::KeyGone) => {
+                self.forget_key(stored.fid);
+                Err(KEY_GONE.into())
+            }
+            Err(Unsent::Failed(message)) => Err(message),
+        }
+    }
+
+    /// Say that a cast went out, with a link to it.
+    pub fn posted(self, hash: &str) {
+        self.notify(Notice { text: "Posted.".into(), link: Some((cast_href(hash), "View")) });
     }
 
     /// Ask the node whether the reader liked and recasted `target` (a
@@ -336,17 +381,16 @@ impl Writer {
         if current(run) {
             self.close();
         }
-        if let Some((target, kind)) = waiting {
-            self.toggle(target, kind);
+        if let Some(then) = waiting {
+            then();
         }
     }
 
     /// The node no longer knows the key: the reader removed it in the
     /// Farcaster app. It is forgotten here too.
-    fn key_gone(self, fid: u64) {
+    fn forget_key(self, fid: u64) {
         KEY.with(|k| k.borrow_mut().take());
         self.can.set(Can::Approve);
-        self.say(KEY_GONE.to_owned());
         spawn_local(async move {
             let _ = keys::remove(fid).await;
             tell_tabs();
@@ -367,11 +411,15 @@ impl Writer {
     }
 
     fn say(self, message: String) {
+        self.notify(Notice { text: message, link: None });
+    }
+
+    fn notify(self, notice: Notice) {
         let run = NOTICE_RUN.with(|r| {
             r.set(r.get() + 1);
             r.get()
         });
-        self.notice.set(Some(message));
+        self.notice.set(Some(notice));
         spawn_local(async move {
             crate::video::sleep(NOTICE_MS).await;
             if NOTICE_RUN.with(Cell::get) == run {
@@ -607,17 +655,48 @@ enum Unsent {
     Failed(String),
 }
 
-/// Sign `body` with the reader's key and hand it to the node.
-async fn send(stored: &Stored, body: Body, key: &(String, Reaction)) -> Result<(), Unsent> {
+/// Who `names` (mentioned as "@name") belong to, as far as the node knows:
+/// asked one by one, and kept for the visit.
+pub async fn fids_of(names: &[String]) -> HashMap<String, u64> {
+    let mut out = HashMap::new();
+    for name in names {
+        let known = NAMES.with(|n| n.borrow().get(name).copied());
+        let fid = match known {
+            Some(fid) => fid,
+            None => match fetch("GET", &message::username_url(name), None).await {
+                Ok((status, body)) => match message::username_fid(status, &body) {
+                    Some(fid) => {
+                        NAMES.with(|n| n.borrow_mut().insert(name.clone(), fid));
+                        fid
+                    }
+                    None => None,
+                },
+                Err(()) => None,
+            },
+        };
+        if let Some(fid) = fid {
+            out.insert(name.clone(), fid);
+        }
+    }
+    out
+}
+
+/// Sign `body` with the reader's key and hand it to the node: the
+/// message's hash. A like or recast (`slot`) that undoes another goes out
+/// at least a second after it.
+async fn send(stored: &Stored, body: Body, slot: Option<&(String, Reaction)>) -> Result<[u8; 20], Unsent> {
     let signer = app_key::parse_public_key(&stored.key).ok_or(Unsent::KeyGone)?;
     let fresh = stored.approved_at.is_some_and(|at| js_sys::Date::now() - at < FRESH_MS);
     let mut wait = RETRY_MS;
     for tried in 0..=RETRIES {
-        let at = SENT_AT.with(|s| {
-            let mut sent = s.borrow_mut();
-            let at = (now_secs() as i64).max(sent.get(key).map_or(0, |last| last + 1));
-            sent.insert(key.clone(), at);
-            at
+        let now = now_secs() as i64;
+        let at = slot.map_or(now, |key| {
+            SENT_AT.with(|s| {
+                let mut sent = s.borrow_mut();
+                let at = now.max(sent.get(key).map_or(0, |last| last + 1));
+                sent.insert(key.clone(), at);
+                at
+            })
         });
         let data = MessageData::new(stored.fid, at, body.clone()).encode();
         let hash = message::message_hash(&data);
@@ -628,7 +707,7 @@ async fn send(stored: &Stored, body: Body, key: &(String, Reaction)) -> Result<(
             .await
             .map_err(|_| Unsent::Failed(NODE_DOWN.into()))?;
         match message::submitted(status, &answer) {
-            Submitted::Merged | Submitted::Duplicate => return Ok(()),
+            Submitted::Merged | Submitted::Duplicate => return Ok(hash),
             // A key approved a moment ago may not have reached this node.
             Submitted::UnknownKey if fresh && tried < RETRIES => {
                 crate::video::sleep(wait).await;
@@ -795,7 +874,10 @@ pub fn WriterDialog() -> impl IntoView {
     view! {
         {dialog_view}
         <p class="toast" role="status" aria-live="polite" class:shown=move || writer.notice.with(Option::is_some)>
-            {move || writer.notice.get()}
+            {move || writer.notice.get().map(|notice| view! {
+                {notice.text}
+                {notice.link.map(|(href, label)| view! { " "<a href=href>{label}</a> })}
+            })}
         </p>
     }
     .into_any()
