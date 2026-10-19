@@ -9,7 +9,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 
 ## Principles
 
-1. **Read without an account.** Reading needs no account. Signing in, with Farcaster by QR code, is optional and only says who is reading; nobody connects a wallet. A signed-in reader who wants to like, recast and post here approves a key once in the Farcaster app: it stays in their browser, and Allthing writes only when they press a button. Without it, a cast or reply written here, with a GIF if the reader likes, opens in the Farcaster app, which posts it.
+1. **Read without an account.** Reading needs no account. Signing in, with Farcaster by QR code, is optional and only says who is reading; nobody connects a wallet. A signed-in reader who wants to like, recast and post here approves a key once in the Farcaster app: it stays in their browser, and Allthing writes only when they press a button. Only on a server without Allthing's keys does a cast written here open in the Farcaster app instead, which posts it.
 2. **Honest engagement.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts. Ranking is simple and public: likes + 2 × recasts + replies, weighed against age for **hot**. **new** and **top** are also offered.
 3. **Never hide anyone.** Allthing shows no account labels, and never hides a cast because of who posted it. What it leaves out (mini apps it doesn't run, and spam by a few fixed content rules) is judged by the cast's content.
 4. **Show where things come from.** Each cast names the app that registered its signing key, and facts like votes and wallet activity name their source. Missing data says so ("not recorded", "not measured", "unavailable") instead of being guessed or hidden.
