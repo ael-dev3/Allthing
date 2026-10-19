@@ -45,3 +45,21 @@ test("a tap on the Wallets button opens its list, and a second tap closes it", a
   await button.tap();
   await expect(list).toHaveCount(0);
 });
+
+test("the hovered wallet list is not cut off by the profile card's edge", async ({ page }, info: TestInfo) => {
+  test.skip(Boolean(info.project.use.hasTouch), "hover needs a mouse");
+  await serve(page);
+  for (const width of [1280, 880]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/u/alice");
+    await page.getByRole("button", { name: "Show 1 verified wallet", exact: true }).hover();
+    const list = page.getByRole("dialog", { name: "Verified wallets" });
+    await expect(list).toBeVisible();
+    const card = await page.locator(".profile").boundingBox();
+    const panel = await list.boundingBox();
+    // The list extends past the card, and is what the pointer finds there.
+    expect(panel!.y + panel!.height).toBeGreaterThan(card!.y + card!.height);
+    const topmost = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[role="dialog"]'), [panel!.x + panel!.width / 2, panel!.y + panel!.height / 2]);
+    expect(topmost).toBe(true);
+  }
+});
