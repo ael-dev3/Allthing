@@ -16,7 +16,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{HtmlVideoElement, IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
 
 use crate::components::media::size_style;
-use crate::util::prefers_reduced_motion;
+use crate::util::{can_hover, prefers_reduced_motion};
 use crate::video::{MsePlayer, Stream, attach, known_size, load_stream, mse_supported, native_hls, remember_file_size};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +215,10 @@ const AUTOPLAY_PENDING: Duration = Duration::from_millis(2500);
 
 /// Share of a video that must be on screen for it to autoplay.
 const AUTOPLAY_RATIO: f64 = 0.6;
+
+/// How long a tap on a touch screen shows an autoplaying video's sound
+/// badge.
+const SOUND_SHOWN: Duration = Duration::from_millis(3000);
 
 /// Make sure `video` has a source of at least `height`, keeping its position.
 fn ensure_source(
@@ -509,8 +513,46 @@ pub fn HlsVideo(
         }
     });
 
+    // On a touch screen the sound badge stays hidden, as it does on a
+    // computer until the pointer is over the video: a tap on the video shows
+    // it for a moment.
+    let sound_shown = RwSignal::new(false);
+    let sound_timer = StoredValue::new(None::<TimeoutHandle>);
+    let show_sound = move || {
+        sound_shown.set(true);
+        sound_timer.update_value(|timer| {
+            if let Some(handle) = timer.take() {
+                handle.clear();
+            }
+            *timer = set_timeout_with_handle(move || sound_shown.set(false), SOUND_SHOWN).ok();
+        });
+    };
+    on_cleanup(move || {
+        sound_timer.update_value(|timer| {
+            if let Some(handle) = timer.take() {
+                handle.clear();
+            }
+        });
+    });
+    // Whether the press that clicked the video was a finger's.
+    let touched = StoredValue::new(false);
+
     let engage = move |_: ev::MouseEvent| {
         let Some(video) = video_ref.get_untracked() else { return };
+        // A first tap on a video that autoplays shows its sound badge; a tap
+        // while the badge shows plays the video with sound and controls. A
+        // click, a key or a screen reader plays it at once.
+        let tapped = touched.get_value();
+        touched.set_value(false);
+        if tapped
+            && !can_hover()
+            && previewing.get_untracked()
+            && playing.get_untracked()
+            && !sound_shown.get_untracked()
+        {
+            show_sound();
+            return;
+        }
         engaged.set(true);
         previewing.set(false);
         if status.get_untracked() != Status::Ready {
@@ -538,6 +580,10 @@ pub fn HlsVideo(
         if sound {
             claim(&video, true);
         }
+        // Long enough on a touch screen to read what it says now.
+        if sound_shown.get_untracked() {
+            show_sound();
+        }
     };
 
     // Media events are queued. A pause/ended event from an earlier state
@@ -555,6 +601,7 @@ pub fn HlsVideo(
             class:previewing=move || previewing.get()
             class:autoplaying=move || previewing.get() && playing.get() && !engaged.get()
             class:autoplay-pending=move || pending.get() && !playing.get() && !engaged.get()
+            class:sound-shown=move || sound_shown.get()
             class:loading=move || status.get() == Status::Loading
             style=move || size.get().map(|(w, h)| size_style(w, h))
             data-sized=move || size.get().map(|_| "")
@@ -619,23 +666,13 @@ pub fn HlsVideo(
                             }
                         }
                     }
+                    on:pointerdown=move |e: ev::PointerEvent| touched.set_value(e.pointer_type() == "touch")
                     on:click=engage
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
                 </button>
-                // Words on a computer, when the pointer is over the video; a
-                // speaker on a phone, which has no hover.
                 <button class="video-sound" type="button" on:click=toggle_sound>
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path class="speaker" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>
-                        <path
-                            class="waves"
-                            d=move || if muted.get() { "M16 9.5l5 5M21 9.5l-5 5" } else { "M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10" }
-                        />
-                    </svg>
-                    <span class="video-sound-label">
-                        {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
-                    </span>
+                    {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
                 </button>
             </Show>
             {on_expand.map(|expand| view! {

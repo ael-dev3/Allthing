@@ -1227,91 +1227,55 @@ p.jumbo .emoji img {
   display: none;
 }
 
-/* The sound badge on an autoplaying video. A phone, which can't hover,
-   shows a small speaker in the corner; a computer shows it in words, and
-   only while the pointer is over the video or the keyboard is on it. */
+/* The sound badge on an autoplaying video, hidden until wanted: on a
+   computer while the pointer is over the video or the keyboard is on it,
+   and on a touch screen for a moment after a tap on the video. */
 .video.autoplaying .video-sound {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
   position: absolute;
-  left: 8px;
-  bottom: 8px;
-  width: 32px;
-  height: 32px;
-  padding: 0;
+  left: 10px;
+  bottom: 10px;
+  min-height: 28px;
+  padding: 0 11px;
   border: 0;
   border-radius: 999px;
   background: rgba(17, 20, 28, 0.62);
   color: #fff;
+  font: 600 12px/1 var(--font-ui);
+  letter-spacing: 0.01em;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s var(--ease), background-color 0.2s;
 }
 
-/* A finger-sized target around the speaker. */
+/* A target a finger can find: 44 px tall. */
 .video.autoplaying .video-sound::after {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -8px -4px;
   border-radius: 999px;
 }
 
-.video-sound svg {
-  width: 18px;
-  height: 18px;
-}
-
-.video-sound .speaker {
-  fill: currentColor;
-}
-
-.video-sound .waves {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-
-.video-sound-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+.video.autoplaying.sound-shown .video-sound,
+.video.autoplaying .video-play:focus-visible ~ .video-sound,
+.video.autoplaying .video-sound:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .video.autoplaying .video-sound {
-    display: inline-flex;
-    align-items: center;
-    left: 10px;
-    bottom: 10px;
-    width: auto;
-    height: auto;
-    min-height: 28px;
-    padding: 0 11px;
-    font: 600 12px/1 var(--font-ui);
-    letter-spacing: 0.01em;
-    opacity: 0;
+    pointer-events: auto;
   }
 
-  .video.autoplaying .video-sound::after,
-  .video.autoplaying .video-sound svg {
-    display: none;
+  .video.autoplaying .video-sound::after {
+    content: none;
   }
 
-  .video.autoplaying .video-sound-label {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
-  }
-
-  .video.autoplaying:hover .video-sound,
-  .video.autoplaying .video-play:focus-visible ~ .video-sound,
-  .video.autoplaying .video-sound:focus-visible {
+  .video.autoplaying:hover .video-sound {
     opacity: 1;
   }
 
