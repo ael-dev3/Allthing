@@ -271,32 +271,36 @@ pub fn EmojiPicker(
             }
         })
     });
-    // The group in view, marked in the bar; and that the grid has just been
-    // moved to a group, whose scroll mustn't mark another.
+    // The group in view, marked in the bar; and where a jump to a group left
+    // the grid, which keeps that group marked even if it can't reach the top
+    // (the last ones), until the grid is scrolled from there.
     let current = RwSignal::new(0usize);
-    let jumped = StoredValue::new(false);
+    let jumped = StoredValue::new(None::<i32>);
     let headings = move || {
         let found = results.get_untracked().and_then(|r| r.query_selector_all(".emoji-group-heading").ok());
         found.map_or_else(Vec::new, |list| {
             (0..list.length()).filter_map(|i| list.item(i)?.dyn_into::<web_sys::HtmlElement>().ok()).collect()
         })
     };
-    // The last group whose heading is at or above the grid's top.
+    // The last group whose heading is at or above the grid's top. Where the
+    // scroll is the jump's own, its group stays marked; a scroll by hand in
+    // the same frame comes as the same event, and is marked from where the
+    // grid ended up.
     let mark = move || {
-        if jumped.get_value() {
-            jumped.set_value(false);
+        let Some(top) = results.get_untracked().map(|r| r.scroll_top()) else { return };
+        if jumped.get_value() == Some(top) {
             return;
         }
-        let Some(top) = results.get_untracked().map(|r| r.scroll_top() + 8) else { return };
-        let at = headings().iter().rposition(|h| h.offset_top() <= top).unwrap_or(0);
+        jumped.set_value(None);
+        let at = headings().iter().rposition(|h| h.offset_top() <= top + 8).unwrap_or(0);
         if current.get_untracked() != at {
             current.set(at);
         }
     };
     let jump = move |i: usize| {
         if let (Some(results), Some(heading)) = (results.get_untracked(), headings().get(i)) {
-            jumped.set_value(results.scroll_top() != heading.offset_top());
             results.set_scroll_top(heading.offset_top());
+            jumped.set_value(Some(results.scroll_top()));
             current.set(i);
         }
     };
