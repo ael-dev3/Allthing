@@ -52,7 +52,6 @@ test.describe("the sound badge on a computer", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect.poll(() => opacity(badge)).toBe("1");
     await expect(badge).toHaveText("Sound off · tap for sound");
-    await expect(badge.locator("svg")).toBeHidden();
     await page.screenshot({ path: info.outputPath("video-badge-1280-hover.png") });
     await page.mouse.move(0, 0);
     await expect.poll(() => opacity(badge)).toBe("0");
@@ -77,28 +76,73 @@ test.describe("the sound badge on a computer", () => {
 test.describe("the sound badge on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test("is a speaker in the corner, a finger-sized target, and a tap turns the sound on", async ({ page }, info) => {
+  test("is hidden; a tap on the video shows it for a moment, and a tap on it turns the sound on", async ({ page }, info) => {
     await videoPost(page);
     await page.goto(`/p/${hash}`);
     const player = page.locator(".post .video");
-    const badge = player.getByRole("button", { name: "Sound off · tap for sound", exact: true });
+    const video = player.locator("video");
+    const badge = player.locator(".video-sound");
     await expect(player).toHaveClass(/autoplaying/, { timeout: 15_000 });
-    // Showing without a hover, as a 32 px speaker, its words for screen readers only.
-    expect(await opacity(badge)).toBe("1");
-    const box = (await badge.boundingBox())!;
-    expect(Math.round(box.width)).toBe(32);
-    expect(Math.round(box.height)).toBe(32);
-    await expect(badge.locator("svg")).toBeVisible();
-    expect(await badge.locator(".video-sound-label").evaluate((l) => l.getBoundingClientRect().width)).toBeLessThanOrEqual(1);
-    // A tap 5 px outside the speaker still reaches it, and plays the video's
-    // sound without its controls.
-    await page.screenshot({ path: info.outputPath("video-badge-390.png") });
-    await page.touchscreen.tap(box.x - 5, box.y + box.height / 2);
-    const on = player.getByRole("button", { name: "Sound on · tap to mute", exact: true });
-    await expect(on).toBeVisible();
-    await expect.poll(() => player.locator("video").evaluate((v: HTMLVideoElement) => !v.muted && !v.paused && !v.controls)).toBe(true);
+    // Hidden, and a tap where it would be doesn't find it.
+    await expect.poll(() => opacity(badge)).toBe("0");
+    expect(await badge.evaluate((b) => getComputedStyle(b).pointerEvents)).toBe("none");
+    await page.screenshot({ path: info.outputPath("video-badge-390-rest.png") });
+
+    // A tap on the video shows the badge, in words, and doesn't open the
+    // controls; it hides again after a moment.
+    const box = (await player.boundingBox())!;
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await expect.poll(() => opacity(badge)).toBe("1");
+    await expect(badge).toHaveText("Sound off · tap for sound");
+    expect(await video.evaluate((v: HTMLVideoElement) => v.controls || !v.muted)).toBe(false);
+    await page.screenshot({ path: info.outputPath("video-badge-390-tap.png") });
+    await expect.poll(() => opacity(badge), { timeout: 6_000 }).toBe("0");
+
+    // Shown again, a tap on it (or a finger's width beside it) turns the
+    // sound on, without controls, and it says so for a moment.
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await expect.poll(() => opacity(badge)).toBe("1");
+    const pill = (await badge.boundingBox())!;
+    expect(pill.height).toBeGreaterThanOrEqual(28);
+    await page.touchscreen.tap(pill.x + pill.width / 2, pill.y + pill.height + 6);
+    await expect(badge).toHaveText("Sound on · tap to mute");
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => !v.muted && !v.paused && !v.controls)).toBe(true);
     await page.screenshot({ path: info.outputPath("video-badge-390-sound.png") });
+
+    // A tap on the video while the badge shows plays it with controls.
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 3);
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && !v.paused)).toBe(true);
+    await expect(badge).toHaveCount(0);
   });
+
+  test("a feed video loops on a phone too", async ({ page }) => {
+    await videoPost(page);
+    await page.goto(`/p/${hash}`);
+    const video = page.locator(".post .video video");
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(5);
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime < 2 && !v.paused && !v.ended), { timeout: 10_000 }).toBe(true);
+  });
+});
+
+test("a video the reader plays loops until they pause it, and stays paused", async ({ page }) => {
+  await videoPost(page);
+  await page.goto(`/p/${hash}`);
+  const player = page.locator(".post .video");
+  const video = player.locator("video");
+  await expect(player).toHaveClass(/autoplaying/, { timeout: 15_000 });
+  await player.getByRole("button", { name: /^Play with sound:/ }).click();
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls && v.loop && !v.paused)).toBe(true);
+  // Past the end, it plays on.
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 15_000 }).toBeGreaterThan(5);
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime < 2 && !v.paused), { timeout: 10_000 }).toBe(true);
+  // Paused (its controls' button calls pause()), it stays paused, even
+  // after scrolling away and back.
+  await video.evaluate((v: HTMLVideoElement) => v.pause());
+  await page.evaluate(() => { document.body.style.minHeight = "4000px"; window.scrollTo(0, 3000); });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(1500);
+  expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
 });
 
 for (const [shape, extinf] of [["matches", "2.000000"], ["runs longer than", "2.300000"], ["runs shorter than", "1.700000"]]) {

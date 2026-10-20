@@ -52,6 +52,11 @@ for (const width of [1280, 390]) {
       await expect.poll(() => video.evaluate((v) => v.muted && !v.paused), { timeout: 15000 }).toBe(true);
       const sound = player.getByRole("button", { name: "Sound off · tap for sound", exact: true });
       await expect(sound).toBeVisible();
+      // On a touch screen, a tap on the video shows the badge first.
+      if (hasTouch) {
+        await activateVisible(video, true);
+        await expect.poll(() => sound.evaluate((b) => getComputedStyle(b).opacity)).toBe("1");
+      }
       const before = await page.evaluate(() => window.scrollY);
       const source = await video.getAttribute("src");
       await activateVisible(sound, hasTouch);
