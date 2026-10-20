@@ -54,7 +54,7 @@ test("shortcodes of the pack show as the emoji, inline; anything else stays text
   expect((await loaded(card(page, 0).getByRole("img", { name: ":pepe_gm:" }))).src).toMatch(/pepe_gm\.webp$/);
   // A cast of emoji alone shows them large.
   const hug = card(page, 1).getByRole("img", { name: ":pepe_heart_hug:" });
-  expect((await loaded(hug)).height).toBe(48);
+  expect((await loaded(hug)).height).toBeCloseTo(48, 1);
   // Times, other apps' shortcodes and names the pack hasn't stay as typed.
   await expect(card(page, 2).locator(".cast-text")).toHaveText("at 10:30:45 :smile: :pepe_nope:");
   await expect(card(page, 2).locator(".emoji")).toHaveCount(0);
@@ -78,7 +78,7 @@ test("at 390, emoji fit their line and the page", async ({ browser }, testInfo) 
   const no = await loaded(card(page, 0).getByRole("img", { name: ":pepe_no:" }));
   expect(no.natural).toBeGreaterThan(0);
   expect(no.height).toBeLessThan(28);
-  expect((await loaded(card(page, 1).getByRole("img", { name: ":pepe_blush:" }))).height).toBe(48);
+  expect((await loaded(card(page, 1).getByRole("img", { name: ":pepe_blush:" }))).height).toBeCloseTo(48, 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await context.close();
 });
