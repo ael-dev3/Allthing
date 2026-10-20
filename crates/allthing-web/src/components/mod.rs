@@ -10,6 +10,8 @@ pub mod compose;
 pub mod emoji_picker;
 pub mod facts;
 pub mod favorite;
+#[cfg(not(feature = "static-host"))]
+pub mod handoff;
 pub mod layout;
 pub mod media;
 pub mod player;

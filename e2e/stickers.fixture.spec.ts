@@ -105,7 +105,8 @@ test.describe("in the composer", () => {
     await expect(dialog.getByRole("button", { name: "Remove the sticker" })).toBeVisible();
     // The hand-off embeds the GIF at allthing.social, for every app to show.
     const opened = page.context().waitForEvent("page");
-    await dialog.getByRole("link", { name: /Post in Farcaster/ }).click();
+    await dialog.getByRole("button", { name: "Post in Farcaster" }).click();
+    await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("link", { name: /Open on farcaster\.xyz/ }).click();
     const tab = await opened;
     await tab.waitForLoadState("domcontentloaded");
     const url = new URL(tab.url());

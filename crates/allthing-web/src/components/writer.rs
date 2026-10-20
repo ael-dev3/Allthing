@@ -7,9 +7,11 @@
 //! Here: whether the reader can ([`Writer`]), the like and recast buttons
 //! that `Engagement` shows on every cast, the dialog with the code, what
 //! the reader liked and recasted (their latest of each, from the node, and
-//! what they do here), and a short notice when something fails. Nothing is
-//! shown unless the Worker endorses keys (`/api/v1/signer`). Not in the
-//! static copy, which has no sign-in.
+//! what they do here), and a short notice when something fails. All of it
+//! waits until the Worker endorses keys (`/api/v1/signer`), which takes an
+//! account of Allthing's own; until then, and for a reader signed out, each
+//! write goes to the Farcaster app instead (`components::handoff`). Not in
+//! the static copy, which has no sign-in.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -17,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use allthing_core::app_key::{
     self, Endorse, KeyState, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
+use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Submitted};
 use allthing_core::provenance::{base64_encode, hex_encode};
@@ -32,6 +35,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::chips::Avatar;
+use crate::components::handoff::{Ask, HandOff, use_hand_off};
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
 use crate::util::{cast_href, document, local_time, scheduled_href, trap_tab};
@@ -64,12 +68,12 @@ const NODE_DOWN: &str = "Couldn't reach Farcaster's network. Check your connecti
 const UNSUPPORTED: &str = "This browser can't keep a signing key safely. Update it, or use another browser, to like and recast from Allthing.";
 const KEY_GONE: &str =
     "Allthing's key isn't on your Farcaster account anymore. Like or recast again to approve a new one.";
-const NOT_HERE: &str = "Liking and recasting aren't available from Allthing right now.";
 
 /// Whether the reader can like and recast here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Can {
-    /// Signed out, or the Worker endorses no keys: no buttons.
+    /// Signed out, or the Worker endorses no keys: writes go to the
+    /// Farcaster app.
     No,
     /// Being found out.
     Checking,
@@ -148,6 +152,7 @@ struct Notice {
 #[derive(Clone, Copy)]
 pub struct Writer {
     session: Session,
+    hand_off: HandOff,
     can: RwSignal<Can>,
     open: RwSignal<bool>,
     step: RwSignal<Step>,
@@ -157,6 +162,9 @@ pub struct Writer {
     /// for their list to be read again.
     scheduled: RwSignal<u32>,
 }
+
+/// A write waiting for the check, and the hand-off it becomes without a key.
+type Pending = (Box<dyn FnOnce()>, Ask);
 
 thread_local! {
     /// The reader's approved key.
@@ -169,11 +177,10 @@ thread_local! {
     /// What opened the dialog (a like, a recast, a cast): done once the
     /// key is approved.
     static WAITING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
-    /// A like or recast clicked while signed out, or before the check: done
-    /// once the reader is signed in and the check is back (after approving
-    /// a key, if they need one). Dropped with a sign-in dialog closed
-    /// without signing in.
-    static PENDING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    /// A write asked for before the check was back: done once it is (after
+    /// approving a key, if the reader needs one), or handed to the
+    /// Farcaster app if Allthing doesn't write for them.
+    static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     /// Usernames looked up for mentions this visit, and whose they are.
     static NAMES: RefCell<HashMap<String, Option<u64>>> = RefCell::new(HashMap::new());
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
@@ -196,6 +203,7 @@ impl Writer {
         let session = use_session();
         let writer = Writer {
             session,
+            hand_off: use_hand_off(),
             can: RwSignal::new(Can::No),
             open: RwSignal::new(false),
             step: RwSignal::new(Step::Starting),
@@ -213,26 +221,22 @@ impl Writer {
             }
             fid
         });
-        Effect::new(move |_| {
-            if !session.dialog_open() && session.user.with(Option::is_none) {
-                PENDING.with(|p| p.borrow_mut().take());
-            }
-        });
         writer.follow_tabs();
         writer
     }
 
     /// Whether the reader can write from here, with a key they have or will
-    /// approve: signed in, where the Worker endorses keys (Follow, Delete).
+    /// approve: signed in, where the Worker endorses keys (their scheduled
+    /// casts).
     pub fn can_write(self) -> bool {
         matches!(self.can.get(), Can::Approve | Can::Yes)
     }
 
-    /// Whether a cast's like and recast icons are buttons: for anyone signed
-    /// out (a click signs them in first) and wherever the Worker endorses
-    /// keys, or may. Pictures for a reader it endorses none for.
-    pub fn icons_act(self) -> bool {
-        self.can.get() != Can::No || self.session.user.with(Option::is_none)
+    /// Whether the reader's writes go to the Farcaster app: signed out, or
+    /// where the Worker endorses no keys. A button then opens the hand-off,
+    /// and isn't a toggle.
+    pub fn hands_off(self) -> bool {
+        self.can.get() == Can::No
     }
 
     /// Whether the reader's key is approved and signs.
@@ -256,14 +260,16 @@ impl Writer {
     }
 
     /// Like or recast `target`, or take it back: at once with the reader's
-    /// key, or once they have signed in or approved one (`when_ready`).
-    pub fn toggle(self, target: CastId, kind: Reaction) {
+    /// key, or once they have approved one; or in the Farcaster app, as
+    /// `ask` says (`when_ready`).
+    pub fn toggle(self, target: CastId, kind: Reaction, ask: Ask) {
         let key = (hex_encode(&target.hash), kind);
         if self.mine.with_untracked(|m| m.busy.contains(&key)) {
             return;
         }
         if self.can.get_untracked() != Can::Yes {
-            self.when_ready(move || self.toggle(target, kind));
+            let again = ask.clone();
+            self.when_ready(move || self.toggle(target, kind, again), ask);
             return;
         }
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
@@ -308,22 +314,18 @@ impl Writer {
     }
 
     /// Run `then` with the reader's key: at once, or when they have
-    /// approved one, for which the dialog opens. Signed out, the sign-in
-    /// dialog opens first; while the Worker is asked, it waits for the
-    /// answer. Where it endorses no keys, a notice says so.
-    pub fn when_ready(self, then: impl FnOnce() + 'static) {
+    /// approved one, for which the dialog opens; while the Worker is asked,
+    /// it waits for the answer. Signed out, or where the Worker endorses no
+    /// keys, the reader does it in the Farcaster app: `ask` opens there.
+    pub fn when_ready(self, then: impl FnOnce() + 'static, ask: Ask) {
         match self.can.get_untracked() {
             Can::Yes => then(),
             Can::Approve => {
                 WAITING.with(|w| *w.borrow_mut() = Some(Box::new(then)));
                 self.connect();
             }
-            Can::Checking => PENDING.with(|p| *p.borrow_mut() = Some(Box::new(then))),
-            Can::No if self.session.user.with_untracked(Option::is_none) => {
-                PENDING.with(|p| *p.borrow_mut() = Some(Box::new(then)));
-                self.session.sign_in();
-            }
-            Can::No => self.say(NOT_HERE.into()),
+            Can::Checking => PENDING.with(|p| *p.borrow_mut() = Some((Box::new(then), ask))),
+            Can::No => self.hand_off.open(ask),
         }
     }
 
@@ -382,15 +384,16 @@ impl Writer {
 
     /// React to `target` with `emoji`: a reply that is the emoji and
     /// nothing else, since Farcaster's own reactions are only likes and
-    /// recasts. With the reader's key, at once, or once they have signed in
-    /// or approved one.
-    pub fn react(self, target: CastId, emoji: &'static Emoji) {
+    /// recasts. With the reader's key, at once, or once they have approved
+    /// one; or in the Farcaster app, as `ask` says.
+    pub fn react(self, target: CastId, emoji: &'static Emoji, ask: Ask) {
         let hash = hex_encode(&target.hash);
         if self.mine.with_untracked(|m| m.reacting.contains(&hash)) {
             return;
         }
         if self.can.get_untracked() != Can::Yes {
-            self.when_ready(move || self.react(target, emoji));
+            let again = ask.clone();
+            self.when_ready(move || self.react(target, emoji, again), ask);
             return;
         }
         self.mine.update(|m| {
@@ -470,13 +473,15 @@ impl Writer {
         });
     }
 
-    /// Follow `fid`, or unfollow them.
-    pub fn toggle_follow(self, fid: u64) {
+    /// Follow `fid`, or unfollow them; or in the Farcaster app, as `ask`
+    /// says.
+    pub fn toggle_follow(self, fid: u64, ask: Ask) {
         if self.mine.with_untracked(|m| m.follow_busy.contains(&fid)) {
             return;
         }
         if self.can.get_untracked() != Can::Yes {
-            self.when_ready(move || self.toggle_follow(fid));
+            let again = ask.clone();
+            self.when_ready(move || self.toggle_follow(fid, again), ask);
             return;
         }
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
@@ -520,10 +525,11 @@ impl Writer {
     }
 
     /// Delete one of the reader's casts: once it is gone, the page shows so,
-    /// and a notice says it.
-    pub fn delete(self, hash: String) {
+    /// and a notice says it. Or in the Farcaster app, as `ask` says.
+    pub fn delete(self, hash: String, ask: Ask) {
         if self.can.get_untracked() != Can::Yes {
-            self.when_ready(move || self.delete(hash));
+            let again = ask.clone();
+            self.when_ready(move || self.delete(hash, again), ask);
             return;
         }
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
@@ -599,9 +605,9 @@ impl Writer {
             if can == Can::Yes {
                 self.load_mine(fid);
             }
-            // The like that signed the reader in, or came before the answer.
-            if let Some(then) = PENDING.with(|p| p.borrow_mut().take()) {
-                self.when_ready(then);
+            // A write that came before the answer.
+            if let Some((then, ask)) = PENDING.with(|p| p.borrow_mut().take()) {
+                self.when_ready(then, ask);
             }
         });
     }
@@ -1201,36 +1207,41 @@ pub fn deleted_memo(hash: String) -> Memo<bool> {
     Memo::new(move |_| writer.is_some_and(|w| w.deleted(&hash)))
 }
 
-/// Follow, or Following, on a profile: for a signed-in reader who can, on
-/// anyone's profile but their own. It shows once the node has said whether
-/// they follow already (a read that needs no key); hovering Following
-/// offers Unfollow.
+/// Follow, or Following, on a profile: on anyone's profile but the
+/// reader's own. Signed in, it shows once the node has said whether they
+/// follow already (a read that needs no key); hovering Following offers
+/// Unfollow. Where Allthing doesn't write for the reader, it opens the
+/// profile in the Farcaster app instead (`components::handoff`).
 #[component]
 pub fn FollowButton(fid: u64, username: String) -> impl IntoView {
     let Some(writer) = use_writer() else { return ().into_any() };
-    let shown = Memo::new(move |_| writer.can_write() && writer.reader().is_some_and(|me| me != fid));
+    let shown = Memo::new(move |_| writer.reader() != Some(fid));
     let known = Memo::new(move |_| writer.follows(fid));
-    Effect::new(move |looked: Option<bool>| {
-        if looked == Some(true) || !shown.get() {
-            return looked.unwrap_or(false);
+    // Asked once for each reader signed in.
+    Effect::new(move |looked: Option<Option<u64>>| {
+        let me = writer.reader().filter(|_| shown.get());
+        if me.is_some() && looked.flatten() != me {
+            writer.look_up_follow(fid);
         }
-        writer.look_up_follow(fid);
-        true
+        me.or(looked.flatten())
     });
     let label = format!("Follow @{username}");
+    let url = profile_url(&username, fid);
     (move || {
         shown.get().then(|| {
             let following = move || known.get().unwrap_or(false);
+            let (url, username) = (url.clone(), username.clone());
             view! {
                 <button
                     type="button"
                     class="follow-button"
                     class:following=following
-                    class:unknown=move || known.get().is_none()
+                    class:unknown=move || writer.reader().is_some() && known.get().is_none()
                     aria-label=label.clone()
-                    aria-pressed=move || following().to_string()
+                    aria-pressed=move || writer.reader().is_some().then(|| following().to_string())
+                    aria-haspopup=move || writer.hands_off().then_some("dialog")
                     aria-busy=move || writer.follow_busy(fid).then_some("true")
-                    on:click=move |_| writer.toggle_follow(fid)
+                    on:click=move |_| writer.toggle_follow(fid, Ask::follow(url.clone(), &username, following()))
                 >
                     <span class="follow-text">{move || if following() { "Following" } else { "Follow" }}</span>
                     <span class="unfollow-text" aria-hidden="true">"Unfollow"</span>
@@ -1250,12 +1261,14 @@ pub fn FollowerCount(fid: u64, n: u64) -> impl IntoView {
 }
 
 /// Delete, under one of the reader's own casts: it asks once more, in
-/// place, with Keep focused, before it deletes.
+/// place, with Keep focused, before it deletes. Where Allthing doesn't write
+/// for the reader, it opens the cast in the Farcaster app to delete there.
 #[component]
-pub fn DeleteButton(hash: String, author: u64, noun: &'static str) -> impl IntoView {
+pub fn DeleteButton(hash: String, author: u64, username: String, noun: &'static str) -> impl IntoView {
     let Some(writer) = use_writer() else { return ().into_any() };
     let gone = deleted_memo(hash.clone());
-    let own = Memo::new(move |_| writer.can_write() && writer.reader() == Some(author) && !gone.get());
+    let own = Memo::new(move |_| writer.reader() == Some(author) && !gone.get());
+    let url = cast_url(&username, &hash);
     let key = hash.clone();
     let busy = Memo::new(move |_| writer.deleting(&key));
     let asking = RwSignal::new(false);
@@ -1273,22 +1286,34 @@ pub fn DeleteButton(hash: String, author: u64, noun: &'static str) -> impl IntoV
                 view! {
                     <span class="delete-confirm" role="group" aria-label=question.clone()>
                         <span class="delete-question">{question.clone()}</span>
-                        <button type="button" class="delete-yes" on:click=move |_| {
-                            asking.set(false);
-                            writer.delete(hash.clone());
+                        <button type="button" class="delete-yes" on:click={
+                            let url = url.clone();
+                            move |_| {
+                                asking.set(false);
+                                writer.delete(hash.clone(), Ask::delete(url.clone(), noun));
+                            }
                         }>"Delete"</button>
                         <button type="button" class="delete-no" node_ref=keep on:click=move |_| asking.set(false)>"Keep"</button>
                     </span>
                 }
                 .into_any()
             } else {
+                // Nothing is deleted here when it goes to the app: no second ask.
+                let url = url.clone();
                 view! {
                     <button
                         type="button"
                         class="reply-button delete-button"
                         disabled=busy
                         aria-busy=move || busy.get().then_some("true")
-                        on:click=move |_| asking.set(true)
+                        aria-haspopup=move || writer.hands_off().then_some("dialog")
+                        on:click=move |_| {
+                            if writer.hands_off() {
+                                writer.hand_off.open(Ask::delete(url.clone(), noun));
+                            } else {
+                                asking.set(true);
+                            }
+                        }
                     >
                         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=TRASH/></svg>
                         {move || if busy.get() { "Deleting…" } else { "Delete" }}

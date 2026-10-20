@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use allthing_core::app_key::{ENDORSEMENT_TTL, Endorse, Writes, is_key_request_link, parse_public_key};
-use allthing_core::compose::GifKey;
+use allthing_core::compose::{GifKey, is_handoff_link};
 use allthing_core::model::UserSummary;
 use allthing_core::normalize;
 use allthing_core::siwf::{
@@ -67,11 +67,13 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
     let now = (inv.now() / 1000.0) as i64;
     match name {
         "qr" => match read_json::<QrRequest>(&mut req).await {
-            Some(QrRequest { url }) if is_app_link(&url) || is_key_request_link(&url) => match qr_code(&url) {
-                Some(code) => json(&code, &[]),
-                None => error(400, "That link is too long for a QR code", None),
-            },
-            _ => error(400, "Expected {\"url\": a Farcaster sign-in or key request link}", None),
+            Some(QrRequest { url }) if is_app_link(&url) || is_key_request_link(&url) || is_handoff_link(&url) => {
+                match qr_code(&url) {
+                    Some(code) => json(&code, &[]),
+                    None => error(400, "That link is too long for a QR code", None),
+                }
+            }
+            _ => error(400, "Expected {\"url\": a Farcaster sign-in, key request or farcaster.xyz link}", None),
         },
         "signer" => {
             if signed_in_fid(&req, env, now)?.is_none() {

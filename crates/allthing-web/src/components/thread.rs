@@ -119,15 +119,15 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
     .into_any()
 }
 
-/// Reply and Quote, under a post or a reply, for the signed-in reader, and
-/// Delete under their own; `noun` names it in the question ("cast", "reply").
+/// Reply, Quote and React, under a post or a reply, and Delete under the
+/// reader's own; `noun` names it in the question ("cast", "reply").
 #[cfg(not(feature = "static-host"))]
 pub fn reply_button(cast: &allthing_core::model::Cast, noun: &'static str) -> AnyView {
     view! {
         <crate::components::compose::ReplyButton cast=cast.clone()/>
         <crate::components::compose::QuoteButton cast=cast.clone()/>
         <crate::components::reactions::ReactButton cast=cast.clone()/>
-        <crate::components::writer::DeleteButton hash=cast.hash.clone() author=cast.author.fid noun/>
+        <crate::components::writer::DeleteButton hash=cast.hash.clone() author=cast.author.fid username=cast.author.username.clone() noun/>
     }
     .into_any()
 }

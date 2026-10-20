@@ -2,10 +2,10 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 
 /*
- * The composer and its GIF picker, for a signed-in reader. KLIPY is a
- * stand-in (no key is in the repository): its answers follow its documented
- * shape. Posting hands the draft to farcaster.xyz's compose link, which is
- * stubbed, so nothing leaves the test.
+ * The composer and its GIF picker. KLIPY is a stand-in (no key is in the
+ * repository): its answers follow its documented shape. This Worker endorses
+ * no keys, so posting hands the draft to farcaster.xyz's compose link, which
+ * is stubbed, so nothing leaves the test.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
@@ -87,10 +87,11 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-/** The farcaster.xyz page "Post in Farcaster" opens, as a URL. */
+/** The farcaster.xyz page "Post in Farcaster" opens, as a URL: on a computer, through the hand-off. */
 async function handOff(page: Page) {
   const opened = page.context().waitForEvent("page");
-  await page.getByRole("link", { name: /Post in Farcaster/ }).click();
+  await page.getByRole("button", { name: "Post in Farcaster" }).click();
+  await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("link", { name: /Open on farcaster\.xyz/ }).click();
   const tab = await opened;
   await tab.waitForLoadState("domcontentloaded");
   const url = new URL(tab.url());
@@ -98,16 +99,25 @@ async function handOff(page: Page) {
   return url;
 }
 
-test("signed out, there is no composer", async ({ page }) => {
-  const calls = await serve(page, { signedIn: false });
+test("signed out, the composer is there, and its draft goes to the Farcaster app, with no GIF button", async ({ page }) => {
+  await serve(page, { signedIn: false });
   await page.goto("/");
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  await page.keyboard.type("gm, signed out");
+  // GIFs take a session (KLIPY's key is handed to one); emoji don't.
+  await expect(dialog.getByRole("button", { name: "Add an emoji" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Add a GIF" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Schedule for later" })).toHaveCount(0);
+  const url = await handOff(page);
+  expect(url.origin + url.pathname).toBe(COMPOSE);
+  expect(url.searchParams.get("text")).toBe("gm, signed out");
+  await expect(dialog).toHaveCount(0);
+  // Reply, under a post, too.
   await page.goto(`/p/${cast.hash}`);
-  await expect(page.locator(".post")).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Reply to/ })).toHaveCount(0);
-  expect(calls.key).toBe(0);
+  await expect(page.locator(".post").getByRole("button", { name: "Reply to @alice" })).toBeVisible();
 });
 
 test("a cast with a GIF: trending, a search, more, a pick, and the hand-off", async ({ page }) => {

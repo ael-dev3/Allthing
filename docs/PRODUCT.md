@@ -19,7 +19,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 
 ## The reading experience
 
-- **Front page**: casts trending across Farcaster, with the author's picture, channel and app, and the three engagement counts. Hovering a count, or its icon, shows who liked, recasted or replied. The heart and recast icons like and recast: a reader signed out signs in first, and the first like approves a key.
+- **Front page**: casts trending across Farcaster, with the author's picture, channel and app, and the three engagement counts. Hovering a count, or its icon, shows who liked, recasted or replied. The heart and recast icons open the cast in the Farcaster app, to like or recast there (a QR code for the reader's phone on a computer), since Allthing has no Farcaster account or key of its own.
 - **Search**: one box for casts, people and channels.
 - **Channels**: a channel's feed with the same sorting, and a directory with search.
 - **Post**: the cast with its media, the parent it replies to, quoted casts, a provenance panel, and threaded replies that collapse and expand.

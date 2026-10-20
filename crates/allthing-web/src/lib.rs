@@ -66,6 +66,8 @@ fn App() -> impl IntoView {
     #[cfg(not(feature = "static-host"))]
     provide_context(components::compose::Composer::new());
     #[cfg(not(feature = "static-host"))]
+    provide_context(components::handoff::HandOff::new());
+    #[cfg(not(feature = "static-host"))]
     provide_context(components::writer::Writer::new());
     view! {
         <Router base=util::BASE>
@@ -96,13 +98,14 @@ fn App() -> impl IntoView {
 }
 
 /// The sign-in dialog and the composer, and Cast's button on phones, in
-/// front of the Worker.
+/// front of the Worker; the hand-off to the Farcaster app over them.
 #[cfg(not(feature = "static-host"))]
 fn sign_in_dialog() -> impl IntoView {
     view! {
         <components::signin::SignInDialog/>
         <components::compose::ComposerDialog/>
         <components::writer::WriterDialog/>
+        <components::handoff::HandOffDialog/>
         <components::compose::CastFab/>
     }
 }

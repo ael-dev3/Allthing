@@ -72,7 +72,7 @@ mod with_worker {
             None => view! { <p class="muted scheduled-loading">"Loading your scheduled casts…"</p> }.into_any(),
             Some(None) => view! {
                 <div class="scheduled-empty">
-                    <p>"Sign in to schedule casts, and to see them here."</p>
+                    <p>"Sign in to see your scheduled casts."</p>
                     <button type="button" class="button" on:click=move |_| session.sign_in()>"Sign in"</button>
                 </div>
             }
@@ -87,12 +87,13 @@ mod with_worker {
                 let mut posted = of(State::Posted);
                 posted.reverse();
                 if casts.is_empty() {
-                    return view! {
-                        <p class="scheduled-empty">
-                            "Nothing scheduled. Write a cast, and the clock beside its GIF button picks when it goes out."
-                        </p>
-                    }
-                    .into_any();
+                    // No clock where drafts go to the Farcaster app to post.
+                    let text = if writer.is_some_and(Writer::can_write) {
+                        "Nothing scheduled. Write a cast, and the clock beside its GIF button picks when it goes out."
+                    } else {
+                        "Nothing scheduled. Allthing doesn't post for you right now: Cast opens your draft in the Farcaster app, ready to post there."
+                    };
+                    return view! { <p class="scheduled-empty">{text}</p> }.into_any();
                 }
                 view! {
                     <Group title="Waiting" casts=waiting composer writer/>

@@ -78,11 +78,14 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                         if own { "" } else { ". React with it too" },
                     );
                     #[cfg(not(feature = "static-host"))]
-                    let react = move |_| {
-                        if let (Some(writer), Some(target)) = (writer, target)
-                            && !own
-                        {
-                            writer.react(target, emoji);
+                    let react = {
+                        let hash = hash.clone();
+                        move |_| {
+                            if let (Some(writer), Some(target)) = (writer, target)
+                                && !own
+                            {
+                                writer.react(target, emoji, react_ask(&hash, emoji));
+                            }
                         }
                     };
                     #[cfg(feature = "static-host")]
@@ -108,17 +111,28 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
     }
 }
 
-/// React, under a post or a reply, for the signed-in reader: the Pepe
-/// picker, whose pick goes out as a reply.
+/// A Pepe reaction handed to the Farcaster app: the reply that is the
+/// emoji, ready to post there.
+#[cfg(not(feature = "static-host"))]
+fn react_ask(hash: &str, emoji: &Emoji) -> crate::components::handoff::Ask {
+    let reply = allthing_core::compose::Draft {
+        text: format!(":{}:", emoji.code),
+        parent_hash: Some(hash.to_owned()),
+        ..Default::default()
+    };
+    crate::components::handoff::Ask::react(reply.compose_url(), emoji.code)
+}
+
+/// React, under a post or a reply: the Pepe picker, whose pick goes out as
+/// a reply, from here or, where Allthing doesn't post for the reader, from
+/// the Farcaster app.
 #[cfg(not(feature = "static-host"))]
 #[component]
 pub fn ReactButton(cast: Cast) -> impl IntoView {
     use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
     use crate::components::popover::Popover;
-    use crate::components::signin::use_session;
     use crate::components::writer::use_writer;
 
-    let session = use_session();
     let (Some(writer), Some(target)) = (use_writer(), allthing_core::message::CastId::new(cast.author.fid, &cast.hash))
     else {
         return ().into_any();
@@ -126,16 +140,19 @@ pub fn ReactButton(cast: Cast) -> impl IntoView {
     let hash = cast.hash.clone();
     let shut = RwSignal::new(0u32);
     let tab = RwSignal::new(Tab::Emoji);
-    let picked = Callback::new(move |(emoji, _): Pick| {
-        emoji_picker::used(emoji);
-        shut.update(|n| *n += 1);
-        writer.react(target, emoji);
-    });
+    let picked = {
+        let hash = hash.clone();
+        Callback::new(move |(emoji, _): Pick| {
+            emoji_picker::used(emoji);
+            shut.update(|n| *n += 1);
+            writer.react(target, emoji, react_ask(&hash, emoji));
+        })
+    };
     let label = format!("React to @{}'s cast with an emoji", cast.author.username);
     (move || {
         let hash = hash.clone();
         let label = label.clone();
-        session.user.get().is_some().then(|| {
+        {
             view! {
                 <Popover
                     label="React with a Pepe"
@@ -155,7 +172,7 @@ pub fn ReactButton(cast: Cast) -> impl IntoView {
                     content=move || view! { <EmojiPicker tab picked/> }
                 />
             }
-        })
+        }
     })
     .into_any()
 }
