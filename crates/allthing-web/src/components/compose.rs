@@ -18,9 +18,10 @@
 //! in the order KLIPY gives them, in a grid of their own, under a search box
 //! that says "Search KLIPY". The key comes from the Worker
 //! (`/api/v1/gifs/key`, for a signed-in session); without one (no
-//! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji come from
-//! Allthing's own pack (`components::emoji_picker`). Not in the static copy,
-//! which has no sign-in.
+//! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji and
+//! stickers come from Allthing's own pack (`components::emoji_picker`); a
+//! sticker takes the GIF's place. Not in the static copy, which has no
+//! sign-in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,8 +30,10 @@ use std::time::Duration;
 
 use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
-use allthing_core::compose::{Draft, Gif, GifKey, GifPage, Quoted, SEARCH_PLACEHOLDER, gif_key_path, gifs_url};
-use allthing_core::emoji;
+use allthing_core::compose::{
+    Draft, Gif, GifKey, GifPage, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path, gifs_url,
+};
+use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::message::MAX_CAST_BYTES;
 use allthing_core::model::Cast;
 use allthing_core::text::mention_names;
@@ -514,6 +517,18 @@ pub fn ComposerDialog() -> impl IntoView {
                 }
                 let _ = area.set_selection_range(at as u32, at as u32);
             });
+            // A sticker goes with the cast as its GIF does, in the GIF's place.
+            let stick = Callback::new(move |sticker: &'static Sticker| {
+                let (width, height) = (u32::from(sticker.width), u32::from(STICKER_HEIGHT));
+                composer.gif.set(Some(Gif {
+                    slug: sticker.code.to_owned(),
+                    title: format!("Sticker: {}", sticker.label()),
+                    tile: Rendition { url: href(&sticker.file()), width, height },
+                    embed: Rendition { url: sticker.embed(), width, height },
+                }));
+                composer.picker.set(Picker::Closed);
+                focus_soon(".compose-text");
+            });
             view! {
                 <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
                     if ev.target() == ev.current_target() {
@@ -543,16 +558,16 @@ pub fn ComposerDialog() -> impl IntoView {
                                 }
                             ></textarea>
                             {move || composer.gif.get().map(|gif| view! {
-                                <figure class="compose-gif">
+                                <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>
                                     <img src=gif.tile.url.clone() width=gif.tile.width height=gif.tile.height alt=gif.title.clone()/>
-                                    <button type="button" class="compose-gif-remove" aria-label="Remove the GIF" on:click=move |_| {
+                                    <button type="button" class="compose-gif-remove" aria-label=if emoji::sticker_of(&gif.embed.url).is_some() { "Remove the sticker" } else { "Remove the GIF" } on:click=move |_| {
                                         composer.gif.set(None);
                                         focus_soon(".compose-text");
                                     }>"×"</button>
                                 </figure>
                             })}
                             {move || (composer.picker.get() == Picker::Gifs).then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
-                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker picked=insert/> })}
+                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker picked=insert stuck=stick/> })}
                             {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -561,7 +576,7 @@ pub fn ComposerDialog() -> impl IntoView {
                                 <button
                                     type="button"
                                     class="emoji-button"
-                                    aria-label="Add an emoji"
+                                    aria-label="Add an emoji or a sticker"
                                     aria-expanded=move || (composer.picker.get() == Picker::Emoji).to_string()
                                     aria-controls="emoji-picker"
                                     on:click=move |_| composer.toggle(Picker::Emoji)

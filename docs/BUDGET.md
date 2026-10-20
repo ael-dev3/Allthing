@@ -8,7 +8,7 @@ The relevant Free plan limits, as of October 2026:
 | Limit | Value | Allthing's design |
 |---|---|---|
 | Worker requests | 100,000/day (resets 00:00 UTC) | `/api/*`, `/version` and `/wasm/*` run the Worker; everything else is a static asset. `/wasm/*` is the app's WebAssembly, fetched once per browser (it is cached for a year), so it adds one request to a first visit only |
-| Static asset requests | free and unlimited | The app, styles, fonts and emoji are all static |
+| Static asset requests | free and unlimited | The app, styles, fonts, emoji and stickers are all static. Other Farcaster apps load a cast's sticker from allthing.social too, as a static asset |
 | CPU time | 10 ms per invocation | Payloads are parsed once per refresh and cached; cache hits copy bytes |
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
 | Cache API | per data center; no-op on `*.workers.dev` | Effective on `allthing.social` only |
