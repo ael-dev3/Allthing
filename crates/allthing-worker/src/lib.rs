@@ -30,7 +30,7 @@ use allthing_core::latest;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::time::iso_utc;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
-use allthing_data::{indexer, pages};
+use allthing_data::{activity, indexer, pages};
 use futures::future::FutureExt;
 use worker::{
     Context, Date, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
@@ -117,6 +117,10 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
 /// with its own CPU time and subrequests.
 const LATEST_CRON: &str = "*/1 * * * *";
 
+/// The cron trigger that counts daily active accounts, every two minutes
+/// (see `allthing_data::activity`).
+const ACTIVITY_CRON: &str = "*/2 * * * *";
+
 /// The cron triggers in wrangler.toml, every minute: the indexer (one page
 /// of casts into Allthing's index, see `allthing_core::index`), and the
 /// stored copy of the newest casts (see `pages::store_latest`).
@@ -138,6 +142,13 @@ pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
         match pages::store_latest(Rc::new(inv)).await {
             Ok(()) => console_log!("latest: stored"),
             Err(failure) => console_error!("latest: {}", failure.message),
+        }
+        return;
+    }
+    if event.cron() == ACTIVITY_CRON {
+        match activity::run(&inv, index.as_ref()).await {
+            Ok(report) => console_log!("activity: {report:?}"),
+            Err(error) => console_error!("activity: {error}"),
         }
         return;
     }

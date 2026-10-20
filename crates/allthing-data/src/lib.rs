@@ -6,6 +6,7 @@
 //! Pages build (`allthing-web` with the `static-host` feature). The runtime
 //! supplies a [`Host`]: the clock, HTTP with a timeout, and background work.
 
+pub mod activity;
 pub mod annotate;
 pub mod chain;
 pub mod hypersnap;
@@ -211,6 +212,8 @@ pub enum Endpoint {
     Engagement(EngagementRequest),
     Replies(String),
     Vote(u64),
+    /// Farcaster's daily active accounts, as the cron last counted them.
+    Activity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,6 +240,7 @@ impl Endpoint {
                 }
             }
             "/latest" => Ok(Endpoint::Latest),
+            "/activity" => Ok(Endpoint::Activity),
             "/reactions" => {
                 let hash = query("hash").and_then(|v| hash_from_param(&v)).ok_or(bad("Expected ?hash=<cast hash>"))?;
                 let kind =
@@ -322,6 +326,7 @@ impl Endpoint {
                 home_page_path(*offset, *window).trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
             }
             Endpoint::Latest => "latest".into(),
+            Endpoint::Activity => "activity".into(),
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
@@ -347,6 +352,7 @@ impl Endpoint {
         match self.clone() {
             Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
             Endpoint::Latest => pages::latest(inv, previous).await,
+            Endpoint::Activity => pages::activity(inv).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
@@ -403,6 +409,8 @@ mod tests {
         );
         assert_eq!(Endpoint::from_path("/api/v1/channels?q=%20"), Ok(Endpoint::Channels(None)));
         assert_eq!(Endpoint::from_path("/api/v1/wallets?fid=0").map_err(|e| e.status), Err(400));
+        assert_eq!(Endpoint::from_path("/api/v1/activity"), Ok(Endpoint::Activity));
+        assert_eq!(Endpoint::Activity.cache_name(), "activity");
         assert_eq!(Endpoint::from_path("/api/v1/nope").map_err(|e| e.status), Err(404));
         assert_eq!(Endpoint::from_path("/api/v2/home").map_err(|e| e.status), Err(404));
     }

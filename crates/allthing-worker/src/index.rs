@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Allthing's index of notable casts in D1 (the `INDEX` binding): the SQL
 //! behind `allthing_data::indexer::Index`. Rankings are computed inside D1,
-//! so the Worker never handles more than one page of casts at a time.
+//! so the Worker never handles more than one page of casts at a time. The
+//! same database keeps the daily active accounts' sets
+//! (`allthing_data::activity::ActivityStore`).
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
+use allthing_data::activity::{ActivityStore, SUMMARY};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde::Deserialize;
@@ -14,8 +18,11 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 2] =
-    [include_str!("../../../migrations/0001_index.sql"), include_str!("../../../migrations/0002_snapshots.sql")];
+const SCHEMA: [&str; 3] = [
+    include_str!("../../../migrations/0001_index.sql"),
+    include_str!("../../../migrations/0002_snapshots.sql"),
+    include_str!("../../../migrations/0003_activity.sql"),
+];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
 /// points of those already indexed (and writing nothing when they are the same).
@@ -38,6 +45,17 @@ const STATE: &str = "SELECT value FROM state WHERE key = 'indexer'";
 const METAS: &str = "SELECT name, built, total, floor FROM rankings";
 const SAVE_STATE: &str = "REPLACE INTO state (key, value) VALUES ('indexer', ?1)";
 const SNAPSHOT: &str = "SELECT built, body FROM snapshots WHERE name = ?1";
+const ACTIVITY_STATE: &str = "SELECT value FROM state WHERE key = 'activity'";
+const ACTIVITY_SETS: &str = "SELECT name, body FROM activity WHERE name IN (SELECT value FROM json_each(?1))";
+/// Store sets given as one JSON array of `[name, body]`.
+const STORE_SETS: &str = "INSERT INTO activity (name, body) \
+    SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true \
+    ON CONFLICT (name) DO UPDATE SET body = excluded.body";
+/// Drop hourly sets before hour ?1 and daily ones before day ?2.
+const DROP_SETS: &str = "DELETE FROM activity WHERE \
+    (substr(name, 1, 1) = 'h' AND CAST(substr(name, 2) AS INTEGER) < ?1) OR \
+    (substr(name, 1, 1) = 'd' AND CAST(substr(name, 2) AS INTEGER) < ?2)";
+const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
 
 thread_local! {
@@ -62,6 +80,12 @@ struct SnapshotRow {
 #[derive(Deserialize)]
 struct StateRow {
     value: String,
+}
+
+#[derive(Deserialize)]
+struct SetRow {
+    name: String,
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -187,6 +211,57 @@ impl Index for D1Index {
             ensure_schema(&db).await?;
             let args = [name.into(), number(snapshot.built.floor()), snapshot.body.into()];
             db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?.run().await.map_err(failed)?;
+            Ok(())
+        }
+        .boxed_local()
+    }
+}
+
+impl ActivityStore for D1Index {
+    fn activity_state(&self) -> LocalBoxFuture<'static, Result<Option<String>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            ensure_schema(&db).await?;
+            let row: Option<StateRow> = db.prepare(ACTIVITY_STATE).first(None).await.map_err(failed)?;
+            Ok(row.map(|r| r.value))
+        }
+        .boxed_local()
+    }
+
+    fn activity_sets(
+        &self,
+        names: Vec<String>,
+    ) -> LocalBoxFuture<'static, Result<HashMap<String, String>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let names = serde_json::to_string(&names).map_err(|e| IndexError(e.to_string()))?;
+            let statement = db.prepare(ACTIVITY_SETS).bind(&[names.into()]).map_err(failed)?;
+            let rows = statement.all().await.map_err(failed)?.results::<SetRow>().map_err(failed)?;
+            Ok(rows.into_iter().map(|r| (r.name, r.body)).collect())
+        }
+        .boxed_local()
+    }
+
+    fn save_activity(
+        &self,
+        sets: Vec<(String, String)>,
+        keep_from: (i64, i64),
+        state: String,
+        summary: Snapshot,
+    ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let mut statements = Vec::new();
+            if !sets.is_empty() {
+                let rows = serde_json::to_string(&sets).map_err(|e| IndexError(e.to_string()))?;
+                statements.push(db.prepare(STORE_SETS).bind(&[rows.into()]).map_err(failed)?);
+            }
+            let keep = [number(keep_from.0 as f64), number(keep_from.1 as f64)];
+            statements.push(db.prepare(DROP_SETS).bind(&keep).map_err(failed)?);
+            statements.push(db.prepare(SAVE_ACTIVITY_STATE).bind(&[state.into()]).map_err(failed)?);
+            let args = [SUMMARY.into(), number(summary.built.floor()), summary.body.into()];
+            statements.push(db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?);
+            db.batch(statements).await.map_err(failed)?;
             Ok(())
         }
         .boxed_local()

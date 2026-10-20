@@ -46,7 +46,7 @@ migrations_dir = "migrations"
 # casts), and the stored copy of the newest casts that a data center with
 # none of its own serves ("*/1", so the Worker can tell the two apart).
 [triggers]
-crons = ["* * * * *", "*/1 * * * *"]
+crons = ["* * * * *", "*/1 * * * *", "*/2 * * * *"]
 
 [observability]
 enabled = true

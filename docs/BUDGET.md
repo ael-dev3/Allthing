@@ -108,6 +108,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1 |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
+| activity | cache read 1 + the cron's stored payload 1 (a D1 read) + cache write 1 (≤ 3); no upstream calls |
+| the active-accounts follower (cron, every 2 minutes) | D1 3 (the state; the sets it adds to and the 48 hours of the windows, in one query; the sets, state and payload written in one batch; the schema once per isolate) + events 2 (a page per shard) + the newest event per shard 2, on a first run only (≤ 7) |
 | channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1, lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + link pages ≤6 + origins + app names ≤1 + cache write 1 (21 before origins, which take what is left of the 45) |
 | cast | cache read 1 + conversation 1 + link pages ≤6 + channel ≤1 + parent ≤1 + quotes ≤3 + origins (budget-limited) + apps ≤1 + cache write 1 |
 | user | cache read 1 + lookup 1–3 (by fname; else the name's username proof, then the account) + casts 1 + signers 1 + cast signers 1 + removed-key history ≤1 + first username ≤1 (accounts registered before Nov 2023, alongside the casts) + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + apps ≤1 + cache write 1 (≤ 19) |
@@ -213,3 +215,20 @@ Past month, Past year and All time are ranked from Allthing's own index in D1 ([
 | D1 storage | 5 GB | About 100 bytes per indexed cast, plus three ranking rows of about 70 KB: megabytes |
 
 **Load on Hypersnap**: at most 1,440 page reads a day (one a minute), through the same token bucket and breaker as page builds. Each run makes one attempt. A rate limit, unreadable page or other failed read keeps the backfill cursor for the feed's next turn; a successful empty or missing page completes the feed.
+
+## 10. Daily active accounts: cron and D1
+
+Farcaster's daily active accounts are counted from Hypersnap's event stream ([ARCHITECTURE.md](ARCHITECTURE.md#daily-active-accounts)). Measured on 20 October 2026 over 24.5 hours: 240,000 events (103 MB of JSON) on the two shards, mostly block confirmations, among them 45,000 counted messages from 6,174 accounts. Against the Free plan:
+
+| Limit | Free plan | The follower |
+|---|---|---|
+| Worker requests | 100,000/day | A cron trigger of its own every 2 minutes: 720 invocations a day, 0.7% of the allowance |
+| Cron triggers | 5 per account | 1 more, 3 in all |
+| CPU time | 10 ms per invocation | A run parses one page of up to 1,000 events per shard, about 1 ms per 400 KB page natively, as the newest-casts cron already does every minute, and merges a few small sets. Keeping up, a page holds the 2 minutes since the last run, about 170 events |
+| Subrequests | 50 per invocation | At most 7, as above |
+| D1 rows written | 100,000/day | 3 or 4 a run, about 2,900 a day: the hour's and the day's set, the state and the payload, each one row however many accounts they hold |
+| D1 rows read | 5,000,000/day | About 50 a run (the state, 48 hourly sets and the day's), 36,000 a day, and 30 day sets once a day for the 30-day count |
+| D1 storage | 5 GB | A day's set of 6,000 accounts is about 16 KB, an hour's about 2 KB; 30 days and 49 hours of them: under a megabyte |
+
+**Load on Hypersnap**: two page reads every 2 minutes, 1,440 a day, through the same token bucket and breaker as page builds; about 100 MB a day, the same events the newest-casts cron reads. A page that can't be read is read again from the same place by the next run. After a deploy, or an outage, the follower reads 6 times faster than events come until it has caught up: from the start of yesterday, about 4.5 hours.
+

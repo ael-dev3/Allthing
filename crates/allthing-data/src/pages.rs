@@ -358,6 +358,21 @@ pub async fn store_latest(inv: Rc<Invocation>) -> Result<(), Failure> {
     index.save_snapshot(LATEST_SNAPSHOT, snapshot).await.map_err(|e| Failure::internal(&e.to_string()))
 }
 
+/// Farcaster's daily active accounts: the copy the cron stores every two
+/// minutes (`activity::run`), as it is. One read; before the first count,
+/// or without an index (the static copy), 503.
+pub async fn activity(inv: Rc<Invocation>) -> Result<Built, Failure> {
+    let Some(stored) = stored(&inv, crate::activity::SUMMARY).await else {
+        return Err(Failure {
+            status: 503,
+            message: "Active accounts aren't counted yet".into(),
+            retry_after: Some(120),
+        });
+    };
+    let body = stored.body.into_bytes();
+    Ok(Built { body, status: 200, policy: api::ACTIVITY_CACHE, fetched_at: Some(stored.built) })
+}
+
 /// The copy of `name` the cron stores, if there is an index and it has one.
 /// Reading it takes one of the build's subrequests.
 async fn stored(inv: &Invocation, name: &'static str) -> Option<Snapshot> {

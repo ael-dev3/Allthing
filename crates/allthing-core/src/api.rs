@@ -494,6 +494,8 @@ pub const INDEXED_HOME_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 180
 /// New casts arrive every few seconds: fresh for 30 s, then refreshed in the
 /// background for a minute, then rebuilt while the reader waits.
 pub const LATEST_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 60, keep: 86_400, browser: 15 };
+/// Active accounts: counted every two minutes.
+pub const ACTIVITY_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 30 };
 pub const CHANNEL_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 900, keep: 86_400, browser: 60 };
 pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
