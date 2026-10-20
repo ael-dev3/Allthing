@@ -61,6 +61,19 @@ async function serve(page: Page, body: object | null) {
   return calls;
 }
 
+// As after a deploy: counting began at 23:29 the day before yesterday, and
+// reading has got to 08:24 yesterday, many hours behind the clock.
+const behind = (today - 1) * DAY + 8 * 3_600 + 24 * 60 + 7;
+const actions = (n: number) => ({ reaction: 316 * n, cast: 156 * n, link: 45 * n, user_data: 44 * n, verification: 7 * n, storage_lending: 6 * n });
+const catchingUp = {
+  reached: behind, rolling_to: Math.floor(behind / 3_600) * 3_600, since: (today - 1) * DAY - 1_808,
+  days: [
+    { day: today - 2, active: 134, complete: false, actions: actions(1) },
+    { day: today - 1, active: 3_047, complete: false, actions: actions(10) },
+  ],
+  meta: { backend: "hypersnap", fetched_at: Date.now() },
+};
+
 async function phone(browser: Browser, testInfo: TestInfo) {
   const context = await browser.newContext({
     baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
@@ -105,6 +118,8 @@ test.describe("with the Worker", () => {
     await expect(chart.getByRole("img")).toHaveAttribute("aria-label", new RegExp(`most 7,200 on ${short(today - 17)}$`));
     await expect(bars.nth(12).locator("title")).toHaveText(/7,200 accounts$/);
     await expect(bars.last().locator("title")).toHaveText(/2,100 accounts so far$/);
+    // A label a week, ending under today's bar.
+    await expect(chart.locator(".dau-ticks span")).toHaveText([28, 21, 14, 7, 0].map((back) => short(today - back)));
     // The table: newest first.
     await chart.getByText("The days as a table").click();
     const rows = chart.locator("tbody tr");
@@ -177,18 +192,7 @@ test.describe("with the Worker", () => {
   });
 
   test("while catching up, today and yesterday follow the clock, and the page says how far it has read", async ({ page }) => {
-    // As after a deploy: counting began at 23:29 the day before yesterday,
-    // and reading has got to 08:24 yesterday, many hours behind the clock.
-    const behind = (today - 1) * DAY + 8 * 3_600 + 24 * 60 + 7;
-    const actions = (n: number) => ({ reaction: 316 * n, cast: 156 * n, link: 45 * n, user_data: 44 * n, verification: 7 * n, storage_lending: 6 * n });
-    await serve(page, {
-      reached: behind, rolling_to: Math.floor(behind / 3_600) * 3_600, since: (today - 1) * DAY - 1_808,
-      days: [
-        { day: today - 2, active: 134, complete: false, actions: actions(1) },
-        { day: today - 1, active: 3_047, complete: false, actions: actions(10) },
-      ],
-      meta: { backend: "hypersnap", fetched_at: Date.now() },
-    });
+    await serve(page, catchingUp);
     await page.goto("/dau");
     const year = new Date((today - 1) * DAY * 1000).getUTCFullYear();
     await expect(page.locator(".dau-behind")).toHaveText(
@@ -204,8 +208,8 @@ test.describe("with the Worker", () => {
     await expect(tiles.nth(1).locator(".dau-tile-note")).toHaveText(`${short(today - 1)}, read to 08:24 UTC so far`);
     await expect(tiles.nth(2).locator(".dau-tile-count")).toHaveText("—");
     await expect(tiles.nth(2).locator(".dau-tile-note")).toHaveText("once a whole day has been read");
-    // The chart ends today, labelled though not read; the day being read is
-    // partly counted so far, not today's.
+    // The chart ends today, not read yet; the day being read is partly
+    // counted so far, not today's.
     const chart = page.locator(".dau-chart");
     const bars = chart.locator("rect");
     await expect(bars).toHaveCount(2);
@@ -213,10 +217,15 @@ test.describe("with the Worker", () => {
     await expect(bars.last()).not.toHaveClass(/today/);
     await expect(bars.last().locator("title")).toHaveText(/3,047 accounts \(read so far\)$/);
     await expect(bars.first().locator("title")).toHaveText(/134 accounts \(partly counted\)$/);
-    await expect(chart.locator(".dau-ticks span").last()).toHaveText(short(today));
     const [svg, last] = await Promise.all([chart.locator("svg").boundingBox(), bars.last().boundingBox()]);
     // Yesterday's bar sits one slot in from the right, today's slot empty.
     expect(svg!.x + svg!.width - (last!.x + last!.width)).toBeGreaterThan(svg!.width / 30);
+    // The last label names that bar, under it; today's empty slot has none.
+    const label = chart.locator(".dau-ticks span").last();
+    await expect(label).toHaveText(short(today - 1));
+    await expect(chart.locator(".dau-ticks span", { hasText: short(today) })).toHaveCount(0);
+    const tick = (await label.boundingBox())!;
+    expect(Math.abs(tick.x + tick.width / 2 - (last!.x + last!.width / 2))).toBeLessThan(1);
     await chart.getByText("The days as a table").click();
     await expect(chart.locator("tbody tr").first().locator("th")).toContainText("(read so far)");
     // What they did: the day being read, said so, not the 31 minutes before it.
@@ -262,6 +271,22 @@ test.describe("with the Worker", () => {
       expect(box.x, section).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width, section).toBeLessThanOrEqual(390);
     }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await context.close();
+  });
+
+  test("at 390, while catching up, the chart's label names the bar above it, on the card", async ({ browser }, testInfo) => {
+    const { context, page } = await phone(browser, testInfo);
+    await serve(page, catchingUp);
+    await page.goto("/dau");
+    const chart = page.locator(".dau-chart");
+    const last = chart.locator("rect").last();
+    await expect(last.locator("title")).toHaveText(new RegExp(`^${short(today - 1)} `));
+    const label = chart.locator(".dau-ticks span").last();
+    await expect(label).toHaveText(short(today - 1));
+    const [bar, tick, card] = [(await last.boundingBox())!, (await label.boundingBox())!, (await chart.boundingBox())!];
+    expect(Math.abs(tick.x + tick.width / 2 - (bar.x + bar.width / 2))).toBeLessThan(1);
+    expect(tick.x + tick.width).toBeLessThanOrEqual(card.x + card.width);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await context.close();
   });
