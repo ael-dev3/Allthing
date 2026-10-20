@@ -487,7 +487,14 @@ fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
 /// How long an answer for `path` is reused: the newest casts change by the
 /// minute, everything else is kept for a few.
 fn ttl(path: &str) -> f64 {
-    if path == allthing_core::api::latest_path() { LATEST_TTL_MS } else { CLIENT_TTL_MS }
+    if path == allthing_core::api::latest_path() {
+        LATEST_TTL_MS
+    } else if path == allthing_core::scheduled::SCHEDULED_PATH {
+        // The reader's own list, read afresh each time.
+        0.0
+    } else {
+        CLIENT_TTL_MS
+    }
 }
 
 /// A recent answer for `path`, if one is kept.

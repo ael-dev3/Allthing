@@ -68,6 +68,18 @@ pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Encode as standard base64, padded.
+pub fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() { BASE64[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
+}
+
 /// Decode hex with or without a 0x prefix.
 pub fn hex_decode(input: &str) -> Option<Vec<u8>> {
     let hex = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")).unwrap_or(input);
@@ -170,6 +182,12 @@ mod tests {
         assert_eq!(base64_decode("+/8=").unwrap(), vec![0xfb, 0xff]);
         assert_eq!(base64_decode("-_8").unwrap(), vec![0xfb, 0xff]);
         assert_eq!(base64_decode("a*b"), None);
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(&[0xfb, 0xff]), "+/8=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+        assert_eq!(base64_encode(b""), "");
+        let bytes: Vec<u8> = (0..=255).collect();
+        assert_eq!(base64_decode(&base64_encode(&bytes)).unwrap(), bytes);
         assert_eq!(hex_decode("0x0aff").unwrap(), vec![0x0a, 0xff]);
         assert_eq!(hex_decode("abc"), None);
         assert_eq!(hex_encode(&[0x0a, 0xff]), "0x0aff");

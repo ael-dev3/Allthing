@@ -144,7 +144,7 @@ fn session_fid(secret: &[u8], value: &str, now: i64) -> Option<u64> {
 }
 
 /// Who the request's session cookie signs in, if anyone.
-fn signed_in_fid(req: &Request, env: &Env, now: i64) -> Result<Option<u64>> {
+pub(crate) fn signed_in_fid(req: &Request, env: &Env, now: i64) -> Result<Option<u64>> {
     let cookies = req.headers().get("cookie")?.unwrap_or_default();
     Ok(session_secret(env).and_then(|secret| {
         cookie(&cookies, SESSION_COOKIE).and_then(|value| session_fid(secret.as_bytes(), value, now))
@@ -340,7 +340,7 @@ fn clear(name: &str) -> String {
 }
 
 /// A JSON answer that no cache keeps, setting `cookies`.
-fn json<T: Serialize>(value: &T, cookies: &[&str]) -> Result<Response> {
+pub(crate) fn json<T: Serialize>(value: &T, cookies: &[&str]) -> Result<Response> {
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;
     headers.set("cache-control", "no-store")?;

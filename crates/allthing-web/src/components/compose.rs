@@ -20,7 +20,12 @@
 //! (`/api/v1/gifs/key`, for a signed-in session); without one (no
 //! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji and
 //! stickers come from Allthing's own pack (`components::emoji_picker`); a
-//! sticker takes the GIF's place. Not in the static copy, which has no
+//! sticker takes the GIF's place.
+//!
+//! The clock schedules the draft for later: it is signed with the reader's
+//! key at once, for the time they pick, and kept by the Worker until then
+//! (`allthing_core::scheduled`). A scheduled cast opens here again to be
+//! changed (`Composer::edit`). Not in the static copy, which has no
 //! sign-in.
 
 use std::cell::RefCell;
@@ -36,6 +41,7 @@ use allthing_core::compose::{
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::message::MAX_CAST_BYTES;
 use allthing_core::model::Cast;
+use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, ScheduledCast};
 use allthing_core::text::mention_names;
 use allthing_core::text::truncate_title;
 use leptos::ev;
@@ -50,7 +56,7 @@ use crate::api;
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::signin::use_session;
 use crate::components::writer::{Writer, fids_of, use_writer};
-use crate::util::{BASE, document, href, trap_tab};
+use crate::util::{BASE, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab};
 
 /// How long typing pauses before a search is sent.
 const DEBOUNCE: Duration = Duration::from_millis(350);
@@ -67,6 +73,8 @@ const QUOTE: &str = "M3.5 4.5h9v6h-5l-2.5 2v-2h-1.5zM6 7.5h4";
 const STICKER: &str = "M5.5 2h5A3.5 3.5 0 0 1 14 5.5V9l-5 5H5.5A3.5 3.5 0 0 1 2 10.5v-5A3.5 3.5 0 0 1 5.5 2zM14 9h-2.5A2.5 2.5 0 0 0 9 11.5V14M5.8 8.6c.6.7 1.4 1 2.2 1";
 /// The text's length starts showing at this many bytes.
 const COUNT_FROM: usize = 280;
+/// The clock's hands, inside its face: the button that schedules for later.
+const CLOCK: &str = "M8 4.6V8l2.4 1.6";
 
 /// A page of KLIPY's GIFs, and whether there are more.
 type Found = Rc<(Vec<Gif>, bool)>;
@@ -95,6 +103,24 @@ impl Other {
             fid: cast.author.fid,
             username: cast.author.username.clone(),
             excerpt: truncate_title(cast.text.trim(), 90),
+        }
+    }
+
+    fn saved(&self) -> SavedCast {
+        SavedCast {
+            hash: self.hash.clone(),
+            fid: self.fid,
+            username: self.username.clone(),
+            excerpt: self.excerpt.clone(),
+        }
+    }
+
+    fn from_saved(saved: &SavedCast) -> Other {
+        Other {
+            hash: saved.hash.clone(),
+            fid: saved.fid,
+            username: saved.username.clone(),
+            excerpt: saved.excerpt.clone(),
         }
     }
 }
@@ -142,6 +168,14 @@ pub struct Composer {
     /// Being posted with the reader's key, and why it didn't go out.
     posting: RwSignal<bool>,
     error: RwSignal<Option<String>>,
+    /// When it goes out, as the date-and-time field holds it, while it is
+    /// scheduled for later.
+    when: RwSignal<Option<String>>,
+    /// The scheduled cast it changes, when it is one.
+    editing: RwSignal<Option<i64>>,
+    /// The channel URL of a scheduled cast being changed, whose channel page
+    /// the browser may not hold.
+    channel_url: RwSignal<Option<String>>,
 }
 
 impl Composer {
@@ -155,6 +189,9 @@ impl Composer {
             tab: RwSignal::new(Tab::Emoji),
             posting: RwSignal::new(false),
             error: RwSignal::new(None),
+            when: RwSignal::new(None),
+            editing: RwSignal::new(None),
+            channel_url: RwSignal::new(None),
         }
     }
 
@@ -162,7 +199,8 @@ impl Composer {
     /// aside; one for the same is taken up again.
     fn start(self, target: Target) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
-        if self.target.get_untracked() != target {
+        // A scheduled cast left unsaved isn't taken up as a new one.
+        if self.target.get_untracked() != target || self.editing.get_untracked().is_some() {
             self.target.set(target);
             self.clear();
         }
@@ -175,6 +213,72 @@ impl Composer {
         self.text.set(String::new());
         self.gif.set(None);
         self.error.set(None);
+        self.when.set(None);
+        self.editing.set(None);
+        self.channel_url.set(None);
+    }
+
+    /// Open one of the reader's scheduled casts, to change it or its time:
+    /// what goes out instead is signed again, in its place. A cast whose time
+    /// has passed (one that didn't go out) is given a new one.
+    pub fn edit(self, cast: &ScheduledCast) {
+        RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
+        let saved = SavedDraft::parse(&cast.draft);
+        let target = match (&saved.reply, &saved.quote) {
+            (Some(to), _) => Target::Reply(Other::from_saved(to)),
+            (None, Some(of)) => Target::Quote(Other::from_saved(of)),
+            (None, None) => Target::Cast(saved.channel.clone()),
+        };
+        self.target.set(target);
+        self.text.set(saved.text.clone());
+        self.gif.set(saved.gif.as_ref().map(|gif| Gif {
+            slug: String::new(),
+            title: gif.title.clone(),
+            tile: Rendition { url: gif.tile.clone(), width: gif.width, height: gif.height },
+            embed: Rendition { url: gif.embed.clone(), width: gif.width, height: gif.height },
+        }));
+        self.channel_url.set(saved.channel_url.clone());
+        let at = if cast.at >= now() + MIN_AHEAD { cast.at } else { later(now()) };
+        self.when.set(Some(local_input(at)));
+        self.editing.set(Some(cast.id));
+        self.picker.set(Picker::Closed);
+        self.error.set(None);
+        self.open.set(true);
+    }
+
+    /// Schedule the draft for later, an hour or so from now to begin with,
+    /// or post it now after all.
+    fn toggle_when(self) {
+        let when = if self.when.get_untracked().is_some() { None } else { Some(local_input(later(now()))) };
+        self.when.set(when);
+        self.error.set(None);
+    }
+
+    /// The draft as its scheduled cast keeps it, for the reader's list and
+    /// for changing it later.
+    fn saved(self, draft: &Draft) -> SavedDraft {
+        let gif = self.gif.with_untracked(|gif| {
+            gif.as_ref().map(|g| SavedGif {
+                title: g.title.clone(),
+                embed: g.embed.url.clone(),
+                tile: g.tile.url.clone(),
+                width: g.tile.width,
+                height: g.tile.height,
+            })
+        });
+        let mut saved = SavedDraft {
+            text: self.text.get_untracked(),
+            gif,
+            channel: draft.channel.clone(),
+            channel_url: draft.channel_url.clone(),
+            ..SavedDraft::default()
+        };
+        match self.target.get_untracked() {
+            Target::Reply(to) => saved.reply = Some(to.saved()),
+            Target::Quote(of) => saved.quote = Some(of.saved()),
+            Target::Cast(_) => {}
+        }
+        saved
     }
 
     /// Close, keeping the draft, and return focus to where it was.
@@ -220,7 +324,8 @@ impl Composer {
                 draft.channel_url = api::peek::<ChannelPayload>(&channel_path(&channel))
                     .and_then(Result::ok)
                     .map(|page| page.data.channel.parent_url.clone())
-                    .filter(|url| !url.is_empty());
+                    .filter(|url| !url.is_empty())
+                    .or_else(|| self.channel_url.get());
                 draft.channel = Some(channel);
             }
             Target::Cast(None) => {}
@@ -228,30 +333,45 @@ impl Composer {
         draft
     }
 
-    /// Post the draft with the reader's key, once they have one: its
-    /// mentions are looked up, and a cast that goes out closes the composer
-    /// and says so; one that doesn't stays, with why.
+    /// Post the draft with the reader's key, once they have one, or, with
+    /// a time picked, sign it for then and hand it to the Worker: its
+    /// mentions are looked up, and a cast that goes out (or is kept) closes
+    /// the composer and says so; one that doesn't stays, with why.
     fn post(self, writer: Writer) {
         if self.posting.get_untracked() {
             return;
         }
+        // The time is checked before the key is asked for.
+        let at = match self.when.get_untracked().map(|value| scheduled_at(&value, now())) {
+            None => None,
+            Some(Ok(at)) => Some(at),
+            Some(Err(why)) => {
+                self.error.set(Some(why.into()));
+                return;
+            }
+        };
         writer.when_ready(move || {
             self.posting.set(true);
             self.error.set(None);
             let draft = self.draft();
+            let saved = self.saved(&draft).to_json();
+            let replaces = self.editing.get_untracked();
             spawn_local(async move {
                 let fids = fids_of(&mention_names(&draft.text)).await;
                 let cast = draft.new_cast(|name| fids.get(name).copied());
-                let outcome = match cast.check() {
-                    Ok(()) => writer.cast(cast).await,
-                    Err(why) => Err(why.to_owned()),
+                let outcome = match (cast.check(), at) {
+                    (Err(why), _) => Err(why.to_owned()),
+                    (Ok(()), Some(at)) => writer.schedule(cast, at, saved, replaces).await.map(|_| None),
+                    (Ok(()), None) => writer.cast(cast).await.map(Some),
                 };
                 self.posting.set(false);
                 match outcome {
                     Ok(hash) => {
                         self.clear();
                         self.close();
-                        writer.posted(&hash);
+                        if let Some(hash) = hash {
+                            writer.posted(&hash);
+                        }
                     }
                     Err(why) => self.error.set(Some(why)),
                 }
@@ -266,8 +386,27 @@ impl Default for Composer {
     }
 }
 
-fn use_composer() -> Composer {
+pub fn use_composer() -> Composer {
     expect_context::<Composer>()
+}
+
+/// A time to schedule for, to begin with: the first quarter hour an hour
+/// or more after `now` (Unix seconds).
+fn later(now: i64) -> i64 {
+    ((now + 3_600) / 900 + 1) * 900
+}
+
+/// When a draft scheduled for `value` (the date-and-time field's, in the
+/// reader's time zone) goes out, as of `now`: Unix seconds, or why it can't.
+fn scheduled_at(value: &str, now: i64) -> Result<i64, &'static str> {
+    let at = from_local_input(value).ok_or("Pick a date and a time.")?;
+    if at < now + MIN_AHEAD {
+        return Err("Pick a time at least a minute from now.");
+    }
+    if at > now + MAX_AHEAD {
+        return Err("Pick a time within 30 days.");
+    }
+    Ok(at)
 }
 
 /// Ask for the GIF key ahead of a click that opens the composer, so its
@@ -500,6 +639,9 @@ pub fn ComposerDialog() -> impl IntoView {
                     channel.map(|id| view! { <p class="compose-context">"In "<strong>"/"{id}</strong></p> }.into_any()),
                 ),
             };
+            let title = if composer.editing.get_untracked().is_some() { "Scheduled cast" } else { title };
+            // Only the field's showing, not its value, redraws the row.
+            let scheduling = Memo::new(move |_| composer.when.with(Option::is_some));
             let writer = use_writer();
             // Posted from here wherever the Worker endorses keys, with no
             // way round it; the Farcaster app only where it doesn't.
@@ -590,6 +732,25 @@ pub fn ComposerDialog() -> impl IntoView {
                             })}
                             {move || (composer.picker.get() == Picker::Gifs).then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
                             {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker tab=composer.tab picked=insert stuck=stick/> })}
+                            {move || scheduling.get().then(|| {
+                                let zone = time_zone().map(|zone| format!("Your time, {zone}")).unwrap_or_else(|| "Your time".into());
+                                view! {
+                                    <div class="compose-when">
+                                        <label for="compose-at">"Goes out"</label>
+                                        <input
+                                            id="compose-at"
+                                            class="compose-at"
+                                            type="datetime-local"
+                                            min=local_input(now() + MIN_AHEAD + 59)
+                                            max=local_input(now() + MAX_AHEAD)
+                                            prop:value=move || composer.when.get().unwrap_or_default()
+                                            on:input=move |ev| composer.when.set(Some(event_target_value(&ev)))
+                                        />
+                                        <span class="compose-zone muted small">{zone}</span>
+                                        <a class="compose-scheduled small" href=scheduled_href()>"Scheduled casts"</a>
+                                    </div>
+                                }
+                            })}
                             {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -625,6 +786,19 @@ pub fn ComposerDialog() -> impl IntoView {
                                         on:click=move |_| composer.toggle(Picker::Gifs)
                                     >"GIF"</button>
                                 })}
+                                {move || (posts_here.get() == Some(true)).then(|| view! {
+                                    <button
+                                        type="button"
+                                        class="schedule-button"
+                                        aria-label="Schedule for later"
+                                        title="Schedule for later"
+                                        aria-pressed=move || scheduling.get().to_string()
+                                        disabled=move || composer.editing.with(Option::is_some)
+                                        on:click=move |_| composer.toggle_when()
+                                    >
+                                        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
+                                    </button>
+                                })}
                                 {move || (used.get() > COUNT_FROM).then(|| view! {
                                     <span class="compose-count" class:over=move || { used.get() > MAX_CAST_BYTES }>
                                         {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
@@ -657,11 +831,17 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
             && !matches!(composer.target.get(), Target::Quote(_));
         empty || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES) || writer.posts_here().is_none()
     });
-    let label = move || match (composer.posting.get(), composer.target.get()) {
-        (true, _) => "Posting…",
-        (false, Target::Reply(_)) => "Reply",
-        (false, Target::Quote(_)) => "Quote",
-        (false, Target::Cast(_)) => "Cast",
+    let label = move || {
+        let later = composer.when.with(Option::is_some);
+        match (composer.posting.get(), later, composer.target.get()) {
+            (true, true, _) => "Scheduling…",
+            (true, false, _) => "Posting…",
+            (false, true, _) if composer.editing.with(Option::is_some) => "Save",
+            (false, true, _) => "Schedule",
+            (false, false, Target::Reply(_)) => "Reply",
+            (false, false, Target::Quote(_)) => "Quote",
+            (false, false, Target::Cast(_)) => "Cast",
+        }
     };
     view! {
         <button

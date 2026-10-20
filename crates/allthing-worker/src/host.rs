@@ -48,6 +48,9 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     if let Some(body) = request.body {
         let _ = init.headers.set("content-type", "application/json");
         init.with_body(Some(body.into()));
+    } else if let Some(octets) = &request.octets {
+        let _ = init.headers.set("content-type", "application/octet-stream");
+        init.with_body(Some(worker::js_sys::Uint8Array::from(octets.as_slice()).into()));
     }
     let outgoing = Request::new_with_init(&request.url, &init).map_err(network)?;
 
@@ -57,7 +60,7 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         let mut response = Fetch::Request(outgoing).send_with_signal(&signal).await.map_err(network)?;
         let status = response.status_code();
         let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body = if !(200..300).contains(&status) {
+        let body = if !(200..300).contains(&status) && !request.any_body {
             None
         } else if let Some(max) = request.max_bytes {
             // Stop reading at the cap (servers may ignore the Range header),

@@ -91,6 +91,59 @@ pub fn dau_href() -> String {
     href("/dau")
 }
 
+/// The reader's scheduled casts.
+#[cfg(not(feature = "static-host"))]
+pub fn scheduled_href() -> String {
+    href("/scheduled")
+}
+
+/// A moment in the reader's own time zone, as scheduled casts show it:
+/// "Wed, 21 Oct, 09:00".
+#[cfg(not(feature = "static-host"))]
+pub fn local_time(unix: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(unix as f64 * 1000.0));
+    let options = js_sys::Object::new();
+    let fields =
+        [("weekday", "short"), ("day", "numeric"), ("month", "short"), ("hour", "2-digit"), ("minute", "2-digit")];
+    for (key, value) in fields.into_iter().chain([("hourCycle", "h23")]) {
+        let _ = js_sys::Reflect::set(&options, &key.into(), &value.into());
+    }
+    date.to_locale_string("en-GB", &options).into()
+}
+
+/// A moment as a date-and-time field holds it, in the reader's time zone:
+/// "2026-10-21T09:00".
+#[cfg(not(feature = "static-host"))]
+pub fn local_input(unix: i64) -> String {
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(unix as f64 * 1000.0));
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date(),
+        d.get_hours(),
+        d.get_minutes()
+    )
+}
+
+/// The moment a date-and-time field's value names, in the reader's time
+/// zone: Unix seconds.
+#[cfg(not(feature = "static-host"))]
+pub fn from_local_input(value: &str) -> Option<i64> {
+    if value.len() < 16 {
+        return None;
+    }
+    let ms = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(value)).get_time();
+    ms.is_finite().then_some((ms / 1000.0).floor() as i64)
+}
+
+/// The reader's time zone, as the browser names it ("Europe/Berlin").
+#[cfg(not(feature = "static-host"))]
+pub fn time_zone() -> Option<String> {
+    let format = js_sys::Intl::DateTimeFormat::new(&js_sys::Array::new(), &js_sys::Object::new());
+    js_sys::Reflect::get(&format.resolved_options(), &"timeZone".into()).ok()?.as_string()
+}
+
 pub fn user_href(username: &str) -> String {
     href(&format!("/u/{}", percent_encode(username)))
 }

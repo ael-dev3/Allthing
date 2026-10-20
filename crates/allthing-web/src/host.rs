@@ -77,6 +77,9 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     if let Some(body) = &request.body {
         let _ = headers.set("content-type", "application/json");
         init.set_body(&JsValue::from_str(body));
+    } else if let Some(octets) = &request.octets {
+        let _ = headers.set("content-type", "application/octet-stream");
+        init.set_body(&js_sys::Uint8Array::from(octets.as_slice()));
     }
     init.set_headers(&headers);
     let controller = web_sys::AbortController::new().map_err(failed)?;
@@ -88,7 +91,7 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
             JsFuture::from(window.fetch_with_request(&outgoing)).await.map_err(failed)?.dyn_into().map_err(failed)?;
         let status = response.status();
         let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body = if response.ok() {
+        let body = if response.ok() || request.any_body {
             Some(read_body(&response, request.max_bytes, request.stop_at).await.map_err(failed)?)
         } else {
             None

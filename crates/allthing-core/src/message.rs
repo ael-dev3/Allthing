@@ -271,6 +271,62 @@ pub fn envelope(data_bytes: &[u8], hash: &[u8; 20], signature: &[u8; 64], signer
     out
 }
 
+/// A signed message's parts, read back from the bytes [`envelope`] makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Opened<'a> {
+    pub hash: &'a [u8],
+    pub hash_scheme: u64,
+    pub signature: &'a [u8],
+    pub signature_scheme: u64,
+    pub signer: &'a [u8],
+    pub data: &'a [u8],
+}
+
+/// A `Message`'s parts: `None` unless the bytes are protobuf with data and
+/// a hash.
+pub fn open_envelope(bytes: &[u8]) -> Option<Opened<'_>> {
+    let mut opened = Opened { hash: &[], hash_scheme: 0, signature: &[], signature_scheme: 0, signer: &[], data: &[] };
+    for (field, value) in read_fields(bytes)? {
+        match (field, value) {
+            (2, Field::Bytes(b)) => opened.hash = b,
+            (3, Field::Int(n)) => opened.hash_scheme = n,
+            (4, Field::Bytes(b)) => opened.signature = b,
+            (5, Field::Int(n)) => opened.signature_scheme = n,
+            (6, Field::Bytes(b)) => opened.signer = b,
+            (7, Field::Bytes(b)) => opened.data = b,
+            _ => {}
+        }
+    }
+    (!opened.data.is_empty() && !opened.hash.is_empty()).then_some(opened)
+}
+
+/// What a message's data says: its type, author, time (Farcaster seconds),
+/// network, and the field its body is in (5 for a cast).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DataRead {
+    pub message_type: u64,
+    pub fid: u64,
+    pub timestamp: u64,
+    pub network: u64,
+    pub body_field: u64,
+}
+
+/// `MessageData`, read from its bytes: `None` unless they are protobuf.
+pub fn read_data(data: &[u8]) -> Option<DataRead> {
+    let mut read = DataRead::default();
+    for (field, value) in read_fields(data)? {
+        match (field, value) {
+            (1, Field::Int(n)) => read.message_type = n,
+            (2, Field::Int(n)) => read.fid = n,
+            (3, Field::Int(n)) => read.timestamp = n,
+            (4, Field::Int(n)) => read.network = n,
+            (field, Field::Bytes(_)) if field >= 5 => read.body_field = field,
+            _ => {}
+        }
+    }
+    Some(read)
+}
+
 /// Where the node takes a message (the bytes of an [`envelope`], as
 /// `application/octet-stream`).
 pub fn submit_url() -> String {
@@ -399,6 +455,47 @@ pub fn lists_key(body: &str, key: &str) -> Option<bool> {
     let key = key.to_ascii_lowercase();
     let listed = |s: &Value| s.get("key").and_then(Value::as_str).and_then(normalize_key);
     Some(answer.get("signers")?.as_array()?.iter().filter_map(listed).any(|k| k == key))
+}
+
+/// A protobuf field's value: a varint, or length-delimited bytes, the only
+/// kinds Farcaster's messages use.
+enum Field<'a> {
+    Int(u64),
+    Bytes(&'a [u8]),
+}
+
+/// Protobuf bytes' top-level fields, by number: `None` if they hold another
+/// kind, or end in the middle of one.
+fn read_fields(mut bytes: &[u8]) -> Option<Vec<(u64, Field<'_>)>> {
+    let mut fields = Vec::new();
+    while !bytes.is_empty() {
+        let tag = read_varint(&mut bytes)?;
+        let value = match tag & 7 {
+            0 => Field::Int(read_varint(&mut bytes)?),
+            2 => {
+                let length = usize::try_from(read_varint(&mut bytes)?).ok()?;
+                let (value, rest) = bytes.split_at_checked(length)?;
+                bytes = rest;
+                Field::Bytes(value)
+            }
+            _ => return None,
+        };
+        fields.push((tag >> 3, value));
+    }
+    Some(fields)
+}
+
+fn read_varint(bytes: &mut &[u8]) -> Option<u64> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let (&byte, rest) = bytes.split_first()?;
+        *bytes = rest;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte < 0x80 {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn cast_id(id: &CastId) -> Vec<u8> {
@@ -680,6 +777,31 @@ mod tests {
         let missing = r#"{"error":"Failed to get username proof","error_detail":"status: NotFound, message: \"Username proof not found\""}"#;
         assert_eq!(username_fid(400, missing), Some(None));
         assert_eq!(username_fid(503, ""), None);
+    }
+
+    #[test]
+    fn a_signed_message_reads_back_as_it_was_made() {
+        let cast = NewCast { text: "Later".into(), ..NewCast::default() };
+        let data = MessageData::new(3, 1_800_000_000, Body::CastAdd(cast)).encode();
+        let hash = message_hash(&data);
+        let bytes = envelope(&data, &hash, &[7; 64], &[9; 32]);
+        let opened = open_envelope(&bytes).unwrap();
+        assert_eq!((opened.hash, opened.hash_scheme), (&hash[..], 1));
+        assert_eq!((opened.signature, opened.signature_scheme), (&[7u8; 64][..], 1));
+        assert_eq!((opened.signer, opened.data), (&[9u8; 32][..], &data[..]));
+        let read = read_data(opened.data).unwrap();
+        let timestamp = (1_800_000_000 - EPOCH) as u64;
+        assert_eq!(read, DataRead { message_type: 1, fid: 3, timestamp, network: 1, body_field: 5 });
+        // A like, by its type and body.
+        let like = MessageData::new(3, 1_800_000_000, Body::ReactionAdd(Reaction::Like, CastId::new(2, CAST).unwrap()));
+        let read = read_data(&like.encode()).unwrap();
+        assert_eq!((read.message_type, read.body_field), (3, 7));
+        // Not protobuf, cut short, or without data.
+        assert_eq!(open_envelope(&[0xff]), None);
+        assert_eq!(open_envelope(&bytes[..bytes.len() - 1]), None);
+        assert_eq!(open_envelope(&[]), None);
+        assert_eq!(read_data(&[0x0b]), None);
+        assert_eq!(read_data(&[0x08, 0x80]), None);
     }
 
     #[test]

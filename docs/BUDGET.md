@@ -105,7 +105,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Any cache hit | 1 (cache read) |
 | home | cache read 1 + trending casts 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + cache write 1 |
 | home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
-| the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1 |
+| the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1; first, [scheduled casts](#11-scheduled-casts) due: D1 1 (what is due) + submits ≤5 + D1 1 (what became of them, only when some were due) (≤ 11) |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
 | activity | cache read 1 + the cron's stored payload 1 (a D1 read) + cache write 1 (≤ 3); no upstream calls |
@@ -122,6 +122,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
 | sign-in `verify` | one batched OP Mainnet `eth_call` pair 1 (custody and auth address; + 1 fallback RPC) + the account's name and picture (`user/bulk`) 1 (≤ 3); never cached |
 | sign-in `start`, `qr`, `signout`; a key's endorsement (`auth/signer`) and `/api/v1/signer` | 0 |
+| scheduled casts: the list, scheduling, cancelling | D1 1 (+ the schema once per isolate); no upstream calls; never cached |
 | `/version` | 0 |
 
 **Preloaded previews** (`/engagement`) give way to page builds. As each list's read starts, the batch checks the isolate's Hypersnap bucket and reads only while it holds more than 16 tokens, likes first. Lists left out make the batch partial: it is cached for 15 s, then rebuilt, and the client loads those lists when their popover opens. With no room at all it answers 503, and the client does the same. A batch's cache key is its sorted hashes, and batches follow the list (cards 1–6, 7–12, …), so readers of the same feed share each batch's edge cache entry.
@@ -234,3 +235,17 @@ Farcaster's daily active accounts are counted from Hypersnap's event stream ([AR
 
 **Counting by app** looks up the keys whose app isn't known: an account's active keys (`signersByFid`, 2 to 20 KB), cached in the isolate for an hour as casts' origins use them, and its onchain history for a key removed since. At most 24 accounts a run, 6 while catching up, whose full pages take most of a run's CPU: about 0.3 ms of parsing for 24 lookups. Keys added onchain come with their app in the event stream and need no lookup (about 300 a day). After a deploy, every active account's key is looked up once: about 7,000 reads, in about 10 hours, during which the hover cards say what share of accounts' apps is known. Then about 1,500 a day. The first count by app comes 24 hours after a deploy, once a whole window of keys has been kept.
 
+## 11. Scheduled casts
+
+A reader's scheduled casts ([ARCHITECTURE.md](ARCHITECTURE.md#scheduled-casts)) are kept in D1 and go out from the indexer's cron run, which already fires every minute, so they need no cron trigger of their own. Against the Free plan:
+
+| Limit | Free plan | Scheduled casts |
+|---|---|---|
+| Worker requests | 100,000/day | The cron's runs, already counted; the list page is one request a view, and scheduling, changing or cancelling one each |
+| CPU time | 10 ms per invocation | A run decodes at most 5 stored messages from base64 (2 KB each at most) before the indexer's page; checking a cast to keep it reads its few protobuf fields and hashes its data once (BLAKE3, under 1 KB) |
+| Subrequests | 50 per invocation | Each run: one D1 read of what is due, then, only if some are, a Hypersnap `submitMessage` each (5 at most) and one D1 batch for what became of them, leaving the indexer its 4 |
+| D1 rows written | 100,000/day | A cast scheduled, changed or cancelled: 1 row, plus its index entries; what became of one: 1 |
+| D1 rows read | 5,000,000/day | What is due is read through its index (`state, at`): no rows when nothing is, 1,440 queries a day. A reader's list reads their own rows (25 waiting at most, and a week of finished ones) |
+| D1 storage | 5 GB | Under 9 KB a cast (its message, 2 KB at most, and its draft, 6 KB at most); finished ones are dropped after a week |
+
+**Load on Hypersnap**: one `submitMessage` per scheduled cast, through the same token bucket and breaker as page builds, and while the node is busy or down, one again each minute, 30 times at most. A run whose breaker is open, or whose bucket is empty, leaves its casts for the next minute without counting a try.
