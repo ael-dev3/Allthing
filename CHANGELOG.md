@@ -11,7 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
-- The source on GitHub, a click away: the footer's Source link has GitHub's mark, and the avatar menu links to Allthing on GitHub, so it's in reach on a feed that scrolls without end.
+- The source on GitHub, a click away: the footer's Source link has GitHub's mark, and the avatar menu links to Allthing on GitHub, so it's in reach on a feed that scrolls without end. Both open GitHub in a new tab, so the page you were reading stays where it was.
 - Stickers move in the picker, as on Telegram: each one in view plays, in a taller panel (four rows on a phone, five larger stickers to a row on a computer), and one held down shows large until let go, without picking it. Each moves as a small animated WebP made from its GIF, loaded as it comes into view; with reduced motion, or when your phone or browser saves data, they stay still.
 - A profile card opened from a Liked by, Recasted by or Replies preview is complete sooner: its people's votes and wallets load as the preview opens (it opens once the pointer rests on the count, or on a tap), not once the pointer comes into the list, and the name pointed at or touched goes first. Three previews' people are preloaded every 5 minutes, up from two.
 - On a phone, small targets take a fingertip: the heart and recast icons, the counts, Reply, Quote and permalink, the sort and profile tabs, Home, Sign in, Follow, Favorite, Show less and the footer's links each take a tap 44 px tall (Sign in 44 px wide too), centred on them, with the layout as it was. The replies count is as tall as the others on a computer too.
