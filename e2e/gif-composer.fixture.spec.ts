@@ -58,6 +58,8 @@ async function serve(target: Page, { key = KEY as string | null, signedIn = true
   );
   await target.route("**/api/v1/gifs/key", (route) => {
     calls.key += 1;
+    // As the Worker answers: the key goes only to a session.
+    if (!signedIn) return route.fulfill({ status: 401, json: { error: "Sign in to search GIFs" } });
     return key ? route.fulfill({ json: { key } }) : route.fulfill({ status: 404, json: { error: "GIF search isn't set up" } });
   });
   await target.route(`${KLIPY}/**`, (route) => {
@@ -100,15 +102,17 @@ async function handOff(page: Page) {
 }
 
 test("signed out, the composer is there, and its draft goes to the Farcaster app, with no GIF button", async ({ page }) => {
-  await serve(page, { signedIn: false });
+  const calls = await serve(page, { signedIn: false });
   await page.goto("/");
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
   await page.getByRole("button", { name: "Write a cast" }).click();
   const dialog = page.getByRole("dialog", { name: "New cast" });
   await page.keyboard.type("gm, signed out");
-  // GIFs take a session (KLIPY's key is handed to one); emoji don't.
+  // GIFs take a session (KLIPY's key is handed to one); emoji don't. The
+  // check waits for the composer's ask for the key, which is refused.
   await expect(dialog.getByRole("button", { name: "Add an emoji" })).toBeVisible();
+  await expect.poll(() => calls.key).toBeGreaterThan(0);
   await expect(dialog.getByRole("button", { name: "Add a GIF" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Schedule for later" })).toHaveCount(0);
   const url = await handOff(page);
