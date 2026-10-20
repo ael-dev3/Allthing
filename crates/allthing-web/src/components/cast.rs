@@ -332,7 +332,7 @@ fn take_viewport_token() -> bool {
 }
 
 /// Run `f` in a task of its own once the next frame has been painted.
-fn after_paint(f: impl FnOnce() + 'static) {
+pub fn after_paint(f: impl FnOnce() + 'static) {
     request_animation_frame(move || set_timeout(f, std::time::Duration::ZERO));
 }
 
