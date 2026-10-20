@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- A test for item 91 on a post page with replies: each Likes, Recasts and Replies popover, the post's and a reply's, is checked at 1280 and 390 to be fully opaque, to have a shadow, to sit above the cards around it, and to have no native tooltip (`e2e/post-popovers.fixture.spec.ts`).
 - The source on GitHub, a click away: the footer's Source link has GitHub's mark, and the avatar menu links to Allthing on GitHub, so it's in reach on a feed that scrolls without end. Both open GitHub in a new tab, so the page you were reading stays where it was.
 - Stickers move in the picker, as on Telegram: each one in view plays, in a taller panel (four rows on a phone, five larger stickers to a row on a computer), and one held down shows large until let go, without picking it. Each moves as a small animated WebP made from its GIF, loaded as it comes into view; with reduced motion, or when your phone or browser saves data, they stay still.
 - A profile card opened from a Liked by, Recasted by or Replies preview is complete sooner: its people's votes and wallets load as the preview opens (it opens once the pointer rests on the count, or on a tap), not once the pointer comes into the list, and the name pointed at or touched goes first. Three previews' people are preloaded every 5 minutes, up from two.
