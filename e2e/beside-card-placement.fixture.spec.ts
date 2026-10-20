@@ -49,7 +49,8 @@ test("at 880 px, a card from the lowest name of a list above its count stays lev
   await expect(profile.locator(".profile-card-bio")).toHaveText("Wallets and words.");
   // One message; the Solana note folded into a word on the label's line.
   await expect(profile.locator(".profile-card-wallets .share-message")).toHaveText("No activity on the EVM chains counted.");
-  await expect(profile.locator(".share-note")).toHaveAttribute("title", "Solana couldn't be read just now, so its wallets aren't counted.");
+  await expect(profile.locator(".share-note .visually-hidden")).toHaveText(": Solana couldn't be read just now, so its wallets aren't counted.");
+  expect(await profile.locator(".share-note").getAttribute("title")).toBeNull();
   const [listBox, cardBox, postBox] = [await list.boundingBox(), await profile.boundingBox(), await post.boundingBox()];
   // Level with the list's bottom, as the list opened above its count: not
   // hanging below the list, nor past the post the list belongs to.

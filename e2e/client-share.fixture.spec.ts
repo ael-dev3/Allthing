@@ -67,6 +67,6 @@ test("the Farcaster app is never called @warpcast, in links or tooltips", async 
   const via = page.locator(".cast-card").first().locator(".origin");
   await expect(via).toHaveText("via Farcaster");
   await expect(via.locator("a")).toHaveAttribute("href", /\/u\/fid(:|%3A)9152$/);
-  await expect(via).toHaveAttribute("title", /requested by Farcaster \(app fid 9152\)/);
-  expect(await page.locator("[title*='warpcast' i], a[href*='/u/warpcast']").count()).toBe(0);
+  await expect(via).toHaveAttribute("aria-description", /requested by Farcaster \(app fid 9152\)/);
+  expect(await page.locator("[title*='warpcast' i], [aria-description*='warpcast' i], a[href*='/u/warpcast']").count()).toBe(0);
 });

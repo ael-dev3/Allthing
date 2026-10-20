@@ -219,26 +219,17 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     }
 }
 
-/// Which app signed the cast, as a quiet line in the post's meta: the
-/// signing key and the app's fid on hover.
+/// Which app signed the cast, as a quiet line in the post's meta, and the
+/// key it signed with: in the open, not in a native tooltip.
 #[component]
 fn PostedVia(cast: Cast, notes: Notes) -> impl IntoView {
     let origin = notes.origins.get(&cast.hash).cloned();
     let app = notes.app_for(&cast.hash).cloned();
-    let title = match (&origin, &app) {
-        (Some(o), Some(app)) => format!(
-            "Signed with key {}, requested by {} (app fid {}).",
-            short_address(&o.signer),
-            client_name(app),
-            app.fid
-        ),
-        (Some(o), None) => format!("Signed with key {}.", short_address(&o.signer)),
-        (None, _) => "Which app posted this is still being resolved.".to_owned(),
-    };
     match app {
         Some(app) => view! {
-            <span class="post-via muted" title=title>
+            <span class="post-via muted">
                 "via "<a href=user_href(&client_profile(&app))>{client_name(&app).to_owned()}</a>
+                {origin.map(|o| view! { <span class="post-key">" · key "<code>{short_address(&o.signer)}</code></span> })}
             </span>
         }
         .into_any(),

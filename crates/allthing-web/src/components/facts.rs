@@ -19,9 +19,9 @@ use crate::util::now;
 #[component]
 pub fn JoinedFact(joined: Joined) -> impl IntoView {
     view! {
-        <div class="fact" title=joined.note(now())>
+        <div class="fact">
             <dt>"Joined"</dt>
-            <dd>{joined.date()}</dd>
+            <dd aria-description=joined.note(now())>{joined.date()}</dd>
         </div>
     }
 }
@@ -40,7 +40,7 @@ pub fn wallet_data(fid: u64) -> WalletData {
     LocalResource::new(move || async move { api::get::<WalletActivity>(&wallets_path(fid)).await })
 }
 
-/// What the NS vote is, for the tooltip.
+/// What the NS vote is, read out with the fact's label.
 const NS_VOTE_TIP: &str = "NS vote: how this account answered farcaster.xyz's vote after Network School took over Farcaster. Stayed (yes), left (no), or didn't vote.";
 
 /// How the account voted when farcaster.xyz asked everyone to stay (yes) or
@@ -53,10 +53,10 @@ pub fn VoteFact(fid: u64, #[prop(optional)] data: Option<VoteData>, #[prop(optio
     let row = |answer: AnyView| {
         view! {
             <div class="fact vote-fact">
-                <dt title=NS_VOTE_TIP>
+                <dt aria-description=NS_VOTE_TIP>
                     <img class="ns-icon" src=crate::util::href("/ns-icon.png") width="14" height="14" alt=""/>
                     "NS vote "
-                    <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" title="What was the vote? (docs/VOTE.md)">"?"</a>
+                    <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/VOTE.md" aria-label="What was the NS vote? (docs/VOTE.md)">"?"</a>
                 </dt>
                 <dd>{answer}</dd>
             </div>
@@ -65,7 +65,7 @@ pub fn VoteFact(fid: u64, #[prop(optional)] data: Option<VoteData>, #[prop(optio
     };
     let unknown = move || {
         always.then(|| {
-            row(view! { <span class="vote vote-unknown" title="The vote couldn't be read just now.">"Unknown"</span> }
+            row(view! { <span class="vote vote-unknown" aria-description="The vote couldn't be read just now.">"Unknown"</span> }
                 .into_any())
         })
     };
@@ -78,7 +78,7 @@ pub fn VoteFact(fid: u64, #[prop(optional)] data: Option<VoteData>, #[prop(optio
         }
         Some(Ok(fetched)) => match fetched.data.summary() {
             Some((result, detail)) => Some(row(view! {
-                <span class=format!("vote {}", result.class()) title=detail>{result.label()}</span>
+                <span class=format!("vote {}", result.class()) aria-description=detail>{result.label()}</span>
             }
             .into_any())),
             None => unknown(),
@@ -124,12 +124,12 @@ const MISSED_SOME: &str = "Some chains weren't read just now.";
 const MISSED_SHARES: &str = "Some chains weren't read just now, so the shares cover the rest.";
 
 /// A card's word for its notes, beside the section's label: what they say
-/// is on the hover, and read out.
+/// is read out.
 fn note_word(notes: Vec<&'static str>, partial: bool) -> Option<impl IntoView> {
     (!notes.is_empty()).then(|| {
         let text = notes.join(" ");
         view! {
-            <span class="share-note" title=text.clone()>
+            <span class="share-note">
                 {if partial { "partial" } else { "earlier counts" }}
                 <span class="visually-hidden">{format!(": {text}")}</span>
             </span>
@@ -192,7 +192,7 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
     let bar = view! {
         <div class="share-bar" role="img" aria-label=bar_label>
             {measured.iter().filter(|c| c.percent > 0).map(|c| view! {
-                <span class=format!("seg chain-{}", c.chain) style=format!("flex-grow: {}", c.percent) title=format!("{}: {}%", c.name, c.percent)></span>
+                <span class=format!("seg chain-{}", c.chain) style=format!("flex-grow: {}", c.percent)></span>
             }).collect_view()}
         </div>
     };
@@ -203,7 +203,7 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
         let rest = &measured[NAMED.min(measured.len())..];
         let more = (!rest.is_empty()).then(|| {
             let listed = rest.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
-            view! { <li class="share-more" title=listed>{format!("+{}", rest.len())}</li> }
+            view! { <li class="share-more" aria-description=listed>{format!("+{}", rest.len())}</li> }
         });
         let notes = [(missed, MISSED_SHARES), (carried, CARRIED), (solana_unread, SOLANA_UNREAD)];
         let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
@@ -211,7 +211,7 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
             {bar}
             <ul class="share-list compact">
                 {measured.iter().take(NAMED).map(|c| view! {
-                    <li title=chain_count_note(c)>
+                    <li aria-description=chain_count_note(c)>
                         <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
                         <span class="chain-name">{c.name.clone()}</span>
                         <strong class="pct">{format!("{}%", c.percent)}</strong>
@@ -227,7 +227,7 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
         {bar}
         <ul class="share-list">
             {measured.iter().map(|c| view! {
-                <li title=chain_count_note(c)>
+                <li aria-description=chain_count_note(c)>
                     <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
                     <span class="chain-name">{c.name.clone()}</span>
                     <strong class="pct">{format!("{}%", c.percent)}</strong>
