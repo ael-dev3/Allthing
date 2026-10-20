@@ -224,7 +224,7 @@ test("a card opened before its facts are in waits for them out of sight", async 
 // at the size it keeps when they come, whatever they say.
 const slow = [
   { fid: 100, what: "two chains", vote: "Didn't vote", legend: [/Base\s*75%/, /Ethereum\s*25%/] },
-  { fid: 101, what: "five chains and an unread Solana", vote: "Voted yes", legend: [/Base\s*40%/, /Ethereum\s*25%/, "+3"], note: "partial" },
+  { fid: 101, what: "five chains and an unread Solana", vote: "Voted yes", legend: [/Base\s*40%/, /Ethereum\s*25%/, /^\+3 35%$/], note: "partial" },
   { fid: 105, what: "no wallets", vote: "Voted yes", message: "No onchain activity from verified wallets." },
   { fid: 107, what: "a vote that can't be read", vote: "Unknown", legend: [/Base\s*75%/, /Ethereum\s*25%/] },
 ];

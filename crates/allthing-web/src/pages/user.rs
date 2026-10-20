@@ -18,7 +18,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
-use crate::components::facts::{JoinedFact, VoteFact, WalletShares};
+use crate::components::facts::{JoinedFact, VoteFact, WALLETS_WHAT, WalletShares, WalletsHelp};
 use crate::components::favorite::FavoriteButton;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
@@ -243,9 +243,10 @@ fn WalletTile(user: User) -> impl IntoView {
     view! {
         <section class="wallets profile-wallets" aria-label="Wallet activity by chain">
             <div class="wallets-head">
-                <h2>"Wallet activity"</h2>
+                <h2>"Wallet activity " <WalletsHelp/></h2>
                 {(!addresses.is_empty()).then(|| view! { <WalletsButton addresses=addresses.clone()/> })}
             </div>
+            <p class="wallets-what muted small">{WALLETS_WHAT}</p>
             <WalletShares fid/>
         </section>
     }
