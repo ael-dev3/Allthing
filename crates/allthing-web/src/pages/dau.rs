@@ -284,9 +284,12 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
             }
         })
         .collect_view();
-    // A label a week, counted back from today, so today is labelled.
+    // A label a week, counted back from the newest day with a bar (today's,
+    // once reading has got to it), so every label names a bar above it. A
+    // slot left empty while reading catches up has no label of its own.
+    let newest = days[n - 1].day;
     let ticks = (0..)
-        .map(|week| end - 7 * week)
+        .map(|week| newest - 7 * week)
         .take_while(|on| *on >= first)
         .map(|on| {
             let left = format!("left: {:.2}%", (slot(on) as f64 + 0.5) / slots as f64 * 100.0);
