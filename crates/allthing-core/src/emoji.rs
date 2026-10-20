@@ -584,6 +584,16 @@ pub struct Reacted {
     pub emoji: &'static Emoji,
     /// Each account once, in the order they reacted.
     pub by: Vec<UserSummary>,
+    /// Every reply that is this emoji, in the order they came: whose it is
+    /// (fid) and its hash. Taking a reaction back deletes its replies.
+    pub replies: Vec<(u64, String)>,
+}
+
+impl Reacted {
+    /// The hashes of `fid`'s replies that are this emoji.
+    pub fn replies_of(&self, fid: u64) -> Vec<String> {
+        self.replies.iter().filter(|(by, _)| *by == fid).map(|(_, hash)| hash.clone()).collect()
+    }
 }
 
 /// The emoji reactions among a cast's `replies`: each emoji with whom it
@@ -598,13 +608,14 @@ pub fn reactions<'a>(replies: impl IntoIterator<Item = &'a Cast>) -> Vec<Reacted
         let at = match out.iter().position(|r| r.emoji == emoji) {
             Some(at) => at,
             None => {
-                out.push(Reacted { emoji, by: Vec::new() });
+                out.push(Reacted { emoji, by: Vec::new(), replies: Vec::new() });
                 out.len() - 1
             }
         };
         if !out[at].by.iter().any(|u| u.fid == cast.author.fid) {
             out[at].by.push(cast.author.clone());
         }
+        out[at].replies.push((cast.author.fid, cast.hash.clone()));
     }
     // Stable: equal counts keep the order they first came in.
     out.sort_by_key(|r| std::cmp::Reverse(r.by.len()));
@@ -683,6 +694,12 @@ mod tests {
         // Two accounts each for the NO sign and the heart, the NO sign
         // first, as it came first; then the one that came before both.
         assert_eq!(summary, [("pepe_no", vec![1, 2]), ("pepe_heart_hug", vec![2, 3]), ("pepe_pls", vec![5])]);
+        // Each reply is kept, an account's two hearts both: taking the
+        // reaction back deletes them all.
+        let heart = &found[1];
+        assert_eq!(heart.replies_of(2), [format!("0x{:040x}", 11), format!("0x{:040x}", 13)]);
+        assert_eq!(heart.replies_of(3), [format!("0x{:040x}", 12)]);
+        assert!(heart.replies_of(9).is_empty());
         assert!(reactions(std::iter::empty()).is_empty());
     }
 

@@ -5477,17 +5477,24 @@ p.jumbo .emoji img {
   height: 22px;
 }
 
-.reaction-chip:hover,
 .reaction-chip:focus-visible {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Only where a pointer hovers: a phone keeps :hover on the chip last
+   tapped, so one just taken back would still look like yours. */
+@media (hover: hover) and (pointer: fine) {
+  .reaction-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
 
 .reaction-chip[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
-  cursor: default;
 }
 
 /* A profile card opened beside a who-list: a transform on an ancestor (a

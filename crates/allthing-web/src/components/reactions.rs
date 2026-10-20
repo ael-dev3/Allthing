@@ -21,8 +21,20 @@ fn names(by: &[UserSummary]) -> String {
     }
 }
 
+/// One chip: its emoji, how many reacted with it, whether the reader did,
+/// who (for its label), and the reader's replies that are it.
+struct Chip {
+    emoji: &'static Emoji,
+    count: u64,
+    own: bool,
+    who: String,
+    /// Deleted to take the reader's reaction back.
+    replies: Vec<String>,
+}
+
 /// A cast's emoji reactions, from its replies (`reacted`), with the
-/// reader's own this visit. A chip reacts with its emoji too.
+/// reader's own this visit. A chip reacts with its emoji too, and the
+/// reader's own takes their reaction back: the reply that is it is deleted.
 #[component]
 pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
     // The static copy shows them, and has no one to react as.
@@ -34,13 +46,25 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
     let writer = crate::components::writer::use_writer();
     #[cfg(not(feature = "static-host"))]
     let target = allthing_core::message::CastId::new(cast.author.fid, &cast.hash);
+    #[cfg(not(feature = "static-host"))]
+    let session = crate::components::signin::use_session();
     let motion = !prefers_reduced_motion();
     move || {
-        // The reader's own this visit, as reactions the replies don't have yet.
+        // Replies the reader deleted this visit.
         #[cfg(not(feature = "static-host"))]
-        let mine: Vec<&'static Emoji> = writer.map(|w| w.reactions(&hash)).unwrap_or_default();
+        let gone = |reply: &str| writer.is_some_and(|w| w.deleted(reply));
         #[cfg(feature = "static-host")]
-        let mine: Vec<&'static Emoji> = Vec::new();
+        let gone = |_: &str| false;
+        // The reader's own this visit, as reactions the replies don't have
+        // yet, with the reply each is once it's known; less those taken back.
+        #[cfg(not(feature = "static-host"))]
+        let mine: Vec<(&'static Emoji, Option<String>)> = writer
+            .map(|w| w.reactions(&hash).into_iter().map(|e| (e, w.reaction_reply(&hash, e))).collect())
+            .unwrap_or_default();
+        #[cfg(feature = "static-host")]
+        let mine: Vec<(&'static Emoji, Option<String>)> = Vec::new();
+        let mine: Vec<(&'static Emoji, Option<String>)> =
+            mine.into_iter().filter(|(_, reply)| !reply.as_deref().is_some_and(gone)).collect();
         let reader = {
             #[cfg(not(feature = "static-host"))]
             {
@@ -51,50 +75,90 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                 None::<u64>
             }
         };
-        let mut chips: Vec<(&'static Emoji, u64, bool, String)> = reacted
+        let mut chips: Vec<Chip> = reacted
             .iter()
-            .map(|r| {
-                let by_reader = reader.is_some_and(|fid| r.by.iter().any(|u| u.fid == fid));
-                let added = !by_reader && mine.contains(&r.emoji);
-                let count = r.by.len() as u64 + u64::from(added);
-                let who = if added { format!("you, {}", names(&r.by)) } else { names(&r.by) };
-                (r.emoji, count, by_reader || added, who)
+            .filter_map(|r| {
+                // An account whose replies with it are all deleted no longer
+                // reacts with it.
+                let by: Vec<UserSummary> =
+                    r.by.iter()
+                        .filter(|u| r.replies.iter().any(|(fid, reply)| *fid == u.fid && !gone(reply)))
+                        .cloned()
+                        .collect();
+                let mut replies: Vec<String> =
+                    reader.map(|fid| r.replies_of(fid)).unwrap_or_default().into_iter().filter(|h| !gone(h)).collect();
+                let by_reader = !replies.is_empty();
+                let this_visit = mine.iter().find(|(e, _)| *e == r.emoji);
+                let added = !by_reader && this_visit.is_some();
+                if let Some((_, Some(reply))) = this_visit
+                    && !replies.contains(reply)
+                {
+                    replies.push(reply.clone());
+                }
+                let count = by.len() as u64 + u64::from(added);
+                let who = match (added, by.is_empty()) {
+                    (true, true) => "you".to_owned(),
+                    (true, false) => format!("you, {}", names(&by)),
+                    (false, _) => names(&by),
+                };
+                (count > 0).then_some(Chip { emoji: r.emoji, count, own: by_reader || added, who, replies })
             })
             .collect();
-        for emoji in mine.iter().filter(|e| !reacted.iter().any(|r| r.emoji == **e)) {
-            chips.push((emoji, 1, true, "you".into()));
+        for (emoji, reply) in mine.iter() {
+            if !chips.iter().any(|c| c.emoji == *emoji) {
+                chips.push(Chip {
+                    emoji,
+                    count: 1,
+                    own: true,
+                    who: "you".into(),
+                    replies: reply.iter().cloned().collect(),
+                });
+            }
         }
         if chips.is_empty() {
             return ().into_any();
         }
         view! {
             <ul class="reaction-chips" aria-label="Emoji reactions">
-                {chips.into_iter().map(|(emoji, count, own, who)| {
+                {chips.into_iter().map(|Chip { emoji, count, own, who, replies }| {
                     let src = href(&if motion { emoji.file() } else { emoji.still() });
-                    // The reader's, handed to the Farcaster app and not posted yet.
+                    // The reader's, handed to the Farcaster app and not posted
+                    // yet, or being taken back.
                     #[cfg(not(feature = "static-host"))]
-                    let pending = own && writer.is_some_and(|w| w.pending_emoji(&hash, emoji));
+                    let pending = own
+                        && writer.is_some_and(|w| w.pending_emoji(&hash, emoji) || replies.iter().any(|r| w.deleting(r)));
                     #[cfg(feature = "static-host")]
                     let pending = false;
+                    let take_back = own && !replies.is_empty();
                     let label = format!(
                         "{}: {count} {}, by {who}{}",
                         emoji.label(),
                         if count == 1 { "reaction" } else { "reactions" },
-                        if own { "" } else { ". React with it too" },
+                        if take_back {
+                            ". Take yours back"
+                        } else if own {
+                            ""
+                        } else {
+                            ". React with it too"
+                        },
                     );
                     #[cfg(not(feature = "static-host"))]
-                    let react = {
+                    let act = {
                         let hash = hash.clone();
                         move |_| {
-                            if let (Some(writer), Some(target)) = (writer, target)
-                                && !own
-                            {
+                            let (Some(writer), Some(target)) = (writer, target) else { return };
+                            if !own {
                                 writer.react(target, emoji, react_ask(&hash, emoji));
+                            } else if let Some(reply) = replies.first() {
+                                let username = session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
+                                writer.delete(reply.clone(), take_back_ask(&username.unwrap_or_default(), reply));
                             }
                         }
                     };
                     #[cfg(feature = "static-host")]
-                    let react = move |_| {};
+                    let act = move |_| {
+                        let _ = &replies;
+                    };
                     view! {
                         <li>
                             <button
@@ -103,7 +167,7 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                                 class:pending=pending
                                 aria-pressed=own.to_string()
                                 aria-label=label
-                                on:click=react
+                                on:click=act
                             >
                                 <img src=src alt="" width=emoji.width / 2 height=emoji.height / 2 loading="lazy"/>
                                 <span class="n">{count}</span>
@@ -115,6 +179,13 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
         }
         .into_any()
     }
+}
+
+/// Taking a Pepe reaction back in the Farcaster app: the reader's reply
+/// that is it, to delete there.
+#[cfg(not(feature = "static-host"))]
+fn take_back_ask(username: &str, reply: &str) -> crate::components::handoff::Ask {
+    crate::components::handoff::Ask::delete(allthing_core::compose::cast_url(username, reply), "reaction")
 }
 
 /// A Pepe reaction handed to the Farcaster app: the reply that is the

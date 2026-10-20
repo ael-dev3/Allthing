@@ -11,6 +11,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- Your own reaction chip takes your Pepe reaction back. Pressed again, it deletes the reply that is the reaction, at once with your key; where Allthing doesn't post for you, the Farcaster app opens that reply for you to delete there. The chip's count goes down by one and it's unpressed, and you can react with it again from there. On a phone, a chip just tapped no longer keeps the colour of one that's yours.
 - A test for item 91 on a post page with replies: each Likes, Recasts and Replies popover, the post's and a reply's, is checked at 1280 and 390 to be fully opaque, to have a shadow, to sit above the cards around it, and to have no native tooltip (`e2e/post-popovers.fixture.spec.ts`).
 - A test for item 142: a name in a post's Liked by, Recasted by or Replies list opens its profile card complete from its first frame. At 1280 the card opens beside the list, on hover and on keyboard focus, and Escape closes the card, then the list. At 390 a tap opens it without leaving the page, with the name tapped still in view (`e2e/popover-row-cards.fixture.spec.ts`).
 - The source on GitHub, a click away: the footer's Source link has GitHub's mark, and the avatar menu links to Allthing on GitHub, so it's in reach on a feed that scrolls without end. Both open GitHub in a new tab, so the page you were reading stays where it was.
