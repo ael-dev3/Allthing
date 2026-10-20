@@ -4,7 +4,9 @@
 //! used emoji first. The pack shows group by group, under headings, with a
 //! bar of the groups that brings one to the top and marks the one in view.
 //! Each emoji shows still and moves while pointed at or focused, unless the
-//! reader asks for less motion.
+//! reader asks for less motion. Stickers, as on Telegram, move while in view
+//! (unless the reader asks for less motion, or to save data), in a taller
+//! panel, and a sticker held down shows large until let go.
 //!
 //! An emoji puts its shortcode in the draft, which Allthing shows as the
 //! emoji and other Farcaster apps as the shortcode. A sticker goes with the
@@ -17,9 +19,10 @@ use allthing_core::emoji::{self, Emoji, Group, STICKER_HEIGHT, Sticker};
 use leptos::ev;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::Element;
+use wasm_bindgen::closure::Closure;
+use web_sys::{Element, IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
 
-use crate::util::{SOURCE_URL, can_hover, document, href, prefers_reduced_motion};
+use crate::util::{SOURCE_URL, can_hover, document, href, prefers_reduced_motion, saves_data};
 
 /// Where the reader's recently used emoji and stickers are kept between
 /// visits.
@@ -90,6 +93,9 @@ impl Tab {
     }
 }
 
+/// How long a sticker is held down before it shows large.
+const HOLD_MS: u64 = 350;
+
 /// What a tile is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
@@ -98,10 +104,11 @@ enum Item {
 }
 
 impl Item {
+    /// It moving: an emoji's file, a sticker's tile (its GIF is for casts).
     fn file(self) -> String {
         match self {
             Item::Emoji(emoji) => emoji.file(),
-            Item::Sticker(sticker) => sticker.file(),
+            Item::Sticker(sticker) => sticker.tile(),
         }
     }
 
@@ -125,8 +132,12 @@ fn tile_of(target: Option<web_sys::EventTarget>) -> Option<(Element, Item)> {
     Some((tile, item))
 }
 
-/// Show a tile moving, or still.
+/// Show a tile moving, or still. A sticker that moves while in view keeps
+/// moving.
 fn animate(tile: &Element, item: Item, moving: bool) {
+    if tile.has_attribute("data-moving") {
+        return;
+    }
     if let Some(img) = tile.first_element_child() {
         let _ = img.set_attribute("src", &href(&if moving { item.file() } else { item.still() }));
     }
@@ -145,8 +156,34 @@ fn tile(emoji: &'static Emoji) -> impl IntoView {
     }
 }
 
-/// One sticker, as `tile`.
-fn sticker_tile(sticker: &'static Sticker) -> impl IntoView {
+/// The observer that loads moving sticker tiles as they come into view in
+/// `results` (`data-src` becomes `src`), not all on opening, as
+/// `loading="lazy"` would in a scroll box this short.
+type Seen = (IntersectionObserver, Closure<dyn FnMut(js_sys::Array, IntersectionObserver)>);
+
+fn load_in_view(results: &Element) -> Option<Seen> {
+    let callback = Closure::<dyn FnMut(js_sys::Array, IntersectionObserver)>::new(
+        move |entries: js_sys::Array, observer: IntersectionObserver| {
+            let entries = entries.iter().filter_map(|e| e.dyn_into::<IntersectionObserverEntry>().ok());
+            for entry in entries.filter(IntersectionObserverEntry::is_intersecting) {
+                let img = entry.target();
+                if let Some(src) = img.get_attribute("data-src") {
+                    let _ = img.set_attribute("src", &src);
+                    let _ = img.remove_attribute("data-src");
+                }
+                observer.unobserve(&img);
+            }
+        },
+    );
+    let options = IntersectionObserverInit::new();
+    options.set_root(Some(results));
+    options.set_root_margin("32px 0px");
+    let observer = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options).ok()?;
+    Some((observer, callback))
+}
+
+/// One sticker, moving once in view, as on Telegram, or still as `tile`.
+fn sticker_tile(sticker: &'static Sticker, moving: bool) -> impl IntoView {
     view! {
         <li>
             <button
@@ -154,9 +191,18 @@ fn sticker_tile(sticker: &'static Sticker) -> impl IntoView {
                 class="emoji-tile sticker-tile"
                 data-code=sticker.code
                 data-sticker=""
+                data-moving=moving.then_some("")
                 aria-label=format!("Sticker: {}", sticker.label())
             >
-                <img src=href(&sticker.still()) alt="" width=sticker.width height=STICKER_HEIGHT loading="lazy"/>
+                <img
+                    src=(!moving).then(|| href(&sticker.still()))
+                    data-src=moving.then(|| href(&sticker.tile()))
+                    alt=""
+                    width=sticker.width
+                    height=STICKER_HEIGHT
+                    loading="lazy"
+                    draggable="false"
+                />
             </button>
         </li>
     }
@@ -183,11 +229,48 @@ pub fn EmojiPicker(
     // What is pointed at or focused, shown in the picker's foot.
     let shown = RwSignal::new(None::<Item>);
     let motion = !prefers_reduced_motion();
+    // Stickers move while in view, unless the reader saves data.
+    let moving = motion && !saves_data();
     // The last press was a touch: a tap leaves the picker open.
     let touch = StoredValue::new(false);
+    // A sticker held down shows large; the press that showed it picks
+    // nothing. `hold` moves on with each press, so a let-go one stops.
+    let preview = RwSignal::new(None::<&'static Sticker>);
+    let hold = StoredValue::new(0u64);
+    let held = StoredValue::new(false);
+    let let_go = move || {
+        hold.update_value(|run| *run += 1);
+        preview.set(None);
+    };
     let input = NodeRef::<leptos::html::Input>::new();
     let section = NodeRef::<leptos::html::Section>::new();
     let results = NodeRef::<leptos::html::Div>::new();
+    // Moving stickers load as they come into view: whenever the stickers
+    // shown change, the new ones are watched, once drawn.
+    let seen = StoredValue::new_local(None::<Seen>);
+    Effect::new(move |_| {
+        let shown = (tab.get(), stickers.with(Vec::len));
+        let Some(root) = results.get().filter(|_| moving && shown.0 == Tab::Stickers) else { return };
+        if seen.with_value(Option::is_none) {
+            seen.set_value(load_in_view(&root));
+        }
+        request_animation_frame(move || {
+            seen.with_value(|seen| {
+                let (Some((observer, _)), Some(root)) = (seen, results.get_untracked()) else { return };
+                let Ok(waiting) = root.query_selector_all(".sticker-tile img[data-src]") else { return };
+                for img in (0..waiting.length()).filter_map(|i| waiting.item(i)?.dyn_into::<Element>().ok()) {
+                    observer.observe(&img);
+                }
+            });
+        });
+    });
+    on_cleanup(move || {
+        seen.with_value(|seen| {
+            if let Some((observer, _)) = seen {
+                observer.disconnect();
+            }
+        })
+    });
     // The group in view, marked in the bar; and that the grid has just been
     // moved to a group, whose scroll mustn't mark another.
     let current = RwSignal::new(0usize);
@@ -308,6 +391,7 @@ pub fn EmojiPicker(
     view! {
         <section
             class="emoji-picker"
+            class:stickers=move || tab.get() == Tab::Stickers
             id="emoji-picker"
             aria-label=if stickers_too { "Pepe emoji and stickers" } else { "Pepe emoji" }
             node_ref=section
@@ -367,7 +451,10 @@ pub fn EmojiPicker(
                 aria-labelledby=move || stickers_too.then(|| tab.get().id())
                 node_ref=results
                 on:scroll=move |_| mark()
-                on:pointerleave=move |_| shown.set(None)
+                on:pointerleave=move |_| {
+                    shown.set(None);
+                    let_go();
+                }
                 on:pointerover=move |ev: ev::PointerEvent| {
                     if let Some((tile, item)) = tile_of(ev.target()) {
                         animate(&tile, item, motion);
@@ -395,10 +482,39 @@ pub fn EmojiPicker(
                         shown.set(None);
                     }
                 }
-                on:pointerdown=move |ev: ev::PointerEvent| touch.set_value(ev.pointer_type() == "touch")
+                on:pointerdown=move |ev: ev::PointerEvent| {
+                    touch.set_value(ev.pointer_type() == "touch");
+                    held.set_value(false);
+                    if let Some((_, Item::Sticker(sticker))) = tile_of(ev.target()) {
+                        hold.update_value(|run| *run += 1);
+                        let run = hold.get_value();
+                        set_timeout(
+                            move || {
+                                if hold.get_value() == run {
+                                    held.set_value(true);
+                                    preview.set(Some(sticker));
+                                }
+                            },
+                            std::time::Duration::from_millis(HOLD_MS),
+                        );
+                    }
+                }
+                on:pointerup=move |_| let_go()
+                on:pointercancel=move |_| let_go()
+                // A phone's own menu for a held image would cover the preview.
+                on:contextmenu=move |ev: ev::MouseEvent| {
+                    if matches!(tile_of(ev.target()), Some((_, Item::Sticker(_)))) {
+                        ev.prevent_default();
+                    }
+                }
                 // A tap leaves it open; a click or Enter closes it unless
-                // Shift is held. A sticker always closes it.
+                // Shift is held. A sticker always closes it, unless it was
+                // held down to see it large.
                 on:click=move |ev: ev::MouseEvent| {
+                    if held.get_value() {
+                        held.set_value(false);
+                        return;
+                    }
                     if let Some((_, item)) = tile_of(ev.target()) {
                         pick(item, ev.shift_key() || (ev.detail() > 0 && touch.get_value()));
                     }
@@ -446,16 +562,31 @@ pub fn EmojiPicker(
                             view! {
                                 <div class="emoji-recent" hidden=move || searching.get()>
                                     <h3 class="emoji-section">"Recently used"</h3>
-                                    <ul class="emoji-grid sticker-grid">{recent.into_iter().map(sticker_tile).collect_view()}</ul>
+                                    <ul class="emoji-grid sticker-grid">
+                                        {recent.into_iter().map(|s| sticker_tile(s, moving)).collect_view()}
+                                    </ul>
                                 </div>
                             }
                         }))}
                         <h3 class="emoji-section" aria-live="polite">{heading}</h3>
-                        <ul class="emoji-grid sticker-grid">{move || stickers.get().into_iter().map(sticker_tile).collect_view()}</ul>
+                        <ul class="emoji-grid sticker-grid">
+                            {move || stickers.get().into_iter().map(|s| sticker_tile(s, moving)).collect_view()}
+                        </ul>
                     }
                     .into_any(),
                 }}
             </div>
+            {move || preview.get().map(|sticker| view! {
+                <div class="sticker-preview" aria-hidden="true">
+                    <img
+                        src=href(&if motion { sticker.tile() } else { sticker.still() })
+                        alt=""
+                        width=sticker.width
+                        height=STICKER_HEIGHT
+                    />
+                    <span>{sticker.label()}</span>
+                </div>
+            })}
             <footer class="emoji-foot">
                 {move || match shown.get() {
                     Some(item) => view! {

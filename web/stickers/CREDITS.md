@@ -2,7 +2,7 @@
 
 # Sticker credits
 
-Allthing's Pepe stickers: 32 of the animated emotes in its emoji pack ([../emoji/CREDITS.md](../emoji/CREDITS.md)), larger. Each is the emote's 128 px GIF as 7TV serves it (its `4x.gif`), unchanged, with a still of its fullest frame (`.still.webp`) for readers who ask for less motion. Pepe the Frog was created by Matt Furie.
+Allthing's Pepe stickers: 32 of the animated emotes in its emoji pack ([../emoji/CREDITS.md](../emoji/CREDITS.md)), larger. Each is the emote's 128 px GIF as 7TV serves it (its `4x.gif`), unchanged, with a still of its fullest frame (`.still.webp`) for readers who ask for less motion, and a moving tile for the picker (`.tile.webp`), the same GIF as an animated WebP. Pepe the Frog was created by Matt Furie.
 
 A sticker goes out as an image embed of its GIF at `https://allthing.social/assets/stickers/v1/`, so every Farcaster app shows it, and Allthing shows it as a sticker. GIF is what every Farcaster app plays.
 

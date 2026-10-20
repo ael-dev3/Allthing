@@ -80,15 +80,17 @@ test.describe("in the composer", () => {
     const tiles = picker.locator(".emoji-results > .sticker-grid .sticker-tile");
     await expect(tiles).toHaveCount(32);
     await expect(tiles.first()).toHaveAccessibleName("Sticker: Pepe jams with headphones");
-    await expect(tiles.first().locator("img")).toHaveAttribute("src", /\/assets\/stickers\/v1\/pepe_jam\.still\.webp$/);
+    // Moving while in view, as on Telegram: each its own animated tile.
+    await expect(tiles.first().locator("img")).toHaveAttribute("src", /\/assets\/stickers\/v1\/pepe_jam\.tile\.webp$/);
     const foot = picker.locator(".emoji-foot");
     await page.mouse.move(5, 5);
     await expect(foot).toContainText("Stickers show in every Farcaster app");
     await expect(foot.getByRole("link", { name: "Credits" })).toHaveAttribute("href", /\/web\/stickers\/CREDITS\.md$/);
-    // Pointed at, it moves, and the foot says what it is.
+    // Pointed at, the foot says what it is; it keeps moving after.
     await tiles.nth(1).hover();
-    await expect(tiles.nth(1).locator("img")).toHaveAttribute("src", /pepe_pls\.gif$/);
     await expect(foot).toContainText("Pepe dances");
+    await page.mouse.move(5, 5);
+    await expect(tiles.nth(1).locator("img")).toHaveAttribute("src", /pepe_pls\.tile\.webp$/);
     // A search, read out; Enter picks the first and closes the picker.
     const search = picker.getByRole("searchbox", { name: "Search stickers" });
     await search.fill("dance");
@@ -179,12 +181,87 @@ test.describe("in the composer", () => {
     const box = await picker.boundingBox();
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    // Four rows in view, as on Telegram, with the dialog still on screen.
+    const whole = await picker.locator(".emoji-results").evaluate((results) => {
+      const frame = results.getBoundingClientRect();
+      return [...results.querySelectorAll(".sticker-tile")].filter((tile) => {
+        const r = tile.getBoundingClientRect();
+        return r.top >= frame.top - 1 && r.bottom <= frame.bottom + 1;
+      }).length;
+    });
+    expect(whole).toBeGreaterThanOrEqual(12);
+    await expect(dialog).toBeInViewport({ ratio: 1 });
+    // Only those in view load and move; the rest as they scroll in.
+    const results = picker.locator(".emoji-results");
+    await expect.poll(() => picker.locator(".sticker-tile img[src*='.tile.webp']").count()).toBeGreaterThanOrEqual(16);
+    expect(await picker.locator(".sticker-tile img[data-src]").count()).toBeGreaterThan(0);
+    await results.evaluate((r) => r.scrollTo(0, r.scrollHeight));
+    await expect(picker.locator(".sticker-tile img[data-src]")).toHaveCount(0);
+    await results.evaluate((r) => r.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("stickers-390.png") });
+    // Held down, one shows large; let go, nothing is picked.
+    const held = picker.locator(".emoji-results > .sticker-grid .sticker-tile").nth(2);
+    await held.dispatchEvent("pointerdown", { pointerType: "touch", isPrimary: true, button: 0 });
+    const preview = picker.locator(".sticker-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview.locator("img")).toHaveAttribute("src", /pepe_sad_dance\.tile\.webp$/);
+    await expect(preview).toContainText("Pepe dances sadly");
+    const large = (await preview.locator("img").boundingBox())!;
+    expect(large.height).toBeGreaterThan(120);
+    await page.screenshot({ path: testInfo.outputPath("stickers-390-held.png") });
+    await held.dispatchEvent("pointerup", { pointerType: "touch", isPrimary: true, button: 0 });
+    await held.dispatchEvent("click", { detail: 1 });
+    await expect(preview).toHaveCount(0);
+    await expect(picker).toBeVisible();
+    await expect(dialog.locator(".compose-sticker")).toHaveCount(0);
     // A tap picks one, and closes the picker: a cast takes one.
     await picker.locator(".sticker-tile").nth(4).tap();
     await expect(picker).toHaveCount(0);
     await expect(dialog.locator(".compose-sticker img")).toHaveAttribute("alt", "Sticker: Pepe claps");
     await context.close();
   });
+});
+
+test.describe("held, and still", () => {
+  test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
+
+  test("a sticker held down with the mouse shows large; a click picks it", async ({ page }, testInfo) => {
+    await serve(page);
+    await page.goto("/");
+    await page.getByRole("button", { name: "Write a cast" }).click();
+    const dialog = page.getByRole("dialog", { name: "New cast" });
+    await dialog.getByRole("button", { name: "Add a sticker" }).click();
+    const picker = dialog.getByRole("region", { name: "Pepe emoji and stickers" });
+    const tile = picker.locator(".emoji-results > .sticker-grid .sticker-tile").nth(4);
+    await tile.hover();
+    await page.mouse.down();
+    const preview = picker.locator(".sticker-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("Pepe claps");
+    await page.screenshot({ path: testInfo.outputPath("stickers-1280-held.png") });
+    await page.mouse.up();
+    await expect(preview).toHaveCount(0);
+    await expect(dialog.locator(".compose-sticker")).toHaveCount(0);
+    await tile.click();
+    await expect(dialog.locator(".compose-sticker img")).toHaveAttribute("alt", "Sticker: Pepe claps");
+  });
+
+  for (const [why, setup] of [
+    ["with reduced motion", async (page: Page) => page.emulateMedia({ reducedMotion: "reduce" })],
+    ["saving data", async (page: Page) => page.addInitScript(() => Object.defineProperty(navigator, "connection", { value: { saveData: true } }))],
+  ] as const) {
+    test(`${why}, the Stickers tab shows stills`, async ({ page }) => {
+      await setup(page);
+      await serve(page);
+      await page.goto("/");
+      await page.getByRole("button", { name: "Write a cast" }).click();
+      const dialog = page.getByRole("dialog", { name: "New cast" });
+      await dialog.getByRole("button", { name: "Add a sticker" }).click();
+      const tiles = dialog.locator(".emoji-results > .sticker-grid .sticker-tile");
+      await expect(tiles.first().locator("img")).toHaveAttribute("src", /pepe_jam\.still\.webp$/);
+      await expect(tiles.first()).not.toHaveAttribute("data-moving");
+    });
+  }
 });
 
 test("a cast's sticker shows as a sticker, apart from its photos", async ({ page }) => {

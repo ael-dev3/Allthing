@@ -26,6 +26,18 @@ pub fn prefers_reduced_motion() -> bool {
         .is_some_and(|m| m.matches())
 }
 
+/// Whether the reader asked to save data (Save-Data: a phone's data saver,
+/// or Chrome's Lite mode): what would move while in view stays still.
+#[cfg(not(feature = "static-host"))]
+pub fn saves_data() -> bool {
+    web_sys::window()
+        .and_then(|w| js_sys::Reflect::get(&w.navigator(), &"connection".into()).ok())
+        .filter(|connection| connection.is_object())
+        .and_then(|connection| js_sys::Reflect::get(&connection, &"saveData".into()).ok())
+        .and_then(|saves| saves.as_bool())
+        .unwrap_or(false)
+}
+
 /// Whether the primary pointer can hover (desktop), so hover previews make sense.
 pub fn can_hover() -> bool {
     web_sys::window()
