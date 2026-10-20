@@ -8,6 +8,7 @@ use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::compact_number;
 use allthing_core::profile::UserCard;
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 
 use crate::Notes;
 use crate::api::{self, Fetched};
@@ -21,8 +22,15 @@ use crate::util::{channel_href, set_title, use_query_param, user_href};
 const PEOPLE_SHOWN: usize = 6;
 const CHANNELS_SHOWN: usize = 8;
 
+/// The page, whose code is fetched the first time it's needed
+/// (`crate::split`): as it opens, or ahead of it.
+#[wasm_split(search, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_search))]
+pub fn search_page() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <SearchPage/> }.into_any())
+}
+
 #[component]
-pub fn SearchPage() -> impl IntoView {
+fn SearchPage() -> impl IntoView {
     let query = use_query_param("q");
     let q = Memo::new(move |_| query.get().map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
     let data = LocalResource::new(move || {

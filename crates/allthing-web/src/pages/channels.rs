@@ -5,13 +5,21 @@ use allthing_core::api::{ChannelsPayload, channels_path};
 use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::full_number;
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 
 use crate::api;
 use crate::components::layout::ErrorPanel;
 use crate::util::{channel_href, href, set_title, use_query_param};
 
+/// The page, whose code is fetched the first time it's needed
+/// (`crate::split`): as it opens, or ahead of it.
+#[wasm_split(channels, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_channels))]
+pub fn channels_page() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <ChannelsPage/> }.into_any())
+}
+
 #[component]
-pub fn ChannelsPage() -> impl IntoView {
+fn ChannelsPage() -> impl IntoView {
     let query = use_query_param("q");
     let q = Memo::new(move |_| query.get().map(|q| q.trim().to_owned()).filter(|q| !q.is_empty()));
     let data = LocalResource::new(move || {

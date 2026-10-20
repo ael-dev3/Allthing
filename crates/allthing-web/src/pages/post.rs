@@ -14,6 +14,7 @@ use allthing_core::text::truncate_title;
 use allthing_core::thread::count_nodes;
 use allthing_core::time::format_date_time;
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
@@ -29,8 +30,15 @@ use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
 use crate::util::{cast_href, set_title, user_href, with_query};
 
+/// The page, whose code is fetched the first time it's needed
+/// (`crate::split`): as it opens, or ahead of it.
+#[wasm_split(post, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_post))]
+pub fn post_page() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <PostPage/> }.into_any())
+}
+
 #[component]
-pub fn PostPage() -> impl IntoView {
+fn PostPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let hash = Memo::new(move |_| {

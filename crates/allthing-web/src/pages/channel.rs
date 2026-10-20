@@ -13,6 +13,7 @@ use allthing_core::model::{Cast, Channel, ExternalLink, UserSummary};
 use allthing_core::params::channel_key_from_decoded;
 use allthing_core::ranking::{Sort, sorted_for};
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
@@ -30,8 +31,15 @@ const MODERATORS_SHOWN: usize = 6;
 const PIN: &str = "M5.5 2.5h5M6.5 2.5v3.8L4 9.5h8L9.5 6.3V2.5M8 9.5v4";
 const LINK: &str = "M6.8 9.2l2.4-2.4M7.4 4.6l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.6 11.4l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1";
 
+/// The page, whose code is fetched the first time it's needed
+/// (`crate::split`): as it opens, or ahead of it.
+#[wasm_split(channel, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_channel))]
+pub fn channel_page() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <ChannelPage/> }.into_any())
+}
+
 #[component]
-pub fn ChannelPage() -> impl IntoView {
+fn ChannelPage() -> impl IntoView {
     let leaning = crate::leanings::use_leaning();
     let params = use_params_map();
     let query = use_query_map();

@@ -49,7 +49,11 @@ pub fn CastCard(
     let quotes: Vec<AnyView> = nested_quotes(&cast, Some(&notes), 0);
     let parent = show_parent.then(|| cast.parent_hash.clone()).flatten();
     let data_path = cast_path(&cast.hash);
-    let warm = move || api::prefetch(&data_path);
+    // The post's data, and its page's code (`crate::split`).
+    let warm = move || {
+        api::prefetch(&data_path);
+        crate::split::preload_page("/p/");
+    };
     let warm_touch = warm.clone();
     let click = card_click(href.clone());
     let gone = crate::components::deleted(&cast.hash);
@@ -337,7 +341,7 @@ pub fn after_paint(f: impl FnOnce() + 'static) {
 }
 
 /// Run `f` when the browser is idle (or soon, where that isn't supported).
-fn idle(f: impl FnOnce() + 'static) {
+pub fn idle(f: impl FnOnce() + 'static) {
     let callback = Closure::once_into_js(f);
     let window = window();
     let request = js_sys::Reflect::get(&window, &JsValue::from_str("requestIdleCallback"))

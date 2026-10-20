@@ -12,6 +12,7 @@ use allthing_core::params::username_from_param;
 use allthing_core::profile::UserCard;
 use allthing_core::ranking::{Sort, sorted};
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
@@ -27,8 +28,15 @@ use crate::components::text::CastText;
 use crate::util::{set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
 
+/// The page, whose code is fetched the first time it's needed
+/// (`crate::split`): as it opens, or ahead of it.
+#[wasm_split(user, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_user))]
+pub fn user_page() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <UserPage/> }.into_any())
+}
+
 #[component]
-pub fn UserPage() -> impl IntoView {
+fn UserPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let name = Memo::new(move |_| {
