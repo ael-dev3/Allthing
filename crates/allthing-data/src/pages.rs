@@ -14,7 +14,7 @@ use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
-use allthing_core::normalize::{self, RawAppChannel, RawCast};
+use allthing_core::normalize::{self, RawAppChannel, RawCast, RawFeed};
 use allthing_core::params::fid_username;
 use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
@@ -455,6 +455,33 @@ async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<B
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(inv) }, api::LATEST_CACHE)
 }
 
+/// The pages with no casts but a cursor for more that a channel page follows
+/// to the channel's newest casts: Hypersnap sends /veg's after two.
+const EMPTY_PAGES_FOLLOWED: usize = 3;
+
+/// The casts of the first page with any, from `page` on, following the
+/// cursor of up to `EMPTY_PAGES_FOLLOWED` pages with none. Still none, the
+/// read fails, and the cache keeps serving the page's last good copy.
+async fn newest_casts(
+    inv: &Invocation,
+    parent_url: &str,
+    mut page: Result<RawFeed, crate::upstream::UpstreamError>,
+) -> Result<Vec<RawCast>, crate::upstream::UpstreamError> {
+    for _ in 0..EMPTY_PAGES_FOLLOWED {
+        let feed = match page {
+            Ok(feed) if feed.is_empty_with_more() => feed,
+            other => return other.map(|feed| feed.casts),
+        };
+        page = hypersnap::channel_page(inv, parent_url, POOL_SIZE / 2, feed.cursor()).await;
+    }
+    match page? {
+        feed if feed.is_empty_with_more() => {
+            Err(crate::upstream::UpstreamError::Parse("channel pages with no casts but a cursor for more".into()))
+        }
+        feed => Ok(feed.casts),
+    }
+}
+
 /// The Farcaster app's record of a channel, when it has an id there and the
 /// app can be read (it can't from a browser: no CORS).
 async fn app_channel(inv: &Invocation, id: Option<&str>) -> Option<RawAppChannel> {
@@ -469,7 +496,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let app_id = if is_channel_id(&key) { Some(key.clone()) } else { channel_id_for_url(&key) };
     let (channel, guessed, app) = join3(
         hypersnap::channel(&inv, &key),
-        hypersnap::channel_casts(&inv, &guess, POOL_SIZE / 2),
+        hypersnap::channel_page(&inv, &guess, POOL_SIZE / 2, None),
         app_channel(&inv, app_id.as_deref()),
     )
     .await;
@@ -483,10 +510,11 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let pinned_hash = app.as_ref().and_then(RawAppChannel::pinned_hash);
     let (raw, users, pinned) = join3(
         async {
-            match guessed {
-                Ok(casts) if channel.parent_url == guess => Ok(casts),
-                _ => hypersnap::channel_casts(&inv, &channel.parent_url, POOL_SIZE / 2).await,
-            }
+            let first = match guessed {
+                Ok(page) if channel.parent_url == guess => Ok(page),
+                _ => hypersnap::channel_page(&inv, &channel.parent_url, POOL_SIZE / 2, None).await,
+            };
+            newest_casts(&inv, &channel.parent_url, first).await
         },
         async { hypersnap::users_bulk(&inv, &fids).await.unwrap_or_default() },
         async {
@@ -1230,7 +1258,7 @@ mod tests {
 
 #[cfg(test)]
 mod channel_tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     use futures::future::{FutureExt, LocalBoxFuture};
 
@@ -1241,16 +1269,19 @@ mod channel_tests {
 
     /// Hypersnap and the Farcaster app as /c/farcaster finds them. Without
     /// `app`, the app can't be read, as from a browser (it sends no CORS
-    /// headers). Everything else (signers, scores) is missing.
+    /// headers). Everything else (signers, scores) is missing. The first
+    /// `hollow` pages of the feed have no casts, each with a cursor for the
+    /// next.
     struct Upstreams {
         app: bool,
         pinned_text: &'static str,
+        hollow: Cell<u32>,
         requests: RefCell<Vec<String>>,
     }
 
     impl Upstreams {
         fn new(app: bool, pinned_text: &'static str) -> Rc<Upstreams> {
-            Rc::new(Upstreams { app, pinned_text, requests: RefCell::new(Vec::new()) })
+            Rc::new(Upstreams { app, pinned_text, hollow: Cell::new(0), requests: RefCell::new(Vec::new()) })
         }
 
         fn sent(&self, prefix: &str) -> usize {
@@ -1276,6 +1307,9 @@ mod channel_tests {
                 }
             } else if v2("channel?") {
                 json(include_str!("../../allthing-core/tests/fixtures/hypersnap-channel-legacy.json").into())
+            } else if v2("feed/parent_urls?") && self.hollow.get() > 0 {
+                self.hollow.set(self.hollow.get() - 1);
+                json(format!(r#"{{"casts":[],"next":{{"cursor":"page{}"}}}}"#, self.hollow.get()))
             } else if v2("feed/parent_urls?") {
                 json(r#"{"casts":[{"hash":"0x01","text":"gm","timestamp":"2026-10-18T10:00:00Z","author":{"fid":2,"username":"v","profile":{"bio":{"text":"gm"}},"follower_count":5}}]}"#.into())
             } else if v2("user/bulk?fids=1") {
@@ -1345,6 +1379,38 @@ mod channel_tests {
         assert_eq!(host.sent(&format!("{}/v2/farcaster/user/bulk", hypersnap::BASE)), 0);
         assert_eq!(host.sent(&format!("{}/v2/farcaster/cast?", hypersnap::BASE)), 0);
         assert_eq!(payload.notes.users.keys().copied().collect::<Vec<_>>(), [2]);
+    }
+
+    fn feed_reads(host: &Upstreams) -> Vec<String> {
+        let feed = format!("{}/v2/farcaster/feed/parent_urls", hypersnap::BASE);
+        host.requests.borrow().iter().filter(|url| url.starts_with(&feed)).cloned().collect()
+    }
+
+    #[test]
+    fn the_newest_casts_after_pages_with_none_are_found_by_their_cursors() {
+        let host = Upstreams::new(true, "gm");
+        host.hollow.set(2);
+        let (payload, spent) = build(&host);
+        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0x01"]);
+        // The first page, then each empty page's cursor.
+        let reads = feed_reads(&host);
+        assert_eq!(reads.len(), 3);
+        assert!(!reads[0].contains("cursor="));
+        assert!(reads[1].ends_with("&cursor=page1") && reads[2].ends_with("&cursor=page0"), "{reads:?}");
+        assert_eq!(spent as usize, host.requests.borrow().len());
+    }
+
+    #[test]
+    fn a_feed_still_without_casts_fails_the_build_so_the_last_good_copy_stays() {
+        let host = Upstreams::new(true, "gm");
+        host.hollow.set(10);
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let failure = channel(inv, "farcaster".into(), None).now_or_never().unwrap().err().unwrap();
+        assert_eq!(failure.status, 502);
+        // The first page and three more, no further: the cache serves the
+        // last good copy instead (stale-if-error), or the page says the data
+        // source didn't answer and offers to try again.
+        assert_eq!(feed_reads(&host).len(), 1 + EMPTY_PAGES_FOLLOWED);
     }
 
     #[test]
