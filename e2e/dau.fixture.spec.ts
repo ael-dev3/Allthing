@@ -194,7 +194,9 @@ test.describe("with the Worker", () => {
     await page.goto("/");
     await page.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).hover();
     const card = page.getByRole("dialog", { name: "Farcaster: active accounts" });
-    await card.getByRole("link", { name: "Every app's active accounts" }).click();
+    // Its count is the link.
+    const count = card.getByRole("link", { name: "4,812 active accounts, on the page of every app's active accounts" });
+    await count.click();
     await expect(page).toHaveURL(/\/dau$/);
     await expect(page.locator(".dau-meter")).toContainText("6,174");
     expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(1);

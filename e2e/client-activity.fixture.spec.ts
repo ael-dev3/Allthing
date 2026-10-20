@@ -137,12 +137,12 @@ test("an app the count hasn't seen says so", async ({ page }) => {
   await serve(page, none);
   await page.goto("/");
   await page.locator(".client-legend").getByRole("link", { name: /Other client/ }).hover();
-  await expect(page.getByRole("dialog", { name: "Other client: active accounts" }).locator(".client-card-active")).toHaveText("No active accounts");
+  await expect(page.getByRole("dialog", { name: "Other client: active accounts" }).locator(".client-card-active a")).toHaveAccessibleName("No active accounts, on the page of every app's active accounts");
   await page.mouse.move(1200, 880);
   await serve(page, { ...none, unknown: 310 });
   await page.reload();
   await page.locator(".client-legend").getByRole("link", { name: /Other client/ }).hover();
-  await expect(page.getByRole("dialog", { name: "Other client: active accounts" }).locator(".client-card-active")).toHaveText("No active accounts known yet");
+  await expect(page.getByRole("dialog", { name: "Other client: active accounts" }).locator(".client-card-active a")).toHaveAccessibleName("No active accounts known yet, on the page of every app's active accounts");
 });
 
 test("before the cron has counted by app, the bar is as it was", async ({ page }) => {
