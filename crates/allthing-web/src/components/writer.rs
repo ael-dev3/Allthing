@@ -17,7 +17,8 @@ use std::collections::{HashMap, HashSet};
 use allthing_core::app_key::{
     self, Endorse, KeyState, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
-use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Reaction, Submitted};
+use allthing_core::emoji::Emoji;
+use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Submitted};
 use allthing_core::provenance::hex_encode;
 use allthing_core::siwf::{self, QrCode, QrRequest};
 use leptos::ev;
@@ -109,6 +110,10 @@ struct Mine {
     /// Casts the reader deleted this visit, and those being deleted.
     deleted: HashSet<String>,
     deleting: HashSet<String>,
+    /// The emoji the reader reacted to casts with this visit, by cast
+    /// hash, and the casts a reaction is being sent to.
+    emoji: HashMap<String, Vec<&'static Emoji>>,
+    reacting: HashSet<String>,
 }
 
 impl Mine {
@@ -328,6 +333,52 @@ impl Writer {
             }
             Err(Unsent::Failed(message)) => Err(message),
         }
+    }
+
+    /// React to `target` with `emoji`: a reply that is the emoji and
+    /// nothing else, since Farcaster's own reactions are only likes and
+    /// recasts. With the reader's key, at once, or once they have signed in
+    /// or approved one.
+    pub fn react(self, target: CastId, emoji: &'static Emoji) {
+        let hash = hex_encode(&target.hash);
+        if self.mine.with_untracked(|m| m.reacting.contains(&hash)) {
+            return;
+        }
+        if self.can.get_untracked() != Can::Yes {
+            self.when_ready(move || self.react(target, emoji));
+            return;
+        }
+        self.mine.update(|m| {
+            m.reacting.insert(hash.clone());
+        });
+        spawn_local(async move {
+            let reply =
+                NewCast { text: format!(":{}:", emoji.code), parent: Some(Parent::Cast(target)), ..NewCast::default() };
+            let outcome = self.cast(reply).await;
+            self.mine.update(|m| {
+                m.reacting.remove(&hash);
+                if outcome.is_ok() {
+                    m.emoji.entry(hash.clone()).or_default().push(emoji);
+                }
+            });
+            match outcome {
+                Ok(reply) => self.notify(Notice {
+                    text: format!("Reacted with :{}:, as a reply.", emoji.code),
+                    link: Some((cast_href(&reply), "View")),
+                }),
+                Err(message) => self.say(message),
+            }
+        });
+    }
+
+    /// The emoji the reader reacted to `hash` with this visit.
+    pub fn reactions(self, hash: &str) -> Vec<&'static Emoji> {
+        self.mine.with(|m| m.emoji.get(hash).cloned().unwrap_or_default())
+    }
+
+    /// Whether a reaction to `hash` is being sent.
+    pub fn reacting(self, hash: &str) -> bool {
+        self.mine.with(|m| m.reacting.contains(hash))
     }
 
     /// Say that a cast went out, with a link to it.

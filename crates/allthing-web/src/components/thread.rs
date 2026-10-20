@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Collapsible reply trees.
 
+use allthing_core::emoji::reactions;
 use allthing_core::format::plural;
 use allthing_core::model::ThreadNode;
 use allthing_core::thread::count_descendants;
@@ -9,6 +10,7 @@ use leptos::prelude::*;
 use crate::Notes;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::reactions::ReactionChips;
 use crate::components::text::CastText;
 use crate::util::cast_href;
 
@@ -103,6 +105,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                         <a class="permalink" href=href.clone()>"permalink"</a>
                         {reply_button(&cast, "reply")}
                     </div>
+                    <ReactionChips cast=cast.clone() reacted=reactions(node.children.iter().map(|n| &n.cast))/>
                     {(!node.children.is_empty()).then(|| view! {
                         <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid/></div>
                     })}
@@ -123,6 +126,7 @@ pub fn reply_button(cast: &allthing_core::model::Cast, noun: &'static str) -> An
     view! {
         <crate::components::compose::ReplyButton cast=cast.clone()/>
         <crate::components::compose::QuoteButton cast=cast.clone()/>
+        <crate::components::reactions::ReactButton cast=cast.clone()/>
         <crate::components::writer::DeleteButton hash=cast.hash.clone() author=cast.author.fid noun/>
     }
     .into_any()
