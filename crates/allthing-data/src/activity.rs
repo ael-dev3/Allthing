@@ -10,11 +10,12 @@
 use std::collections::{BTreeSet, HashMap};
 
 use allthing_core::activity::{
-    self, ActivityPayload, AppsWindow, Batch, Fids, Follow, KEEP_DAYS, KEEP_HOURS, Keys, Reached, Window, day, day_set,
-    hour, hour_set, key_pair, key_set,
+    self, ActivityPayload, AppsWindow, Batch, Fids, Follow, KEEP_DAYS, KEEP_HOURS, Keys, NAMED_APPS, Reached, Window,
+    day, day_set, hour, hour_set, key_pair, key_set,
 };
 use allthing_core::api::Meta;
 use allthing_core::latest::{Cursor, SHARDS};
+use allthing_core::normalize;
 use futures::future::{LocalBoxFuture, join_all};
 
 use crate::Invocation;
@@ -39,8 +40,9 @@ const LOOKUPS: usize = 24;
 const LOOKUPS_BEHIND: usize = 6;
 /// Keys with no known app kept from a count to look up next.
 const BACKLOG: usize = 400;
-/// D1 calls a run makes after its lookups: the count by app and the save.
-const D1_AFTER: u32 = 2;
+/// Subrequests a run makes after its lookups: the count by app and the save
+/// (D1), and with a count, the apps' accounts.
+const AFTER: u32 = 2;
 /// Subrequests kept for keys removed since, each a read of the account's
 /// onchain history.
 const HISTORY: u32 = 6;
@@ -126,7 +128,7 @@ fn app_among(keys: &HashMap<String, Option<u64>>, fid: u64, pair: u64) -> Option
 /// the isolate for an hour, as casts' origins use them), or for a key
 /// removed since, its onchain history. Keys whose app couldn't be read are
 /// left out, to be looked up again later.
-async fn look_up(inv: &Invocation, fid: u64, pairs: Vec<u64>) -> Option<Vec<(u64, u64)>> {
+async fn look_up(inv: &Invocation, fid: u64, pairs: Vec<u64>, after: u32) -> Option<Vec<(u64, u64)>> {
     let active = annotate::signer_apps(inv, fid).await?;
     let (mut found, mut removed) = (Vec::new(), Vec::new());
     for pair in pairs {
@@ -137,7 +139,7 @@ async fn look_up(inv: &Invocation, fid: u64, pairs: Vec<u64>) -> Option<Vec<(u64
     }
     // Not read (no subrequest to spare, say): those keys are looked up again.
     if !removed.is_empty()
-        && inv.remaining_subrequests() > D1_AFTER
+        && inv.remaining_subrequests() > after
         && let Ok(history) = hypersnap::all_onchain_signers(inv, fid).await
     {
         found.extend(removed.into_iter().map(|pair| (pair, app_among(&history, fid, pair).unwrap_or(0))));
@@ -244,8 +246,9 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     // Look up the apps of keys not known yet: this run's first, then those
     // the last count left, an account a request, keeping subrequests for
     // keys removed since and for the D1 calls that follow.
+    let after = AFTER + u32::from(due_apps);
     let limit = if keeping_up { LOOKUPS } else { LOOKUPS_BEHIND };
-    let limit = limit.min(inv.remaining_subrequests().saturating_sub(D1_AFTER + HISTORY) as usize);
+    let limit = limit.min(inv.remaining_subrequests().saturating_sub(after + HISTORY) as usize);
     let mut accounts: Vec<(u64, Vec<u64>)> = Vec::new();
     for &pair in signed.iter().filter(|p| !known.contains_key(p)).chain(follow.backlog.iter()) {
         let fid = activity::pair_fid(pair);
@@ -258,7 +261,7 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         }
     }
     report.looked_up = accounts.len();
-    let found = join_all(accounts.into_iter().map(|(fid, pairs)| look_up(inv, fid, pairs))).await;
+    let found = join_all(accounts.into_iter().map(|(fid, pairs)| look_up(inv, fid, pairs, after))).await;
     let mut keys: Vec<(u64, u64)> = learned.into_iter().collect();
     for (pair, app) in found.into_iter().flatten().flatten() {
         known.insert(pair, app);
@@ -307,7 +310,24 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         let counts = store.count_apps(keys.clone(), chunks).await?;
         follow.backlog = counts.iter().flat_map(|(_, _, pairs)| pairs.iter().copied()).take(BACKLOG).collect();
         let counts = counts.into_iter().map(|(app, n, _)| (app, n));
-        follow.apps_24h = Some(AppsWindow::of(to, now, active, counts));
+        let window = AppsWindow::of(to, now, active, counts);
+        // The accounts of the apps the page names: those not read yet, and
+        // all of them again each day. Unread, the names read before stay.
+        let named: Vec<u64> = window.apps.iter().take(NAMED_APPS).map(|a| a.app).collect();
+        follow.app_accounts.retain(|a| named.contains(&a.fid));
+        let stale = follow.named != Some(today);
+        let missing: Vec<u64> =
+            named.iter().copied().filter(|fid| stale || !follow.app_accounts.iter().any(|a| a.fid == *fid)).collect();
+        if !missing.is_empty()
+            && let Ok(users) = hypersnap::users_bulk(inv, &missing).await
+        {
+            for user in users.iter().map(normalize::user_summary).filter(|a| named.contains(&a.fid)) {
+                follow.app_accounts.retain(|a| a.fid != user.fid);
+                follow.app_accounts.push(user);
+            }
+            follow.named = Some(today);
+        }
+        follow.apps_24h = Some(window);
         report.counted_apps = true;
     }
     follow.settle();
@@ -349,6 +369,8 @@ mod tests {
         events: HashMap<(String, String), String>,
         signers: HashMap<String, String>,
         history: HashMap<String, String>,
+        /// `user/bulk` answers by its `fids`.
+        users: HashMap<String, String>,
         requests: RefCell<Vec<String>>,
         /// Seconds after `NOW`.
         later: i64,
@@ -367,7 +389,9 @@ mod tests {
             let url = request.url.clone();
             self.requests.borrow_mut().push(url.clone());
             let fid = param(&url, "fid").unwrap_or_default().to_owned();
-            let body = if url.contains("/signersByFid") {
+            let body = if url.contains("/user/bulk") {
+                self.users.get(param(&url, "fids").unwrap_or_default())
+            } else if url.contains("/signersByFid") {
                 self.signers.get(&fid)
             } else if url.contains("/onChainEventsByFid") {
                 self.history.get(&fid)
@@ -625,6 +649,15 @@ mod tests {
             keys.insert(pair(7, "0x01"), 0);
         }
         hub.signers.insert("9".into(), r#"{"signers":[{"key":"0x03","requestFid":309857}]}"#.into());
+        // The apps' own accounts, for the page that names them.
+        hub.users.insert(
+            "9152".into(),
+            r#"{"users":[{"fid":9152,"username":"warpcast","display_name":"Warpcast"}]}"#.into(),
+        );
+        hub.users.insert(
+            "309857".into(),
+            r#"{"users":[{"fid":309857,"username":"baseapp.base.eth","display_name":"Base App"}]}"#.into(),
+        );
         // Fid 42's second key has been removed since: its onchain history has it.
         hub.signers.insert("42".into(), r#"{"signers":[{"key":"0x01","requestFid":9152}]}"#.into());
         hub.history.insert(
@@ -640,6 +673,9 @@ mod tests {
         let to = now_hour * 3_600;
         assert_eq!((window.to, window.counted, window.active), (to, NOW, 3));
         assert_eq!(window.apps, [AppActive { app: 9152, active: 1 }]);
+        let named: Vec<(u64, String)> = follow.app_accounts.iter().map(|a| (a.fid, a.name().to_owned())).collect();
+        assert_eq!(named, [(9152, "Warpcast".to_owned())]);
+        assert_eq!(follow.named, Some(day(NOW)));
         assert_eq!((window.none, window.unknown, window.known_percent()), (1, 2, 33));
         assert_eq!(follow.backlog, [pair(9, "0x03"), pair(42, "0x02")]);
         let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
@@ -658,6 +694,14 @@ mod tests {
         let window = state(&store).apps_24h.unwrap();
         assert_eq!(window.apps, [AppActive { app: 9152, active: 1 }, AppActive { app: 309_857, active: 1 }]);
         assert_eq!((window.none, window.unknown, window.known_percent()), (2, 0, 100));
+        // Only the app not named yet is read; the payload names both.
+        let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
+        let named: Vec<&str> = payload.app_accounts.iter().map(|a| a.name()).collect();
+        assert_eq!(named, ["Warpcast", "Base App"]);
+        let reads =
+            later.requests.borrow().iter().filter(|url| url.contains("/user/bulk")).cloned().collect::<Vec<_>>();
+        assert_eq!(reads.len(), 1);
+        assert!(reads[0].ends_with("fids=309857"), "{reads:?}");
         assert_eq!(store.keys.borrow()[&pair(42, "0x02")], 0);
         assert!(state(&store).backlog.is_empty());
         // Known now: an hour later, the window has moved on and is counted
@@ -706,6 +750,7 @@ mod tests {
         hub.events = from.events.clone();
         hub.signers = from.signers.clone();
         hub.history = from.history.clone();
+        hub.users = from.users.clone();
     }
 
     #[test]

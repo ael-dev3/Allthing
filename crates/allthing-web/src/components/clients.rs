@@ -13,7 +13,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::Notes;
 use crate::components::popover::Popover;
-use crate::util::{href, now, with_query};
+use crate::util::{dau_href, href, now, with_query};
 
 /// The feed's URL with the reader's sort and time range kept, and the client
 /// filter set to `client` (or cleared).
@@ -100,7 +100,10 @@ fn ClientCard(
             {(known < 100).then(|| view! {
                 <p class="client-card-note">{format!("Apps are known for {known}% of active accounts so far.")}</p>
             })}
-            <a class="client-card-filter" href=target>"Show only casts from "{name}</a>
+            <p class="client-card-links">
+                <a class="client-card-filter" href=target>"Show only casts from "{name}</a>
+                <a class="client-card-more" href=dau_href()>"Every app's active accounts"</a>
+            </p>
         </div>
     }
 }

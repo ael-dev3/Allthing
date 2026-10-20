@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+
+/*
+ * /dau: Farcaster's daily active accounts as the cron counts them, laid out
+ * after SnapMeter's dashboard. `/api/v1/activity` is a fixture.
+ */
+
+const DAY = 86_400;
+const now = Math.floor(Date.now() / 1000);
+const today = Math.floor(now / DAY);
+const reached = now - 60;
+const to = Math.floor(reached / 3_600) * 3_600;
+const hour = `${String(new Date(to * 1000).getUTCHours()).padStart(2, "0")}:00 UTC`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const short = (day: number) => { const d = new Date(day * DAY * 1000); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
+
+// 30 days: the first begun mid-day, the last in progress, the busiest 7,200.
+const days = Array.from({ length: 30 }, (_, i) => {
+  const day = today - 29 + i;
+  const active = i === 29 ? 2_100 : i === 0 ? 3_300 : i === 12 ? 7_200 : 6_000 + (i % 5) * 100;
+  return {
+    day, active, complete: i > 0 && i < 29,
+    actions: { reaction: 19_600 + i, cast: 12_300, link: 10_700, user_data: 1_900, verification: 600, username_proof: 12 },
+  };
+});
+const yesterday = days[28];
+
+function payload(extra: object = {}) {
+  return {
+    reached, rolling_to: to, rolling_24h: 6_174, previous_24h: 5_982,
+    active_30d: { day: today - 1, active: 41_234, complete: false },
+    since: (today - 29) * DAY + 5_000,
+    days,
+    apps_24h: {
+      to, counted: to + 120, active: 6_174, none: 14,
+      apps: [
+        { app: 9152, active: 4_812 }, { app: 309857, active: 1_203 }, { app: 16823, active: 120 }, { app: 777, active: 3 },
+      ],
+    },
+    app_accounts: [
+      { fid: 9152, username: "warpcast", display_name: "Warpcast" },
+      { fid: 309857, username: "baseapp.base.eth", display_name: "Base App" },
+      { fid: 16823, username: "recaster", display_name: "Recaster" },
+    ],
+    meta: { backend: "hypersnap", fetched_at: Date.now() },
+    ...extra,
+  };
+}
+
+/** Serve `body` (or 503, before the first count); the requests are counted. */
+async function serve(page: Page, body: object | null) {
+  const calls: string[] = [];
+  await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
+  await page.route("**/api/v1/activity", (route) => {
+    calls.push(new URL(route.request().url()).pathname);
+    return body
+      ? route.fulfill({ json: body })
+      : route.fulfill({ status: 503, headers: { "retry-after": "120" }, json: { error: "Active accounts aren't counted yet" } });
+  });
+  return calls;
+}
+
+async function phone(browser: Browser, testInfo: TestInfo) {
+  const context = await browser.newContext({
+    baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+  });
+  return { context, page: await context.newPage() };
+}
+
+test.describe("with the Worker", () => {
+  test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no count");
+
+  test("the past 24 hours against the 24 before, today, yesterday and the past 30 days", async ({ page }) => {
+    const calls = await serve(page, payload());
+    await page.goto("/dau");
+    await expect(page).toHaveTitle(/Daily active accounts/);
+    await expect(page.getByRole("heading", { level: 1, name: "Daily active accounts" })).toBeVisible();
+    const meter = page.locator(".dau-meter");
+    await expect(meter).toContainText(`6,174 accounts active in the 24 hours to ${hour}`);
+    // One request, started by the inline script before the app, which took it.
+    expect(calls).toEqual(["/api/v1/activity"]);
+    expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);
+    await expect(meter.locator(".dau-change")).toHaveText("↑ 3.2% on the 24 hours before (5,982)");
+    await expect(meter.locator(".dau-change")).toHaveClass(/up/);
+    const tiles = page.locator(".dau-tile");
+    await expect(tiles).toHaveCount(3);
+    await expect(tiles.nth(0)).toContainText("Today so far");
+    await expect(tiles.nth(0)).toContainText("2,100");
+    await expect(tiles.nth(1)).toContainText(`${(yesterday.active).toLocaleString("en-US")}`);
+    await expect(tiles.nth(1)).toContainText(short(yesterday.day));
+    await expect(tiles.nth(2)).toContainText("41,234");
+    await expect(tiles.nth(2)).toContainText(`to the end of ${short(today - 1)}, since counting began`);
+  });
+
+  test("the month's days as bars and as a table, and what the accounts did", async ({ page }) => {
+    await serve(page, payload());
+    await page.goto("/dau");
+    const chart = page.locator(".dau-chart");
+    const bars = chart.locator("rect");
+    await expect(bars).toHaveCount(30);
+    await expect(bars.first()).toHaveClass(/partial/);
+    await expect(bars.last()).toHaveClass(/today/);
+    await expect(bars.nth(12)).not.toHaveClass(/partial|today/);
+    await expect(chart.getByRole("img")).toHaveAttribute("aria-label", new RegExp(`most 7,200 on ${short(today - 17)}$`));
+    await expect(bars.nth(12).locator("title")).toHaveText(/7,200 accounts$/);
+    await expect(bars.last().locator("title")).toHaveText(/2,100 accounts so far$/);
+    // The table: newest first.
+    await chart.getByText("The days as a table").click();
+    const rows = chart.locator("tbody tr");
+    await expect(rows).toHaveCount(30);
+    await expect(rows.first().locator("th")).toContainText("(so far)");
+    await expect(rows.first().locator("td").first()).toHaveText("2,100");
+    await expect(rows.last().locator("th")).toContainText("(partly)");
+    // The last whole day's messages, by kind, largest first.
+    const mix = page.locator(".dau-mix");
+    await expect(mix).toContainText(`45,140 messages merged on ${short(yesterday.day)}, by kind.`);
+    await expect(mix.locator("li .dau-mix-name")).toHaveText(["Reactions", "Casts", "Follows", "Profile changes", "Verifications", "Username proofs"]);
+    await expect(mix.locator("li").first()).toContainText("19,628");
+    await expect(mix.locator("li").first()).toContainText("43%");
+    await expect(mix.locator("li").nth(4)).toContainText("1.3%");
+    await expect(mix.locator("li").last()).toContainText("<0.1%");
+  });
+
+  test("accounts by app, and how they were counted", async ({ page }) => {
+    await serve(page, payload());
+    await page.goto("/dau");
+    const apps = page.locator(".dau-apps");
+    await expect(apps).toContainText(`Accounts active through each app in the 24 hours to ${hour}.`);
+    await expect(apps.locator(".dau-note")).toHaveCount(0);
+    const rows = apps.locator("li");
+    await expect(rows.locator(".dau-app-name")).toHaveText(["Farcaster", "Base App", "Recaster", "app fid 777"]);
+    await expect(rows.first().locator(".dau-app-count")).toHaveText("4,812");
+    await expect(rows.first().locator(".dau-app-share")).toHaveText("78%");
+    await expect(rows.nth(2).locator(".dau-app-share")).toHaveText("1.9%");
+    // The Farcaster app's account is still named Warpcast: linked by fid.
+    await expect(rows.first().getByRole("link", { name: "Farcaster" })).toHaveAttribute("href", /\/u\/fid(:|%3A)9152$/);
+    await expect(rows.nth(1).getByRole("link", { name: "Base App" })).toHaveAttribute("href", /\/u\/baseapp\.base\.eth$/);
+    await expect(rows.nth(3).getByRole("link")).toHaveCount(0);
+    await expect(apps.locator(".dau-apps-foot")).toHaveText("14 accounts signed with keys no app requested.");
+    const method = page.locator(".dau-method");
+    await expect(method).toContainText("SnapMeter's closed list for Snapchain, message types 1–8 and 11–21");
+    await expect(method).toContainText("(t − 24 h, t]");
+    await expect(method).toContainText("Gaps: none.");
+    await expect(method.getByRole("link", { name: "SnapMeter's definitions" })).toHaveAttribute("href", "https://github.com/ael-dev3/SnapMeter/blob/main/docs/metrics.md");
+    await expect(method.getByRole("link", { name: "The data as JSON" })).toHaveAttribute("href", "/api/v1/activity");
+  });
+
+  test("while counting by app warms up, a gap, and a falling count", async ({ page }) => {
+    const body = payload({
+      previous_24h: 6_500,
+      gaps: [[(today - 3) * DAY + 3_600, (today - 3) * DAY + 7_200]],
+      apps_24h: { to, counted: to + 120, active: 6_174, unknown: 1_234, apps: [{ app: 9152, active: 3_900 }] },
+    });
+    await serve(page, body);
+    await page.goto("/dau");
+    await expect(page.locator(".dau-change")).toHaveText("↓ 5.0% on the 24 hours before (6,500)");
+    await expect(page.locator(".dau-change")).toHaveClass(/down/);
+    await expect(page.locator(".dau-apps .dau-note")).toHaveText("Apps are known for 80% of active accounts so far: the counts below are floors while the rest are looked up.");
+    await expect(page.locator(".dau-apps-foot")).toHaveText("1,234 accounts with keys whose app isn't known yet.");
+    await expect(page.locator(".dau-method")).toContainText(`Gaps: not read: ${short(today - 3)}`);
+  });
+
+  test("before the first count, the page says so", async ({ page }) => {
+    await serve(page, null);
+    await page.goto("/dau");
+    const empty = page.locator(".dau-empty");
+    await expect(empty.getByRole("heading", { name: "Not counted yet" })).toBeVisible();
+    await expect(empty).toContainText("Allthing hasn't counted active accounts yet.");
+    // Before a whole window: no 24-hour figure, and when it comes.
+    await serve(page, payload({ rolling_24h: undefined, previous_24h: undefined, since: to - 3_600 }));
+    await page.reload();
+    await expect(page.locator(".dau-meter")).toContainText("The first 24-hour count comes once a whole day has been read");
+  });
+
+  test("a short history keeps a month's room, the newest day on the right", async ({ page }) => {
+    await serve(page, payload({ days: days.slice(-3) }));
+    await page.goto("/dau");
+    const svg = page.locator(".dau-chart svg");
+    await expect(svg.locator("rect")).toHaveCount(3);
+    const [chart, last] = await Promise.all([svg.boundingBox(), svg.locator("rect").last().boundingBox()]);
+    expect(chart!.x + chart!.width - (last!.x + last!.width)).toBeLessThan(chart!.width / 30);
+    expect(last!.width).toBeLessThan(chart!.width / 25);
+  });
+
+  test("a client card links to the page, which the app opens without a reload", async ({ page }) => {
+    await serve(page, payload());
+    const hash = (i: number) => `0x${(i + 1).toString(16).padStart(40, "0")}`;
+    const pool = Array.from({ length: 25 }, (_, i) => ({ hash: hash(i), author: { fid: 1, username: "fixture" }, text: `DAU link fixture ${i}`, ts: 1792235681 - i }));
+    const origins = Object.fromEntries(pool.map((c) => [c.hash, { signer: "0x01", app_fid: 9152 }]));
+    await page.route("**/api/v1/home**", (route) => route.fulfill({
+      json: { pool, notes: { origins, apps: { "9152": { fid: 9152, username: "warpcast", display_name: "Warpcast" } } }, meta: payload().meta, apps_24h: payload().apps_24h },
+    }));
+    await page.goto("/");
+    await page.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).hover();
+    const card = page.getByRole("dialog", { name: "Farcaster: active accounts" });
+    await card.getByRole("link", { name: "Every app's active accounts" }).click();
+    await expect(page).toHaveURL(/\/dau$/);
+    await expect(page.locator(".dau-meter")).toContainText("6,174");
+    expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(1);
+  });
+
+  test("at 390, everything fits the screen", async ({ browser }, testInfo) => {
+    const { context, page } = await phone(browser, testInfo);
+    await serve(page, payload());
+    await page.goto("/dau");
+    await expect(page.locator(".dau-meter")).toContainText("6,174");
+    for (const section of [".dau-meter", ".dau-tiles", ".dau-chart", ".dau-mix", ".dau-apps", ".dau-method"]) {
+      const box = (await page.locator(section).boundingBox())!;
+      expect(box.x, section).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, section).toBeLessThanOrEqual(390);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await context.close();
+  });
+});
+
+test("the static copy points to allthing.social for the counts", async ({ page }) => {
+  test.skip(!process.env.E2E_PAGES, "only the static copy lacks the Worker");
+  await page.goto("/Allthing/dau");
+  await expect(page.locator(".dau-empty")).toContainText("They're at allthing.social/dau.");
+  await expect(page.getByRole("link", { name: "allthing.social/dau" })).toHaveAttribute("href", "https://allthing.social/dau");
+});

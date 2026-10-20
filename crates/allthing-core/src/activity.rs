@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::latest::{Cursor, FARCASTER_EPOCH};
+use crate::model::UserSummary;
 use crate::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 
 /// What kind of action a counted message is.
@@ -572,7 +573,16 @@ pub struct Follow {
     /// look up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub backlog: Vec<u64>,
+    /// The accounts of the apps with the most active accounts, read once a
+    /// day, on `named`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_accounts: Vec<UserSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub named: Option<i64>,
 }
+
+/// Apps whose accounts the activity page names.
+pub const NAMED_APPS: usize = 20;
 
 /// Accounts active through one app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -753,6 +763,9 @@ pub struct ActivityPayload {
     /// hour; none until a whole window's keys were kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apps_24h: Option<AppsWindow>,
+    /// The accounts of the apps with the most active accounts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_accounts: Vec<UserSummary>,
     /// The latest 30 UTC days, oldest first; the last is in progress.
     #[serde(default)]
     pub days: Vec<DayCount>,
@@ -789,6 +802,7 @@ pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Me
         previous_24h: to.and_then(|t| rolling(follow, hours, t - 86_400)),
         active_30d: follow.active_30d,
         apps_24h: follow.apps_24h.clone(),
+        app_accounts: follow.app_accounts.clone(),
         days: follow.days.iter().rev().take(KEEP_DAYS as usize).rev().cloned().collect(),
         since: follow.since,
         gaps: follow.gaps.clone(),

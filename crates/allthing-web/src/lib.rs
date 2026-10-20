@@ -27,6 +27,7 @@ use crate::components::media::{Lightbox, Viewer};
 use crate::components::who::{WhoDialog, WhoList};
 use crate::pages::channel::ChannelPage;
 use crate::pages::channels::ChannelsPage;
+use crate::pages::dau::DauPage;
 use crate::pages::home::Home;
 use crate::pages::post::PostPage;
 use crate::pages::search::SearchPage;
@@ -77,6 +78,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("/u/:name") view=UserPage/>
                     <Route path=path!("/u") view=UserPage/>
                     <Route path=path!("/channels") view=ChannelsPage/>
+                    <Route path=path!("/dau") view=DauPage/>
                     <Route path=path!("/search") view=SearchPage/>
                 </Routes>
             </main>

@@ -2245,16 +2245,27 @@ p.jumbo .emoji img {
   margin-top: 4px;
 }
 
-/* In a legend entry's card, not the legend's own inherited link color. */
-.popover-panel .client-card-filter {
-  display: inline-block;
+.client-card-body .client-card-links {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
   margin-top: 8px;
+}
+
+/* In a legend entry's card, not the legend's own inherited link color. */
+.popover-panel .client-card-links a {
+  display: inline;
   color: var(--accent);
   text-decoration: none;
 }
 
-.client-card-filter:hover,
-.client-card-filter:focus-visible {
+.popover-panel .client-card-links .client-card-more {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.popover-panel .client-card-links a:hover,
+.popover-panel .client-card-links a:focus-visible {
   text-decoration: underline;
 }
 
@@ -4713,4 +4724,455 @@ p.jumbo .emoji img {
 
 .popover-panel.beside {
   z-index: 60;
+}
+
+/* Daily active accounts (/dau): SnapMeter's meter, tiles, the month's days,
+   what accounts did and which apps they used, and how they were counted. */
+.dau {
+  max-width: 770px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.dau-head {
+  margin-bottom: 4px;
+}
+
+.dau-lede {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.dau-lede a,
+.dau-method a,
+.dau-empty a {
+  color: var(--accent);
+}
+
+.dau-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+.dau-card h2 {
+  font: 600 13px/1.2 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 10px;
+}
+
+.dau-card p {
+  margin: 0;
+}
+
+.dau-meter {
+  padding: 22px 20px 20px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, var(--accent-soft), transparent 60%),
+    var(--card);
+}
+
+.dau-big {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.dau-big strong {
+  font: 400 64px/1 var(--font-display);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.dau-what {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.dau-card .dau-change {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-change.up {
+  color: #1d7a4f;
+}
+
+.dau-change.down {
+  color: #b4433b;
+}
+
+.dau-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dau-tile-count {
+  font: 400 34px/1.05 var(--font-display);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-card .dau-tile-note {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.dau-plot {
+  position: relative;
+  padding-top: 4px;
+}
+
+.dau-chart svg {
+  display: block;
+  width: 100%;
+  height: 170px;
+}
+
+.dau-max {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-ticks {
+  position: relative;
+  height: 18px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.dau-ticks span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.dau-ticks span:last-child {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.dau-bar {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+
+.dau-bar.partial {
+  fill: var(--accent);
+  opacity: 0.32;
+}
+
+.dau-bar.today {
+  fill: var(--cyan);
+  opacity: 0.85;
+}
+
+.dau-bar:hover {
+  opacity: 1;
+}
+
+.dau-grid {
+  stroke: var(--line-2);
+  stroke-dasharray: 3 4;
+}
+
+.dau-card .dau-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.dau-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dau-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.dau-key.partial {
+  opacity: 0.32;
+}
+
+.dau-key.today {
+  background: var(--cyan);
+}
+
+.dau-table {
+  margin-top: 10px;
+  font-size: 13.5px;
+}
+
+.dau-table summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.dau-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-table th,
+.dau-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  font-weight: 400;
+}
+
+.dau-table th[scope="row"],
+.dau-table thead th:first-child {
+  text-align: left;
+}
+
+.dau-table thead th {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.dau-mix-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin: 12px 0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dau-mix-seg {
+  min-width: 3px;
+}
+
+.mix-0 {
+  background: var(--accent);
+}
+
+.mix-1 {
+  background: #2f6fde;
+}
+
+.mix-2 {
+  background: var(--cyan);
+}
+
+.mix-3 {
+  background: var(--gold);
+}
+
+.mix-4 {
+  background: #c25e8a;
+}
+
+.mix-5 {
+  background: #a3a8b8;
+}
+
+.dau-mix-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px 18px;
+  font-size: 14px;
+}
+
+.dau-mix-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-mix-name {
+  margin-right: auto;
+}
+
+.dau-card .dau-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(185, 130, 42, 0.1);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.dau-app-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.dau-app-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr) auto 52px;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-app-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dau-app-name a,
+.dau-app-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dau-app-name a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.dau-app-name a:hover,
+.dau-app-name a:focus-visible {
+  text-decoration: underline;
+}
+
+.dau-app-name img,
+.dau-app-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  object-fit: cover;
+}
+
+.dau-app-avatar {
+  background: var(--line);
+}
+
+.dau-app-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.dau-app-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.dau-app-share {
+  text-align: right;
+  font-size: 12.5px;
+}
+
+.dau-card .dau-apps-foot {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.dau-method ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dau-method code {
+  font: 13px var(--font-mono);
+  white-space: nowrap;
+}
+
+.dau-card .dau-links {
+  margin-top: 12px;
+  font-size: 13.5px;
+}
+
+.dau-empty h2 {
+  text-transform: none;
+  letter-spacing: 0;
+  font: 400 26px/1.2 var(--font-display);
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .dau-big strong {
+    font-size: 48px;
+  }
+
+  .dau-tiles {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .dau-tile {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 0 12px;
+  }
+
+  .dau-tile .dau-tile-label {
+    margin: 0;
+  }
+
+  .dau-tile-count {
+    font-size: 28px;
+    grid-row: span 2;
+  }
+
+  .dau-chart svg {
+    height: 130px;
+  }
+
+  .dau-app-list li {
+    grid-template-columns: minmax(0, 1fr) auto 48px;
+  }
+
+  .dau-app-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }

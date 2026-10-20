@@ -3,6 +3,7 @@
 
 pub mod channel;
 pub mod channels;
+pub mod dau;
 pub mod home;
 pub mod post;
 pub mod search;
