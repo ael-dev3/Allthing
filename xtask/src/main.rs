@@ -207,15 +207,17 @@ fn site(site: &Site) -> Result<()> {
     let boot_name = format!("boot-{}.js", fingerprint(boot.as_bytes()));
     write(&assets.join(&boot_name), &boot)?;
 
-    // The emoji pack, each version's folder as it is (web/emoji/CREDITS.md
-    // says whose they are).
-    for version in fs::read_dir(root.join("web/emoji")).map_err(|e| e.to_string())? {
-        let version = version.map_err(|e| e.to_string())?.path();
-        let Some(name) = version.file_name().filter(|_| version.is_dir()) else { continue };
-        for file in fs::read_dir(&version).map_err(|e| e.to_string())? {
-            let file = file.map_err(|e| e.to_string())?.path();
-            if let Some(file_name) = file.file_name() {
-                write(&assets.join("emoji").join(name).join(file_name), read(&file)?)?;
+    // The emoji and stickers, each version's folder as it is (their
+    // CREDITS.md say whose they are).
+    for pack in ["emoji", "stickers"] {
+        for version in fs::read_dir(root.join("web").join(pack)).map_err(|e| e.to_string())? {
+            let version = version.map_err(|e| e.to_string())?.path();
+            let Some(name) = version.file_name().filter(|_| version.is_dir()) else { continue };
+            for file in fs::read_dir(&version).map_err(|e| e.to_string())? {
+                let file = file.map_err(|e| e.to_string())?.path();
+                if let Some(file_name) = file.file_name() {
+                    write(&assets.join(pack).join(name).join(file_name), read(&file)?)?;
+                }
             }
         }
     }

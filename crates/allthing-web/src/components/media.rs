@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use allthing_core::embeds::{ImageSize, embed_domain, resized_image_url};
+use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::model::{Cast, Embed};
 use allthing_core::text::truncate_title;
 use allthing_core::video::{self, VideoLink};
@@ -16,7 +17,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
 use crate::components::player::{HlsVideo, VideoFacade};
-use crate::util::cast_href;
+use crate::util::{cast_href, href};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
@@ -164,14 +165,36 @@ pub fn video_links(cast: &Cast) -> Vec<(String, VideoLink)> {
     out
 }
 
+/// One of Allthing's stickers in a cast: large, with no frame, and still
+/// for readers who ask for less motion. It is the cast's image embed, which
+/// other Farcaster apps show as the GIF it is.
+fn sticker_view(sticker: &'static Sticker) -> impl IntoView {
+    view! {
+        <picture class="sticker">
+            <source media="(prefers-reduced-motion: reduce)" srcset=href(&sticker.still())/>
+            <img
+                src=href(&sticker.file())
+                alt=format!("Sticker: {}", sticker.label())
+                width=sticker.width
+                height=STICKER_HEIGHT
+                loading="lazy"
+                decoding="async"
+            />
+        </picture>
+    }
+}
+
 /// A cast's images and videos. In listings, images link to the post; on the
-/// post page (`open_on_click`), they open the lightbox.
+/// post page (`open_on_click`), they open the lightbox. Allthing's stickers
+/// show apart, as stickers.
 #[component]
 pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl IntoView {
     let viewer = use_viewer();
-    let items = media_items(&cast);
+    let (stickers, items): (Vec<MediaItem>, Vec<MediaItem>) =
+        media_items(&cast).into_iter().partition(|item| emoji::sticker_of(&item.url).is_some());
+    let stickers = stickers.iter().filter_map(|item| emoji::sticker_of(&item.url)).map(sticker_view).collect_view();
     if items.is_empty() {
-        return ().into_any();
+        return stickers.into_any();
     }
     let gallery = Gallery { items: items.clone(), index: 0, caption: truncate_title(&cast.text, 280) };
     let href = cast_href(&cast.hash);
@@ -242,7 +265,11 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
             }
         })
         .collect_view();
-    view! { <div class=format!("media-grid n{}", count.min(4))>{tiles}</div> }.into_any()
+    view! {
+        {stickers}
+        <div class=format!("media-grid n{}", count.min(4))>{tiles}</div>
+    }
+    .into_any()
 }
 
 /// Links (other than playable videos) under a cast.

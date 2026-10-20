@@ -4,6 +4,10 @@
 //! with their sources in `web/emoji/CREDITS.md`). A cast writes one as a
 //! shortcode, `:pepe_no:`, which Allthing shows as the emote; other
 //! Farcaster apps show the shortcode as text.
+//!
+//! Some of the animated ones are stickers too: larger GIFs
+//! (`web/stickers/v1/`, credited in `web/stickers/CREDITS.md`) that a cast
+//! carries as an image embed, which every Farcaster app shows.
 
 /// Where the pack's files are served, below the site's base path. They are
 /// cached for a year, so a changed file goes in a folder of its own (`v2`).
@@ -151,6 +155,136 @@ pub const PACK: &[Emoji] = &[
     e("pepe_feels_bad", "feels bad", false, 64, 64),
     e("pepe_samurai", "dressed as a samurai", false, 64, 64),
 ];
+
+/// Where stickers are served, below the site's base path; cached for a
+/// year, like the emoji, and embedded in casts for good, so a file never
+/// changes in place.
+pub const STICKER_DIR: &str = "/assets/stickers/v1";
+/// Where a cast's sticker is embedded from, for every Farcaster app to load.
+pub const STICKER_ORIGIN: &str = "https://allthing.social";
+/// Every sticker's height in pixels (7TV's 4x).
+pub const STICKER_HEIGHT: u16 = 128;
+
+/// A sticker: one of the pack's animated emoji as a 128 px GIF, which a
+/// cast embeds as an image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sticker {
+    /// The emoji's shortcode, without the colons.
+    pub code: &'static str,
+    /// Its width in pixels.
+    pub width: u16,
+}
+
+impl Sticker {
+    /// The emoji it is.
+    pub fn emoji(&self) -> &'static Emoji {
+        find(self.code).unwrap_or(&PACK[0])
+    }
+
+    /// Its GIF, below the site's base path.
+    pub fn file(&self) -> String {
+        format!("{STICKER_DIR}/{}.gif", self.code)
+    }
+
+    /// A still of it, for readers who ask for less motion.
+    pub fn still(&self) -> String {
+        format!("{STICKER_DIR}/{}.still.webp", self.code)
+    }
+
+    /// What a cast embeds: its GIF at allthing.social.
+    pub fn embed(&self) -> String {
+        format!("{STICKER_ORIGIN}{}", self.file())
+    }
+
+    /// What it shows: "Pepe jams with headphones".
+    pub fn label(&self) -> String {
+        self.emoji().label()
+    }
+}
+
+const fn s(code: &'static str, width: u16) -> Sticker {
+    Sticker { code, width }
+}
+
+/// The stickers, in the order a picker shows them.
+pub const STICKERS: &[Sticker] = &[
+    s("pepe_jam", 132),
+    s("pepe_pls", 92),
+    s("pepe_sad_dance", 144),
+    s("pepe_laugh", 128),
+    s("pepe_clap", 128),
+    s("pepe_nopers", 128),
+    s("pepe_yes", 128),
+    s("pepe_hands", 128),
+    s("pepe_cry", 128),
+    s("pepe_shy", 128),
+    s("pepe_comfy", 128),
+    s("pepe_huggers", 128),
+    s("pepe_wink", 128),
+    s("pepe_cool", 128),
+    s("pepe_side_eye", 128),
+    s("pepe_wow", 128),
+    s("pepe_wave", 128),
+    s("pepe_gm", 128),
+    s("pepe_gn", 128),
+    s("pepe_gg", 128),
+    s("pepe_thanks", 128),
+    s("pepe_party", 148),
+    s("pepe_cheer", 128),
+    s("pepe_popcorn", 128),
+    s("pepe_coffee", 128),
+    s("pepe_typing", 128),
+    s("pepe_rain", 128),
+    s("pepe_birthday", 128),
+    s("pepe_headbang", 128),
+    s("pepe_sleep", 128),
+    s("pepe_money", 128),
+    s("pepe_gift", 148),
+];
+
+/// The sticker whose shortcode is `code`.
+pub fn sticker(code: &str) -> Option<&'static Sticker> {
+    STICKERS.iter().find(|s| s.code == code)
+}
+
+/// The sticker a cast's embed is, if it is one of Allthing's.
+pub fn sticker_of(url: &str) -> Option<&'static Sticker> {
+    let file = url.strip_prefix(STICKER_ORIGIN)?.strip_prefix(STICKER_DIR)?.strip_prefix('/')?;
+    sticker(file.strip_suffix(".gif")?)
+}
+
+/// How many recently used stickers a picker keeps: a row or two.
+pub const RECENT_STICKERS: usize = 8;
+
+/// The recently used stickers in `kept` (shortcodes, most recent first,
+/// separated by spaces), leaving out any that are no longer stickers.
+pub fn recent_stickers(kept: &str) -> Vec<&'static Sticker> {
+    let mut recent: Vec<&'static Sticker> = Vec::new();
+    for sticker in kept.split_whitespace().filter_map(sticker) {
+        if !recent.contains(&sticker) && recent.len() < RECENT_STICKERS {
+            recent.push(sticker);
+        }
+    }
+    recent
+}
+
+/// `kept` with `sticker` as the most recent.
+pub fn remember_sticker(kept: &str, sticker: &Sticker) -> String {
+    let mut codes = vec![sticker.code];
+    codes.extend(recent_stickers(kept).iter().map(|s| s.code).filter(|code| *code != sticker.code));
+    codes.truncate(RECENT_STICKERS);
+    codes.join(" ")
+}
+
+/// The stickers that match a picker's search, best first, as `search`
+/// ranks their emoji; all of them, in their own order, when it matches all.
+pub fn search_stickers(query: &str) -> Vec<&'static Sticker> {
+    let found = search(query);
+    if found.len() == PACK.len() {
+        return STICKERS.iter().collect();
+    }
+    found.into_iter().filter_map(|emoji| sticker(emoji.code)).collect()
+}
 
 /// The emoji whose shortcode is `code`, without its colons, in any case.
 pub fn find(code: &str) -> Option<&'static Emoji> {
@@ -351,6 +485,92 @@ mod tests {
         // Past the end: at the end.
         assert_eq!(insert("gm", 99, 99, no), ("gm :pepe_no: ".to_owned(), 13));
         assert_eq!(insert("gm\n", 3, 3, no), ("gm\n:pepe_no: ".to_owned(), 13));
+    }
+
+    #[test]
+    fn stickers_are_animated_emoji_of_the_pack() {
+        let codes: BTreeSet<&str> = STICKERS.iter().map(|s| s.code).collect();
+        assert_eq!(codes.len(), STICKERS.len());
+        for sticker in STICKERS {
+            let emoji = find(sticker.code).unwrap_or_else(|| panic!("{} isn't in the pack", sticker.code));
+            assert!(emoji.animated, "{}", sticker.code);
+            assert_eq!(sticker.emoji(), emoji);
+        }
+        let jam = sticker("pepe_jam").unwrap();
+        assert_eq!(jam.file(), "/assets/stickers/v1/pepe_jam.gif");
+        assert_eq!(jam.still(), "/assets/stickers/v1/pepe_jam.still.webp");
+        assert_eq!(jam.label(), "Pepe jams with headphones");
+    }
+
+    #[test]
+    fn a_casts_sticker_is_known_by_its_embed() {
+        let jam = sticker("pepe_jam").unwrap();
+        assert_eq!(jam.embed(), "https://allthing.social/assets/stickers/v1/pepe_jam.gif");
+        assert_eq!(sticker_of(&jam.embed()), Some(jam));
+        for other in [
+            "http://allthing.social/assets/stickers/v1/pepe_jam.gif",
+            "https://allthing.social.example/assets/stickers/v1/pepe_jam.gif",
+            "https://allthing.social/assets/stickers/v1/pepe_jam.still.webp",
+            "https://allthing.social/assets/stickers/v2/pepe_jam.gif",
+            "https://allthing.social/assets/stickers/v1/pepe_no.gif",
+            "https://allthing.social/assets/emoji/v1/pepe_jam.webp",
+            "https://example.com/pepe_jam.gif",
+        ] {
+            assert_eq!(sticker_of(other), None, "{other}");
+        }
+        // Every embed fits a cast's 256 bytes.
+        assert!(STICKERS.iter().all(|s| s.embed().len() <= 256));
+    }
+
+    #[test]
+    fn a_sticker_search_ranks_as_the_emoji_search() {
+        let codes: Vec<&str> = search_stickers("dance").iter().map(|s| s.code).collect();
+        assert_eq!(codes, ["pepe_sad_dance", "pepe_pls"]);
+        let all: Vec<&str> = search_stickers("").iter().map(|s| s.code).collect();
+        assert_eq!(all, STICKERS.iter().map(|s| s.code).collect::<Vec<_>>());
+        assert!(search_stickers("no").iter().all(|s| s.code != "pepe_no"));
+    }
+
+    #[test]
+    fn recent_stickers_are_kept_apart_newest_first() {
+        let jam = sticker("pepe_jam").unwrap();
+        let gm = sticker("pepe_gm").unwrap();
+        assert_eq!(remember_sticker("", jam), "pepe_jam");
+        assert_eq!(remember_sticker("pepe_jam", gm), "pepe_gm pepe_jam");
+        assert_eq!(remember_sticker("pepe_gm pepe_jam", jam), "pepe_jam pepe_gm");
+        // Emoji that aren't stickers, and repeats, are dropped.
+        let kept: Vec<&str> = recent_stickers("pepe_no pepe_gm pepe_gm pepe_jam").iter().map(|s| s.code).collect();
+        assert_eq!(kept, ["pepe_gm", "pepe_jam"]);
+        let all: Vec<&str> = STICKERS.iter().map(|s| s.code).collect();
+        assert_eq!(recent_stickers(&all.join(" ")).len(), RECENT_STICKERS);
+        assert_eq!(remember_sticker(&all.join(" "), gm).split(' ').count(), RECENT_STICKERS);
+    }
+
+    /// Every sticker has its GIF, 128 px tall at the width the table says,
+    /// and a still of the same size, and a credit with its source; every
+    /// file is one of theirs.
+    #[test]
+    fn every_sticker_has_its_files_and_a_credit() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/stickers");
+        let credits = fs::read_to_string(dir.join("CREDITS.md")).unwrap();
+        let files: BTreeSet<String> =
+            fs::read_dir(dir.join("v1")).unwrap().map(|f| f.unwrap().file_name().into_string().unwrap()).collect();
+        let mut expected = BTreeSet::new();
+        for sticker in STICKERS {
+            let gif = fs::read(dir.join("v1").join(format!("{}.gif", sticker.code))).unwrap();
+            assert!(gif.starts_with(b"GIF89a"), "{}", sticker.code);
+            let size = (u16::from_le_bytes([gif[6], gif[7]]), u16::from_le_bytes([gif[8], gif[9]]));
+            assert_eq!(size, (sticker.width, STICKER_HEIGHT), "{}", sticker.code);
+            assert!(gif.len() <= 300_000, "{} is {} bytes", sticker.code, gif.len());
+            let still = fs::read(dir.join("v1").join(format!("{}.still.webp", sticker.code))).unwrap();
+            assert_eq!(webp_size(&still), (u32::from(sticker.width), u32::from(STICKER_HEIGHT)), "{}", sticker.code);
+            expected.insert(format!("{}.gif", sticker.code));
+            expected.insert(format!("{}.still.webp", sticker.code));
+            let credit = credits.lines().find(|l| l.starts_with(&format!("| `{}` |", sticker.code)));
+            let credit = credit.unwrap_or_else(|| panic!("no credit for {}", sticker.code));
+            assert!(credit.contains("| https://7tv.app/emotes/"), "no source for {}", sticker.code);
+        }
+        assert_eq!(files, expected, "files that aren't stickers, or missing");
     }
 
     /// The width and height a WebP says it has: its canvas (VP8X), or its

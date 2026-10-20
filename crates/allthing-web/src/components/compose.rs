@@ -18,9 +18,10 @@
 //! in the order KLIPY gives them, in a grid of their own, under a search box
 //! that says "Search KLIPY". The key comes from the Worker
 //! (`/api/v1/gifs/key`, for a signed-in session); without one (no
-//! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji come from
-//! Allthing's own pack (`components::emoji_picker`). Not in the static copy,
-//! which has no sign-in.
+//! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji and
+//! stickers come from Allthing's own pack (`components::emoji_picker`); a
+//! sticker takes the GIF's place. Not in the static copy, which has no
+//! sign-in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,8 +30,10 @@ use std::time::Duration;
 
 use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
-use allthing_core::compose::{Draft, Gif, GifKey, GifPage, Quoted, SEARCH_PLACEHOLDER, gif_key_path, gifs_url};
-use allthing_core::emoji;
+use allthing_core::compose::{
+    Draft, Gif, GifKey, GifPage, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path, gifs_url,
+};
+use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::message::MAX_CAST_BYTES;
 use allthing_core::model::Cast;
 use allthing_core::text::mention_names;
@@ -44,7 +47,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
 
 use crate::api;
-use crate::components::emoji_picker::{self, EmojiPicker, Pick};
+use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::signin::use_session;
 use crate::components::writer::{Writer, fids_of, use_writer};
 use crate::util::{BASE, document, href, trap_tab};
@@ -60,6 +63,8 @@ const PEN: &str = "M10.5 3.2l2.3 2.3M3 13l.6-2.9 7.5-7.5a1.2 1.2 0 0 1 1.7 0l.6.
 const REPLY: &str = "M6.5 4L3 7.5 6.5 11M3.5 7.5h6a3.5 3.5 0 0 1 3.5 3.5v1";
 const OUT: &str = "M9 3h4v4M13 3L7.5 8.5M11.5 9.5v3h-8v-8h3";
 const QUOTE: &str = "M3.5 4.5h9v6h-5l-2.5 2v-2h-1.5zM6 7.5h4";
+/// A sticker with its corner peeling.
+const STICKER: &str = "M5.5 2h5A3.5 3.5 0 0 1 14 5.5V9l-5 5H5.5A3.5 3.5 0 0 1 2 10.5v-5A3.5 3.5 0 0 1 5.5 2zM14 9h-2.5A2.5 2.5 0 0 0 9 11.5V14M5.8 8.6c.6.7 1.4 1 2.2 1";
 /// The text's length starts showing at this many bytes.
 const COUNT_FROM: usize = 280;
 
@@ -103,12 +108,13 @@ enum Picker {
 }
 
 impl Picker {
-    /// The button that opens it, for focus to go back to.
-    fn button(self) -> Option<&'static str> {
-        match self {
-            Picker::Closed => None,
-            Picker::Gifs => Some(".gif-button"),
-            Picker::Emoji => Some(".emoji-button"),
+    /// The button that opens it on `tab`, for focus to go back to.
+    fn button(self, tab: Tab) -> Option<&'static str> {
+        match (self, tab) {
+            (Picker::Closed, _) => None,
+            (Picker::Gifs, _) => Some(".gif-button"),
+            (Picker::Emoji, Tab::Emoji) => Some(".emoji-button"),
+            (Picker::Emoji, Tab::Stickers) => Some(".sticker-button"),
         }
     }
 }
@@ -131,6 +137,8 @@ pub struct Composer {
     text: RwSignal<String>,
     gif: RwSignal<Option<Gif>>,
     picker: RwSignal<Picker>,
+    /// The emoji picker's tab, emoji or stickers.
+    tab: RwSignal<Tab>,
     /// Being posted with the reader's key, and why it didn't go out.
     posting: RwSignal<bool>,
     error: RwSignal<Option<String>>,
@@ -144,6 +152,7 @@ impl Composer {
             text: RwSignal::new(String::new()),
             gif: RwSignal::new(None),
             picker: RwSignal::new(Picker::Closed),
+            tab: RwSignal::new(Tab::Emoji),
             posting: RwSignal::new(false),
             error: RwSignal::new(None),
         }
@@ -180,6 +189,21 @@ impl Composer {
     /// Open `picker`, or close it if it is open.
     fn toggle(self, picker: Picker) {
         self.picker.update(|open| *open = if *open == picker { Picker::Closed } else { picker });
+    }
+
+    /// Whether the emoji picker is open on `tab`.
+    fn showing(self, tab: Tab) -> bool {
+        self.picker.get() == Picker::Emoji && self.tab.get() == tab
+    }
+
+    /// Open the emoji picker on `tab`, or close it if it shows that already.
+    fn toggle_tab(self, tab: Tab) {
+        if self.picker.get_untracked() == Picker::Emoji && self.tab.get_untracked() == tab {
+            self.picker.set(Picker::Closed);
+        } else {
+            self.tab.set(tab);
+            self.picker.set(Picker::Emoji);
+        }
     }
 
     fn draft(self) -> Draft {
@@ -420,7 +444,7 @@ pub fn ComposerDialog() -> impl IntoView {
             // The picker first, then the dialog.
             "Escape" => {
                 ev.prevent_default();
-                match composer.picker.get_untracked().button() {
+                match composer.picker.get_untracked().button(composer.tab.get_untracked()) {
                     Some(button) => {
                         composer.picker.set(Picker::Closed);
                         focus_soon(button);
@@ -514,6 +538,19 @@ pub fn ComposerDialog() -> impl IntoView {
                 }
                 let _ = area.set_selection_range(at as u32, at as u32);
             });
+            // A sticker goes with the cast as its GIF does, in the GIF's place.
+            let stick = Callback::new(move |sticker: &'static Sticker| {
+                emoji_picker::used_sticker(sticker);
+                let (width, height) = (u32::from(sticker.width), u32::from(STICKER_HEIGHT));
+                composer.gif.set(Some(Gif {
+                    slug: sticker.code.to_owned(),
+                    title: format!("Sticker: {}", sticker.label()),
+                    tile: Rendition { url: href(&sticker.file()), width, height },
+                    embed: Rendition { url: sticker.embed(), width, height },
+                }));
+                composer.picker.set(Picker::Closed);
+                focus_soon(".compose-text");
+            });
             view! {
                 <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
                     if ev.target() == ev.current_target() {
@@ -543,16 +580,16 @@ pub fn ComposerDialog() -> impl IntoView {
                                 }
                             ></textarea>
                             {move || composer.gif.get().map(|gif| view! {
-                                <figure class="compose-gif">
+                                <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>
                                     <img src=gif.tile.url.clone() width=gif.tile.width height=gif.tile.height alt=gif.title.clone()/>
-                                    <button type="button" class="compose-gif-remove" aria-label="Remove the GIF" on:click=move |_| {
+                                    <button type="button" class="compose-gif-remove" aria-label=if emoji::sticker_of(&gif.embed.url).is_some() { "Remove the sticker" } else { "Remove the GIF" } on:click=move |_| {
                                         composer.gif.set(None);
                                         focus_soon(".compose-text");
                                     }>"×"</button>
                                 </figure>
                             })}
                             {move || (composer.picker.get() == Picker::Gifs).then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
-                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker picked=insert/> })}
+                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker tab=composer.tab picked=insert stuck=stick/> })}
                             {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -562,11 +599,21 @@ pub fn ComposerDialog() -> impl IntoView {
                                     type="button"
                                     class="emoji-button"
                                     aria-label="Add an emoji"
-                                    aria-expanded=move || (composer.picker.get() == Picker::Emoji).to_string()
+                                    aria-expanded=move || composer.showing(Tab::Emoji).to_string()
                                     aria-controls="emoji-picker"
-                                    on:click=move |_| composer.toggle(Picker::Emoji)
+                                    on:click=move |_| composer.toggle_tab(Tab::Emoji)
                                 >
                                     <img src=href(&emoji::find("pepe_smirk").unwrap_or(&emoji::PACK[0]).still()) alt="" width="22" height="22"/>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="sticker-button"
+                                    aria-label="Add a sticker"
+                                    aria-expanded=move || composer.showing(Tab::Stickers).to_string()
+                                    aria-controls="emoji-picker"
+                                    on:click=move |_| composer.toggle_tab(Tab::Stickers)
+                                >
+                                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STICKER/></svg>
                                 </button>
                                 {move || gif_key().map(|_| view! {
                                     <button
