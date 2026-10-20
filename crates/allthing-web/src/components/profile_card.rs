@@ -25,7 +25,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::chips::{Avatar, Count};
-use crate::components::facts::{JoinedFact, VoteFact, WalletShares, vote_data, wallet_data};
+use crate::components::facts::{JoinedFact, VoteFact, WALLETS_WHAT, WalletShares, WalletsHelp, vote_data, wallet_data};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
 use crate::util::user_href;
@@ -139,7 +139,7 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
                 <VoteFact fid data=vote always=true/>
             </dl>
             <div class="profile-card-wallets">
-                <p class="profile-card-label">"Wallet activity"</p>
+                <p class="profile-card-label" aria-description=WALLETS_WHAT>"Wallet activity " <WalletsHelp/></p>
                 <WalletShares fid data=wallets compact=true/>
             </div>
             <a class="popover-foot" href=href>"View profile →"</a>

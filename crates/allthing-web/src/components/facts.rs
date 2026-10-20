@@ -87,6 +87,18 @@ pub fn VoteFact(fid: u64, #[prop(optional)] data: Option<VoteData>, #[prop(optio
     }
 }
 
+/// What a wallet chart's shares are of; `docs/WALLETS.md` has how each
+/// count is read, and how the shares are rounded.
+pub const WALLETS_WHAT: &str = "Share of the verified wallets' transactions, by chain.";
+
+/// "?" beside "Wallet activity": how it is counted, in `docs/WALLETS.md`.
+#[component]
+pub fn WalletsHelp() -> impl IntoView {
+    view! {
+        <a class="fact-help" href="https://github.com/ael-dev3/Allthing/blob/main/docs/WALLETS.md" aria-label="How is wallet activity counted? (docs/WALLETS.md)">"?"</a>
+    }
+}
+
 /// Wallet activity by chain, loaded when shown (or from `data`, as for
 /// [`VoteFact`]): it is read from many RPCs, so it has an endpoint of its
 /// own, cached for hours. `compact` (a card) keeps one height whatever
@@ -197,13 +209,21 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
         </div>
     };
     if compact {
-        // The two largest chains by name, and how many more; the bar, and
-        // its label, have them all.
+        // The two largest chains by name, and how many more with their share
+        // together, so the numbers shown add up to 100; the bar, and its
+        // label, have them all.
         const NAMED: usize = 2;
         let rest = &measured[NAMED.min(measured.len())..];
         let more = (!rest.is_empty()).then(|| {
             let listed = rest.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
-            view! { <li class="share-more" aria-description=listed>{format!("+{}", rest.len())}</li> }
+            let together: u32 = rest.iter().map(|c| c.percent).sum();
+            view! {
+                <li class="share-more" aria-description=listed>
+                    // The space keeps "+4" and "35%" apart when read out.
+                    <span class="chain-name">{format!("+{} ", rest.len())}</span>
+                    <strong class="pct">{format!("{together}%")}</strong>
+                </li>
+            }
         });
         let notes = [(missed, MISSED_SHARES), (carried, CARRIED), (solana_unread, SOLANA_UNREAD)];
         let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
