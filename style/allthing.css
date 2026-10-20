@@ -4848,6 +4848,14 @@ p.jumbo .emoji img {
   color: var(--ink-3);
 }
 
+/* The key the post was signed with, after its app: plain, in the line. */
+.post-key code {
+  font-size: 11.5px;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
 /* A link in a line of text is underlined, not told apart by color alone. */
 .post-via a {
   color: var(--ink-3);

@@ -80,7 +80,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
                 </button>
                 <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
-                {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" title="Original poster">"OP"</span> })}
+                {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" aria-description="Original poster">"OP"</span> })}
                 <span class="sep" aria-hidden="true">"·"</span>
                 <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>

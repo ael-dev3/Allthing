@@ -42,7 +42,9 @@ test("shortcodes of the pack show as the emoji, inline; anything else stays text
   await serve(page);
   await page.goto("/");
   const no = card(page, 0).getByRole("img", { name: ":pepe_no:" });
-  await expect(no).toHaveAttribute("title", "Pepe holds up a NO sign");
+  // What it shows is read out; there's no native tooltip.
+  await expect(no).toHaveAttribute("aria-description", "Pepe holds up a NO sign");
+  expect(await no.getAttribute("title")).toBeNull();
   const shown = await loaded(no);
   expect(shown.natural).toBeGreaterThan(0);
   expect(shown.src).toMatch(/\/assets\/emoji\/v1\/pepe_no\.webp$/);

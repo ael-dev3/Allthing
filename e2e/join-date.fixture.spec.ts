@@ -20,7 +20,7 @@ async function profile(page: Page, user: object) {
 test("an account from before the migration joined when it got its first username", async ({ page }) => {
   const joined = await profile(page, { registered_at: MIGRATION, first_username_at: 1623888000 });
   await expect(joined.locator("dd")).toHaveText("17 Jun 2021");
-  await expect(joined).toHaveAttribute("title", /^Got its first username .* ago\. The account was registered before the ID registry moved to OP Mainnet on 7 Nov 2023/);
+  await expect(joined.locator("dd")).toHaveAttribute("aria-description", /^Got its first username .* ago\. The account was registered before the ID registry moved to OP Mainnet on 7 Nov 2023/);
 });
 
 test("without its first username's date it says before Nov 2023", async ({ page }) => {
@@ -31,5 +31,5 @@ test("without its first username's date it says before Nov 2023", async ({ page 
 test("a newer account joined when it registered onchain", async ({ page }) => {
   const joined = await profile(page, { registered_at: 1715817600, first_username_at: 1715900000 });
   await expect(joined.locator("dd")).toHaveText("16 May 2024");
-  await expect(joined).toHaveAttribute("title", /^Registered onchain .* ago\.$/);
+  await expect(joined.locator("dd")).toHaveAttribute("aria-description", /^Registered onchain .* ago\.$/);
 });

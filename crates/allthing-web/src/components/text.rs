@@ -40,7 +40,8 @@ fn line(text: &str, mentions: &[Mention]) -> Vec<AnyView> {
 }
 
 /// One of the pack's emoji, in the text: a still of it for readers who ask
-/// for less motion. Its alt text is its shortcode, so copied text keeps it.
+/// for less motion. Its alt text is its shortcode, so copied text keeps it,
+/// and what it shows is read out as its description (no native tooltip).
 fn emoji_view(emoji: &'static Emoji) -> AnyView {
     view! {
         <picture class="emoji">
@@ -48,7 +49,7 @@ fn emoji_view(emoji: &'static Emoji) -> AnyView {
             <img
                 src=href(&emoji.file())
                 alt=format!(":{}:", emoji.code)
-                title=emoji.label()
+                aria-description=emoji.label()
                 width=emoji.width
                 height=emoji.height
                 loading="lazy"

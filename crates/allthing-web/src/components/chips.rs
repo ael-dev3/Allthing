@@ -20,7 +20,7 @@ use leptos_router::hooks::use_navigate;
 
 #[component]
 pub fn TimeAgo(ts: i64) -> impl IntoView {
-    view! { <time datetime=iso_utc(ts) title=format_date_time(ts)>{time_ago(ts, now())}</time> }
+    view! { <time datetime=iso_utc(ts) aria-description=format_date_time(ts)>{time_ago(ts, now())}</time> }
 }
 
 #[component]
@@ -271,7 +271,7 @@ pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
                 name,
                 app.fid
             );
-            view! { <span class="origin" title=title>"via "<a href=user_href(&client_profile(&app))>{name}</a></span> }
+            view! { <span class="origin" aria-description=title>"via "<a href=user_href(&client_profile(&app))>{name}</a></span> }
                 .into_any()
         }
         (Some(origin), None) => {
@@ -283,7 +283,7 @@ pub fn OriginChip(hash: String, notes: Notes) -> impl IntoView {
             };
             let label =
                 origin.app_fid.map_or_else(|| "via unattributed key".to_owned(), |fid| format!("via app fid {fid}"));
-            view! { <span class="origin origin-unknown" title=title>{label}</span> }.into_any()
+            view! { <span class="origin origin-unknown" aria-description=title>{label}</span> }.into_any()
         }
         _ => ().into_any(),
     }

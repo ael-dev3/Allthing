@@ -93,8 +93,7 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                                 type="button"
                                 class="reaction-chip"
                                 aria-pressed=own.to_string()
-                                aria-label=label.clone()
-                                title=label
+                                aria-label=label
                                 on:click=react
                             >
                                 <img src=src alt="" width=emoji.width / 2 height=emoji.height / 2 loading="lazy"/>
