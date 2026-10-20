@@ -95,24 +95,24 @@ async function serve(page: Page, options: Options = {}) {
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: first, children: [] }, notes: {}, meta } }));
   await page.route("**/api/v1/signer", (route) => {
     calls.writes += 1;
-    return writes ? route.fulfill({ json: { app_fid: 539854 } }) : route.fulfill({ status: 404, json: { error: "Liking and recasting from Allthing isn't set up on this server" } });
+    return writes ? route.fulfill({ json: { app_fid: 3356318 } }) : route.fulfill({ status: 404, json: { error: "Liking and recasting from Allthing isn't set up on this server" } });
   });
   await page.route("**/api/v1/auth/signer", (route) => {
     key = route.request().postDataJSON().key;
     calls.endorse.push(key);
-    return route.fulfill({ json: { key, requestFid: 539854, signature: `0x${"5a".repeat(65)}`, deadline: Math.floor(Date.now() / 1000) + 3600 } });
+    return route.fulfill({ json: { key, requestFid: 3356318, signature: `0x${"5a".repeat(65)}`, deadline: Math.floor(Date.now() / 1000) + 3600 } });
   });
   // The Worker draws the code itself.
   await page.route("**/api/v1/auth/qr", (route) => route.continue());
   await page.route(`${FARCASTER}/signed-key-requests`, async (route) => {
     if (await preflight(route)) return;
     calls.requests.push(route.request().postDataJSON());
-    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 539854, state: "pending" } } } });
+    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 3356318, state: "pending" } } } });
   });
   await page.route(`${FARCASTER}/signed-key-request?*`, (route) => {
     expect(new URL(route.request().url()).searchParams.get("token")).toBe(TOKEN);
     calls.polls += 1;
-    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 539854, ...poll(calls.polls) } } } });
+    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 3356318, ...poll(calls.polls) } } } });
   });
   await page.route(`${NODE}/signersByFid?*`, (route) => {
     calls.signers += 1;
@@ -253,14 +253,14 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
   expect(await code.locator("path").getAttribute("d")).toMatch(/^M4 4h7v1h-7z/);
   await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(dialog).toContainText("Allthing's servers never see it");
-  // The Farcaster app will name the account that asks, a person's.
-  await expect(dialog).toContainText("The Farcaster app shows the request as from @0xael.eth, who makes Allthing.");
+  // The Farcaster app will name the account that asks: Allthing's own.
+  await expect(dialog).toContainText("The Farcaster app shows the request as from Allthing, @allthingapp.");
   await page.screenshot({ path: test.info().outputPath("approve-1280.png") });
   // A fresh key, endorsed by the Worker and passed on as it is.
   expect(calls.endorse).toHaveLength(1);
   const key = calls.endorse[0];
   expect(key).toMatch(/^0x[0-9a-f]{64}$/);
-  expect(calls.requests).toEqual([expect.objectContaining({ key, requestFid: 539854, signature: `0x${"5a".repeat(65)}` })]);
+  expect(calls.requests).toEqual([expect.objectContaining({ key, requestFid: 3356318, signature: `0x${"5a".repeat(65)}` })]);
   const pending = await kept(page);
   expect(pending).toEqual({ key, extractable: false, algorithm: "Ed25519", approved: false, token: TOKEN });
 
