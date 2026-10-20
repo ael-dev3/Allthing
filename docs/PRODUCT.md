@@ -10,8 +10,8 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 ## Principles
 
 1. **Read without an account.** Reading needs no account. Signing in, with Farcaster by QR code, is optional and only says who is reading; nobody connects a wallet. A signed-in reader who wants to like, recast and post here approves a key once in the Farcaster app: it stays in their browser, and Allthing writes only when they press a button. Only on a server without Allthing's keys does a cast written here open in the Farcaster app instead, which posts it.
-2. **Honest engagement.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts. Ranking is simple and public: likes + 2 × recasts + replies, weighed against age for **hot**. **new** and **top** are also offered. A reader's favorites, kept in their browser, weigh four times in their own hot and top, and nobody else's.
-3. **Never hide anyone.** Allthing shows no account labels, and never hides a cast because of who posted it. What it leaves out (mini apps it doesn't run, and spam by a few fixed content rules) is judged by the cast's content.
+2. **Honest engagement.** Farcaster has likes, recasts and replies, and no downvotes, so Allthing shows those three counts. Ranking is simple and public: likes + 2 × recasts + replies, weighed against age for **hot**. **new** and **top** are also offered. A reader's favorites, kept in their browser, weigh four times in their own hot and top, and accounts they see less of half, and nobody else's.
+3. **Never hide anyone.** Allthing shows no account labels, and never hides a cast because of who posted it. What it leaves out (mini apps it doesn't run, and spam by a few fixed content rules) is judged by the cast's content. A reader who sees less of an account gets its casts a little lower in their own feeds, never hidden.
 4. **Show where things come from.** Each cast names the app that registered its signing key, and facts like votes and wallet activity name their source. Missing data says so ("not recorded", "not measured", "unavailable") instead of being guessed or hidden.
 5. **Media without leaving.** Images open in an accessible viewer. Videos play in place while in view, muted until the reader turns sound on, which then holds for later videos until they mute one. Third-party players load only when asked.
 6. **Fast and frugal.** Navigation feels instant ([PERFORMANCE.md](PERFORMANCE.md)). The site is static first, makes one API call per page, and caches at the edge. It runs on a free hosting tier without straining the public data sources it reads.
@@ -24,7 +24,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 - **Channels**: a channel's feed with the same sorting, and a directory with search.
 - **Post**: the cast with its media, the parent it replies to, quoted casts, a provenance panel, and threaded replies that collapse and expand.
 - **Profile cards**: hovering or tapping a name or profile picture anywhere shows a small card with the start of the bio, followers and following, when the account joined, its NS vote and wallet activity, and a link to the profile.
-- **Profile**: the profile picture, name, bio, followers and following, registration date and NS vote, Follow for a signed-in reader with a key, and Favorite for anyone. It also shows wallet activity by chain from verified addresses, with a Wallets popover listing the addresses.
+- **Profile**: the profile picture, name, bio, followers and following, registration date and NS vote, Follow for a signed-in reader with a key, and Favorite and Show less for anyone. It also shows wallet activity by chain from verified addresses, with a Wallets popover listing the addresses.
 
 ## Out of scope for now
 

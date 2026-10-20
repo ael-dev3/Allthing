@@ -107,7 +107,7 @@ test("there's no star on the reader's own profile", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Favorite" })).toBeVisible();
 });
 
-test("at 390, the star sits in the profile's name row, inside the screen", async ({ browser }, testInfo) => {
+test("at 390, the star sits under the profile's picture and name, inside the screen", async ({ browser }, testInfo) => {
   const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   await serve(page);

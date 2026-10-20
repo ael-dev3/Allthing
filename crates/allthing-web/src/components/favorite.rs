@@ -10,7 +10,7 @@ use crate::leanings::use_leaning;
 /// A five-pointed star.
 const STAR: &str = "M8 1.9l1.85 3.8 4.15.6-3 2.95.7 4.15L8 11.45 4.3 13.4l.7-4.15-3-2.95 4.15-.6z";
 
-/// Favorite, beside Follow on a profile: the reader's own, kept in this
+/// Favorite, at the top of a profile: the reader's own, kept in this
 /// browser.
 #[component]
 pub fn FavoriteButton(fid: u64, username: String) -> impl IntoView {
