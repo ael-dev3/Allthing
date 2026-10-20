@@ -270,20 +270,76 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
     let span = usize::try_from(end - first + 1).unwrap_or(n);
     let slots = span.max(30);
     let slot = |on: i64| slots - span + usize::try_from(on - first).unwrap_or(0);
+    // The day pointed at, focused or tapped: its count and date show above
+    // its bar (the table has them all). No native tooltip: it shows late,
+    // in the system's style, and never on a touch screen.
+    let picked = RwSignal::new(None::<usize>);
+    let height = |d: &DayCount| (d.active as f64 / max as f64 * 88.0).max(1.0);
+    let tips = StoredValue::new(
+        days.iter()
+            .map(|d| {
+                let (_, said, _) = note(d);
+                let accounts = if d.active == 1 { " account" } else { " accounts" };
+                (slot(d.day), height(d), full_number(d.active), format!("{accounts}{said}"), date(d.day, true))
+            })
+            .collect::<Vec<_>>(),
+    );
     let bars = days
         .iter()
-        .map(|d| {
-            let h = (d.active as f64 / max as f64 * 88.0).max(1.0);
-            let (kind, said, _) = note(d);
+        .enumerate()
+        .map(|(i, d)| {
+            let h = height(d);
+            let (kind, _, _) = note(d);
             let class = if kind.is_empty() { "dau-bar".to_owned() } else { format!("dau-bar {kind}") };
-            let title = format!("{}: {}{said}", date(d.day, true), plural(d.active, "account", "accounts"));
+            let x = slot(d.day) * 10;
+            // The bar, and over it its whole column, a target easier to hit
+            // than a short bar.
             view! {
-                <rect class=class x=slot(d.day) * 10 + 1 y=100.0 - h width="8" height=h>
-                    <title>{title}</title>
-                </rect>
+                <rect class=class class:on=move || picked.get() == Some(i) x=x + 1 y=100.0 - h width="8" height=h/>
+                <rect
+                    class="dau-hit"
+                    x=x
+                    y="0"
+                    width="10"
+                    height="100"
+                    on:pointerenter=move |_| picked.set(Some(i))
+                    on:click=move |ev| {
+                        ev.stop_propagation();
+                        picked.set(Some(i));
+                    }
+                />
             }
         })
         .collect_view();
+    // Keyboard: the chart takes focus once, and the arrows go from day to day.
+    let keys = move |ev: leptos::ev::KeyboardEvent| {
+        let next = match (ev.key().as_str(), picked.get_untracked()) {
+            ("ArrowLeft", Some(i)) => Some(i.saturating_sub(1)),
+            ("ArrowRight", Some(i)) => Some((i + 1).min(n - 1)),
+            ("ArrowLeft" | "ArrowRight" | "End", None) | ("End", _) => Some(n - 1),
+            ("Home", _) => Some(0),
+            ("Escape", _) => None,
+            _ => return,
+        };
+        ev.prevent_default();
+        picked.set(next);
+    };
+    let tip = move || picked.get().and_then(|i| tips.with_value(|t| t.get(i).cloned()));
+    // Above the bar's top: the plot is 170 px tall under 4 px of padding. By
+    // the chart's edges it hangs inward, so it stays on the card.
+    let tip_style = move || {
+        tip().map_or_else(String::new, |(at, h, ..)| {
+            let center = (at as f64 + 0.5) / slots as f64 * 100.0;
+            format!("left: {center:.2}%; top: {:.1}px", 4.0 + (100.0 - h) * 1.7)
+        })
+    };
+    let tip_side = move || {
+        tip().map_or("", |(at, ..)| match (at as f64 + 0.5) / slots as f64 {
+            x if x < 0.15 => "dau-tip start",
+            x if x > 0.85 => "dau-tip end",
+            _ => "dau-tip",
+        })
+    };
     // A label a week, counted back from the newest day with a bar (today's,
     // once reading has got to it), so every label names a bar above it. A
     // slot left empty while reading catches up has no label of its own.
@@ -304,10 +360,38 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
             <h2>"The past month"</h2>
             <div class="dau-plot">
                 <span class="dau-max" aria-hidden="true">{full_number(max)}</span>
-                <svg viewBox=format!("0 0 {} 100", slots * 10) role="img" aria-label=summary preserveAspectRatio="none">
+                <svg
+                    viewBox=format!("0 0 {} 100", slots * 10)
+                    role="img"
+                    aria-label=summary
+                    aria-description="Left and right arrows read each day."
+                    preserveAspectRatio="none"
+                    tabindex="0"
+                    on:keydown=keys
+                    on:focus=move |_| picked.update(|p| *p = p.or(Some(n - 1)))
+                    on:blur=move |_| picked.set(None)
+                    on:click=move |_| picked.set(None)
+                    on:pointerleave=move |ev| {
+                        if ev.pointer_type() == "mouse" {
+                            picked.set(None);
+                        }
+                    }
+                >
                     <line class="dau-grid" x1="0" x2=slots * 10 y1="12" y2="12" vector-effect="non-scaling-stroke"/>
                     {bars}
                 </svg>
+                <div class=tip_side style=tip_style role="status" hidden=move || tip().is_none()>
+                    {move || {
+                        tip()
+                            .map(|(_, _, count, accounts, when)| {
+                                view! {
+                                    <strong>{count}</strong>
+                                    {accounts}
+                                    <span class="dau-tip-day">{when}</span>
+                                }
+                            })
+                    }}
+                </div>
                 <div class="dau-ticks" aria-hidden="true">{ticks}</div>
             </div>
             <p class="dau-legend">
