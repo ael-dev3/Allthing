@@ -11,6 +11,7 @@ use allthing_core::clients::{client_name, client_profile};
 use allthing_core::format::{full_number, plural};
 use allthing_core::model::UserSummary;
 use leptos::prelude::*;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 
 use crate::api::{self, Failure};
 use crate::components::layout::ErrorPanel;
@@ -83,6 +84,12 @@ fn percent(part: u64, whole: u64) -> String {
 pub fn DauPage() -> impl IntoView {
     set_title("Daily active accounts");
     let data = LocalResource::new(|| api::get::<ActivityPayload>(ACTIVITY_PATH));
+    // The dashboard's code comes while the counts do (the static copy has none).
+    #[cfg(not(feature = "static-host"))]
+    leptos::task::spawn_local(async {
+        let _ = preload_dashboard().await;
+    });
+    let loading = || view! { <p class="muted dau-loading">"Loading the counts…"</p> };
     view! {
         <section class="dau">
             <header class="dau-head">
@@ -94,10 +101,10 @@ pub fn DauPage() -> impl IntoView {
                 </p>
             </header>
             {move || match data.get() {
-                None => view! { <p class="muted dau-loading">"Loading the counts…"</p> }.into_any(),
+                None => loading().into_any(),
                 Some(Err(Failure::Busy { .. })) => view! { <NotCounted/> }.into_any(),
                 Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
-                Some(Ok(fetched)) => view! { <Dashboard counted=fetched.data.as_ref().clone()/> }.into_any(),
+                Some(Ok(fetched)) => crate::split::lazy_view(loading, dashboard(fetched.data.as_ref().clone())).into_any(),
             }}
         </section>
     }
@@ -123,6 +130,13 @@ fn NotCounted() -> impl IntoView {
             }}
         </section>
     }
+}
+
+/// The dashboard, whose code is fetched the first time it's shown
+/// (`crate::split`).
+#[wasm_split(dau, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_dashboard))]
+fn dashboard(counted: ActivityPayload) -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <Dashboard counted/> }.into_any())
 }
 
 #[component]

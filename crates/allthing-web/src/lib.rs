@@ -12,6 +12,7 @@ mod leanings;
 mod nav;
 mod pages;
 mod preload;
+mod split;
 mod util;
 mod video;
 

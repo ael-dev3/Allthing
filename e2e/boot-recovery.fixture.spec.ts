@@ -3,15 +3,18 @@ import { expect, test } from "@playwright/test";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
+// The module comes from the Worker at /wasm/ and, failing that, from
+// /assets/; its JavaScript from the build's folder in /assets/.
+const paths = { wasm: "**/{assets,wasm}/allthing-*.wasm", js: "**/assets/allthing-*/allthing.js" };
+
 for (const width of [1280, 390]) {
-  for (const asset of ["wasm", "js"]) {
+  for (const asset of ["wasm", "js"] as const) {
     test(`a failed ${asset} load offers a working reload at width ${width}`, async ({ page }, info) => {
       await page.setViewportSize({ width, height: 844 });
       let blocked = true;
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      // The module comes from the Worker at /wasm/ and, failing that, from /assets/.
-      await page.route(`**/{assets,wasm}/allthing-*.${asset}`, (route) => blocked ? route.abort("failed") : route.continue());
+      await page.route(paths[asset], (route) => blocked ? route.abort("failed") : route.continue());
       await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
         pool: [], meta: { backend: "hypersnap", fetched_at: Date.now() },
       } }));
