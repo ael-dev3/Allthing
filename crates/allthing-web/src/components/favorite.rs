@@ -42,7 +42,7 @@ pub fn FavoriteMark(fid: u64) -> impl IntoView {
     move || {
         leaning.is_favorite(fid).then(|| {
             view! {
-                <span class="favorite-mark" role="img" aria-label="One of your favorites" title="One of your favorites">
+                <span class="favorite-mark" role="img" aria-label="One of your favorites">
                     <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STAR/></svg>
                 </span>
             }

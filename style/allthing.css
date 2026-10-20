@@ -1017,10 +1017,66 @@ p.jumbo .emoji img {
 }
 
 /* The count's hit area reaches 7.5 px past it, to where the next one's
-   icon begins, so a finger finds it beside the button. */
+   icon begins, so a finger finds it beside the button. The replies count,
+   its icon and all, as tall. */
 .engagement .popover-trigger.stat-count {
   padding: 7.5px 7.5px 7.5px 0;
   margin: -7.5px -7.5px -7.5px 0;
+}
+
+.engagement .popover-trigger.stat-replies {
+  padding: 7.5px 0;
+  margin: -7.5px 0;
+}
+
+/* On a touch screen, a fingertip's height for the small targets of the
+   header, the feeds, the posts, the profiles and the footer: each takes a
+   tap in a band 44 px tall, as wide as it is and centred on it, leaving
+   the layout as it is. Only taller, not wider: a count's band would cover
+   the heart beside it, as the later of the two. The sign-in button, on its
+   own, is 44 px wide as well, as the picture is above. */
+@media (pointer: coarse) {
+  .main-nav a,
+  .sign-in-button,
+  .sort-tabs a,
+  .tabs a,
+  .engagement .act,
+  .engagement .popover-trigger,
+  .reply-button,
+  .permalink,
+  .follow-button,
+  .favorite-button,
+  .show-less-button,
+  .site-footer a {
+    position: relative;
+  }
+
+  .main-nav a::after,
+  .sign-in-button::after,
+  .sort-tabs a::after,
+  .tabs a::after,
+  .engagement .act::after,
+  .engagement .popover-trigger::after,
+  .reply-button::after,
+  .permalink::after,
+  .follow-button::after,
+  .favorite-button::after,
+  .show-less-button::after,
+  .site-footer a::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: max(100%, 44px);
+    transform: translateY(-50%);
+  }
+
+  .sign-in-button::after {
+    left: 50%;
+    width: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 .engagement .popover-trigger.stat-count:focus-visible {

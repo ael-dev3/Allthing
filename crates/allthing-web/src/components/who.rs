@@ -28,7 +28,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::{Avatar, TimeAgo};
 use crate::components::profile_card::ProfileHover;
-use crate::util::{can_hover, cast_href, user_href};
+use crate::util::{cast_href, user_href};
 
 /// The open full who-list, if any: (cast hash, which reactions).
 #[derive(Clone, Copy)]
@@ -74,58 +74,38 @@ fn heading(kind: ReactionKind) -> &'static str {
     }
 }
 
-/// What starts loading the votes and wallets of the people a preview lists
-/// (`api::prefetch_row_facts`): the reader's pointer or keyboard focus
-/// coming into the list, once, rather than every list a passing pointer
-/// opens; on a touch screen, where a tap opened the list, at once.
-fn row_interest(fids: Vec<u64>) -> Callback<()> {
-    let done = StoredValue::new(false);
-    let preload = Callback::new(move |()| {
-        if !done.get_value() {
-            done.set_value(true);
-            api::prefetch_row_facts(&fids);
-        }
-    });
-    if !can_hover() {
-        preload.run(());
-    }
-    preload
-}
-
 /// People who reacted, each linking to their profile, and each showing the
 /// person's profile card: in the full list, in its dialog; in the short
 /// list, beside the preview's panel, so the card never covers the names.
-/// The short list's people have their votes and wallets preloaded
-/// ([`row_interest`]); the full list's cards read theirs when they open.
+/// The short list's people have their votes and wallets preloaded as it
+/// opens (`api::prefetch_row_facts`): it opens on a tap, or once the pointer
+/// has rested on its count, so a reader means to look at it. The person on a
+/// row pointed at or touched goes first (`api::prefetch_facts_first`), in
+/// the full list too, whose cards otherwise read theirs when they open.
 #[component]
 fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bool) -> impl IntoView {
     // Their bios, counts and join dates come with the list: a card opened
     // from it shows them at once.
     api::remember_cards(&payload.cards);
-    let interest = (!cards).then(|| row_interest(payload.users.iter().map(|u| u.fid).collect()));
-    let interested = move || {
-        if let Some(interest) = interest {
-            interest.run(());
-        }
-    };
+    if !cards {
+        api::prefetch_row_facts(&payload.users.iter().map(|u| u.fid).collect::<Vec<_>>());
+    }
     view! {
-        <ul class="who-list" on:pointerenter=move |_| interested() on:focusin=move |_| interested()>
+        <ul class="who-list">
             {payload.users.iter().map(|u| {
+                let fid = u.fid;
                 let href = user_href(&u.username);
                 let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
-                let row = move || view! {
-                    <a class="who-link" href=href.clone()>
-                        <Avatar url=pfp.clone() size=28/>
-                        <span class="who-name">{name.clone()}</span>
-                        <span class="muted">"@"{username.clone()}</span>
-                    </a>
-                };
-                if cards {
-                    view! { <li><ProfileHover user=u.clone() in_dialog=true class="who-links">{row()}</ProfileHover></li> }
-                        .into_any()
-                } else {
-                    view! { <li><ProfileHover user=u.clone() beside=true class="who-links">{row()}</ProfileHover></li> }
-                        .into_any()
+                view! {
+                    <li on:pointerenter=move |_| api::prefetch_facts_first(fid) on:focusin=move |_| api::prefetch_facts_first(fid)>
+                        <ProfileHover user=u.clone() in_dialog=cards beside=!cards class="who-links">
+                            <a class="who-link" href=href.clone()>
+                                <Avatar url=pfp.clone() size=28/>
+                                <span class="who-name">{name.clone()}</span>
+                                <span class="muted">"@"{username.clone()}</span>
+                            </a>
+                        </ProfileHover>
+                    </li>
                 }
             }).collect_view()}
         </ul>
@@ -318,9 +298,9 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                             authors.push(reply.author.fid);
                         }
                     }
-                    let interest = row_interest(authors);
+                    api::prefetch_row_facts(&authors);
                     view! {
-                        <ul class="reply-items" on:pointerenter=move |_| interest.run(()) on:focusin=move |_| interest.run(())>
+                        <ul class="reply-items">
                             {payload.replies.iter().map(|reply| {
                                 let thumbs: Vec<String> = reply.embeds.iter().filter_map(|e| match e {
                                     Embed::Image { url } => Some(resized_image_url(url, ImageSize::Thumb)),
@@ -332,8 +312,12 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                                 let author = reply.author.clone();
                                 let profile = user_href(&author.username);
                                 let post = cast_href(&reply.hash);
+                                let fid = author.fid;
                                 view! {
-                                    <li>
+                                    <li
+                                        on:pointerenter=move |_| api::prefetch_facts_first(fid)
+                                        on:focusin=move |_| api::prefetch_facts_first(fid)
+                                    >
                                         <span class="reply-who">
                                             <ProfileHover user=author.clone() beside=true class="reply-author">
                                                 <a class="reply-author-link" href=profile.clone()>

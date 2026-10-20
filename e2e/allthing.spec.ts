@@ -551,13 +551,14 @@ test.describe("profiles", () => {
     // the account got its first username, on 18 Nov 2022.
     await expect(page.locator(".profile .fact", { hasText: "Joined" }).locator("dd")).toHaveText("18 Nov 2022");
 
-    // The side area holds only the wallet infographic.
-    const wallets = page.locator(".profile-wallets");
+    // The wallet infographic is in the profile header; profiles have no
+    // sidebar.
+    const wallets = page.locator(".profile .profile-wallets");
     await expect(wallets.locator(".share-bar")).toBeVisible();
     await expect(wallets.locator(".share-list li").first()).toContainText(/%/);
     await expect(wallets.locator(".share-list")).toContainText("Base");
     await expect(page.getByText(/How this is measured|Solana: Not measured|No activity on|Posts via|Verified addresses/)).toHaveCount(0);
-    await expect(page.locator(".side .side-box")).toHaveCount(1);
+    await expect(page.locator(".side")).toHaveCount(0);
     await expect(firstCard(page)).toBeVisible();
     await shoot(page, "profile");
 
@@ -1104,15 +1105,17 @@ test.describe("phone width", () => {
     await shoot(page, "phone-channels");
   });
 
-  test("profiles show the wallet panel before the casts", async ({ page }) => {
+  test("profiles show the wallet panel in their header, before the casts", async ({ page }) => {
     await page.goto(at("/u/0xael.eth"));
-    const panel = page.locator(".side .side-box").first();
+    const panel = page.locator(".profile .profile-wallets");
     const firstCast = page.locator(".cast-card").first();
     await expect(firstCast).toBeVisible();
-    await expect(panel).toBeVisible();
+    await expect(panel.locator(".share-list li").first()).toContainText(/%/);
     const [p, c, h] = await Promise.all([panel.boundingBox(), firstCast.boundingBox(), page.locator(".profile").boundingBox()]);
-    expect(p!.y).toBeGreaterThan(h!.y + h!.height - 1);
-    expect(p!.y + p!.height).toBeLessThan(c!.y);
+    expect(p!.x).toBeGreaterThanOrEqual(h!.x);
+    expect(p!.x + p!.width).toBeLessThanOrEqual(h!.x + h!.width + 1);
+    expect(p!.y + p!.height).toBeLessThanOrEqual(h!.y + h!.height + 1);
+    expect(h!.y + h!.height).toBeLessThan(c!.y);
     await panel.getByRole("button", { name: /verified wallet/ }).tap();
     const list = page.getByRole("dialog", { name: "Verified wallets" });
     await expect(list).toBeVisible();

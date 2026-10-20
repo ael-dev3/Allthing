@@ -15,8 +15,8 @@ const ts = 1792235681;
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const person = (fid: number) => ({ fid, username: `user${fid}`, display_name: `Person ${fid}` });
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
-// Three casts, each liked by ten people of its own.
-const casts = [0, 1, 2].map((i) => ({ hash: hex(i + 1), author: alice, text: `Cast ${i + 1}`, ts: ts - i * 60, likes: 10, replies: 2 }));
+// Four casts, each liked by ten people of its own.
+const casts = [0, 1, 2, 3].map((i) => ({ hash: hex(i + 1), author: alice, text: `Cast ${i + 1}`, ts: ts - i * 60, likes: 10, replies: 2 }));
 const likers = (i: number) => Array.from({ length: 10 }, (_, j) => person(100 + i * 10 + j));
 const cards = Object.fromEntries(
   Array.from({ length: 40 }, (_, k) => [String(100 + k), { bio: `Bio ${100 + k}`, followers: 10 + k, following: 3, registered_at: 1759222921 }]),
@@ -154,7 +154,7 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-test("a card opened from Liked by is complete from its first frame, its people preloaded in order", async ({ page }) => {
+test("a card opened from Liked by is complete from its first frame, its people preloaded in order", async ({ page }, testInfo) => {
   const reads = await serve(page);
   await page.goto("/");
   const first = page.locator(".cast-card:not(.skeleton)").first();
@@ -162,12 +162,8 @@ test("a card opened from Liked by is complete from its first frame, its people p
   const list = page.getByRole("dialog", { name: "Liked by" });
   await expect(list.locator(".who-list li")).toHaveCount(10);
   const fids = likers(0).map((p) => p.fid);
-  // Only showing the list loads nothing of its people.
-  await page.waitForTimeout(400);
-  expect(people(reads, fids)).toEqual([]);
-  // The pointer comes into the list: every row's vote and wallets load, top
-  // to bottom, once.
-  await list.locator(".who-list").hover({ position: { x: 4, y: 4 } });
+  // The list opened because the pointer rested on its count: every row's
+  // vote and wallets load at once, top to bottom, once.
   await expect.poll(() => people(reads.served, fids).length, { timeout: 15_000 }).toBe(20);
   expect(votes(reads, fids)).toEqual(fids);
   expect(new Set(people(reads, fids)).size).toBe(20);
@@ -180,6 +176,7 @@ test("a card opened from Liked by is complete from its first frame, its people p
     await expect(card).toHaveCSS("opacity", "1");
   }
   await page.waitForTimeout(300);
+  await page.screenshot({ path: testInfo.outputPath("row-card-1280.png") });
   const seen = await cardSeen(page);
   expect(seen.visibleFrames).toBeGreaterThan(0);
   expect(seen.loading, "a visible card showed a loading vote or wallet bar").toBe(0);
@@ -273,39 +270,41 @@ for (const width of [1280, 390]) {
   }
 }
 
-test("a list the pointer only passes, without coming into it, preloads nothing", async ({ page }) => {
+test("a count the pointer only crosses, too quickly to open its list, preloads nothing", async ({ page }) => {
   const reads = await serve(page);
   await page.goto("/");
-  const first = page.locator(".cast-card:not(.skeleton)").first();
-  await first.locator(".stat-likes").hover();
-  await expect(page.getByRole("dialog", { name: "Liked by" }).locator(".who-list li")).toHaveCount(10);
+  const count = page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes");
+  const box = (await count.boundingBox())!;
+  // Across it and away, in less than the 280 ms a preview waits for.
+  await page.mouse.move(box.x - 30, box.y + box.height / 2);
+  await page.mouse.move(box.x + box.width + 30, box.y + box.height / 2, { steps: 3 });
   await page.mouse.move(5, 600);
+  await page.waitForTimeout(600);
   await expect(page.getByRole("dialog", { name: "Liked by" })).toHaveCount(0);
-  await page.waitForTimeout(500);
   expect(people(reads, likers(0).map((p) => p.fid))).toEqual([]);
 });
 
-test("at most 20 people of opened lists are preloaded per five minutes", async ({ page }) => {
+test("at most 30 people of opened lists are preloaded per five minutes", async ({ page }) => {
   const reads = await serve(page, { delay: 20 });
   await page.goto("/");
-  for (const i of [0, 1, 2]) {
+  for (const i of [0, 1, 2, 3]) {
     const card = page.locator(`.cast-card[data-hash="${casts[i].hash}"]`);
     await card.scrollIntoViewIfNeeded();
     await card.locator(".stat-likes").hover();
     const list = page.getByRole("dialog", { name: "Liked by" });
     await expect(list.locator(".who-list li")).toHaveCount(10);
-    // Into the list, onto its title, then away.
-    await list.locator(".who-list").hover({ position: { x: 4, y: 4 } });
+    // Open, then away without pointing at anyone (a name pointed at loads
+    // whatever the count).
     await page.waitForTimeout(800);
     await page.mouse.move(5, 5);
     await expect(list).toHaveCount(0);
   }
-  const all = [0, 1, 2].flatMap((i) => likers(i).map((p) => p.fid));
-  await expect.poll(() => new Set(people(reads, all).map((r) => r.split(" ")[1])).size).toBe(20);
+  const all = [0, 1, 2, 3].flatMap((i) => likers(i).map((p) => p.fid));
+  await expect.poll(() => new Set(people(reads, all).map((r) => r.split(" ")[1])).size).toBe(30);
   await page.waitForTimeout(800);
-  expect(new Set(people(reads, all).map((r) => r.split(" ")[1])).size).toBe(20);
-  // The first two lists, whole; the third, none.
-  expect(people(reads, likers(2).map((p) => p.fid))).toEqual([]);
+  expect(new Set(people(reads, all).map((r) => r.split(" ")[1])).size).toBe(30);
+  // The first three lists, whole; the fourth, none.
+  expect(people(reads, likers(3).map((p) => p.fid))).toEqual([]);
 });
 
 test("a replies preview preloads its authors, each once", async ({ page }) => {
@@ -345,6 +344,7 @@ test("on a phone, a tapped list preloads its people, and a tapped name's card is
   await expect(card).toBeInViewport({ ratio: 1 });
   await expect(page).toHaveURL(/\/$/);
   await page.waitForTimeout(500);
+  await page.screenshot({ path: testInfo.outputPath("row-card-390.png") });
   const seen = await cardSeen(page);
   expect(seen.visibleFrames).toBeGreaterThan(0);
   expect(seen.loading).toBe(0);

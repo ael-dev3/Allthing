@@ -350,8 +350,8 @@ pub fn prefetch_card_facts(fid: u64) {
 }
 
 /// The people of likes, recasts and replies previews whose card facts are
-/// preloaded per 5 minutes, at most, on top of feed authors'.
-const ROW_ACCOUNTS_PER_WINDOW: usize = 20;
+/// preloaded per 5 minutes, at most, on top of feed authors': three lists'.
+const ROW_ACCOUNTS_PER_WINDOW: usize = 30;
 
 /// Load the vote and wallet activity of the people a likes, recasts or
 /// replies preview lists, so a card opened from one of its rows is complete
@@ -385,6 +385,30 @@ pub fn prefetch_row_facts(fids: &[u64]) {
             break;
         }
         wanted.extend(missing);
+    }
+    CARD_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        q.retain(|path| !wanted.contains(path));
+        for path in wanted.into_iter().rev() {
+            q.push_front(path);
+        }
+    });
+    pump_cards();
+}
+
+/// Load `fid`'s vote and wallet activity ahead of anything queued: the
+/// person on a preview's row the reader points at or touches, whose card is
+/// about to open and would read them then anyway, so they don't count
+/// towards the lists' five minutes. Not on Save-Data or 2g.
+pub fn prefetch_facts_first(fid: u64) {
+    if fid == 0 || constrained_network() {
+        return;
+    }
+    let now = js_sys::Date::now();
+    let paths = [allthing_core::api::vote_path(fid), allthing_core::api::wallets_path(fid)];
+    let wanted: Vec<String> = paths.into_iter().filter(|path| !kept_or_loading(path, now)).collect();
+    if wanted.is_empty() {
+        return;
     }
     CARD_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
