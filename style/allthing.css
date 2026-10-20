@@ -4700,6 +4700,81 @@ p.jumbo .emoji img {
   margin-right: 4px;
 }
 
+/* Emoji reactions (components/reactions.rs): React, after Reply and Quote,
+   opens the Pepe picker; a cast's replies that are one Pepe gather under it
+   as chips. */
+.react-button {
+  margin-left: 0;
+}
+
+/* On a phone, React is its icon and a post's buttons sit closer, so the
+   post's row of counts and buttons fits on one line; React's name stays for
+   screen readers. */
+@media (max-width: 520px) {
+  .react-button .react-label {
+    display: none;
+  }
+
+  .post .cast-foot {
+    column-gap: 8px;
+  }
+}
+
+.popover-panel.react-panel {
+  width: min(340px, 92vw);
+  padding: 0;
+}
+
+.react-panel .emoji-picker {
+  border: 0;
+  background: none;
+}
+
+.reaction-chips {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.comment .reaction-chips {
+  margin-top: 6px;
+}
+
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: 600 12.5px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.reaction-chip img {
+  width: auto;
+  height: 22px;
+}
+
+.reaction-chip:hover,
+.reaction-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.reaction-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  cursor: default;
+}
+
 /* A profile card opened beside a who-list: a transform on an ancestor (a
    hovered card lifts, a page's content animates in) would make that ancestor
    the card's containing block, clipping it to the list and to the card.

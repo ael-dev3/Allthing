@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use allthing_core::api::{CastPayload, QuotedCast, cast_path};
 use allthing_core::clients::{client_name, client_profile};
+use allthing_core::emoji::reactions;
 use allthing_core::format::{full_number, short_address};
 use allthing_core::model::Cast;
 use allthing_core::params::hash_from_param;
@@ -23,6 +24,7 @@ use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
+use crate::components::reactions::ReactionChips;
 use crate::components::text::CastText;
 use crate::components::thread::CommentTree;
 use crate::util::{cast_href, set_title, user_href, with_query};
@@ -212,6 +214,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                 <Engagement cast=cast.clone()/>
                 {crate::components::thread::reply_button(&cast, "cast")}
             </footer>
+            <ReactionChips cast=cast.clone() reacted=reactions(payload.thread.children.iter().map(|n| &n.cast))/>
         </article>
     }
 }

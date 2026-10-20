@@ -9,6 +9,8 @@
 //! (`web/stickers/v1/`, credited in `web/stickers/CREDITS.md`) that a cast
 //! carries as an image embed, which every Farcaster app shows.
 
+use crate::model::{Cast, UserSummary};
+
 /// Where the pack's files are served, below the site's base path. They are
 /// cached for a year, so a changed file goes in a folder of its own (`v2`).
 pub const DIR: &str = "/assets/emoji/v1";
@@ -379,6 +381,50 @@ pub fn insert(text: &str, start: usize, end: usize, emoji: &Emoji) -> (String, u
     (out, caret)
 }
 
+/// The emoji a cast is, when its text is one emoji and nothing else and it
+/// carries no embeds: how Allthing sends an emoji reaction, as a reply to
+/// the cast (Farcaster's own reactions are only likes and recasts).
+pub fn reaction(cast: &Cast) -> Option<&'static Emoji> {
+    if !cast.embeds.is_empty() || cast.hidden() {
+        return None;
+    }
+    let text = cast.text.trim();
+    shortcode_at(text).filter(|(_, len)| *len == text.len()).map(|(emoji, _)| emoji)
+}
+
+/// One emoji's reactions to a cast, and who reacted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reacted {
+    pub emoji: &'static Emoji,
+    /// Each account once, in the order they reacted.
+    pub by: Vec<UserSummary>,
+}
+
+/// The emoji reactions among a cast's `replies`: each emoji with whom it
+/// came from, an account counted once for each emoji, most first, then the
+/// earliest first.
+pub fn reactions<'a>(replies: impl IntoIterator<Item = &'a Cast>) -> Vec<Reacted> {
+    let mut replies: Vec<&Cast> = replies.into_iter().collect();
+    replies.sort_by_key(|c| c.ts);
+    let mut out: Vec<Reacted> = Vec::new();
+    for cast in replies {
+        let Some(emoji) = reaction(cast) else { continue };
+        let at = match out.iter().position(|r| r.emoji == emoji) {
+            Some(at) => at,
+            None => {
+                out.push(Reacted { emoji, by: Vec::new() });
+                out.len() - 1
+            }
+        };
+        if !out[at].by.iter().any(|u| u.fid == cast.author.fid) {
+            out[at].by.push(cast.author.clone());
+        }
+    }
+    // Stable: equal counts keep the order they first came in.
+    out.sort_by_key(|r| std::cmp::Reverse(r.by.len()));
+    out
+}
+
 /// The byte offset in `text` of the UTF-16 offset `at`, at a character's
 /// start; past the end, the end.
 fn byte_at(text: &str, at: usize) -> usize {
@@ -398,6 +444,61 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;
+
+    fn reply(fid: u64, text: &str, ts: i64) -> Cast {
+        Cast {
+            hash: format!("0x{ts:040x}"),
+            author: UserSummary { fid, username: format!("user{fid}"), display_name: String::new(), pfp_url: None },
+            text: text.into(),
+            mentions: vec![],
+            ts,
+            parent_hash: Some("0x01".into()),
+            parent_url: None,
+            channel: None,
+            embeds: vec![],
+            likes: 0,
+            recasts: 0,
+            replies: 0,
+            mini_app: false,
+            spam: false,
+        }
+    }
+
+    #[test]
+    fn a_reaction_is_one_emoji_and_nothing_else() {
+        let heart = find("pepe_heart_hug").unwrap();
+        assert_eq!(reaction(&reply(1, ":pepe_heart_hug:", 1)), Some(heart));
+        assert_eq!(reaction(&reply(1, "  :PEPE_HEART_HUG:\n", 1)), Some(heart));
+        for not in [":pepe_heart_hug: gm", "gm", ":pepe_heart_hug::pepe_no:", ":not_a_pepe:", "", ":pepe_heart_hug"] {
+            assert_eq!(reaction(&reply(1, not, 1)), None, "{not:?}");
+        }
+        let mut with_image = reply(1, ":pepe_no:", 1);
+        with_image.embeds.push(crate::model::Embed::Image { url: "https://example.com/a.png".into() });
+        assert_eq!(reaction(&with_image), None);
+        let mut spam = reply(1, ":pepe_no:", 1);
+        spam.spam = true;
+        assert_eq!(reaction(&spam), None);
+    }
+
+    #[test]
+    fn reactions_count_each_account_once_per_emoji_most_first() {
+        let replies = [
+            reply(1, ":pepe_no:", 10),
+            reply(2, ":pepe_heart_hug:", 11),
+            reply(3, ":pepe_heart_hug:", 12),
+            reply(2, ":pepe_heart_hug:", 13),
+            reply(4, "not a reaction", 14),
+            reply(2, ":pepe_no:", 15),
+            reply(5, ":pepe_pls:", 9),
+        ];
+        let found = reactions(&replies);
+        let summary: Vec<(&str, Vec<u64>)> =
+            found.iter().map(|r| (r.emoji.code, r.by.iter().map(|u| u.fid).collect())).collect();
+        // Two accounts each for the NO sign and the heart, the NO sign
+        // first, as it came first; then the one that came before both.
+        assert_eq!(summary, [("pepe_no", vec![1, 2]), ("pepe_heart_hug", vec![2, 3]), ("pepe_pls", vec![5])]);
+        assert!(reactions(std::iter::empty()).is_empty());
+    }
 
     #[test]
     fn shortcodes_are_unique_lowercase_words() {

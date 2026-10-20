@@ -161,9 +161,17 @@ fn sticker_tile(sticker: &'static Sticker) -> impl IntoView {
 }
 
 /// The picker, of emoji or of stickers (`tab`). Enter in its search box
-/// picks the first match.
+/// picks the first match. Without `stuck`, emoji only (a reaction is one).
 #[component]
-pub fn EmojiPicker(tab: RwSignal<Tab>, picked: Callback<Pick>, stuck: Callback<&'static Sticker>) -> impl IntoView {
+pub fn EmojiPicker(
+    tab: RwSignal<Tab>,
+    picked: Callback<Pick>,
+    #[prop(optional)] stuck: Option<Callback<&'static Sticker>>,
+) -> impl IntoView {
+    let stickers_too = stuck.is_some();
+    if !stickers_too {
+        tab.set(Tab::Emoji);
+    }
     let query = RwSignal::new(String::new());
     let found = Memo::new(move |_| query.with(|q| emoji::search(q)));
     let stickers = Memo::new(move |_| query.with(|q| emoji::search_stickers(q)));
@@ -192,7 +200,11 @@ pub fn EmojiPicker(tab: RwSignal<Tab>, picked: Callback<Pick>, stuck: Callback<&
     });
     let pick = move |item: Item, again: bool| match item {
         Item::Emoji(emoji) => picked.run((emoji, again)),
-        Item::Sticker(sticker) => stuck.run(sticker),
+        Item::Sticker(sticker) => {
+            if let Some(stuck) = stuck {
+                stuck.run(sticker);
+            }
+        }
     };
     let on_keydown = move |ev: ev::KeyboardEvent| {
         if ev.key() == "Enter" {
@@ -254,11 +266,18 @@ pub fn EmojiPicker(tab: RwSignal<Tab>, picked: Callback<Pick>, stuck: Callback<&
         }
     };
     view! {
-        <section class="emoji-picker" id="emoji-picker" aria-label="Pepe emoji and stickers" node_ref=section>
-            <div class="emoji-tabs" role="tablist" aria-label="Emoji or stickers">
-                {tab_button(Tab::Emoji, "Emoji")}
-                {tab_button(Tab::Stickers, "Stickers")}
-            </div>
+        <section
+            class="emoji-picker"
+            id="emoji-picker"
+            aria-label=if stickers_too { "Pepe emoji and stickers" } else { "Pepe emoji" }
+            node_ref=section
+        >
+            {stickers_too.then(|| view! {
+                <div class="emoji-tabs" role="tablist" aria-label="Emoji or stickers">
+                    {tab_button(Tab::Emoji, "Emoji")}
+                    {tab_button(Tab::Stickers, "Stickers")}
+                </div>
+            })}
             <input
                 class="emoji-search"
                 type="search"
@@ -278,8 +297,8 @@ pub fn EmojiPicker(tab: RwSignal<Tab>, picked: Callback<Pick>, stuck: Callback<&
             <div
                 class="emoji-results"
                 id="emoji-panel"
-                role="tabpanel"
-                aria-labelledby=move || tab.get().id()
+                role=stickers_too.then_some("tabpanel")
+                aria-labelledby=move || stickers_too.then(|| tab.get().id())
                 on:pointerleave=move |_| shown.set(None)
                 on:pointerover=move |ev: ev::PointerEvent| {
                     if let Some((tile, item)) = tile_of(ev.target()) {

@@ -87,6 +87,10 @@ pub fn Popover(
     /// How tall the panel may be, in pixels, room permitting.
     #[prop(optional)]
     max_px: Option<f64>,
+    /// Closes the panel whenever it changes: when what the panel was for is
+    /// done (an emoji picked to react with).
+    #[prop(optional, into)]
+    shut: Option<Signal<u32>>,
     /// Classes for the root element.
     #[prop(into, optional)]
     class: String,
@@ -240,6 +244,15 @@ pub fn Popover(
             );
         }
     };
+    if let Some(shut) = shut {
+        Effect::new(move |seen: Option<u32>| {
+            let now = shut.get();
+            if seen.is_some_and(|seen| seen != now) {
+                close();
+            }
+            now
+        });
+    }
     let idle = move || idle.is_some_and(|idle| idle.get());
     let hovering = move || hover && can_hover() && !idle();
     let open_delay = if links { LINKS_OPEN_DELAY } else { OPEN_DELAY };
