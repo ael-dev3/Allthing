@@ -22,6 +22,7 @@ use crate::components::facts::{JoinedFact, VoteFact, WalletShares};
 use crate::components::favorite::FavoriteButton;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
+use crate::components::show_less::ShowLessButton;
 use crate::components::text::CastText;
 use crate::util::{set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
@@ -139,7 +140,6 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                     <div class="profile-name-row">
                         <h1 class="profile-name">{user.name().to_owned()}</h1>
                         {follow_button(user.fid, &user.username)}
-                        {favorite_button(user.fid, &user.username)}
                     </div>
                     <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" · fid {}", user.fid)}</span></p>
                     {if has_card {
@@ -155,6 +155,7 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                         view! { <p class="counts"><span class="sk sk-meta"></span></p> }.into_any()
                     }}
                 </div>
+                {leaning_buttons(user.fid, &user.username)}
             </div>
             {if !has_card {
                 view! { <div class="bio"><span class="sk sk-title"></span></div> }.into_any()
@@ -183,22 +184,37 @@ fn follow_button(_: u64, _: &str) -> AnyView {
     ().into_any()
 }
 
-/// Favorite, on anyone's profile but the reader's own.
+/// Favorite and Show less, on anyone's profile but the reader's own: at
+/// the header's top right, or in a row of their own under it on a phone.
 #[cfg(not(feature = "static-host"))]
-fn favorite_button(fid: u64, username: &str) -> AnyView {
+fn leaning_buttons(fid: u64, username: &str) -> AnyView {
     let session = crate::components::signin::use_session();
     let username = username.to_owned();
     (move || {
         let mine = session.user.with(|u| u.as_ref().is_some_and(|u| u.fid == fid));
-        (!mine).then(|| view! { <FavoriteButton fid username=username.clone()/> })
+        (!mine).then(|| {
+            view! {
+                <span class="leaning-buttons">
+                    <FavoriteButton fid username=username.clone()/>
+                    <ShowLessButton fid username=username.clone()/>
+                </span>
+            }
+        })
     })
     .into_any()
 }
 
-/// The static copy has no one signed in: Favorite on every profile.
+/// The static copy has no one signed in: Favorite and Show less on every
+/// profile.
 #[cfg(feature = "static-host")]
-fn favorite_button(fid: u64, username: &str) -> AnyView {
-    view! { <FavoriteButton fid username=username.to_owned()/> }.into_any()
+fn leaning_buttons(fid: u64, username: &str) -> AnyView {
+    view! {
+        <span class="leaning-buttons">
+            <FavoriteButton fid username=username.to_owned()/>
+            <ShowLessButton fid username=username.to_owned()/>
+        </span>
+    }
+    .into_any()
 }
 
 /// The follower count, with the reader's follow or unfollow here.

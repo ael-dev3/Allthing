@@ -192,25 +192,39 @@ pub fn sorted(casts: &[Cast], sort: Sort) -> Vec<Cast> {
 }
 
 /// A reader's own leanings about accounts, kept in their browser and never
-/// shared: their favorites' casts rise in hot and top. It isn't a label on an
-/// account, and it hides nothing: new stays in time order.
+/// shared: their favorites' casts rise in hot and top, and the casts of those
+/// they see less of sit a little lower. It isn't a label on an account, and it
+/// hides nothing: new stays in time order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Leanings {
     pub favorites: BTreeSet<u64>,
+    pub less: BTreeSet<u64>,
 }
 
 /// A favorite's cast weighs in hot and top as if it had this many times its
 /// points.
 pub const FAVORITE_WEIGHT: f64 = 4.0;
 
+/// The cast of an account the reader sees less of weighs as if it had half its
+/// points: gently lower, never hidden.
+pub const SHOW_LESS_WEIGHT: f64 = 0.5;
+
 impl Leanings {
     pub fn is_empty(&self) -> bool {
-        self.favorites.is_empty()
+        self.favorites.is_empty() && self.less.is_empty()
     }
 
-    /// How much more, or less, `cast` weighs for this reader.
+    /// How much more, or less, `cast` weighs for this reader. A favorite wins
+    /// over seeing less, though the app never keeps an account as both.
     pub fn weight(&self, cast: &Cast) -> f64 {
-        if self.favorites.contains(&cast.author.fid) { FAVORITE_WEIGHT } else { 1.0 }
+        let fid = cast.author.fid;
+        if self.favorites.contains(&fid) {
+            FAVORITE_WEIGHT
+        } else if self.less.contains(&fid) {
+            SHOW_LESS_WEIGHT
+        } else {
+            1.0
+        }
     }
 }
 
@@ -342,7 +356,7 @@ mod tests {
             assert_eq!(sorted_for(&casts, sort, &none), sorted(&casts, sort));
         }
         assert_eq!(order(sorted(&casts, Sort::Top)), ["busy", "favorite", "newest"]);
-        let leanings = Leanings { favorites: BTreeSet::from([2]) };
+        let leanings = Leanings { favorites: BTreeSet::from([2]), ..Leanings::default() };
         // 10 points weigh as 40, over 30.
         assert_eq!(order(sorted_for(&casts, Sort::Top, &leanings)), ["favorite", "busy", "newest"]);
         assert_eq!(order(sorted_for(&casts, Sort::Hot, &leanings)), ["favorite", "busy", "newest"]);
@@ -352,6 +366,35 @@ mod tests {
         assert_eq!(order(sorted_for(&busier, Sort::Top, &leanings)), ["busier", "favorite"]);
         assert_eq!(leanings.weight(&casts[1]), FAVORITE_WEIGHT);
         assert_eq!(leanings.weight(&casts[0]), 1.0);
+    }
+
+    #[test]
+    fn showing_less_lowers_gently_in_hot_and_top_and_new_stays_in_time_order() {
+        let by = |fid: u64, mut c: Cast| {
+            c.author.fid = fid;
+            c
+        };
+        // The busiest cast is by an account the reader sees less of.
+        let casts = vec![
+            by(1, cast("less", 30, 0, 0, "2026-10-17T00:00:00Z")),
+            by(2, cast("middling", 20, 0, 0, "2026-10-17T00:00:00Z")),
+            by(3, cast("newest", 1, 0, 0, "2026-10-17T01:00:00Z")),
+        ];
+        let order = |sorted: Vec<Cast>| sorted.into_iter().map(|c| c.hash).collect::<Vec<_>>();
+        let leanings = Leanings { less: BTreeSet::from([1]), ..Leanings::default() };
+        assert!(!leanings.is_empty());
+        // 30 points weigh as 15: under 20, still over 1. Nothing is left out.
+        assert_eq!(order(sorted_for(&casts, Sort::Top, &leanings)), ["middling", "less", "newest"]);
+        assert_eq!(order(sorted_for(&casts, Sort::Hot, &leanings)), ["middling", "less", "newest"]);
+        assert_eq!(order(sorted_for(&casts, Sort::New, &leanings)), order(sorted(&casts, Sort::New)));
+        // Gently: half, no less, so 30 points still weigh more than 14.
+        let quieter = vec![casts[0].clone(), by(2, cast("fourteen", 14, 0, 0, "2026-10-17T00:00:00Z"))];
+        assert_eq!(order(sorted_for(&quieter, Sort::Top, &leanings)), ["less", "fourteen"]);
+        assert_eq!(leanings.weight(&casts[0]), SHOW_LESS_WEIGHT);
+        assert_eq!(leanings.weight(&casts[1]), 1.0);
+        // An account kept as both counts as a favorite.
+        let both = Leanings { favorites: BTreeSet::from([1]), less: BTreeSet::from([1]) };
+        assert_eq!(both.weight(&casts[0]), FAVORITE_WEIGHT);
     }
 
     #[test]
