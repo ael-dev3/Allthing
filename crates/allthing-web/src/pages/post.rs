@@ -166,9 +166,11 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     }
     let author = cast.author.clone();
     let href = user_href(&author.username);
+    let gone = crate::components::deleted(&cast.hash);
     let (pfp, name, username) = (author.pfp_url.clone(), author.name().to_owned(), author.username.clone());
     view! {
-        <article class="post">
+        <article class="post" class:deleted=gone>
+            <p class="deleted-note">"You deleted this cast."</p>
             <h1 class="visually-hidden">{format!("Cast by {}", author.name())}</h1>
             <header class="post-author">
                 <ProfileHover user=author.clone() card=notes.users.get(&author.fid).cloned() class="post-author-links">
@@ -208,7 +210,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
             </p>
             <footer class="cast-foot">
                 <Engagement cast=cast.clone()/>
-                {crate::components::thread::reply_button(&cast)}
+                {crate::components::thread::reply_button(&cast, "cast")}
             </footer>
         </article>
     }

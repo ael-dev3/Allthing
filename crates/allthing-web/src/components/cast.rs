@@ -51,6 +51,7 @@ pub fn CastCard(
     let warm = move || api::prefetch(&data_path);
     let warm_touch = warm.clone();
     let click = card_click(href.clone());
+    let gone = crate::components::deleted(&cast.hash);
     let node = NodeRef::<leptos::html::Article>::new();
     Effect::new(move |_| {
         if let Some(element) = node.get() {
@@ -65,6 +66,7 @@ pub fn CastCard(
     view! {
         <article
             class="cast-card"
+            class:deleted=gone
             node_ref=node
             data-hash=cast.hash.clone()
             data-fid=cast.author.fid
@@ -77,6 +79,7 @@ pub fn CastCard(
             on:pointerenter=move |_| warm()
             on:touchstart=move |_| warm_touch()
         >
+            <p class="deleted-note">"You deleted this cast."</p>
             <header class="cast-meta">
                 <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
                 <span class="sep" aria-hidden="true">"·"</span>

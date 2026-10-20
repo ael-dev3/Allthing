@@ -47,6 +47,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
     let shown_children = node.children.len() as u64;
     let more = cast.replies.saturating_sub(shown_children);
     let href = cast_href(&cast.hash);
+    let gone = crate::components::deleted(&cast.hash);
     let toggle_label = move || {
         if collapsed.get() {
             format!("Expand reply by @{}", node.cast.author.username)
@@ -63,6 +64,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             class="comment"
             class:collapsed=move || collapsed.get()
             class:animating=move || animating.get()
+            class:deleted=gone
             id=format!("c-{}", &cast.hash[2..10])
         >
             <div class="comment-head">
@@ -86,6 +88,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             </div>
             <div class="comment-body" prop:inert=move || collapsed.get()>
                 <div class="comment-inner">
+                    <p class="deleted-note">"You deleted this reply."</p>
                     {if cast.hidden() {
                         let note = if cast.spam { "Post hidden" } else { "Mini app post hidden" };
                         view! { <p class="mini-app-note">{note}</p> }.into_any()
@@ -98,7 +101,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     <div class="comment-foot">
                         <Engagement cast=cast.clone()/>
                         <a class="permalink" href=href.clone()>"permalink"</a>
-                        {reply_button(&cast)}
+                        {reply_button(&cast, "reply")}
                     </div>
                     {(!node.children.is_empty()).then(|| view! {
                         <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid/></div>
@@ -113,18 +116,20 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
     .into_any()
 }
 
-/// Reply and Quote, under a post or a reply, for the signed-in reader.
+/// Reply and Quote, under a post or a reply, for the signed-in reader, and
+/// Delete under their own; `noun` names it in the question ("cast", "reply").
 #[cfg(not(feature = "static-host"))]
-pub fn reply_button(cast: &allthing_core::model::Cast) -> AnyView {
+pub fn reply_button(cast: &allthing_core::model::Cast, noun: &'static str) -> AnyView {
     view! {
         <crate::components::compose::ReplyButton cast=cast.clone()/>
         <crate::components::compose::QuoteButton cast=cast.clone()/>
+        <crate::components::writer::DeleteButton hash=cast.hash.clone() author=cast.author.fid noun/>
     }
     .into_any()
 }
 
 /// The static copy has no sign-in, and no Reply.
 #[cfg(feature = "static-host")]
-pub fn reply_button(_: &allthing_core::model::Cast) -> AnyView {
+pub fn reply_button(_: &allthing_core::model::Cast, _: &'static str) -> AnyView {
     ().into_any()
 }

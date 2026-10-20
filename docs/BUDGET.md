@@ -45,6 +45,8 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Being signed in where likes and recasts are set up | at most 1 an hour (`/api/v1/signer`: no subrequest, no cache call; kept by the browser for an hour). With an approved key, the browser reads the reader's latest 100 likes and 100 recasts from Hypersnap itself (2 requests per page load, about 14 KB each compressed), and 2 more on a post page for that cast, never through the Worker | none |
 | Approving a key (the first like or recast) | 2 (`/api/v1/auth/signer` and `/api/v1/auth/qr`: no subrequest); the browser makes the request at `api.farcaster.xyz` and polls it every 2 s while the dialog is open, then asks Hypersnap for the account's keys every 2 s, 15 times at most, never through the Worker | none |
 | Liking or recasting, and undoing it | **0**: the browser signs the message and hands it to Hypersnap's `submitMessage` itself. A key approved in the last 5 minutes that the node doesn't know yet is tried again after 2, 4 and 8 s | none |
+| A profile, for a reader who can follow | **0** more: the browser asks Hypersnap whether the reader follows the account (`/v1/linkById`, one request per profile view) | none |
+| Following, unfollowing, or deleting one's own cast | **0**: signed and handed to Hypersnap by the browser, like a like | none |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
 Images and videos never touch the Worker. They load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.

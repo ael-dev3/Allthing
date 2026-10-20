@@ -1793,7 +1793,8 @@ code {
 .comment-foot {
   display: flex;
   align-items: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 4px 14px;
   margin: 7px 0 4px;
 }
 
@@ -1855,6 +1856,64 @@ code {
 .profile .handle {
   margin: 5px 0 0;
   color: var(--ink-2);
+}
+
+/* The profile's name, and Follow beside it for a reader who can. */
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.follow-button {
+  font: 600 13.5px/1 var(--font-ui);
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: #fff;
+  background: var(--accent);
+  cursor: pointer;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+
+.follow-button:hover {
+  background: #4337c4;
+}
+
+.follow-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.follow-button.following {
+  color: var(--ink);
+  background: var(--card);
+  border-color: var(--line-2);
+}
+
+/* Until the node says whether they follow: its place, not a guess. */
+.follow-button.unknown {
+  visibility: hidden;
+}
+
+.follow-button .unfollow-text,
+.follow-button.following:hover .follow-text {
+  display: none;
+}
+
+.follow-button.following:hover .unfollow-text {
+  display: inline;
+}
+
+.follow-button.following:hover {
+  color: #a3322a;
+  border-color: rgba(163, 50, 42, 0.4);
+  background: var(--card);
+}
+
+.follow-button[aria-busy="true"] {
+  cursor: progress;
 }
 
 .profile .counts {
@@ -3635,8 +3694,65 @@ code {
   margin: 0;
 }
 
-.quote-button {
+.quote-button,
+.delete-button {
   margin-left: 0;
+}
+
+/* Delete asks once more, in place. */
+.delete-button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.delete-yes,
+.delete-no {
+  font: 600 13px/1 var(--font-ui);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.delete-yes {
+  color: #fff;
+  background: #b4322a;
+  border: 1px solid transparent;
+}
+
+.delete-no {
+  color: var(--ink-2);
+  background: var(--card);
+  border: 1px solid var(--line-2);
+}
+
+/* A cast the reader deleted this visit: a note in its place. A deleted
+   reply keeps its own replies. */
+.deleted-note {
+  display: none;
+  margin: 0;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.cast-card.deleted > :not(.deleted-note),
+.post.deleted > :not(.deleted-note),
+.comment.deleted > .comment-body > .comment-inner > :not(.deleted-note, .children, .continue) {
+  display: none;
+}
+
+.cast-card.deleted > .deleted-note,
+.post.deleted > .deleted-note,
+.comment.deleted > .comment-body > .comment-inner > .deleted-note {
+  display: block;
 }
 
 /* How long the text is, as it nears what a cast takes. */

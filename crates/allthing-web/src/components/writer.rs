@@ -52,6 +52,9 @@ const TIMEOUT_MS: i32 = 15_000;
 const NOTICE_MS: i32 = 6000;
 /// The site's other tabs hear on this when a key is approved or forgotten.
 const TABS: &str = "allthing-keys";
+/// The casts the reader deleted, kept for the tab: a page read from a cache
+/// may still have one for a while.
+const DELETED: &str = "allthing-deleted";
 
 const EXPIRED: &str = "This code has expired. Get a new one to approve Allthing.";
 const FARCASTER_DOWN: &str = "Couldn't reach the Farcaster app's API. Check your connection and try again.";
@@ -98,6 +101,14 @@ struct Mine {
     changed: HashMap<(String, Reaction), bool>,
     /// Being sent.
     busy: HashSet<(String, Reaction)>,
+    /// Whom the reader follows, as the node says, by fid.
+    follows: HashMap<u64, bool>,
+    /// Follows and unfollows this visit, and those being sent.
+    follow_changed: HashMap<u64, bool>,
+    follow_busy: HashSet<u64>,
+    /// Casts the reader deleted this visit, and those being deleted.
+    deleted: HashSet<String>,
+    deleting: HashSet<String>,
 }
 
 impl Mine {
@@ -112,6 +123,11 @@ impl Mine {
             (Some(false), true) => -1,
             _ => 0,
         }
+    }
+
+    /// Whether the reader follows `fid`, once known.
+    fn following(&self, fid: u64) -> Option<bool> {
+        self.follow_changed.get(&fid).or_else(|| self.follows.get(&fid)).copied()
     }
 }
 
@@ -154,7 +170,7 @@ thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
     /// The last timestamp each like or recast was sent with: a message that
     /// undoes another goes out at least a second later, so it wins.
-    static SENT_AT: RefCell<HashMap<(String, Reaction), i64>> = RefCell::new(HashMap::new());
+    static SENT_AT: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
     /// The page came back into view since the last poll: poll at once.
     static WOKEN: Cell<bool> = const { Cell::new(false) };
     static NOTICE_RUN: Cell<u64> = const { Cell::new(0) };
@@ -174,7 +190,7 @@ impl Writer {
             can: RwSignal::new(Can::No),
             open: RwSignal::new(false),
             step: RwSignal::new(Step::Starting),
-            mine: RwSignal::new(Mine::default()),
+            mine: RwSignal::new(Mine { deleted: deleted_before(), ..Mine::default() }),
             notice: RwSignal::new(None),
         };
         Effect::new(move |before: Option<Option<u64>>| {
@@ -194,6 +210,12 @@ impl Writer {
         });
         writer.follow_tabs();
         writer
+    }
+
+    /// Whether the reader can write from here, with a key they have or will
+    /// approve: signed in, where the Worker endorses keys (Follow, Delete).
+    pub fn can_write(self) -> bool {
+        matches!(self.can.get(), Can::Approve | Can::Yes)
     }
 
     /// Whether a cast's like and recast icons are buttons: for anyone signed
@@ -243,7 +265,7 @@ impl Writer {
         });
         spawn_local(async move {
             let body = if on { Body::ReactionAdd(kind, target) } else { Body::ReactionRemove(kind, target) };
-            let outcome = send(&stored, body, Some(&key)).await;
+            let outcome = send(&stored, body, Some(&format!("{kind:?} {}", key.0))).await;
             self.mine.update(|m| {
                 m.busy.remove(&key);
                 if outcome.is_err() {
@@ -313,6 +335,128 @@ impl Writer {
         self.notify(Notice { text: "Posted.".into(), link: Some((cast_href(hash), "View")) });
     }
 
+    /// Who is signed in, as the page follows it.
+    pub fn reader(self) -> Option<u64> {
+        self.session.user.with(|u| u.as_ref().map(|u| u.fid))
+    }
+
+    /// Whether the reader follows `fid`: `None` until the node has said.
+    pub fn follows(self, fid: u64) -> Option<bool> {
+        self.mine.with(|m| m.following(fid))
+    }
+
+    /// How far `fid`'s follower count, read before, is off now.
+    pub fn followers_delta(self, fid: u64) -> i64 {
+        self.mine.with(|m| match (m.follow_changed.get(&fid), m.follows.get(&fid)) {
+            (Some(true), Some(false) | None) => 1,
+            (Some(false), Some(true)) => -1,
+            _ => 0,
+        })
+    }
+
+    pub fn follow_busy(self, fid: u64) -> bool {
+        self.mine.with(|m| m.follow_busy.contains(&fid))
+    }
+
+    /// Ask the node whether the reader follows `fid`: a public read, so it
+    /// needs no key.
+    pub fn look_up_follow(self, fid: u64) {
+        let Some(reader) = self.fid() else { return };
+        spawn_local(async move {
+            let Ok((status, body)) = fetch("GET", &message::link_url(reader, fid), None).await else { return };
+            if let Some(found) = message::follows(status, &body)
+                && self.fid() == Some(reader)
+            {
+                self.mine.update(|m| {
+                    m.follows.insert(fid, found);
+                });
+            }
+        });
+    }
+
+    /// Follow `fid`, or unfollow them.
+    pub fn toggle_follow(self, fid: u64) {
+        if self.mine.with_untracked(|m| m.follow_busy.contains(&fid)) {
+            return;
+        }
+        if self.can.get_untracked() != Can::Yes {
+            self.when_ready(move || self.toggle_follow(fid));
+            return;
+        }
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
+        let before = self.mine.with_untracked(|m| m.follow_changed.get(&fid).copied());
+        let on = !self.mine.with_untracked(|m| m.following(fid).unwrap_or(false));
+        self.mine.update(|m| {
+            m.follow_changed.insert(fid, on);
+            m.follow_busy.insert(fid);
+        });
+        spawn_local(async move {
+            let body = if on { Body::Follow(fid) } else { Body::Unfollow(fid) };
+            let outcome = send(&stored, body, Some(&format!("follow {fid}"))).await;
+            self.mine.update(|m| {
+                m.follow_busy.remove(&fid);
+                if outcome.is_err() {
+                    match before {
+                        Some(was) => m.follow_changed.insert(fid, was),
+                        None => m.follow_changed.remove(&fid),
+                    };
+                }
+            });
+            match outcome {
+                Ok(_) => {}
+                Err(Unsent::KeyGone) => {
+                    self.forget_key(stored.fid);
+                    self.say(KEY_GONE.to_owned());
+                }
+                Err(Unsent::Failed(message)) => self.say(message),
+            }
+        });
+    }
+
+    /// Whether the reader deleted `hash` this visit.
+    pub fn deleted(self, hash: &str) -> bool {
+        self.mine.with(|m| m.deleted.contains(hash))
+    }
+
+    /// Whether `hash` is being deleted.
+    pub fn deleting(self, hash: &str) -> bool {
+        self.mine.with(|m| m.deleting.contains(hash))
+    }
+
+    /// Delete one of the reader's casts: once it is gone, the page shows so,
+    /// and a notice says it.
+    pub fn delete(self, hash: String) {
+        if self.can.get_untracked() != Can::Yes {
+            self.when_ready(move || self.delete(hash));
+            return;
+        }
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
+        let Some(target) = CastId::new(stored.fid, &hash) else { return };
+        if !self.mine.try_update(|m| m.deleting.insert(hash.clone())).unwrap_or(false) {
+            return;
+        }
+        spawn_local(async move {
+            let outcome = send(&stored, Body::CastRemove(target.hash), None).await;
+            self.mine.update(|m| {
+                m.deleting.remove(&hash);
+            });
+            match outcome {
+                Ok(_) => {
+                    self.mine.update(|m| {
+                        m.deleted.insert(hash);
+                        remember_deleted(&m.deleted);
+                    });
+                    self.say("Deleted. It leaves Farcaster as the network catches up.".into());
+                }
+                Err(Unsent::KeyGone) => {
+                    self.forget_key(stored.fid);
+                    self.say(KEY_GONE.to_owned());
+                }
+                Err(Unsent::Failed(message)) => self.say(message),
+            }
+        });
+    }
+
     /// Ask the node whether the reader liked and recasted `target` (a
     /// post's own cast, which may be older than their latest).
     pub fn look_up(self, target: CastId) {
@@ -372,7 +516,8 @@ impl Writer {
         KEY.with(|k| k.borrow_mut().take());
         WAITING.with(|w| w.borrow_mut().take());
         PENDING.with(|p| p.borrow_mut().take());
-        self.mine.set(Mine::default());
+        // What was deleted stays deleted, whoever is signed in.
+        self.mine.update(|m| *m = Mine { deleted: std::mem::take(&mut m.deleted), ..Mine::default() });
         if self.open.get_untracked() {
             self.dismiss();
         }
@@ -545,6 +690,20 @@ fn tell_tabs() {
     });
 }
 
+/// The casts deleted earlier in this tab.
+fn deleted_before() -> HashSet<String> {
+    let stored = web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+        .and_then(|s| s.get_item(DELETED).ok().flatten());
+    stored.unwrap_or_default().split(',').filter(|hash| CastId::new(1, hash).is_some()).map(str::to_owned).collect()
+}
+
+fn remember_deleted(hashes: &HashSet<String>) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = storage.set_item(DELETED, &hashes.iter().map(String::as_str).collect::<Vec<_>>().join(","));
+    }
+}
+
 fn current(run: u64) -> bool {
     RUN.with(|r| r.get() == run)
 }
@@ -713,9 +872,9 @@ pub async fn fids_of(names: &[String]) -> HashMap<String, u64> {
 }
 
 /// Sign `body` with the reader's key and hand it to the node: the
-/// message's hash. A like or recast (`slot`) that undoes another goes out
-/// at least a second after it.
-async fn send(stored: &Stored, body: Body, slot: Option<&(String, Reaction)>) -> Result<[u8; 20], Unsent> {
+/// message's hash. A like, a recast or a follow (`slot`) that undoes
+/// another goes out at least a second after it, so it wins.
+async fn send(stored: &Stored, body: Body, slot: Option<&String>) -> Result<[u8; 20], Unsent> {
     let signer = app_key::parse_public_key(&stored.key).ok_or(Unsent::KeyGone)?;
     let fresh = stored.approved_at.is_some_and(|at| js_sys::Date::now() - at < FRESH_MS);
     let mut wait = RETRY_MS;
@@ -930,3 +1089,111 @@ pub fn WriterMenuItem() -> impl IntoView {
     })
     .into_any()
 }
+
+/// Whether the reader deleted `hash` this visit, for a view to show so.
+pub fn deleted_memo(hash: String) -> Memo<bool> {
+    let writer = use_writer();
+    Memo::new(move |_| writer.is_some_and(|w| w.deleted(&hash)))
+}
+
+/// Follow, or Following, on a profile: for a signed-in reader who can, on
+/// anyone's profile but their own. It shows once the node has said whether
+/// they follow already (a read that needs no key); hovering Following
+/// offers Unfollow.
+#[component]
+pub fn FollowButton(fid: u64, username: String) -> impl IntoView {
+    let Some(writer) = use_writer() else { return ().into_any() };
+    let shown = Memo::new(move |_| writer.can_write() && writer.reader().is_some_and(|me| me != fid));
+    let known = Memo::new(move |_| writer.follows(fid));
+    Effect::new(move |looked: Option<bool>| {
+        if looked == Some(true) || !shown.get() {
+            return looked.unwrap_or(false);
+        }
+        writer.look_up_follow(fid);
+        true
+    });
+    let label = format!("Follow @{username}");
+    (move || {
+        shown.get().then(|| {
+            let following = move || known.get().unwrap_or(false);
+            view! {
+                <button
+                    type="button"
+                    class="follow-button"
+                    class:following=following
+                    class:unknown=move || known.get().is_none()
+                    aria-label=label.clone()
+                    aria-pressed=move || following().to_string()
+                    aria-busy=move || writer.follow_busy(fid).then_some("true")
+                    on:click=move |_| writer.toggle_follow(fid)
+                >
+                    <span class="follow-text">{move || if following() { "Following" } else { "Follow" }}</span>
+                    <span class="unfollow-text" aria-hidden="true">"Unfollow"</span>
+                </button>
+            }
+        })
+    })
+    .into_any()
+}
+
+/// A profile's follower count, with the reader's follow or unfollow here.
+#[component]
+pub fn FollowerCount(fid: u64, n: u64) -> impl IntoView {
+    let writer = use_writer();
+    let shown = Memo::new(move |_| (n as i64 + writer.map_or(0, |w| w.followers_delta(fid))).max(0) as u64);
+    move || view! { <crate::components::chips::Count n=shown.get() label="followers"/> }
+}
+
+/// Delete, under one of the reader's own casts: it asks once more, in
+/// place, with Keep focused, before it deletes.
+#[component]
+pub fn DeleteButton(hash: String, author: u64, noun: &'static str) -> impl IntoView {
+    let Some(writer) = use_writer() else { return ().into_any() };
+    let gone = deleted_memo(hash.clone());
+    let own = Memo::new(move |_| writer.can_write() && writer.reader() == Some(author) && !gone.get());
+    let key = hash.clone();
+    let busy = Memo::new(move |_| writer.deleting(&key));
+    let asking = RwSignal::new(false);
+    let question = format!("Delete this {noun}?");
+    (move || {
+        own.get().then(|| {
+            let hash = hash.clone();
+            if asking.get() {
+                let keep = NodeRef::<leptos::html::Button>::new();
+                Effect::new(move |_| {
+                    if let Some(button) = keep.get() {
+                        let _ = button.focus();
+                    }
+                });
+                view! {
+                    <span class="delete-confirm" role="group" aria-label=question.clone()>
+                        <span class="delete-question">{question.clone()}</span>
+                        <button type="button" class="delete-yes" on:click=move |_| {
+                            asking.set(false);
+                            writer.delete(hash.clone());
+                        }>"Delete"</button>
+                        <button type="button" class="delete-no" node_ref=keep on:click=move |_| asking.set(false)>"Keep"</button>
+                    </span>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <button
+                        type="button"
+                        class="reply-button delete-button"
+                        disabled=busy
+                        aria-busy=move || busy.get().then_some("true")
+                        on:click=move |_| asking.set(true)
+                    >
+                        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=TRASH/></svg>
+                        {move || if busy.get() { "Deleting…" } else { "Delete" }}
+                    </button>
+                }
+                .into_any()
+            }
+        })
+    })
+    .into_any()
+}
+
+const TRASH: &str = "M3.5 4.5h9M6.5 4.5v-1.5h3v1.5M5 4.5l.5 8.5h5l.5-8.5";
