@@ -66,6 +66,11 @@ pub fn Popover(
     /// What a click does on hover-capable screens, instead of toggling.
     #[prop(optional)]
     on_activate: Option<Callback<()>>,
+    /// Called as the pointer comes onto the trigger, presses it or keyboard
+    /// focus reaches it, before the panel opens: to start fetching what the
+    /// panel needs (its code, `crate::split`).
+    #[prop(optional)]
+    on_warm: Option<Callback<()>>,
     /// The trigger is `trigger` itself, links rather than a button: see the
     /// module notes.
     #[prop(optional)]
@@ -257,7 +262,13 @@ pub fn Popover(
     let hovering = move || hover && can_hover() && !idle();
     let open_delay = if links { LINKS_OPEN_DELAY } else { OPEN_DELAY };
 
+    let warm = move || {
+        if let Some(warm) = on_warm {
+            warm.run(());
+        }
+    };
     let enter = move |_: ev::MouseEvent| {
+        warm();
         if hovering() {
             if state.get_untracked() == State::Open {
                 cancel();
@@ -279,6 +290,7 @@ pub fn Popover(
     // button, but then the click itself decides; opening here as well would
     // have the click toggle the popover straight back closed.
     let focus_in = move |_: ev::FocusEvent| {
+        warm();
         let keyboard = button.get_untracked().is_some_and(|b| b.matches(":focus-visible").unwrap_or(false));
         // Escape returns focus here while the closing animation runs.
         // That focus must not open the panel again.
@@ -323,6 +335,7 @@ pub fn Popover(
         }
     };
     let pointer_down = move |ev: ev::PointerEvent| {
+        warm();
         let in_panel = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok()).is_some_and(|n| inside_panel(&n));
         pressing.set_value(in_panel && ev.pointer_type() == "mouse");
         pointer.set_value(ev.pointer_type());

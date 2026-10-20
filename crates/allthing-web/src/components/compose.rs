@@ -48,6 +48,7 @@ use allthing_core::text::truncate_title;
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::use_location;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -392,6 +393,18 @@ impl Composer {
         );
     }
 
+    /// The dialog's title.
+    fn title(self) -> &'static str {
+        if self.editing.get_untracked().is_some() {
+            return "Scheduled cast";
+        }
+        match self.target.get_untracked() {
+            Target::Reply(_) => "Reply",
+            Target::Quote(_) => "Quote",
+            Target::Cast(_) => "New cast",
+        }
+    }
+
     /// What the draft is, in a word: "cast", "reply" or "quote".
     fn noun(self) -> &'static str {
         match self.target.get_untracked() {
@@ -498,9 +511,13 @@ fn scheduled_at(value: &str, now: i64) -> Result<i64, &'static str> {
 }
 
 /// Ask for the GIF key ahead of a click that opens the composer, so its
-/// GIF button is there when it opens.
+/// GIF button is there when it opens, and fetch the composer's code
+/// (`composer_view`) if it hasn't come yet.
 fn warm() {
     api::prefetch(&gif_key_path());
+    spawn_local(async {
+        let _ = preload_composer().await;
+    });
 }
 
 /// Focus `selector`'s element once the page has drawn it.
@@ -679,18 +696,22 @@ pub fn ComposerDialog() -> impl IntoView {
     on_cleanup(move || keys.remove());
     move || {
         composer.open.get().then(|| {
-            // Kept in the client cache for 5 minutes, and by the browser for an hour.
-            let key = LocalResource::new(|| async { api::get::<GifKey>(&gif_key_path()).await });
-            let gif_key = move || key.get().and_then(Result::ok).map(|k| k.data.key.clone()).filter(|k| !k.is_empty());
+            // KLIPY's key, once the bar has asked for it (`composer_bar`).
+            let gif_key = RwSignal::new(None::<String>);
+            // Only the field's showing, not its value, redraws the row.
+            let scheduling = Memo::new(move |_| composer.when.with(Option::is_some));
             let text = NodeRef::<leptos::html::Textarea>::new();
             Effect::new(move |_| {
                 if let Some(text) = text.get() {
                     let _ = text.focus();
                 }
             });
-            let (title, placeholder, context) = match composer.target.get_untracked() {
+            // Where the caret was when the text lost focus, or after the last
+            // emoji put in: a tap elsewhere can move an unfocused text box's
+            // own selection to its start.
+            let caret = StoredValue::new(None::<(usize, usize)>);
+            let (placeholder, context) = match composer.target.get_untracked() {
                 Target::Reply(to) => (
-                    "Reply",
                     "Write your reply",
                     Some(view! {
                         <p class="compose-context">
@@ -700,7 +721,6 @@ pub fn ComposerDialog() -> impl IntoView {
                     }.into_any()),
                 ),
                 Target::Quote(of) => (
-                    "Quote",
                     "Add your thoughts",
                     Some(view! {
                         <p class="compose-context">
@@ -710,65 +730,17 @@ pub fn ComposerDialog() -> impl IntoView {
                     }.into_any()),
                 ),
                 Target::Cast(channel) => (
-                    "New cast",
                     "What's happening?",
                     channel.map(|id| view! { <p class="compose-context">"In "<strong>"/"{id}</strong></p> }.into_any()),
                 ),
             };
-            let title = if composer.editing.get_untracked().is_some() { "Scheduled cast" } else { title };
-            // Only the field's showing, not its value, redraws the row.
-            let scheduling = Memo::new(move |_| composer.when.with(Option::is_some));
-            let writer = use_writer();
-            // Posted from here wherever the Worker endorses keys, with no
-            // way round it; the Farcaster app only where it doesn't.
-            let posts_here = Memo::new(move |_| writer.map_or(Some(false), |w| w.posts_here()));
-            // The text's length, in bytes, as a cast counts it.
-            let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
-            let picked = Callback::new(move |gif: Gif| {
-                composer.gif.set(Some(gif));
-                composer.picker.set(Picker::Closed);
-                focus_soon(".compose-text");
-            });
-            // Where the caret was when the text lost focus, or after the last
-            // emoji put in: a tap elsewhere can move an unfocused text box's
-            // own selection to its start.
-            let caret = StoredValue::new(None::<(usize, usize)>);
-            let selection = move |area: &web_sys::HtmlTextAreaElement| {
-                let (from, to) = (area.selection_start().ok().flatten(), area.selection_end().ok().flatten());
-                from.zip(to).map(|(from, to)| (from as usize, to as usize))
+            // The text is here at once, to type in, the first time too; what
+            // goes around it comes with the composer's code (`composer_extras`,
+            // `composer_bar`). The extras say nothing if it can't come: the
+            // bar does.
+            let extras = async move {
+                Ok(composer_extras(composer, text, caret, gif_key, scheduling).await.unwrap_or_else(|_| ().into_any()))
             };
-            // An emoji's shortcode goes in at the caret, or in place of what
-            // is selected, and the caret after it.
-            let insert = Callback::new(move |(emoji, again): Pick| {
-                let Some(area) = text.get_untracked() else { return };
-                let value = area.value();
-                let focused = document().active_element().is_some_and(|el| el.is_same_node(Some(&area)));
-                let end = value.encode_utf16().count();
-                let (from, to) = if focused { selection(&area) } else { caret.get_value() }.unwrap_or((end, end));
-                let (value, at) = emoji::insert(&value, from, to, emoji);
-                area.set_value(&value);
-                composer.text.set(value);
-                caret.set_value(Some((at, at)));
-                emoji_picker::used(emoji);
-                if !again {
-                    composer.picker.set(Picker::Closed);
-                    let _ = area.focus();
-                }
-                let _ = area.set_selection_range(at as u32, at as u32);
-            });
-            // A sticker goes with the cast as its GIF does, in the GIF's place.
-            let stick = Callback::new(move |sticker: &'static Sticker| {
-                emoji_picker::used_sticker(sticker);
-                let (width, height) = (u32::from(sticker.width), u32::from(STICKER_HEIGHT));
-                composer.gif.set(Some(Gif {
-                    slug: sticker.code.to_owned(),
-                    title: format!("Sticker: {}", sticker.label()),
-                    tile: Rendition { url: href(&sticker.file()), width, height },
-                    embed: Rendition { url: sticker.embed(), width, height },
-                }));
-                composer.picker.set(Picker::Closed);
-                focus_soon(".compose-text");
-            });
             view! {
                 <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
                     if ev.target() == ev.current_target() {
@@ -777,7 +749,7 @@ pub fn ComposerDialog() -> impl IntoView {
                 }>
                     <div class="modal compose-modal" role="dialog" aria-modal="true" aria-labelledby="compose-title" node_ref=dialog>
                         <header class="modal-head">
-                            <h2 id="compose-title">{title}</h2>
+                            <h2 id="compose-title">{composer.title()}</h2>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
                         </header>
                         // A picker open makes the text smaller, to fit both.
@@ -797,100 +769,197 @@ pub fn ComposerDialog() -> impl IntoView {
                                     }
                                 }
                             ></textarea>
-                            {move || composer.gif.get().map(|gif| view! {
-                                <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>
-                                    <img src=gif.tile.url.clone() width=gif.tile.width height=gif.tile.height alt=gif.title.clone()/>
-                                    <button type="button" class="compose-gif-remove" aria-label=if emoji::sticker_of(&gif.embed.url).is_some() { "Remove the sticker" } else { "Remove the GIF" } on:click=move |_| {
-                                        composer.gif.set(None);
-                                        focus_soon(".compose-text");
-                                    }>"×"</button>
-                                </figure>
-                            })}
-                            {move || (composer.picker.get() == Picker::Gifs).then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
-                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker tab=composer.tab picked=insert stuck=stick/> })}
-                            {move || scheduling.get().then(|| {
-                                let zone = time_zone().map(|zone| format!("Your time, {zone}")).unwrap_or_else(|| "Your time".into());
-                                view! {
-                                    <div class="compose-when">
-                                        <label for="compose-at">"Goes out"</label>
-                                        <input
-                                            id="compose-at"
-                                            class="compose-at"
-                                            type="datetime-local"
-                                            min=local_input(now() + MIN_AHEAD + 59)
-                                            max=local_input(now() + MAX_AHEAD)
-                                            prop:value=move || composer.when.get().unwrap_or_default()
-                                            on:input=move |ev| composer.when.set(Some(event_target_value(&ev)))
-                                        />
-                                        <span class="compose-zone muted small">{zone}</span>
-                                        <a class="compose-scheduled small" href=scheduled_href()>"Scheduled casts"</a>
-                                    </div>
-                                }
-                            })}
-                            {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
+                            {crate::split::lazy_view(|| (), extras)}
                         </div>
                         // Below what scrolls, so the picker never hides it.
-                        <footer class="compose-foot">
-                            <div class="compose-bar">
-                                <button
-                                    type="button"
-                                    class="emoji-button"
-                                    aria-label="Add an emoji"
-                                    aria-expanded=move || composer.showing(Tab::Emoji).to_string()
-                                    aria-controls="emoji-picker"
-                                    on:click=move |_| composer.toggle_tab(Tab::Emoji)
-                                >
-                                    <img src=href(&emoji::find("pepe_smirk").unwrap_or(&emoji::PACK[0]).still()) alt="" width="22" height="22"/>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="sticker-button"
-                                    aria-label="Add a sticker"
-                                    aria-expanded=move || composer.showing(Tab::Stickers).to_string()
-                                    aria-controls="emoji-picker"
-                                    on:click=move |_| composer.toggle_tab(Tab::Stickers)
-                                >
-                                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STICKER/></svg>
-                                </button>
-                                {move || gif_key().map(|_| view! {
-                                    <button
-                                        type="button"
-                                        class="gif-button"
-                                        aria-label="Add a GIF"
-                                        aria-expanded=move || (composer.picker.get() == Picker::Gifs).to_string()
-                                        aria-controls="gif-picker"
-                                        on:click=move |_| composer.toggle(Picker::Gifs)
-                                    >"GIF"</button>
-                                })}
-                                {move || (posts_here.get() == Some(true)).then(|| view! {
-                                    <button
-                                        type="button"
-                                        class="schedule-button"
-                                        aria-label="Schedule for later"
-                                        title="Schedule for later"
-                                        aria-pressed=move || scheduling.get().to_string()
-                                        disabled=move || composer.editing.with(Option::is_some)
-                                        on:click=move |_| composer.toggle_when()
-                                    >
-                                        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
-                                    </button>
-                                })}
-                                {move || (used.get() > COUNT_FROM).then(|| view! {
-                                    <span class="compose-count" class:over=move || { used.get() > MAX_CAST_BYTES }>
-                                        {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
-                                    </span>
-                                })}
-                                {move || match (posts_here.get(), writer) {
-                                    (Some(false), _) | (_, None) => view! { <PostLink composer/> }.into_any(),
-                                    (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
-                                }}
-                            </div>
-                        </footer>
+                        {crate::split::lazy_view(pending_bar, composer_bar(composer, gif_key, scheduling))}
                     </div>
                 </div>
             }
         })
     }
+}
+
+/// Where the caret is in `area`, or what is selected.
+fn selection(area: &web_sys::HtmlTextAreaElement) -> Option<(usize, usize)> {
+    let (from, to) = (area.selection_start().ok().flatten(), area.selection_end().ok().flatten());
+    from.zip(to).map(|(from, to)| (from as usize, to as usize))
+}
+
+/// The composer's bar while its code comes, the first time it opens.
+fn pending_bar() -> impl IntoView {
+    view! {
+        <footer class="compose-foot" aria-busy="true">
+            <div class="compose-bar"><span class="button compose-post compose-loading">"Loading…"</span></div>
+        </footer>
+    }
+}
+
+/// What the composer shows under the text: its GIF or sticker, the GIF,
+/// emoji and sticker pickers, when it goes out, and why it didn't. With
+/// `composer_bar`, the composer's part of the app, fetched the first time
+/// the composer opens, or as a Cast, Reply or Quote button is pointed at or
+/// focused (`warm`; `crate::split`).
+#[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_composer))]
+fn composer_extras(
+    composer: Composer,
+    text: NodeRef<leptos::html::Textarea>,
+    caret: StoredValue<Option<(usize, usize)>>,
+    gif_key: RwSignal<Option<String>>,
+    scheduling: Memo<bool>,
+) -> Result<AnyView, SplitLoaderError> {
+    let picked = Callback::new(move |gif: Gif| {
+        composer.gif.set(Some(gif));
+        composer.picker.set(Picker::Closed);
+        focus_soon(".compose-text");
+    });
+    // An emoji's shortcode goes in at the caret, or in place of what
+    // is selected, and the caret after it.
+    let insert = Callback::new(move |(emoji, again): Pick| {
+        let Some(area) = text.get_untracked() else { return };
+        let value = area.value();
+        let focused = document().active_element().is_some_and(|el| el.is_same_node(Some(&area)));
+        let end = value.encode_utf16().count();
+        let (from, to) = if focused { selection(&area) } else { caret.get_value() }.unwrap_or((end, end));
+        let (value, at) = emoji::insert(&value, from, to, emoji);
+        area.set_value(&value);
+        composer.text.set(value);
+        caret.set_value(Some((at, at)));
+        emoji_picker::used(emoji);
+        if !again {
+            composer.picker.set(Picker::Closed);
+            let _ = area.focus();
+        }
+        let _ = area.set_selection_range(at as u32, at as u32);
+    });
+    // A sticker goes with the cast as its GIF does, in the GIF's place.
+    let stick = Callback::new(move |sticker: &'static Sticker| {
+        emoji_picker::used_sticker(sticker);
+        let (width, height) = (u32::from(sticker.width), u32::from(STICKER_HEIGHT));
+        composer.gif.set(Some(Gif {
+            slug: sticker.code.to_owned(),
+            title: format!("Sticker: {}", sticker.label()),
+            tile: Rendition { url: href(&sticker.file()), width, height },
+            embed: Rendition { url: sticker.embed(), width, height },
+        }));
+        composer.picker.set(Picker::Closed);
+        focus_soon(".compose-text");
+    });
+    Ok(view! {
+        {move || composer.gif.get().map(|gif| view! {
+            <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>
+                <img src=gif.tile.url.clone() width=gif.tile.width height=gif.tile.height alt=gif.title.clone()/>
+                <button type="button" class="compose-gif-remove" aria-label=if emoji::sticker_of(&gif.embed.url).is_some() { "Remove the sticker" } else { "Remove the GIF" } on:click=move |_| {
+                    composer.gif.set(None);
+                    focus_soon(".compose-text");
+                }>"×"</button>
+            </figure>
+        })}
+        {move || (composer.picker.get() == Picker::Gifs).then(|| gif_key.get()).flatten().map(|key| view! { <GifPicker key picked/> })}
+        {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker tab=composer.tab picked=insert stuck=stick/> })}
+        {move || scheduling.get().then(|| {
+            let zone = time_zone().map(|zone| format!("Your time, {zone}")).unwrap_or_else(|| "Your time".into());
+            view! {
+                <div class="compose-when">
+                    <label for="compose-at">"Goes out"</label>
+                    <input
+                        id="compose-at"
+                        class="compose-at"
+                        type="datetime-local"
+                        min=local_input(now() + MIN_AHEAD + 59)
+                        max=local_input(now() + MAX_AHEAD)
+                        prop:value=move || composer.when.get().unwrap_or_default()
+                        on:input=move |ev| composer.when.set(Some(event_target_value(&ev)))
+                    />
+                    <span class="compose-zone muted small">{zone}</span>
+                    <a class="compose-scheduled small" href=scheduled_href()>"Scheduled casts"</a>
+                </div>
+            }
+        })}
+        {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
+    }
+    .into_any())
+}
+
+/// The composer's bar: the emoji, sticker, GIF and schedule buttons, the
+/// count, and Cast (or Post in Farcaster). In the composer's part, with
+/// `composer_extras`.
+#[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn composer_bar(
+    composer: Composer,
+    gif_key: RwSignal<Option<String>>,
+    scheduling: Memo<bool>,
+) -> Result<AnyView, SplitLoaderError> {
+    // Kept in the client cache for 5 minutes, and by the browser for an hour.
+    let key = LocalResource::new(|| async { api::get::<GifKey>(&gif_key_path()).await });
+    Effect::new(move |_| {
+        gif_key.set(key.get().and_then(Result::ok).map(|k| k.data.key.clone()).filter(|k| !k.is_empty()));
+    });
+    let writer = use_writer();
+    // Posted from here wherever the Worker endorses keys, with no
+    // way round it; the Farcaster app only where it doesn't.
+    let posts_here = Memo::new(move |_| writer.map_or(Some(false), |w| w.posts_here()));
+    // The text's length, in bytes, as a cast counts it.
+    let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
+    Ok(view! {
+        <footer class="compose-foot">
+            <div class="compose-bar">
+                <button
+                    type="button"
+                    class="emoji-button"
+                    aria-label="Add an emoji"
+                    aria-expanded=move || composer.showing(Tab::Emoji).to_string()
+                    aria-controls="emoji-picker"
+                    on:click=move |_| composer.toggle_tab(Tab::Emoji)
+                >
+                    <img src=href(&emoji::find("pepe_smirk").unwrap_or(&emoji::PACK[0]).still()) alt="" width="22" height="22"/>
+                </button>
+                <button
+                    type="button"
+                    class="sticker-button"
+                    aria-label="Add a sticker"
+                    aria-expanded=move || composer.showing(Tab::Stickers).to_string()
+                    aria-controls="emoji-picker"
+                    on:click=move |_| composer.toggle_tab(Tab::Stickers)
+                >
+                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STICKER/></svg>
+                </button>
+                {move || gif_key.get().map(|_| view! {
+                    <button
+                        type="button"
+                        class="gif-button"
+                        aria-label="Add a GIF"
+                        aria-expanded=move || (composer.picker.get() == Picker::Gifs).to_string()
+                        aria-controls="gif-picker"
+                        on:click=move |_| composer.toggle(Picker::Gifs)
+                    >"GIF"</button>
+                })}
+                {move || (posts_here.get() == Some(true)).then(|| view! {
+                    <button
+                        type="button"
+                        class="schedule-button"
+                        aria-label="Schedule for later"
+                        title="Schedule for later"
+                        aria-pressed=move || scheduling.get().to_string()
+                        disabled=move || composer.editing.with(Option::is_some)
+                        on:click=move |_| composer.toggle_when()
+                    >
+                        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
+                    </button>
+                })}
+                {move || (used.get() > COUNT_FROM).then(|| view! {
+                    <span class="compose-count" class:over=move || { used.get() > MAX_CAST_BYTES }>
+                        {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
+                    </span>
+                })}
+                {move || match (posts_here.get(), writer) {
+                    (Some(false), _) | (_, None) => view! { <PostLink composer/> }.into_any(),
+                    (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
+                }}
+            </div>
+        </footer>
+    }
+    .into_any())
 }
 
 /// Cast, Reply or Quote, with the reader's key: their first post opens the
