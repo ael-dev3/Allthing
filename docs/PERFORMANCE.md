@@ -79,6 +79,10 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
   - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 - **Drawing a screenful at a time.** A list rendered anew (a sort tab, another page) draws 6 cards, about a screenful, in the task that asked for it, and 6 more in a task after each paint until it has drawn what it shows (`CastList`, `DRAW_STEP`). A re-sort that changes the top of the list starts again from there. The tap's frame paints at once: building all 25 cards in the click took 13–39 ms of WebAssembly on a fast desktop CPU, which put the slowest interaction over 100 ms on CI runners. Back and forward draw the whole list at once while they restore the reader's place (`nav::restoring`).
+- **The tap first, the feed after.** A sort tab answers in the frame after the tap: the tab shows as chosen at once, and the feed follows in a task of its own once that frame is painted (`after_a_paint` in `pages/home.rs`), then draws a screenful at a time as above. Switching between hot and new swaps the whole feed, tearing down the old cards and building new ones. On a phone with the CPU slowed 4×, that work made the tap wait for its next frame. New also read its client filter inside its view. A tap that changed only the sort changes the query too, so new redrew its 25 cards just before they were torn down. The filter is now a memo of its own. Measured on 20 October 2026 as the speed report measures, with the two builds served locally on the same data, alternating, median of 9:
+  - the slowest of the new and hot taps went from 144 ms to 48 ms (40–56) on the phone profile;
+  - at 1280 px it went from 56 ms to 32 ms (median of 7);
+  - the first cast came 7 ms later (4,003 → 4,010 ms), the time the module's extra 0.7 KB takes.
 
 ### Animations that never stop
 

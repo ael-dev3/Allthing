@@ -27,39 +27,68 @@ async function serve(page: Page) {
   await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool: latest, notes: {}, cursors: [], meta } }));
 }
 
-/** How many cards are in the page in the frame after the next click, before it paints. */
-async function cardsInFirstFrame(page: Page, click: () => Promise<void>) {
+/** The chosen tab and the first card in the frame after the next click, before it paints. */
+async function firstFrame(page: Page, click: () => Promise<void>) {
   await page.evaluate(() => {
     (window as any).__firstFrame = null;
     document.addEventListener(
       "click",
-      () => requestAnimationFrame(() => ((window as any).__firstFrame = document.querySelectorAll(".cast-card:not(.skeleton)").length)),
+      () =>
+        requestAnimationFrame(() => ((window as any).__firstFrame = {
+          tab: document.querySelector(".sort-tabs a.selected")?.textContent?.trim() ?? "",
+          first: document.querySelector(".cast-card:not(.skeleton)")?.getAttribute("data-hash") ?? "",
+        })),
       { capture: true, once: true },
     );
   });
   await click();
   await expect.poll(() => page.evaluate(() => (window as any).__firstFrame)).not.toBeNull();
-  return page.evaluate(() => (window as any).__firstFrame as number);
+  return page.evaluate(() => (window as any).__firstFrame as { tab: string; first: string });
+}
+
+/** How many cards the list holds when a card other than `from` first leads it. */
+function drawnAtFirst(page: Page, from: string) {
+  return page.evaluate(
+    (from) =>
+      new Promise<number>((resolve) => {
+        new MutationObserver((_, observer) => {
+          const shown = document.querySelectorAll(".cast-card:not(.skeleton)");
+          if (shown.length && shown[0].getAttribute("data-hash") !== from) {
+            observer.disconnect();
+            resolve(shown.length);
+          }
+        }).observe(document.body, { childList: true, subtree: true });
+      }),
+    from,
+  );
 }
 
 const cards = (page: Page) => page.locator(".cast-card:not(.skeleton)");
 const tab = (page: Page, name: string) => page.locator(".sort-tabs a", { hasText: name });
 
-test("a sort tab paints the first cards at once and draws the rest after", async ({ page }) => {
+test("a sort tab shows as chosen in the frame after the tap; the cards follow, a screenful first", async ({ page }) => {
   await serve(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(25);
-  const hot = await cards(page).first().getAttribute("data-hash");
+  const hot = (await cards(page).first().getAttribute("data-hash"))!;
 
-  // Re-sorting the same list: a screenful in the click's frame, then all 25.
-  expect(await cardsInFirstFrame(page, () => tab(page, "top").click())).toBeLessThanOrEqual(6);
+  // Re-sorting the same list: the tab at once, the old order for that
+  // frame, then the new order, a screenful drawn first, then all 25.
+  let drawn = drawnAtFirst(page, hot);
+  expect(await firstFrame(page, () => tab(page, "top").click())).toEqual({ tab: "top", first: hot });
+  expect(await drawn).toBeLessThanOrEqual(6);
   await expect(cards(page)).toHaveCount(25);
   expect(await cards(page).first().getAttribute("data-hash")).not.toBe(hot);
 
   // Another list, its data already in the client cache: the same.
+  const top = (await cards(page).first().getAttribute("data-hash"))!;
   await tab(page, "new").click();
+  await expect(cards(page).first()).not.toHaveAttribute("data-hash", top);
   await expect(cards(page)).toHaveCount(25);
-  expect(await cardsInFirstFrame(page, () => tab(page, "hot").click())).toBeLessThanOrEqual(6);
+  const newest = (await cards(page).first().getAttribute("data-hash"))!;
+  drawn = drawnAtFirst(page, newest);
+  expect(await firstFrame(page, () => tab(page, "hot").click())).toEqual({ tab: "hot", first: newest });
+  expect(await drawn).toBeLessThanOrEqual(6);
   await expect(cards(page)).toHaveCount(25);
   expect(await cards(page).first().getAttribute("data-hash")).toBe(hot);
 });

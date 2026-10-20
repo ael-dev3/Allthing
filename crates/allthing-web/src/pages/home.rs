@@ -13,7 +13,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use crate::api::{self, Fetched};
-use crate::components::cast::{CastList, CastSkeletons};
+use crate::components::cast::{CastList, CastSkeletons, after_paint};
 use crate::components::clients::{ClientChip, ClientShareBar, client_param};
 use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice, TimeFilter};
 use crate::util::{href, set_title, with_query};
@@ -52,17 +52,36 @@ pub fn Home() -> impl IntoView {
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
     Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
+    // The tab tapped shows as chosen in the next frame, and the feed follows
+    // in a task of its own once that frame is painted: a tap is answered at
+    // once, even where drawing the cards takes a while (docs/PERFORMANCE.md).
+    let listed = after_a_paint(sort);
     // "new" lists the newest casts from the event stream; hot and top rank
     // the trending pool over the time range (and switching between them
     // re-sorts in place).
-    let newest = Memo::new(move |_| sort.get() == Sort::New);
+    let newest = Memo::new(move |_| listed.get() == Sort::New);
     move || {
         if newest.get() {
             view! { <Latest sort range/> }.into_any()
         } else {
-            view! { <Trending sort range/> }.into_any()
+            view! { <Trending sort listed range/> }.into_any()
         }
     }
+}
+
+/// `sort`, a paint later.
+fn after_a_paint(sort: Memo<Sort>) -> ReadSignal<Sort> {
+    let (later, set_later) = signal(sort.get_untracked());
+    Effect::new(move |_| {
+        if sort.get() != later.get_untracked() {
+            after_paint(move || {
+                if let Some(now) = sort.try_get_untracked() {
+                    let _ = set_later.try_set(now);
+                }
+            });
+        }
+    });
+    later
 }
 
 /// The newest casts on Farcaster, read from Snapchain's event stream and
@@ -70,6 +89,10 @@ pub fn Home() -> impl IntoView {
 #[component]
 fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     let data = LocalResource::new(|| async { api::get::<LatestPayload>(&latest_path()).await });
+    // Only another client filter redraws the list: a tap on a sort tab
+    // changes the query too, and mustn't rebuild the cards it's leaving.
+    let query = use_query_map();
+    let client = Memo::new(move |_| client_param(&query.read()));
     move || match data.get() {
         None => view! {
             <Columns>
@@ -81,8 +104,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
         Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
         Some(Ok(Fetched { data, stale, .. })) => {
             let notes = Arc::new(data.notes.clone());
-            let query = use_query_map();
-            let client = client_param(&query.read());
+            let client = client.get();
             let casts = top_level(&data.pool);
             let casts = match client {
                 Some(fid) => from_client(casts, &notes, fid),
@@ -104,7 +126,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
 /// Trending casts over the time range, ranked hot or top, with more pages
 /// as the reader scrolls.
 #[component]
-fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     let leaning = crate::leanings::use_leaning();
     let window = Memo::new(move |_| range.get().window());
     let data = LocalResource::new(move || {
@@ -246,7 +268,7 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 // Re-sorting, or a favorite made, reorders the list in place
                 // instead of rebuilding the page.
                 let casts = Memo::new(move |_| {
-                    let order = sort.get();
+                    let order = listed.get();
                     let leanings = leaning.leanings();
                     let mut all = sorted_for(&pool, order, &leanings);
                     more.with(|pages| {
