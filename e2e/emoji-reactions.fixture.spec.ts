@@ -82,10 +82,17 @@ test("a post's emoji replies gather as chips, each account once, most first", as
   await expect(words.locator(":scope > .comment-body .reaction-chip").first()).toHaveAccessibleName(/^Pepe dances: 1 reaction, by @alice/);
   // The replies stay in the thread too, as replies.
   await expect(page.locator(".comment")).toHaveCount(5);
-  // Signed out: no React, and a chip asks to sign in first.
-  await expect(page.getByRole("button", { name: /React to/ })).toHaveCount(0);
+  // Signed out: React is there, and a chip hands its Pepe to the Farcaster
+  // app, as a reply ready to post, with no one asked to sign in.
+  await expect(page.locator(".post").getByRole("button", { name: "React to @alice's cast with an emoji" })).toBeVisible();
   await chips(page).first().click();
-  await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeVisible();
+  const handOff = page.getByRole("dialog", { name: "React in Farcaster" });
+  await expect(handOff).toContainText("The Farcaster app opens a reply with :pepe_heart_hug:, ready to post.");
+  const url = new URL((await handOff.getByRole("link", { name: /Open on farcaster\.xyz/ }).getAttribute("href"))!);
+  expect(url.origin + url.pathname).toBe("https://farcaster.xyz/~/compose");
+  expect(url.searchParams.get("text")).toBe(":pepe_heart_hug:");
+  expect(url.searchParams.get("parentCastHash")).toBe(post.hash);
+  await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toHaveCount(0);
 });
 
 test("React opens the Pepe picker, and a pick goes out as a reply that is the emoji", async ({ page }) => {

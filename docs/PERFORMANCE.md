@@ -106,6 +106,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 
   Opening it the first time loads the stills in view, about 110 KB at 1280 px (all 103 are 220 KB), from the year-long cache after that. It makes no Worker requests.
 - **Stickers** added 4.7 KB more (495,615 → 500,468 bytes at brotli 11): the sticker button and the picker's Stickers tab with its recently used, a sticker as the cast's attachment, and stickers in casts. A cast's sticker loads its GIF from the site itself, cached for a year: a median of 74 KB (12 to 269 KB), or with reduced motion a still of about 4 KB. The picker's tab shows the stills until a sticker is pointed at. No Worker requests.
+- **Handing writes to the Farcaster app** added 5.8 KB (551,831 → 557,797 bytes at brotli 11, release builds on 20 October 2026): its dialog, the links to casts, profiles and drafts, and the like, recast, follow, delete and composer buttons shown to every reader. The QR code is drawn by the Worker, as sign-in's is, so the browser ships no encoder; a phone asks for none.
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
 
 ### 5. Infinite scroll

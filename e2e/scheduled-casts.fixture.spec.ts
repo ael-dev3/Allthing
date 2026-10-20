@@ -253,7 +253,7 @@ test("the list: one waiting to change or cancel, one that didn't go out, one pos
 test("signed out, the list asks to sign in first; with nothing scheduled, it says how", async ({ page }) => {
   await serve(page);
   await page.goto("/scheduled");
-  await expect(page.locator(".scheduled-empty")).toContainText("Sign in to schedule casts, and to see them here.");
+  await expect(page.locator(".scheduled-empty")).toContainText("Sign in to see your scheduled casts.");
   await page.locator(".scheduled-empty").getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeVisible();
 

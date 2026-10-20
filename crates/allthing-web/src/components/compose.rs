@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Writing a cast, a reply or a quote, with a GIF or emoji, for the
-//! signed-in reader.
+//! Writing a cast, a reply or a quote, with a GIF or emoji, for any reader.
 //! Cast, at the top right of the front page's feed or a channel's (a round
 //! button over the feed on a phone), starts a cast, in the channel on a
 //! channel page; Reply and Quote under a post or a reply start a reply to it
@@ -9,9 +8,11 @@
 //! Where the reader can like and recast here (`components::writer`), the
 //! draft is posted with their key: "@name"s become mentions, and the cast
 //! goes to the node from their browser (`allthing_core::compose::Draft::
-//! new_cast`). Only where the Worker endorses no keys does "Post in
-//! Farcaster" open the draft in the Farcaster app instead, through
-//! farcaster.xyz's compose link, for the reader to post there.
+//! new_cast`). Signed out, or where the Worker endorses no keys (as on
+//! allthing.social), "Post in Farcaster" opens the draft in the Farcaster
+//! app instead, through farcaster.xyz's compose link, for the reader to
+//! post there: at once on a phone, and on a computer through the hand-off
+//! dialog, with the link as a QR code for their phone (`components::handoff`).
 //!
 //! GIFs come from KLIPY. Its terms ask that the browser reach its API and
 //! its media itself, never through Allthing's server, and that results show
@@ -25,8 +26,8 @@
 //! The clock schedules the draft for later: it is signed with the reader's
 //! key at once, for the time they pick, and kept by the Worker until then
 //! (`allthing_core::scheduled`). A scheduled cast opens here again to be
-//! changed (`Composer::edit`). Not in the static copy, which has no
-//! sign-in.
+//! changed (`Composer::edit`). There is no clock where the draft goes to the
+//! Farcaster app. Not in the static copy, which has no sign-in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -54,9 +55,12 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
+use crate::components::handoff::{Ask, use_hand_off};
 use crate::components::signin::use_session;
 use crate::components::writer::{Writer, fids_of, use_writer};
-use crate::util::{BASE, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab};
+use crate::util::{
+    BASE, can_hover, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab,
+};
 
 /// How long typing pauses before a search is sent.
 const DEBOUNCE: Duration = Duration::from_millis(350);
@@ -350,33 +354,56 @@ impl Composer {
                 return;
             }
         };
-        writer.when_ready(move || {
-            self.posting.set(true);
-            self.error.set(None);
-            let draft = self.draft();
-            let saved = self.saved(&draft).to_json();
-            let replaces = self.editing.get_untracked();
-            spawn_local(async move {
-                let fids = fids_of(&mention_names(&draft.text)).await;
-                let cast = draft.new_cast(|name| fids.get(name).copied());
-                let outcome = match (cast.check(), at) {
-                    (Err(why), _) => Err(why.to_owned()),
-                    (Ok(()), Some(at)) => writer.schedule(cast, at, saved, replaces).await.map(|_| None),
-                    (Ok(()), None) => writer.cast(cast).await.map(Some),
-                };
-                self.posting.set(false);
-                match outcome {
-                    Ok(hash) => {
-                        self.clear();
-                        self.close();
-                        if let Some(hash) = hash {
-                            writer.posted(&hash);
+        let ask = self.hand_off_ask();
+        writer.when_ready(
+            move || {
+                self.posting.set(true);
+                self.error.set(None);
+                let draft = self.draft();
+                let saved = self.saved(&draft).to_json();
+                let replaces = self.editing.get_untracked();
+                spawn_local(async move {
+                    let fids = fids_of(&mention_names(&draft.text)).await;
+                    let cast = draft.new_cast(|name| fids.get(name).copied());
+                    let outcome = match (cast.check(), at) {
+                        (Err(why), _) => Err(why.to_owned()),
+                        (Ok(()), Some(at)) => writer.schedule(cast, at, saved, replaces).await.map(|_| None),
+                        (Ok(()), None) => writer.cast(cast).await.map(Some),
+                    };
+                    self.posting.set(false);
+                    match outcome {
+                        Ok(hash) => {
+                            self.clear();
+                            self.close();
+                            if let Some(hash) = hash {
+                                writer.posted(&hash);
+                            }
                         }
+                        Err(why) => self.error.set(Some(why)),
                     }
-                    Err(why) => self.error.set(Some(why)),
-                }
-            });
+                });
+            },
+            ask,
+        );
+    }
+
+    /// What the draft is, in a word: "cast", "reply" or "quote".
+    fn noun(self) -> &'static str {
+        match self.target.get_untracked() {
+            Target::Reply(_) => "reply",
+            Target::Quote(_) => "quote",
+            Target::Cast(_) => "cast",
+        }
+    }
+
+    /// The draft, handed to the Farcaster app: once it has gone, it is
+    /// cleared and the composer closes.
+    fn hand_off_ask(self) -> Ask {
+        let done = Callback::new(move |()| {
+            self.clear();
+            self.close();
         });
+        Ask::post(self.draft().compose_url(), self.noun(), done)
     }
 }
 
@@ -445,28 +472,23 @@ fn start_cast() -> impl Fn() + Copy + 'static {
     move || composer.start(Target::Cast(channel_in_view(&pathname.get_untracked())))
 }
 
-/// Cast, for the signed-in reader, at the top right of a feed: a pill in
-/// Allthing's accent, lettered in its serif. On a phone, `CastFab` instead.
+/// Cast, at the top right of a feed: a pill in Allthing's accent, lettered
+/// in its serif. On a phone, `CastFab` instead.
 #[component]
 pub fn CastPill() -> impl IntoView {
-    let session = use_session();
     let start = start_cast();
-    move || {
-        session.user.get().is_some().then(|| {
-            view! {
-                <button
-                    type="button"
-                    class="cast-pill"
-                    aria-label="Write a cast"
-                    on:pointerenter=move |_| warm()
-                    on:focus=move |_| warm()
-                    on:click=move |_| start()
-                >
-                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=PEN/></svg>
-                    "Cast"
-                </button>
-            }
-        })
+    view! {
+        <button
+            type="button"
+            class="cast-pill"
+            aria-label="Write a cast"
+            on:pointerenter=move |_| warm()
+            on:focus=move |_| warm()
+            on:click=move |_| start()
+        >
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=PEN/></svg>
+            "Cast"
+        </button>
     }
 }
 
@@ -474,10 +496,9 @@ pub fn CastPill() -> impl IntoView {
 /// a channel's, at the bottom right, within the thumb's reach.
 #[component]
 pub fn CastFab() -> impl IntoView {
-    let session = use_session();
     let pathname = use_location().pathname;
     let start = start_cast();
-    let shown = Memo::new(move |_| session.user.with(Option::is_some) && on_feed(&pathname.get()));
+    let shown = Memo::new(move |_| on_feed(&pathname.get()));
     move || {
         shown.get().then(|| {
             view! {
@@ -496,58 +517,45 @@ pub fn CastFab() -> impl IntoView {
     }
 }
 
-/// Reply, under a post or a reply, for the signed-in reader.
+/// Reply, under a post or a reply.
 #[component]
 pub fn ReplyButton(cast: Cast) -> impl IntoView {
-    let session = use_session();
     let composer = use_composer();
     let to = Other::of(&cast);
-    move || {
-        session.user.get().is_some().then(|| {
-            let label = format!("Reply to @{}", to.username);
-            let to = to.clone();
-            view! {
-                <button
-                    type="button"
-                    class="reply-button"
-                    aria-label=label
-                    on:pointerenter=move |_| warm()
-                    on:focus=move |_| warm()
-                    on:click=move |_| composer.start(Target::Reply(to.clone()))
-                >
-                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
-                    "Reply"
-                </button>
-            }
-        })
+    let label = format!("Reply to @{}", to.username);
+    view! {
+        <button
+            type="button"
+            class="reply-button"
+            aria-label=label
+            on:pointerenter=move |_| warm()
+            on:focus=move |_| warm()
+            on:click=move |_| composer.start(Target::Reply(to.clone()))
+        >
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
+            "Reply"
+        </button>
     }
 }
 
-/// Quote, under a post or a reply, for the signed-in reader: a cast that
-/// embeds this one.
+/// Quote, under a post or a reply: a cast that embeds this one.
 #[component]
 pub fn QuoteButton(cast: Cast) -> impl IntoView {
-    let session = use_session();
     let composer = use_composer();
     let of = Other::of(&cast);
-    move || {
-        session.user.get().is_some().then(|| {
-            let label = format!("Quote @{}'s cast", of.username);
-            let of = of.clone();
-            view! {
-                <button
-                    type="button"
-                    class="reply-button quote-button"
-                    aria-label=label
-                    on:pointerenter=move |_| warm()
-                    on:focus=move |_| warm()
-                    on:click=move |_| composer.start(Target::Quote(of.clone()))
-                >
-                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=QUOTE/></svg>
-                    "Quote"
-                </button>
-            }
-        })
+    let label = format!("Quote @{}'s cast", of.username);
+    view! {
+        <button
+            type="button"
+            class="reply-button quote-button"
+            aria-label=label
+            on:pointerenter=move |_| warm()
+            on:focus=move |_| warm()
+            on:click=move |_| composer.start(Target::Quote(of.clone()))
+        >
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=QUOTE/></svg>
+            "Quote"
+        </button>
     }
 }
 
@@ -574,9 +582,12 @@ pub fn ComposerDialog() -> impl IntoView {
         }
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
-        // The key dialog, over the composer for a first post, has the keys.
-        let key_open = document().document_element().is_some_and(|root| root.class_list().contains("key-open"));
-        if !composer.open.get_untracked() || key_open {
+        // The key dialog, over the composer for a first post, or the
+        // hand-off to the Farcaster app, has the keys.
+        let over = document()
+            .document_element()
+            .is_some_and(|root| root.class_list().contains("key-open") || root.class_list().contains("handoff-open"));
+        if !composer.open.get_untracked() || over {
             return;
         }
         match ev.key().as_str() {
@@ -856,15 +867,30 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
     }
 }
 
-/// "Post in Farcaster": the draft's compose link, opened in a new tab (or
-/// the Farcaster app, on a phone). The draft is the app's from there on.
+/// "Post in Farcaster": on a phone, the draft's compose link, which opens
+/// the Farcaster app; on a computer, the hand-off, with the link as a QR
+/// code for the reader's phone and on farcaster.xyz. The draft is the app's
+/// from there on.
 #[component]
 fn PostLink(composer: Composer) -> impl IntoView {
     let empty = Memo::new(move |_| composer.draft().is_empty());
+    let hand_off = use_hand_off();
     move || {
         if empty.get() {
             view! { <button type="button" class="button compose-post" disabled=true>"Post in Farcaster"</button> }
                 .into_any()
+        } else if can_hover() {
+            view! {
+                <button
+                    type="button"
+                    class="button compose-post"
+                    aria-haspopup="dialog"
+                    on:click=move |_| hand_off.open(composer.hand_off_ask())
+                >
+                    "Post in Farcaster"
+                </button>
+            }
+            .into_any()
         } else {
             view! {
                 <a

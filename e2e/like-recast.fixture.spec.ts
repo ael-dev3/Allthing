@@ -148,30 +148,34 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-test("signed out, the icons sign in first and never open the list; the preview is as it was", async ({ page }) => {
+test("signed out, the icons open the cast in the Farcaster app and never the list; the preview is as it was", async ({ page }) => {
   const calls = await serve(page);
   await page.goto("/");
   const like = card(page, first).getByRole("button", { name: "Like", exact: true });
-  await expect(like).toHaveAttribute("aria-pressed", "false");
+  // Not a toggle here: a way to the Farcaster app.
+  await expect(like).not.toHaveAttribute("aria-pressed");
+  await expect(like).toHaveAttribute("aria-haspopup", "dialog");
   await expect(card(page, first).getByRole("button", { name: "Recast", exact: true })).toBeVisible();
   // Pointing at the heart previews who liked, as pointing at the count does.
   await like.hover();
   const preview = card(page, first).getByRole("dialog", { name: "Liked by" });
   await expect(preview).toContainText("@alice");
-  // A click on it signs in; the list doesn't open.
+  // A click on it hands the like to the Farcaster app; the list doesn't open,
+  // and no one is asked to sign in.
   await like.click();
-  const signIn = page.getByRole("dialog", { name: "Sign in with Farcaster" });
-  await expect(signIn).toBeVisible();
+  const handOff = page.getByRole("dialog", { name: "Like in Farcaster" });
+  await expect(handOff.getByRole("link", { name: /Open on farcaster\.xyz/ })).toHaveAttribute("href", `https://farcaster.xyz/alice/${first.hash.slice(0, 10)}`);
+  await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toHaveCount(0);
   await expect(page.locator(".who-modal")).toHaveCount(0);
-  // Closed without signing in, the like is dropped: signing in later from
-  // the header neither likes nor asks for a key.
   await page.keyboard.press("Escape");
-  await expect(signIn).toBeHidden();
+  await expect(handOff).toHaveCount(0);
   await expect(like).toBeFocused();
+  // Signing in from the header, where the Worker endorses keys, makes the
+  // heart a toggle, and asks for no key until it's pressed.
   await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
   await expect(page.getByRole("link", { name: "Signed in as @reader: your profile" })).toBeVisible();
   await expect.poll(() => calls.writes).toBe(1);
-  await page.waitForTimeout(300);
+  await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("dialog", { name: "Like and recast" })).toHaveCount(0);
   expect(calls.endorse).toHaveLength(0);
   // The full list: the preview's "See everyone", or a click on the count.
@@ -186,13 +190,15 @@ test("signed out, the icons sign in first and never open the list; the preview i
   expect(calls.sent).toHaveLength(0);
 });
 
-test("a like clicked signed out signs in, approves a key, then likes", async ({ page }) => {
+test("signed in from the header, a like approves a key, then likes", async ({ page }) => {
   const calls = await serve(page);
   await page.goto("/");
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  await expect(page.getByRole("link", { name: "Signed in as @reader: your profile" })).toBeVisible();
   const like = card(page, first).getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("aria-pressed", "false");
   await like.click();
-  await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeVisible();
-  // Approved in the Farcaster app: signed in, and on to the key.
+  // On to the key, approved in the Farcaster app.
   const keyDialog = page.getByRole("dialog", { name: "Like and recast" });
   await expect(keyDialog.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
   expect(calls.signIns).toBe(1);
@@ -206,18 +212,24 @@ test("a like clicked signed out signs in, approves a key, then likes", async ({ 
   await expect(page.locator(".who-modal")).toHaveCount(0);
 });
 
-test("on a server that endorses no keys, a signed-in reader's icons are pictures", async ({ page }) => {
+test("on a server that endorses no keys, a signed-in reader likes and recasts in the Farcaster app", async ({ page }) => {
   await signIn(page);
   const calls = await serve(page, { writes: false });
   await page.goto("/");
   await expect(card(page, first)).toBeVisible();
   await expect.poll(() => calls.writes).toBe(1);
-  await expect(page.locator(".engagement .act")).toHaveCount(0);
-  // A click on the icon does nothing; the count is as it was.
-  await card(page, first).locator(".stat-likes .icon").click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const recast = card(page, first).getByRole("button", { name: "Recast", exact: true });
+  await expect(recast).not.toHaveAttribute("aria-pressed");
+  await recast.click();
+  const handOff = page.getByRole("dialog", { name: "Recast in Farcaster" });
+  await expect(handOff).toContainText("The Farcaster app opens this cast. Recast it there.");
+  await expect(handOff.getByRole("link", { name: /Open on farcaster\.xyz/ })).toHaveAttribute("href", `https://farcaster.xyz/alice/${first.hash.slice(0, 10)}`);
+  // The count is as it was, and no key is asked for.
+  await page.keyboard.press("Escape");
   await expect(card(page, first).getByRole("button", { name: "3 likes: show who" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Like and recast" })).toHaveCount(0);
   expect(calls.endorse).toHaveLength(0);
+  expect(calls.sent).toHaveLength(0);
 });
 
 test("a like asks for a key by QR code, then likes, unlikes and remembers", async ({ page }) => {
@@ -316,7 +328,7 @@ test("on a phone, the buttons are easy to tap and the dialog fits", async ({ bro
   await context.close();
 });
 
-test("on a phone, signed out, a tap on the heart signs in; one on the count previews who", async ({ browser }, testInfo) => {
+test("on a phone, signed out, a tap on the heart opens the Farcaster app's way; one on the count previews who", async ({ browser }, testInfo) => {
   const { context, page } = await phone(browser, testInfo);
   const calls = await serve(page);
   await page.goto("/");
@@ -334,8 +346,11 @@ test("on a phone, signed out, a tap on the heart signs in; one on the count prev
   await page.keyboard.press("Escape");
   await expect(list).toHaveCount(0);
   await card(page, first).getByRole("button", { name: "Like", exact: true }).tap();
-  const signIn = page.getByRole("dialog", { name: "Sign in with Farcaster" });
-  await expect(signIn).toBeInViewport({ ratio: 1 });
+  // No code on a phone: its link opens the app.
+  const handOff = page.getByRole("dialog", { name: "Like in Farcaster" });
+  await expect(handOff).toBeInViewport({ ratio: 1 });
+  await expect(handOff.getByRole("link", { name: /Open in Farcaster/ })).toHaveAttribute("href", `https://farcaster.xyz/alice/${first.hash.slice(0, 10)}`);
+  await expect(handOff.getByRole("img")).toHaveCount(0);
   await expect(list).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   expect(calls.sent).toHaveLength(0);
@@ -391,8 +406,8 @@ test("an approval from another account is refused, and signing out forgets the k
   await page.getByRole("dialog", { name: "Your account" }).getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
   await expect.poll(() => kept(page)).toBeNull();
-  // Signed out, the hearts are there to sign in with, none pressed.
-  await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-pressed", "false");
+  // Signed out, the hearts open the casts in the Farcaster app.
+  await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).not.toHaveAttribute("aria-pressed");
 });
 
 test("the real Worker endorses keys only for a session, from Allthing, and draws only Farcaster's links", async ({ request, baseURL }) => {
@@ -411,7 +426,20 @@ test("the real Worker endorses keys only for a session, from Allthing, and draws
   const code = await request.post("/api/v1/auth/qr", { data: { url: LINK }, headers: { origin } });
   expect(code.status()).toBe(200);
   expect((await code.json()).path).toMatch(/^M4 4h7v1h-7z/);
-  for (const url of [`${LINK}&next=https://evil.example`, "farcaster://signed-key-request?token=0x12", "https://evil.example/?token=0xfc01"]) {
+  // The Farcaster app's own links, which writes are handed to: its composer,
+  // a cast and a profile.
+  for (const url of ["https://farcaster.xyz/~/compose?text=gm&parentCastHash=0x01", `https://farcaster.xyz/alice/${first.hash.slice(0, 10)}`, "https://farcaster.xyz/alice"]) {
+    const drawn = await request.post("/api/v1/auth/qr", { data: { url }, headers: { origin } });
+    expect(drawn.status(), url).toBe(200);
+  }
+  for (const url of [
+    `${LINK}&next=https://evil.example`,
+    "farcaster://signed-key-request?token=0x12",
+    "https://evil.example/?token=0xfc01",
+    "https://farcaster.xyz/~/settings",
+    "https://farcaster.xyz/alice?next=https://evil.example",
+    "https://farcaster.xyz.evil.example/alice",
+  ]) {
     const refused = await request.post("/api/v1/auth/qr", { data: { url }, headers: { origin } });
     expect(refused.status(), url).toBe(400);
   }

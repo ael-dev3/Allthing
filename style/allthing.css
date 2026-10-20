@@ -69,7 +69,8 @@ html.lightbox-open,
 html.who-open,
 html.signin-open,
 html.key-open,
-html.compose-open {
+html.compose-open,
+html.handoff-open {
   overflow: hidden;
 }
 
@@ -4111,6 +4112,62 @@ p.jumbo .emoji img {
 
 .compose-note {
   margin: 0;
+}
+
+/* A write handed to the Farcaster app: the code for the reader's phone on a
+   computer, what to do there, and the link, in the accent. */
+.handoff-line {
+  margin: 0;
+  color: var(--ink-2);
+  max-width: 34ch;
+  text-wrap: balance;
+}
+
+.handoff-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 11px 20px;
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  text-decoration: none;
+}
+
+.handoff-open:hover {
+  color: #fff;
+  background: #4337c4;
+}
+
+.handoff-open .icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.handoff-done {
+  font: 600 13.5px/1 var(--font-ui);
+  padding: 6px 10px;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.handoff-done:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.qr-none {
+  padding: 18px;
+  text-align: center;
 }
 
 .quote-button,

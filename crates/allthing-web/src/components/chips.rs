@@ -156,7 +156,8 @@ fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList) -> AnyVi
     if let Some(writer) = crate::components::writer::use_writer()
         && let Some(target) = allthing_core::message::CastId::new(cast.author.fid, &cast.hash)
     {
-        return acting_stat(writer, target, cast.hash.clone(), kind, n, who);
+        let url = allthing_core::compose::cast_url(&cast.author.username, &cast.hash);
+        return acting_stat(writer, target, cast.hash.clone(), url, kind, n, who);
     }
     let (icon, _, _, class) = reaction_words(kind);
     let lead =
@@ -202,24 +203,30 @@ fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, le
 }
 
 /// A like or recast button before the count, pressed when the reader has,
-/// and the count, which follows what they do. For a reader signed out, or
-/// without a key yet, the button signs them in or approves a key first
-/// (`Writer::toggle`); where the Worker endorses no keys, the icon is a
-/// picture.
+/// and the count, which follows what they do. For a reader without a key
+/// yet, the button approves one first (`Writer::toggle`); signed out, or
+/// where the Worker endorses no keys, it opens the cast in the Farcaster app
+/// (`url`), to like or recast there.
 #[cfg(not(feature = "static-host"))]
 fn acting_stat(
     writer: crate::components::writer::Writer,
     target: allthing_core::message::CastId,
     hash: String,
+    url: String,
     kind: ReactionKind,
     n: u64,
     who: WhoList,
 ) -> AnyView {
+    use crate::components::handoff::Ask;
     use allthing_core::message::Reaction;
     let (icon, _, _, class) = reaction_words(kind);
     let (reaction, action) = match kind {
         ReactionKind::Likes => (Reaction::Like, "Like"),
         ReactionKind::Recasts => (Reaction::Recast, "Recast"),
+    };
+    let ask = move || match kind {
+        ReactionKind::Likes => Ask::like(url.clone()),
+        ReactionKind::Recasts => Ask::recast(url.clone()),
     };
     let key = hash.clone();
     let mine = Memo::new(move |_| writer.reacted(&key, reaction));
@@ -227,26 +234,22 @@ fn acting_stat(
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
     let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
-    let buttons = Memo::new(move |_| writer.icons_act());
+    let hands_off = Memo::new(move |_| writer.hands_off());
     let lead = ViewFn::from(move || {
-        move || {
-            let icon = view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> };
-            if !buttons.get() {
-                return icon.into_any();
-            }
-            view! {
-                <button
-                    type="button"
-                    class="act"
-                    aria-label=action
-                    aria-pressed=move || mine.get().to_string()
-                    aria-busy=move || busy.get().then_some("true")
-                    on:click=move |_| writer.toggle(target, reaction)
-                >
-                    {icon}
-                </button>
-            }
-            .into_any()
+        let ask = ask.clone();
+        view! {
+            <button
+                type="button"
+                class="act"
+                aria-label=action
+                // A toggle where Allthing writes; a way to the app otherwise.
+                aria-pressed=move || (!hands_off.get()).then(|| mine.get().to_string())
+                aria-haspopup=move || hands_off.get().then_some("dialog")
+                aria-busy=move || busy.get().then_some("true")
+                on:click=move |_| writer.toggle(target, reaction, ask())
+            >
+                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
+            </button>
         }
     });
     view! {

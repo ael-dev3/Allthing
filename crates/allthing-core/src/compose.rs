@@ -3,7 +3,9 @@
 //! cast it answers or quotes) becomes the cast the reader's key signs
 //! ([`Draft::new_cast`]); where Allthing endorses no keys, it opens in the
 //! Farcaster app instead, ready to post, through farcaster.xyz's compose
-//! link ([`Draft::compose_url`]).
+//! link ([`Draft::compose_url`]). Likes, recasts, follows and deletions go
+//! there the same way, to the cast or the profile ([`cast_url`],
+//! [`profile_url`]): the links Allthing hands a write to ([`is_handoff_link`]).
 //!
 //! GIFs come from KLIPY (<https://docs.klipy.com>). KLIPY asks that its API
 //! and its media be reached from the reader's browser, never through a
@@ -70,13 +72,60 @@ pub struct Quoted {
 
 impl Quoted {
     /// Its link in the Farcaster app, which quotes it when a draft opens
-    /// there: its author's name and its hash's first eight digits.
+    /// there.
     pub fn url(&self) -> String {
-        format!(
-            "https://farcaster.xyz/{}/{}",
-            percent_encode(&self.username),
-            self.hash.get(..10).unwrap_or(&self.hash)
-        )
+        cast_url(&self.username, &self.hash)
+    }
+}
+
+/// Where the Farcaster app opens a cast: its author's name and its hash's
+/// first eight digits, or, for an author without a username, the whole hash.
+pub fn cast_url(username: &str, hash: &str) -> String {
+    if username.is_empty() {
+        format!("{APP}/~/conversations/{hash}")
+    } else {
+        format!("{APP}/{}/{}", percent_encode(username), hash.get(..10).unwrap_or(hash))
+    }
+}
+
+/// Where the Farcaster app opens an account's profile: its name, or its fid
+/// for an account without a username.
+pub fn profile_url(username: &str, fid: u64) -> String {
+    if username.is_empty() { format!("{APP}/~/profiles/{fid}") } else { format!("{APP}/{}", percent_encode(username)) }
+}
+
+/// The Farcaster app, on the web; a phone with the app opens its links there.
+const APP: &str = "https://farcaster.xyz";
+
+/// A link Allthing hands a write to: the Farcaster app's composer with a
+/// draft ([`Draft::compose_url`]), a cast ([`cast_url`]) or a profile
+/// ([`profile_url`]), on farcaster.xyz, and nothing else. The QR endpoint
+/// draws these, as well as sign-in and key request links.
+pub fn is_handoff_link(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://farcaster.xyz/") else { return false };
+    if url.len() > 4096 {
+        return false;
+    }
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (rest, None),
+    };
+    // As `percent_encode` writes them, and the query's own `&`, `=` and `[]`.
+    let encoded = |s: &str, extra: &[u8]| {
+        s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.~!*'()%".contains(&b) || extra.contains(&b))
+    };
+    let name = |s: &str| (1..=64).contains(&s.len()) && s != "~" && encoded(s, b"");
+    let hex = |s: &str, digits: std::ops::RangeInclusive<usize>| {
+        s.strip_prefix("0x").is_some_and(|h| digits.contains(&h.len()) && h.bytes().all(|b| b.is_ascii_hexdigit()))
+    };
+    let parts: Vec<&str> = path.split('/').collect();
+    match (parts.as_slice(), query) {
+        (["~", "compose"], query) => query.is_none_or(|q| encoded(q, b"&=[]")),
+        (["~", "conversations", hash], None) => hex(hash, 40..=40),
+        (["~", "profiles", fid], None) => (1..=20).contains(&fid.len()) && fid.bytes().all(|b| b.is_ascii_digit()),
+        ([user], None) => name(user),
+        ([user, hash], None) => name(user) && hex(hash, 8..=40),
+        _ => false,
     }
 }
 
@@ -394,5 +443,68 @@ mod tests {
         // Unknown names stay as written.
         let plain = Draft { text: "hi @nobody".into(), ..Draft::default() }.new_cast(fids);
         assert_eq!((plain.text.as_str(), plain.mentions.len(), plain.parent), ("hi @nobody", 0, None));
+    }
+
+    #[test]
+    fn casts_and_profiles_open_in_the_farcaster_app() {
+        let hash = "0x0945506739352d78a4fd9c5c7c6f2f4b1d1a7e59";
+        assert_eq!(cast_url("dwr", hash), "https://farcaster.xyz/dwr/0x09455067");
+        assert_eq!(cast_url("0xael.eth", hash), "https://farcaster.xyz/0xael.eth/0x09455067");
+        // An author without a username: the whole hash.
+        assert_eq!(cast_url("", hash), format!("https://farcaster.xyz/~/conversations/{hash}"));
+        assert_eq!(profile_url("dwr", 3), "https://farcaster.xyz/dwr");
+        assert_eq!(profile_url("", 1234), "https://farcaster.xyz/~/profiles/1234");
+        // A Pepe reaction, as the reply the app opens ready to post.
+        let react = Draft { text: ":pepe_no:".into(), parent_hash: Some(hash.into()), ..Draft::default() };
+        assert_eq!(
+            react.compose_url(),
+            format!("https://farcaster.xyz/~/compose?text=%3Apepe_no%3A&parentCastHash={hash}")
+        );
+    }
+
+    #[test]
+    fn only_the_farcaster_apps_own_links_are_handed_off() {
+        let hash = "0x0945506739352d78a4fd9c5c7c6f2f4b1d1a7e59";
+        let draft = Draft {
+            text: "gm & hello? 100% (it's \"so\" true!)".into(),
+            embeds: vec!["https://static.klipy.com/ii/abc/14/af/cat.gif".into()],
+            parent_hash: Some(hash.into()),
+            ..Draft::default()
+        };
+        for url in [
+            draft.compose_url(),
+            COMPOSE_URL.to_owned(),
+            Draft { channel: Some("dev".into()), text: "hi".into(), ..Draft::default() }.compose_url(),
+            cast_url("dwr", hash),
+            cast_url("0xael.eth", hash),
+            cast_url("", hash),
+            profile_url("dwr", 3),
+            profile_url("", 3),
+        ] {
+            assert!(is_handoff_link(&url), "{url}");
+        }
+        for url in [
+            "http://farcaster.xyz/dwr",
+            "https://farcaster.xyz.evil.example/dwr",
+            "https://evil.example/https://farcaster.xyz/dwr",
+            "https://farcaster.xyz/",
+            "https://farcaster.xyz/~",
+            "https://farcaster.xyz/~/settings",
+            "https://farcaster.xyz/~/compose/x",
+            "https://farcaster.xyz/~/compose?text=<script>",
+            "https://farcaster.xyz/~/compose?text=a b",
+            "https://farcaster.xyz/dwr?next=https://evil.example",
+            "https://farcaster.xyz/dwr/0x0945",
+            "https://farcaster.xyz/dwr/0x09455067zz",
+            "https://farcaster.xyz/dwr/0x09455067/likes",
+            "https://farcaster.xyz/~/conversations/0x09455067",
+            "https://farcaster.xyz/~/profiles/three",
+            "https://farcaster.xyz/miniapps/abc/name",
+            "https://farcaster.xyz/d w r",
+            "farcaster://signed-key-request?token=0x12",
+        ] {
+            assert!(!is_handoff_link(url), "{url}");
+        }
+        assert!(!is_handoff_link(&format!("https://farcaster.xyz/~/compose?text={}", "a".repeat(4100))));
     }
 }

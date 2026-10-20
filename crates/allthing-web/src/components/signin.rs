@@ -129,17 +129,11 @@ impl Session {
         fresh(self);
     }
 
-    /// Open the sign-in dialog, for something only a signed-in reader can
-    /// do (a like, say), which follows once they have.
+    /// Open the sign-in dialog.
     pub fn sign_in(self) {
         if !self.open.get_untracked() {
             self.open();
         }
-    }
-
-    /// Whether the sign-in dialog is open.
-    pub fn dialog_open(self) -> bool {
-        self.open.get()
     }
 
     /// Close the dialog, stopping its sign-in, and return focus to where it
@@ -595,7 +589,7 @@ pub fn SignInDialog() -> impl IntoView {
                             <p class="signin-status" class:error=stuck role="status">
                                 {status}
                             </p>
-                            <p class="signin-note muted small">"Signing in tells Allthing who you are, nothing more. Liking, recasting and posting take a key you approve once, in the Farcaster app."</p>
+                            <p class="signin-note muted small">"Signing in tells Allthing who you are, nothing more."</p>
                         </div>
                     </div>
                 </div>
