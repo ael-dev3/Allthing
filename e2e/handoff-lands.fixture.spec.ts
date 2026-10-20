@@ -140,6 +140,25 @@ test("a like done in the Farcaster app shows here: the heart fills, the count go
   await expect(page.getByRole("status").filter({ hasText: "Unliked." })).toBeVisible();
 });
 
+test("a like from before, older than the reader's latest, is found at once: the heart fills and the count stays", async ({ page }) => {
+  await signIn(page, me);
+  // Liked long ago: the node has it, but not among the latest likes.
+  const done: Done = { liked: true, following: false, deleted: false };
+  const asked = await serve(page, done);
+  await page.goto("/");
+  const like = card(page, theirs.hash).getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("aria-pressed", "false");
+  await like.click();
+  // Asked before the reader can have done anything: nothing to do.
+  await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toHaveCount(0, { timeout: 2_000 });
+  await expect(like).toHaveAttribute("aria-pressed", "true");
+  await expect(likes(page, theirs.hash)).toContainText("3");
+  await expect(page.getByRole("status").filter({ hasText: "Already done in Farcaster." })).toBeVisible();
+  const after = asked.reaction;
+  await page.waitForTimeout(4_000);
+  expect(asked.reaction).toBe(after);
+});
+
 test("a follow and a delete done in the Farcaster app show here", async ({ page }) => {
   await signIn(page, me);
   const done: Done = { liked: false, following: false, deleted: false };

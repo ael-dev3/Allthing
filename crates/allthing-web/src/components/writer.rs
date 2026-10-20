@@ -632,8 +632,10 @@ impl Writer {
     /// After a write went to the Farcaster app (`url`): ask the node every
     /// few seconds, and at once when the page is back in view, whether the
     /// reader did it there; once they have, it shows here, the dialog
-    /// closes if it's still open, and a notice says so. A newer hand-off of
-    /// the same takes its place; signing out, or a few minutes, ends it.
+    /// closes if it's still open, and a notice says so. Asked first right
+    /// away, before the reader can have: then it was so already, and the
+    /// page was behind (a like older than their latest). A newer hand-off
+    /// of the same takes its place; signing out, or a few minutes, ends it.
     fn watch(self, expect: Expect, url: String) {
         let Some(reader) = self.fid() else { return };
         let about = expect.about();
@@ -646,13 +648,21 @@ impl Writer {
             move |about: &str| WATCHES.with(|w| w.borrow().get(about) == Some(&run)) && self.fid() == Some(reader);
         let started = js_sys::Date::now();
         spawn_local(async move {
+            let mut first = true;
             while current(&about) && js_sys::Date::now() - started < WATCH_FOR_MS {
-                pause(WATCH_MS).await;
+                if !first {
+                    pause(WATCH_MS).await;
+                }
                 if current(&about) && self.landed(reader, &expect).await == Some(true) && current(&about) {
-                    self.show(&expect);
+                    if first {
+                        self.was_so(&expect);
+                    } else {
+                        self.show(&expect);
+                    }
                     self.hand_off.close_if(&url);
                     break;
                 }
+                first = false;
             }
             WATCHES.with(|w| {
                 let mut watches = w.borrow_mut();
@@ -680,6 +690,31 @@ impl Writer {
                 message::cast_gone(status, &body)
             }
         }
+    }
+
+    /// Show what the node had before the hand-off, as it says: the button
+    /// turns, and the count, which had it, stays as it is.
+    fn was_so(self, expect: &Expect) {
+        self.mine.update(|m| match expect {
+            Expect::Reaction { target, kind, on } => {
+                let key = (hex_encode(&target.hash), *kind);
+                m.changed.remove(&key);
+                if *on {
+                    m.known.insert(key);
+                } else {
+                    m.known.remove(&key);
+                }
+            }
+            Expect::Follow { fid, on } => {
+                m.follow_changed.remove(fid);
+                m.follows.insert(*fid, *on);
+            }
+            Expect::Deleted { target } => {
+                m.deleted.insert(hex_encode(&target.hash));
+                remember_deleted(&m.deleted);
+            }
+        });
+        self.say("Already done in Farcaster.".to_owned());
     }
 
     /// Show what the reader did in the Farcaster app, as if done here.
