@@ -7,12 +7,15 @@
 //! Not in the static copy, which has no Worker.
 
 use std::cell::{Cell, RefCell};
+use std::future::Future;
+use std::pin::Pin;
 
 use allthing_core::model::UserSummary;
 use allthing_core::siwf::{self, Proof, QrCode, QrRequest, RELAY, SignedIn, Started, USER_COOKIE};
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::use_location;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
@@ -40,6 +43,7 @@ const CHECK_WAIT_MS: i32 = 1000;
 const EXPIRED: &str = "This code has expired. Get a new one to sign in.";
 const RELAY_DOWN: &str = "Couldn't reach Farcaster's sign-in relay. Check your connection and try again.";
 const UNCONFIRMED: &str = "You approved, but Allthing couldn't confirm it on Optimism just now.";
+const UNLOADED: &str = "This part of Allthing couldn't load. Check the connection, or reload the page.";
 /// The other tabs of the site hear on this when someone signs in or out.
 const TABS: &str = "allthing-session";
 
@@ -229,7 +233,10 @@ fn begin(session: Session) {
     let run = next_run();
     session.step.set(Step::Starting);
     spawn_local(async move {
-        let outcome = sign_in(run, session.step).await;
+        let outcome = match sign_in_flow(run, session.step).await {
+            Ok(flow) => flow.await,
+            Err(_) => Err(UNLOADED.to_owned()),
+        };
         settle(session, run, outcome);
     });
 }
@@ -238,9 +245,36 @@ fn begin(session: Session) {
 fn recheck(session: Session, proof: Proof, who: Option<Approver>) {
     let run = next_run();
     spawn_local(async move {
-        let outcome = check(run, session.step, proof, who).await;
+        let outcome = match check_flow(run, session.step, proof, who).await {
+            Ok(flow) => flow.await,
+            Err(_) => Err(UNLOADED.to_owned()),
+        };
         settle(session, run, outcome);
     });
+}
+
+/// Fetch the sign-in's code ahead of a click that opens the dialog.
+fn warm() {
+    spawn_local(async {
+        let _ = preload_sign_in().await;
+    });
+}
+
+/// A sign-in under way, to its end.
+type Flow = Pin<Box<dyn Future<Output = Result<UserSummary, String>>>>;
+
+/// A sign-in, from a code from Farcaster's relay to the Worker's check of
+/// the approval: code of its own, fetched as Sign in is pointed at,
+/// focused or pressed (`warm`), or when the dialog opens (`crate::split`).
+#[wasm_split(signin, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_sign_in))]
+fn sign_in_flow(run: u64, step: RwSignal<Step>) -> Result<Flow, SplitLoaderError> {
+    Ok(Box::pin(sign_in(run, step)))
+}
+
+/// The Worker's check of an approval again, in the sign-in's code.
+#[wasm_split(signin, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn check_flow(run: u64, step: RwSignal<Step>, proof: Proof, who: Option<Approver>) -> Result<Flow, SplitLoaderError> {
+    Ok(Box::pin(check(run, step, proof, who)))
 }
 
 /// Where a sign-in ended. An empty message is a run that stopped, or one
@@ -429,7 +463,15 @@ pub fn Account() -> impl IntoView {
     move || {
         match session.user.get() {
         None => view! {
-            <button type="button" class="sign-in-button" aria-label="Sign in with Farcaster" on:click=move |_| session.open()>
+            <button
+                type="button"
+                class="sign-in-button"
+                aria-label="Sign in with Farcaster"
+                on:pointerenter=move |_| warm()
+                on:pointerdown=move |_| warm()
+                on:focus=move |_| warm()
+                on:click=move |_| session.open()
+            >
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d=PERSON/></svg>
                 <span class="sign-in-label">"Sign in"</span>
             </button>
