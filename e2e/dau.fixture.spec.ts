@@ -170,7 +170,57 @@ test.describe("with the Worker", () => {
     // Before a whole window: no 24-hour figure, and when it comes.
     await serve(page, payload({ rolling_24h: undefined, previous_24h: undefined, since: to - 3_600 }));
     await page.reload();
-    await expect(page.locator(".dau-meter")).toContainText("The first 24-hour count comes once a whole day has been read");
+    const first = to - 3_600 + DAY;
+    const at = `${String(new Date(first * 1000).getUTCHours()).padStart(2, "0")}:00 UTC`;
+    await expect(page.locator(".dau-meter")).toHaveText(`The first 24-hour count comes once the 24 hours to ${short(Math.floor(first / DAY))}, ${at} have been read.`);
+    await expect(page.locator(".dau-behind")).toHaveCount(0);
+  });
+
+  test("while catching up, today and yesterday follow the clock, and the page says how far it has read", async ({ page }) => {
+    // As after a deploy: counting began at 23:29 the day before yesterday,
+    // and reading has got to 08:24 yesterday, many hours behind the clock.
+    const behind = (today - 1) * DAY + 8 * 3_600 + 24 * 60 + 7;
+    const actions = (n: number) => ({ reaction: 316 * n, cast: 156 * n, link: 45 * n, user_data: 44 * n, verification: 7 * n, storage_lending: 6 * n });
+    await serve(page, {
+      reached: behind, rolling_to: Math.floor(behind / 3_600) * 3_600, since: (today - 1) * DAY - 1_808,
+      days: [
+        { day: today - 2, active: 134, complete: false, actions: actions(1) },
+        { day: today - 1, active: 3_047, complete: false, actions: actions(10) },
+      ],
+      meta: { backend: "hypersnap", fetched_at: Date.now() },
+    });
+    await page.goto("/dau");
+    const year = new Date((today - 1) * DAY * 1000).getUTCFullYear();
+    await expect(page.locator(".dau-behind")).toHaveText(
+      `Catching up: Allthing has read the network's messages to ${short(today - 1)} ${year}, 08:24 UTC so far, and reads them faster than they come until it is current. The counts below go to then.`,
+    );
+    await expect(page.getByRole("status").filter({ hasText: "Catching up" })).toBeVisible();
+    await expect(page.locator(".dau-meter")).toHaveText(`The first 24-hour count comes once the 24 hours to ${short(today)}, 00:00 UTC have been read.`);
+    // Today hasn't been read; yesterday is being read; no whole day yet.
+    const tiles = page.locator(".dau-tile");
+    await expect(tiles.nth(0).locator(".dau-tile-count")).toHaveText("—");
+    await expect(tiles.nth(0).locator(".dau-tile-note")).toHaveText("not read yet");
+    await expect(tiles.nth(1).locator(".dau-tile-count")).toHaveText("3,047");
+    await expect(tiles.nth(1).locator(".dau-tile-note")).toHaveText(`${short(today - 1)}, read to 08:24 UTC so far`);
+    await expect(tiles.nth(2).locator(".dau-tile-count")).toHaveText("—");
+    await expect(tiles.nth(2).locator(".dau-tile-note")).toHaveText("once a whole day has been read");
+    // The chart ends today, labelled though not read; the day being read is
+    // partly counted so far, not today's.
+    const chart = page.locator(".dau-chart");
+    const bars = chart.locator("rect");
+    await expect(bars).toHaveCount(2);
+    await expect(bars.last()).toHaveClass(/partial/);
+    await expect(bars.last()).not.toHaveClass(/today/);
+    await expect(bars.last().locator("title")).toHaveText(/3,047 accounts \(read so far\)$/);
+    await expect(bars.first().locator("title")).toHaveText(/134 accounts \(partly counted\)$/);
+    await expect(chart.locator(".dau-ticks span").last()).toHaveText(short(today));
+    const [svg, last] = await Promise.all([chart.locator("svg").boundingBox(), bars.last().boundingBox()]);
+    // Yesterday's bar sits one slot in from the right, today's slot empty.
+    expect(svg!.x + svg!.width - (last!.x + last!.width)).toBeGreaterThan(svg!.width / 30);
+    await chart.getByText("The days as a table").click();
+    await expect(chart.locator("tbody tr").first().locator("th")).toContainText("(read so far)");
+    // What they did: the day being read, said so, not the 31 minutes before it.
+    await expect(page.locator(".dau-mix")).toContainText(`5,740 messages merged on ${short(today - 1)}, read to 08:24 UTC so far, by kind.`);
   });
 
   test("a short history keeps a month's room, the newest day on the right", async ({ page }) => {

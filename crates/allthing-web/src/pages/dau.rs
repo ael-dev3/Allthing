@@ -5,7 +5,7 @@
 //! before, the UTC days of the past month, what the accounts did, which
 //! apps they used, and how and since when they were counted.
 
-use allthing_core::activity::{ActivityPayload, AppsWindow, DayCount, Family, Window, day, day_name};
+use allthing_core::activity::{ActivityPayload, AppsWindow, DayCount, Family, day, day_name};
 use allthing_core::api::ACTIVITY_PATH;
 use allthing_core::clients::{client_name, client_profile};
 use allthing_core::format::{full_number, plural};
@@ -28,10 +28,30 @@ fn date(day: i64, year: bool) -> String {
     if year { format!("{short} {y}") } else { short }
 }
 
+/// "14:05 UTC".
+fn clock(at: i64) -> String {
+    format!("{:02}:{:02} UTC", at.div_euclid(3_600).rem_euclid(24), at.div_euclid(60).rem_euclid(60))
+}
+
 /// "14:05 UTC", with the date when it isn't today.
 fn moment(at: i64) -> String {
-    let time = format!("{:02}:{:02} UTC", at.div_euclid(3_600).rem_euclid(24), at.div_euclid(60).rem_euclid(60));
-    if day(at) == day(now()) { time } else { format!("{}, {time}", date(day(at), true)) }
+    if day(at) == day(now()) { clock(at) } else { format!("{}, {}", date(day(at), true), clock(at)) }
+}
+
+/// How far behind the clock reading may be before the page says it is
+/// catching up: a run every 2 minutes is normally a few minutes behind.
+const BEHIND: i64 = 15 * 60;
+
+/// How much of a day has been read: "19 Oct", "19 Oct, partly counted"
+/// (counting began in it, or a gap), or "19 Oct, read to 08:24 UTC so far"
+/// while reading is in it.
+fn day_note(d: &DayCount, reached: Option<i64>) -> String {
+    let name = date(d.day, false);
+    match reached {
+        Some(at) if day(at) == d.day => format!("{name}, read to {} so far", clock(at)),
+        _ if d.complete => name,
+        _ => format!("{name}, partly counted"),
+    }
 }
 
 /// What a family of messages is called on the page.
@@ -108,37 +128,53 @@ fn NotCounted() -> impl IntoView {
 #[component]
 fn Dashboard(counted: ActivityPayload) -> impl IntoView {
     let reached = counted.reached;
-    let today = counted.days.last().filter(|d| Some(d.day) == reached.map(day)).map(|d| d.active);
-    let before = yesterday(&counted);
+    // Today and yesterday by the clock, not by how far reading has got:
+    // after a deploy or an outage the cron reads past days, faster than
+    // events come, until it has caught up.
+    let today = day(now());
+    let read = |on: i64| counted.days.iter().find(|d| d.day == on && reached.is_some_and(|at| day(at) >= on)).cloned();
+    let (so_far, before) = (read(today), read(today - 1));
+    let behind = reached.filter(|at| now() - at > BEHIND);
     let month = counted.active_30d;
     let apps = counted.apps_24h.clone().map(|apps| (apps, counted.app_accounts.clone()));
+    let begun_today = counted.since.is_some_and(|since| day(since) >= today);
     view! {
+        {behind.map(|at| view! {
+            <p class="dau-behind" role="status">
+                "Catching up: Allthing has read the network's messages to "{moment(at)}
+                " so far, and reads them faster than they come until it is current. The counts below go to then."
+            </p>
+        })}
         <Meter counted=counted.clone()/>
         <div class="dau-tiles">
-            <Tile label="Today so far" count=today>
-                {reached.map(|at| format!("from 00:00 to {}", moment(at)))}
+            <Tile label="Today so far" count=so_far.as_ref().map(|d| d.active)>
+                {match (&so_far, reached) {
+                    (Some(_), Some(at)) => format!("from 00:00 to {}", clock(at)),
+                    _ => "not read yet".to_owned(),
+                }}
             </Tile>
             <Tile label="Yesterday" count=before.as_ref().map(|d| d.active)>
-                {before.map(|d| if d.complete { date(d.day, false) } else { format!("{}, partly counted", date(d.day, false)) })}
+                {match &before {
+                    Some(d) => day_note(d, reached),
+                    None if begun_today => "before counting began".to_owned(),
+                    None => "not read yet".to_owned(),
+                }}
             </Tile>
             <Tile label="Past 30 days" count=month.map(|w| w.active)>
-                {month.map(|w: Window| {
-                    let to = format!("to the end of {}", date(w.day, false));
-                    if w.complete { to } else { format!("{to}, since counting began") }
-                })}
+                {match month {
+                    Some(w) => {
+                        let to = format!("to the end of {}", date(w.day, false));
+                        if w.complete { to } else { format!("{to}, since counting began") }
+                    }
+                    None => "once a whole day has been read".to_owned(),
+                }}
             </Tile>
         </div>
-        <Chart days=counted.days.clone()/>
+        <Chart days=counted.days.clone() today reached/>
         <Mix counted=counted.clone()/>
         {apps.map(|(apps, accounts)| view! { <Apps apps accounts/> })}
         <Method counted/>
     }
-}
-
-/// The last whole day counted: the day before the one in progress.
-fn yesterday(counted: &ActivityPayload) -> Option<DayCount> {
-    let reached = counted.reached?;
-    counted.days.iter().rev().find(|d| d.day == day(reached) - 1).cloned()
 }
 
 /// The past 24 hours against the 24 before: SnapMeter's meter.
@@ -151,10 +187,17 @@ fn Meter(counted: ActivityPayload) -> impl IntoView {
     let Some(active) = counted.rolling_24h else {
         // The first window ends 24 hours after counting began, on the hour.
         let first = counted.since.map(|since| (since + 86_400 + 3_599).div_euclid(3_600) * 3_600);
+        let when = match first {
+            Some(at) => format!(
+                "The first 24-hour count comes once the 24 hours to {}, {} have been read.",
+                date(day(at), false),
+                clock(at)
+            ),
+            None => "The first 24-hour count comes once a whole day has been read.".to_owned(),
+        };
         return view! {
             <section class="dau-card dau-meter">
-                <p class="dau-what">"The first 24-hour count comes once a whole day has been read"</p>
-                {first.map(|at| view! { <p class="dau-change">"at "{moment(at)}"."</p> })}
+                <p class="dau-what">{when}</p>
             </section>
         }
         .into_any();
@@ -192,13 +235,26 @@ fn Tile(label: &'static str, count: Option<u64>, #[prop(optional)] children: Opt
 /// readers and anyone who wants the numbers. The bars stretch to the width;
 /// their labels are text, so they stay readable on a phone.
 #[component]
-fn Chart(days: Vec<DayCount>) -> impl IntoView {
+fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView {
     if days.is_empty() {
         return ().into_any();
     }
     let n = days.len();
     let max = days.iter().map(|d| d.active).max().unwrap_or(0).max(1);
-    let last = days.last().map(|d| d.day);
+    let reading = reached.map(day);
+    // A day's class, and what its bar and its row say: the day being read is
+    // today's so far, or, while catching up, a past day read partly so far.
+    let note = |d: &DayCount| {
+        if Some(d.day) == reading && d.day == today {
+            ("today", " so far", " (so far)")
+        } else if Some(d.day) == reading {
+            ("partial", " (read so far)", " (read so far)")
+        } else if d.complete {
+            ("", "", "")
+        } else {
+            ("partial", " (partly counted)", " (partly)")
+        }
+    };
     let summary = format!(
         "Active accounts each UTC day from {} to {}: most {} on {}",
         date(days[0].day, false),
@@ -207,45 +263,38 @@ fn Chart(days: Vec<DayCount>) -> impl IntoView {
         days.iter().find(|d| d.active == max).map_or_else(String::new, |d| date(d.day, false)),
     );
     // Ten units a day, the bars 88 high at most under a line at the top.
-    // Room for a month however many days there are, the newest on the
-    // right, so a first day isn't one wide bar.
-    let slots = n.max(30);
-    let offset = slots - n;
+    // A slot a day up to today's, read or not, and room for a month however
+    // many days there are, so a first day isn't one wide bar.
+    let first = days[0].day;
+    let end = today.max(days[n - 1].day);
+    let span = usize::try_from(end - first + 1).unwrap_or(n);
+    let slots = span.max(30);
+    let slot = |on: i64| slots - span + usize::try_from(on - first).unwrap_or(0);
     let bars = days
         .iter()
-        .enumerate()
-        .map(|(i, d)| {
+        .map(|d| {
             let h = (d.active as f64 / max as f64 * 88.0).max(1.0);
-            let today = Some(d.day) == last;
-            let class = match (today, d.complete) {
-                (true, _) => "dau-bar today",
-                (false, true) => "dau-bar",
-                (false, false) => "dau-bar partial",
-            };
-            let note = if today {
-                " so far"
-            } else if d.complete {
-                ""
-            } else {
-                " (partly counted)"
-            };
-            let title = format!("{}: {}{note}", date(d.day, true), plural(d.active, "account", "accounts"));
+            let (kind, said, _) = note(d);
+            let class = if kind.is_empty() { "dau-bar".to_owned() } else { format!("dau-bar {kind}") };
+            let title = format!("{}: {}{said}", date(d.day, true), plural(d.active, "account", "accounts"));
             view! {
-                <rect class=class x=(offset + i) * 10 + 1 y=100.0 - h width="8" height=h>
+                <rect class=class x=slot(d.day) * 10 + 1 y=100.0 - h width="8" height=h>
                     <title>{title}</title>
                 </rect>
             }
         })
         .collect_view();
-    // A label a week, counted back from today, so the newest is labelled.
-    let ticks = days
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| (n - 1 - i).is_multiple_of(7))
-        .map(|(i, d)| {
-            let left = format!("left: {:.2}%", ((offset + i) as f64 + 0.5) / slots as f64 * 100.0);
-            view! { <span style=left>{date(d.day, false)}</span> }
+    // A label a week, counted back from today, so today is labelled.
+    let ticks = (0..)
+        .map(|week| end - 7 * week)
+        .take_while(|on| *on >= first)
+        .map(|on| {
+            let left = format!("left: {:.2}%", (slot(on) as f64 + 0.5) / slots as f64 * 100.0);
+            view! { <span style=left>{date(on, false)}</span> }
         })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
         .collect_view();
     view! {
         <section class="dau-card dau-chart">
@@ -270,7 +319,7 @@ fn Chart(days: Vec<DayCount>) -> impl IntoView {
                     <tbody>
                         {days.iter().rev().map(|d| {
                             let messages: u64 = d.actions.values().sum();
-                            let note = if Some(d.day) == last { " (so far)" } else if d.complete { "" } else { " (partly)" };
+                            let (_, _, note) = note(d);
                             view! {
                                 <tr>
                                     <th scope="row">{date(d.day, true)}{note}</th>
@@ -287,18 +336,27 @@ fn Chart(days: Vec<DayCount>) -> impl IntoView {
     .into_any()
 }
 
-/// What the accounts did on the last whole day (or today, before one).
+/// What the accounts did on the last day read whole; before one, on the
+/// day being read.
 #[component]
 fn Mix(counted: ActivityPayload) -> impl IntoView {
-    let Some(shown) = yesterday(&counted).or_else(|| counted.days.last().cloned()) else { return ().into_any() };
+    let reading = counted.reached.map(day);
+    let shown = (counted.days.iter().rev().find(|d| d.complete))
+        .or_else(|| counted.days.iter().find(|d| Some(d.day) == reading))
+        .or_else(|| counted.days.last())
+        .cloned();
+    let Some(shown) = shown else { return ().into_any() };
     let total: u64 = shown.actions.values().sum();
     if total == 0 {
         return ().into_any();
     }
     let mut families: Vec<(Family, u64)> = shown.actions.iter().map(|(f, n)| (*f, *n)).collect();
     families.sort_by(|a, b| b.1.cmp(&a.1).then(family_name(a.0).cmp(family_name(b.0))));
-    let today = counted.reached.is_some_and(|at| day(at) == shown.day);
-    let when = if today { "today so far".to_owned() } else { format!("on {}", date(shown.day, false)) };
+    let when = if reading == Some(shown.day) && shown.day == day(now()) {
+        "today so far".to_owned()
+    } else {
+        format!("on {}", day_note(&shown, counted.reached))
+    };
     view! {
         <section class="dau-card dau-mix">
             <h2>"What they did"</h2>
