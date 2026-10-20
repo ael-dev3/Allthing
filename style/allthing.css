@@ -4314,19 +4314,34 @@ p.jumbo .emoji img {
   gap: 8px;
 }
 
+/* Rows of whole GIFs, each row of one height: a tile grows from a basis of
+   its shape at the row's height (`GifTile`), so none is cropped. */
 .gif-grid {
+  --gif-row: 104px;
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+/* The last row's tiles keep their size: this takes what's left of it. */
+.gif-grid::after {
+  content: "";
+  flex-grow: 1000;
+}
+
+.gif-grid > li {
+  flex: var(--shape) 1 calc(var(--shape) * var(--gif-row));
+  /* A row that one tile ends early can't blow that tile up. */
+  max-width: calc(var(--shape) * var(--gif-row) * 1.75);
+  min-width: 0;
 }
 
 .gif-tile {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -4338,7 +4353,9 @@ p.jumbo .emoji img {
 .gif-tile img {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  /* The shape KLIPY gives, whatever the file turns out to be. */
+  aspect-ratio: var(--shape);
   object-fit: cover;
 }
 
@@ -4348,6 +4365,8 @@ p.jumbo .emoji img {
 }
 
 .gif-tile.placeholder {
+  flex: 1.33 1 calc(1.33 * var(--gif-row));
+  height: var(--gif-row);
   background: linear-gradient(90deg, #f1efe9 25%, #fbfaf6 50%, #f1efe9 75%);
   background-size: 200% 100%;
   animation: shimmer 1.3s linear infinite;
@@ -4607,7 +4626,7 @@ p.jumbo .emoji img {
   }
 
   .gif-grid {
-    grid-template-columns: repeat(3, 1fr);
+    --gif-row: 76px;
   }
 }
 

@@ -146,6 +146,8 @@ test("a cast with a GIF: trending, a search, more, a pick, and the hand-off", as
   await expect(tiles.nth(23)).toHaveAccessibleName("trending 24");
   await expect(tiles.first().locator("img")).toHaveAttribute("src", "https://static.klipy.com/ii/fixture/trending-1/sm.webp");
   await expect(picker).toContainText("Powered by KLIPY");
+  // No browser tooltips: each GIF's name is its button's.
+  await expect(picker.locator("[title]")).toHaveCount(0);
   // Typing: one search, once typing pauses.
   await search.pressSequentially("cats", { delay: 60 });
   await expect(tiles.first()).toHaveAccessibleName("cats 1");
@@ -311,6 +313,46 @@ test("a search with no results says so; a failed one offers a retry", async ({ p
 });
 const page_ = (q: string) => page(q, 24, false);
 
+test("each GIF shows whole, in rows that share a height and fill the width", async ({ page }) => {
+  await serve(page);
+  // KLIPY's GIFs come in every shape: wide, square, tall.
+  const shapes: [number, number][] = [[320, 180], [240, 240], [180, 320], [320, 240], [400, 170], [320, 180], [240, 240], [180, 320]];
+  await page.route(`${KLIPY}/**`, (route) => {
+    const data = shapes.map(([w, h], i) => {
+      const base = `https://static.klipy.com/ii/fixture/shape-${i + 1}`;
+      const f = (size: string) => ({ gif: { url: `${base}/${size}.gif`, width: w, height: h, size: 1000 }, webp: { url: `${base}/${size}.webp`, width: w, height: h, size: 500 } });
+      return { id: i + 1, slug: `shape-${i + 1}`, title: `${w} by ${h}`, type: "gif", tags: [], file: { hd: f("hd"), md: f("md"), sm: f("sm"), xs: f("xs") } };
+    });
+    return route.fulfill(klipy({ result: true, data: { data, current_page: 1, per_page: 24, has_next: false } }));
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  await dialog.getByRole("button", { name: "Add a GIF" }).click();
+  const tiles = dialog.locator(".gif-tile:not(.placeholder)");
+  await expect(tiles).toHaveCount(shapes.length);
+  const grid = (await dialog.locator(".gif-grid").boundingBox())!;
+  const boxes = await tiles.evaluateAll((els) => els.map((e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  }));
+  // Whole: each tile has its GIF's shape, cropped nowhere.
+  boxes.forEach((b, i) => expect(b.w / b.h).toBeCloseTo(shapes[i][0] / shapes[i][1], 1));
+  // In rows: a row's tiles share a height, and each row but the last fills the width.
+  const rows: (typeof boxes)[] = [];
+  for (const b of boxes) {
+    const row = rows.find((r) => Math.abs(r[0].y - b.y) < 1);
+    if (row) row.push(b);
+    else rows.push([b]);
+  }
+  expect(rows.length).toBeGreaterThan(1);
+  for (const row of rows) for (const b of row) expect(Math.abs(b.h - row[0].h)).toBeLessThan(1);
+  for (const row of rows.slice(0, -1)) {
+    const last = row[row.length - 1];
+    expect(Math.abs(last.x + last.w - (grid.x + grid.width))).toBeLessThan(1.5);
+  }
+});
+
 test("on a phone, the composer and its picker fit the screen", async ({ browser }, testInfo) => {
   const { context, page } = await phone(browser, testInfo);
   await serve(page);
@@ -332,6 +374,16 @@ test("on a phone, the composer and its picker fit the screen", async ({ browser 
   await dialog.getByRole("button", { name: "Add a GIF" }).tap();
   const tiles = dialog.locator(".gif-tile:not(.placeholder)");
   await expect(tiles).toHaveCount(24);
+  // The search box waits for a tap: focused, the phone's keyboard would
+  // cover the GIFs. Enter searches, and puts the keyboard away again.
+  const search = dialog.getByRole("searchbox", { name: "Search GIFs" });
+  await expect(search).not.toBeFocused();
+  await search.tap();
+  await expect(search).toBeFocused();
+  await page.keyboard.type("cats");
+  await page.keyboard.press("Enter");
+  await expect(search).not.toBeFocused();
+  await expect(tiles.first()).toHaveAccessibleName("cats 1");
   // Three to a row, each a comfortable tap.
   const boxes = await Promise.all([0, 1, 2, 3].map((i) => tiles.nth(i).boundingBox()));
   expect(boxes[0]!.y).toBeCloseTo(boxes[2]!.y, 0);
