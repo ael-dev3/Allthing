@@ -234,6 +234,10 @@ test("the first cast asks for a key, then goes out; at 390 it all fits", async (
   expect(calls.endorse).toBe(1);
   expect(calls.sent).toHaveLength(1);
   expect(castOf(calls.sent[0])).toMatchObject({ text: "first post from Allthing", parent: null });
-  await expect(page.getByRole("status").filter({ hasText: "Posted." })).toBeVisible();
+  const notice = page.getByRole("status").filter({ hasText: "Posted." });
+  await expect(notice).toBeVisible();
+  // The notice sits above the floating Cast button, not under it.
+  const [toast, fab] = await Promise.all([notice.boundingBox(), page.getByRole("button", { name: "Write a cast" }).boundingBox()]);
+  expect(toast!.y + toast!.height).toBeLessThanOrEqual(fab!.y);
   await context.close();
 });

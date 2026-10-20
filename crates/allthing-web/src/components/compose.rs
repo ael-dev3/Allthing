@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Writing a cast, a reply or a quote, with a GIF, for the signed-in reader.
-//! The header's Cast button starts a cast, in the channel being read on a
-//! channel page; Reply and Quote under a post or a reply start a reply to
-//! it or a cast that quotes it.
+//! Cast, at the top right of the front page's feed or a channel's (a round
+//! button over the feed on a phone), starts a cast, in the channel on a
+//! channel page; Reply and Quote under a post or a reply start a reply to it
+//! or a cast that quotes it.
 //!
 //! Where the reader can like and recast here (`components::writer`), the
 //! draft is posted with their key: "@name"s become mentions, and the cast
@@ -239,26 +240,65 @@ fn channel_in_view(path: &str) -> Option<String> {
     is_channel_id(&id).then_some(id)
 }
 
-/// The header's Cast button, for the signed-in reader: a new cast, in the
-/// channel being read on a channel page. Only its icon on phones.
-#[component]
-pub fn ComposeButton() -> impl IntoView {
-    let session = use_session();
+/// Whether `path` is a feed with a Cast button: the front page's or a
+/// channel's.
+fn on_feed(path: &str) -> bool {
+    let path = path.strip_prefix(BASE).unwrap_or(path);
+    path.is_empty() || path == "/" || channel_in_view(path).is_some()
+}
+
+/// Start a cast, in the channel being read on a channel page.
+fn start_cast() -> impl Fn() + Copy + 'static {
     let composer = use_composer();
-    let location = use_location();
+    let pathname = use_location().pathname;
+    move || composer.start(Target::Cast(channel_in_view(&pathname.get_untracked())))
+}
+
+/// Cast, for the signed-in reader, at the top right of a feed: a pill in
+/// Allthing's accent, lettered in its serif. On a phone, `CastFab` instead.
+#[component]
+pub fn CastPill() -> impl IntoView {
+    let session = use_session();
+    let start = start_cast();
     move || {
         session.user.get().is_some().then(|| {
             view! {
                 <button
                     type="button"
-                    class="compose-button"
+                    class="cast-pill"
                     aria-label="Write a cast"
                     on:pointerenter=move |_| warm()
                     on:focus=move |_| warm()
-                    on:click=move |_| composer.start(Target::Cast(channel_in_view(&location.pathname.get_untracked())))
+                    on:click=move |_| start()
                 >
                     <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=PEN/></svg>
-                    <span class="compose-label">"Cast"</span>
+                    "Cast"
+                </button>
+            }
+        })
+    }
+}
+
+/// Cast on a phone: a round button floating over the front page's feed or
+/// a channel's, at the bottom right, within the thumb's reach.
+#[component]
+pub fn CastFab() -> impl IntoView {
+    let session = use_session();
+    let pathname = use_location().pathname;
+    let start = start_cast();
+    let shown = Memo::new(move |_| session.user.with(Option::is_some) && on_feed(&pathname.get()));
+    move || {
+        shown.get().then(|| {
+            view! {
+                <button
+                    type="button"
+                    class="cast-fab"
+                    aria-label="Write a cast"
+                    on:pointerdown=move |_| warm()
+                    on:focus=move |_| warm()
+                    on:click=move |_| start()
+                >
+                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=PEN/></svg>
                 </button>
             }
         })

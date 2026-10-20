@@ -156,7 +156,10 @@ fn ChannelHeader(channel: Channel, notes: Notes) -> impl IntoView {
                         <img class="channel-image" src=resized_image_url(&src, ImageSize::Thumb) alt=picture_alt width="88" height="88" decoding="async" referrerpolicy="no-referrer"/>
                     })}
                     <div class="channel-names">
-                        <h1 class="page-title">{title}</h1>
+                        <div class="channel-title-row">
+                            <h1 class="page-title">{title}</h1>
+                            {crate::components::layout::cast_pill()}
+                        </div>
                         {subtitle.map(|s| view! { <p class="channel-handle">{s}</p> })}
                     </div>
                 </div>
