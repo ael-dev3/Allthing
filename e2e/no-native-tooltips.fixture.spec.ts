@@ -54,11 +54,13 @@ async function open(page: Page) {
   await expect(page.locator(".replies .comment")).toHaveCount(2);
 }
 
-/** A popover is solid, and nothing in it has a native tooltip. */
+/** A popover is solid, and nothing in it or around it has a native tooltip. */
 async function solidWithoutTooltips(panel: Locator) {
   await expect(panel).toBeVisible();
   expect(await panel.evaluate((p) => getComputedStyle(p).backgroundColor)).toBe("rgb(255, 255, 255)");
   await expect(panel.locator("[title]")).toHaveCount(0);
+  // A title on an element the panel sits inside shows over the panel too.
+  expect(await panel.evaluate((p) => p.parentElement?.closest("[title]")?.getAttribute("title") ?? null)).toBeNull();
 }
 
 test("a post and its replies have no native tooltips, and say what they said another way", async ({ page }) => {

@@ -85,6 +85,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- On the front page's app bar, an app's card no longer has the browser's tooltip over it. The bar said what it was in a native tooltip ("Apps that posted … of today's trending casts, from the app that registered each cast's signing key."), which showed over any card opened from it after a second; it's read out instead. Segments without a card no longer have one either: the legend under the bar says the same.
 - A profile's card can't be shifted sideways any more. The glow behind the name reaches past the card's sides, and the card that clipped it could be scrolled, so anything that scrolled it, such as focus or find in page, moved the picture and text 40 px to the left, under the card's edge.
 - On a phone, a tap on a cast's heart or recast, or anywhere else in a cast, no longer flashes the whole card in the browser's tap colour, which showed over the dialog the tap opened too.
 - A channel page shows its newest casts where it showed only its pinned cast, as /veg did. For some channels, Hypersnap sends the newest casts after a page or two with none on them, each with a cursor for more (/veg's after two, every time), and the page took the first, empty one for the whole channel. It now follows the cursor past up to three such pages. If it still finds none, the page keeps the last copy it had, or, with none, says the data source didn't answer and offers to try again, instead of showing the channel as empty.

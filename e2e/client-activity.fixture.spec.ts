@@ -54,6 +54,28 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
+test("no native tooltip over the bar or an app's card: what the bar is, is read out", async ({ page }) => {
+  await serve(page, counted());
+  await page.goto("/?sort=top");
+  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
+  await expect(share).toHaveAttribute("aria-description", /^Apps that posted \d+ of today's trending casts, from the app that registered each cast's signing key\.$/);
+  await expect(share.locator("[title]")).toHaveCount(0);
+  for (const open of [
+    () => share.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).hover(),
+    () => share.locator(".share-bar .seg.client-0").hover(),
+  ]) {
+    await open();
+    const card = page.getByRole("dialog", { name: "Farcaster: active accounts" });
+    await expect(card).toBeVisible();
+    // A title on anything the card sits inside would show over it, after a
+    // second, in the system's style.
+    expect(await card.evaluate((el) => el.closest("[title]")?.getAttribute("title") ?? null)).toBeNull();
+    await expect(card.locator("[title]")).toHaveCount(0);
+    await page.mouse.move(1200, 880);
+    await expect(card).toBeHidden();
+  }
+});
+
 test("pointing at an app opens its card: its active accounts in the past 24 hours, and its share", async ({ page }) => {
   await serve(page, counted());
   await page.goto("/?sort=top");
