@@ -106,6 +106,12 @@ pub struct HomePayload {
     /// the pool is then the past week's trending casts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<IndexCoverage>,
+    /// Accounts active in the past 24 hours through the apps the pool's
+    /// casts were posted from, as the cron last counted them (see
+    /// `/api/v1/activity`). Absent before it has counted by app, and in the
+    /// static copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apps_24h: Option<crate::activity::AppsWindow>,
 }
 
 /// What a ranking from Allthing's index was ranked from.

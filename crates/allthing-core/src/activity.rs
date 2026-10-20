@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::latest::{Cursor, FARCASTER_EPOCH};
-use crate::provenance::normalize_key;
+use crate::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 
 /// What kind of action a counted message is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -93,6 +93,9 @@ pub struct ActivityPage {
     pub first_block: Option<u64>,
     /// How many events the page held, of every kind.
     pub count: usize,
+    /// Signing keys added onchain on the page (`key_pair`), each with the
+    /// app that requested it, 0 for none.
+    pub keys: Vec<(u64, u64)>,
 }
 
 #[derive(Deserialize)]
@@ -111,6 +114,31 @@ struct Event {
     confirmed: Option<Confirmed>,
     #[serde(rename = "mergeMessageBody")]
     merge: Option<Merge>,
+    #[serde(rename = "mergeOnChainEventBody")]
+    chain: Option<OnChain>,
+}
+
+#[derive(Deserialize)]
+struct OnChain {
+    #[serde(rename = "onChainEvent")]
+    event: Option<ChainEvent>,
+}
+
+#[derive(Deserialize)]
+struct ChainEvent {
+    fid: Option<u64>,
+    #[serde(rename = "signerEventBody")]
+    signer: Option<SignerEvent>,
+}
+
+#[derive(Deserialize)]
+struct SignerEvent {
+    key: Option<String>,
+    #[serde(rename = "eventType")]
+    kind: Option<String>,
+    metadata: Option<String>,
+    #[serde(rename = "metadataType")]
+    metadata_type: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -179,6 +207,26 @@ pub fn activity(json: &[u8]) -> Option<ActivityPage> {
                 let Some(at) = block_time.or_else(|| data.timestamp.and_then(unix)) else { continue };
                 out.actions.push(Action { fid, signer, at, family });
             }
+            // A key added for an account: which app requested it is in its
+            // signed key request (`provenance`), so it needn't be looked up.
+            Some("HUB_EVENT_TYPE_MERGE_ON_CHAIN_EVENT") => {
+                let Some(ChainEvent { fid: Some(fid), signer: Some(body) }) = event.chain.and_then(|c| c.event) else {
+                    continue;
+                };
+                if body.kind.as_deref() != Some("SIGNER_EVENT_TYPE_ADD") {
+                    continue;
+                }
+                let Some(pair) = body.key.as_deref().and_then(normalize_key).and_then(|key| key_pair(fid, &key)) else {
+                    continue;
+                };
+                let app = body
+                    .metadata
+                    .as_deref()
+                    .filter(|_| body.metadata_type == Some(1))
+                    .and_then(base64_decode)
+                    .and_then(|metadata| request_fid_from_metadata(&metadata));
+                out.keys.push((pair, app.unwrap_or(0)));
+            }
             _ => {}
         }
     }
@@ -216,8 +264,98 @@ const B64_VALUES: [u8; 256] = {
     table
 };
 
-/// A set of fids, sorted. Stored as text: each fid's gap from the one
-/// before as a LEB128 varint, in unpadded URL-safe base64; a day's 6,000
+/// Increasing `values` as stored: each one's gap from the one before as a
+/// LEB128 varint, in unpadded URL-safe base64.
+fn encode_gaps(values: impl IntoIterator<Item = u64>) -> String {
+    let mut bytes = Vec::new();
+    let mut previous = 0u64;
+    for value in values {
+        let mut gap = value - previous;
+        previous = value;
+        loop {
+            let low = (gap & 0x7f) as u8;
+            gap >>= 7;
+            if gap == 0 {
+                bytes.push(low);
+                break;
+            }
+            bytes.push(low | 0x80);
+        }
+    }
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |n, &b| n << 8 | u32::from(b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            out.push(char::from(B64[(n >> (18 - 6 * i) & 63) as usize]));
+        }
+    }
+    out
+}
+
+/// Stored values, increasing; `None` if `text` isn't a stored set.
+fn decode_gaps(text: &str) -> Option<Vec<u64>> {
+    // Unpadded base64 never leaves one character over.
+    if text.len() % 4 == 1 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut buffer, mut bits) = (0u32, 0);
+    for c in text.bytes() {
+        let value = B64_VALUES[c as usize];
+        if value == 255 {
+            return None;
+        }
+        buffer = (buffer << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+    let mut values = Vec::with_capacity(bytes.len() / 2);
+    let (mut previous, mut gap, mut shift) = (0u64, 0u64, 0);
+    for b in bytes {
+        let low = u64::from(b & 0x7f);
+        // A u64 takes 10 bytes at most, the last holding one bit.
+        if shift > 63 || (shift == 63 && low > 1) {
+            return None;
+        }
+        gap |= low << shift;
+        if b & 0x80 == 0 {
+            previous = previous.checked_add(gap)?;
+            values.push(previous);
+            (gap, shift) = (0, 0);
+        } else {
+            shift += 7;
+        }
+    }
+    // Every value after the first is a positive gap away, so they increase.
+    (shift == 0 && values.windows(2).all(|w| w[0] < w[1])).then_some(values)
+}
+
+/// The union of two increasing lists.
+fn merge<T: Ord + Copy>(a: &[T], b: &[T]) -> Vec<T> {
+    let mut all = Vec::with_capacity(a.len() + b.len());
+    let (mut a, mut b) = (a.iter().peekable(), b.iter().peekable());
+    loop {
+        let next = match (a.peek(), b.peek()) {
+            (Some(&&x), Some(&&y)) if x < y => a.next(),
+            (Some(&&x), Some(&&y)) if x > y => b.next(),
+            (Some(_), Some(_)) => {
+                b.next();
+                a.next()
+            }
+            (Some(_), None) => a.next(),
+            (None, Some(_)) => b.next(),
+            (None, None) => break,
+        };
+        all.extend(next.copied());
+    }
+    all
+}
+
+/// A set of fids, sorted. Stored as text (`encode_gaps`): a day's 6,000
 /// active accounts take about 16 KB.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Fids(Vec<u32>);
@@ -241,90 +379,17 @@ impl Fids {
 
     /// Add `other`'s fids.
     pub fn extend(&mut self, other: &Fids) {
-        let mut all = Vec::with_capacity(self.0.len() + other.0.len());
-        let (mut a, mut b) = (self.0.iter().peekable(), other.0.iter().peekable());
-        loop {
-            let next = match (a.peek(), b.peek()) {
-                (Some(&&x), Some(&&y)) if x < y => a.next(),
-                (Some(&&x), Some(&&y)) if x > y => b.next(),
-                (Some(_), Some(_)) => {
-                    b.next();
-                    a.next()
-                }
-                (Some(_), None) => a.next(),
-                (None, Some(_)) => b.next(),
-                (None, None) => break,
-            };
-            all.extend(next.copied());
-        }
-        self.0 = all;
+        self.0 = merge(&self.0, &other.0);
     }
 
     /// As stored.
     pub fn encode(&self) -> String {
-        let mut bytes = Vec::with_capacity(self.0.len() * 2);
-        let mut previous = 0u32;
-        for &fid in &self.0 {
-            let mut gap = fid - previous;
-            previous = fid;
-            loop {
-                let low = (gap & 0x7f) as u8;
-                gap >>= 7;
-                if gap == 0 {
-                    bytes.push(low);
-                    break;
-                }
-                bytes.push(low | 0x80);
-            }
-        }
-        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-        for chunk in bytes.chunks(3) {
-            let n = chunk.iter().fold(0u32, |n, &b| n << 8 | u32::from(b)) << (8 * (3 - chunk.len()));
-            for i in 0..=chunk.len() {
-                out.push(char::from(B64[(n >> (18 - 6 * i) & 63) as usize]));
-            }
-        }
-        out
+        encode_gaps(self.0.iter().map(|&fid| u64::from(fid)))
     }
 
-    /// From storage; `None` if `text` isn't a stored set.
+    /// From storage; `None` if `text` isn't a stored set of fids.
     pub fn decode(text: &str) -> Option<Fids> {
-        // Unpadded base64 never leaves one character over.
-        if text.len() % 4 == 1 {
-            return None;
-        }
-        let mut bytes = Vec::with_capacity(text.len() * 3 / 4);
-        let (mut buffer, mut bits) = (0u32, 0);
-        for c in text.bytes() {
-            let value = B64_VALUES[c as usize];
-            if value == 255 {
-                return None;
-            }
-            buffer = (buffer << 6) | u32::from(value);
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                bytes.push((buffer >> bits) as u8);
-                buffer &= (1 << bits) - 1;
-            }
-        }
-        let mut fids = Vec::with_capacity(bytes.len() / 2);
-        let (mut previous, mut gap, mut shift) = (0u32, 0u32, 0);
-        for b in bytes {
-            if shift > 28 {
-                return None;
-            }
-            gap |= u32::from(b & 0x7f) << shift;
-            if b & 0x80 == 0 {
-                previous = previous.checked_add(gap)?;
-                fids.push(previous);
-                (gap, shift) = (0, 0);
-            } else {
-                shift += 7;
-            }
-        }
-        // Every fid after the first is a positive gap away, so the set is sorted.
-        (shift == 0 && fids.windows(2).all(|w| w[0] < w[1])).then_some(Fids(fids))
+        decode_gaps(text)?.into_iter().map(|v| u32::try_from(v).ok()).collect::<Option<_>>().map(Fids)
     }
 
     /// How many distinct fids `sets` hold between them.
@@ -337,6 +402,81 @@ impl Fids {
             seen[*fid as usize / 64] |= 1 << (fid % 64);
         }
         seen.iter().map(|w| w.count_ones() as usize).sum()
+    }
+}
+
+/// A signing key as the cron keeps it: its account's fid in the high 32
+/// bits and the key's first four bytes in the low 32, which tell an
+/// account's keys apart. `None` for an fid of 2³¹ or more, past what D1's
+/// signed integers hold.
+pub fn key_pair(fid: u64, key: &str) -> Option<u64> {
+    if fid >= 1 << 31 {
+        return None;
+    }
+    let hex = key.strip_prefix("0x").unwrap_or(key);
+    let head = u32::from_str_radix(hex.get(..hex.len().min(8))?, 16).ok()?;
+    Some(fid << 32 | u64::from(head))
+}
+
+/// The fid of the account a `key_pair` signs for.
+pub fn pair_fid(pair: u64) -> u64 {
+    pair >> 32
+}
+
+/// A set of signing keys (`key_pair`), sorted, so each account's keys are
+/// together. Stored as text, as `Fids` are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Keys(Vec<u64>);
+
+impl Keys {
+    /// The set of `pairs`, in any order, with repeats.
+    pub fn of(pairs: impl IntoIterator<Item = u64>) -> Keys {
+        let mut pairs: Vec<u64> = pairs.into_iter().collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        Keys(pairs)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn as_slice(&self) -> &[u64] {
+        &self.0
+    }
+
+    /// Add `other`'s keys.
+    pub fn extend(&mut self, other: &Keys) {
+        self.0 = merge(&self.0, &other.0);
+    }
+
+    pub fn encode(&self) -> String {
+        encode_gaps(self.0.iter().copied())
+    }
+
+    pub fn decode(text: &str) -> Option<Keys> {
+        decode_gaps(text).map(Keys)
+    }
+
+    /// The keys in runs of about `size`, cut only between accounts, so an
+    /// account counted in one run is in no other.
+    pub fn chunks(&self, size: usize) -> Vec<&[u64]> {
+        let mut out = Vec::new();
+        let mut rest = self.0.as_slice();
+        while !rest.is_empty() {
+            let mut end = size.max(1).min(rest.len());
+            while end < rest.len() && pair_fid(rest[end]) == pair_fid(rest[end - 1]) {
+                end += 1;
+            }
+            let (chunk, after) = rest.split_at(end);
+            out.push(chunk);
+            rest = after;
+        }
+        out
     }
 }
 
@@ -370,6 +510,11 @@ pub fn hour_set(hour: i64) -> String {
 
 pub fn day_set(day: i64) -> String {
     format!("d{day}")
+}
+
+/// The name an hour's set of active keys is stored under: `k<hour>`.
+pub fn key_set(hour: i64) -> String {
+    format!("k{hour}")
 }
 
 /// One UTC day's counts.
@@ -416,6 +561,87 @@ pub struct Follow {
     /// Accounts active in the 30 days to the end of `day`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_30d: Option<Window>,
+    /// The first block time from which each hour's active keys were kept,
+    /// Unix seconds: counting by app began here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys_since: Option<i64>,
+    /// Accounts active by app, counted again each hour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apps_24h: Option<AppsWindow>,
+    /// Active keys (`key_pair`) whose app the last count didn't know, to
+    /// look up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backlog: Vec<u64>,
+}
+
+/// Accounts active through one app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppActive {
+    /// The app's fid.
+    pub app: u64,
+    pub active: u64,
+}
+
+/// Accounts active in the 24 hours to `to`, `(to − 24 h, to]`, by the app
+/// that requested the key they signed with: an account that used two apps
+/// counts for each.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppsWindow {
+    /// The window's end, Unix seconds, on the hour.
+    pub to: i64,
+    /// When it was counted, Unix seconds.
+    pub counted: i64,
+    /// Accounts active in the window, through any app.
+    pub active: u64,
+    /// By app, most first.
+    #[serde(default)]
+    pub apps: Vec<AppActive>,
+    /// Accounts that signed with a key no app requested.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub none: u64,
+    /// Accounts that signed with a key whose app isn't known yet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unknown: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl AppsWindow {
+    /// From `(app, accounts)` counts: app `None` for keys not looked up
+    /// yet, and 0 for keys no app requested. Counts for the same app add
+    /// up, so they can come from runs of keys that share no account.
+    pub fn of(to: i64, counted: i64, active: u64, counts: impl IntoIterator<Item = (Option<u64>, u64)>) -> AppsWindow {
+        let mut window = AppsWindow { to, counted, active, ..AppsWindow::default() };
+        let mut apps: HashMap<u64, u64> = HashMap::new();
+        for (app, n) in counts {
+            match app {
+                None => window.unknown += n,
+                Some(0) => window.none += n,
+                Some(app) => *apps.entry(app).or_default() += n,
+            }
+        }
+        window.apps = apps.into_iter().map(|(app, active)| AppActive { app, active }).collect();
+        window.apps.sort_by(|a, b| b.active.cmp(&a.active).then(a.app.cmp(&b.app)));
+        window
+    }
+
+    /// Accounts active through `app`.
+    pub fn through(&self, app: u64) -> u64 {
+        self.apps.iter().find(|a| a.app == app).map_or(0, |a| a.active)
+    }
+
+    /// The whole percent of active accounts whose keys' apps are all known
+    /// (rounded down, so 100 means all of them).
+    pub fn known_percent(&self) -> u64 {
+        (self.active.saturating_sub(self.unknown) * 100).checked_div(self.active).unwrap_or(100)
+    }
+
+    /// Only the apps `keep` names, for a page that shows those.
+    pub fn only(&self, keep: impl Fn(u64) -> bool) -> AppsWindow {
+        AppsWindow { apps: self.apps.iter().copied().filter(|a| keep(a.app)).collect(), ..self.clone() }
+    }
 }
 
 /// A count over the days to the end of `day`.
@@ -438,6 +664,15 @@ impl Follow {
         self.since.is_some_and(|since| since <= from)
             && self.reached().is_some_and(|reached| reached >= to)
             && !self.gaps.iter().any(|&(a, b)| a < to && b > from)
+    }
+
+    /// Whether accounts by app are due to be counted for the window to `to`
+    /// at `now`: its keys were all kept, and it is a window not counted
+    /// yet, or, while more than 1% of accounts' apps aren't known, the last
+    /// count is 10 minutes old (keys are looked up a few at a time).
+    pub fn apps_due(&self, to: i64, now: i64) -> bool {
+        let kept = self.keys_since.is_some_and(|since| since <= to - 86_400) && self.covered(to - 86_400, to);
+        kept && self.apps_24h.as_ref().is_none_or(|w| w.to < to || (w.known_percent() < 99 && now - w.counted >= 600))
     }
 
     /// The counts of `day`, made if new.
@@ -470,6 +705,8 @@ pub struct Batch {
     pub hours: HashMap<i64, Fids>,
     pub days: HashMap<i64, Fids>,
     pub actions: HashMap<i64, HashMap<Family, u64>>,
+    /// The keys that signed, by hour.
+    pub keys: HashMap<i64, Keys>,
 }
 
 impl Batch {
@@ -477,7 +714,9 @@ impl Batch {
         let mut hours: HashMap<i64, Vec<u64>> = HashMap::new();
         let mut days: HashMap<i64, Vec<u64>> = HashMap::new();
         let mut counts: HashMap<i64, HashMap<Family, u64>> = HashMap::new();
+        let mut keys: HashMap<i64, Vec<u64>> = HashMap::new();
         for a in actions {
+            keys.entry(bucket(a.at)).or_default().extend(key_pair(a.fid, &a.signer));
             hours.entry(bucket(a.at)).or_default().push(a.fid);
             days.entry(day(a.at)).or_default().push(a.fid);
             *counts.entry(day(a.at)).or_default().entry(a.family).or_default() += 1;
@@ -486,6 +725,7 @@ impl Batch {
             hours: hours.into_iter().map(|(h, f)| (h, Fids::of(f))).collect(),
             days: days.into_iter().map(|(d, f)| (d, Fids::of(f))).collect(),
             actions: counts,
+            keys: keys.into_iter().map(|(h, k)| (h, Keys::of(k))).collect(),
         }
     }
 }
@@ -509,6 +749,10 @@ pub struct ActivityPayload {
     pub previous_24h: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_30d: Option<Window>,
+    /// Accounts active by app in the 24 hours to its `to`, counted each
+    /// hour; none until a whole window's keys were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apps_24h: Option<AppsWindow>,
     /// The latest 30 UTC days, oldest first; the last is in progress.
     #[serde(default)]
     pub days: Vec<DayCount>,
@@ -544,6 +788,7 @@ pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Me
         rolling_24h: to.and_then(|t| rolling(follow, hours, t)),
         previous_24h: to.and_then(|t| rolling(follow, hours, t - 86_400)),
         active_30d: follow.active_30d,
+        apps_24h: follow.apps_24h.clone(),
         days: follow.days.iter().rev().take(KEEP_DAYS as usize).rev().cloned().collect(),
         since: follow.since,
         gaps: follow.gaps.clone(),
@@ -729,6 +974,109 @@ mod tests {
         assert_eq!(payload.rolling_to, Some(to));
         let json = serde_json::to_string(&payload).unwrap();
         assert_eq!(serde_json::from_str::<ActivityPayload>(&json).unwrap(), payload);
+    }
+
+    #[test]
+    fn keys_added_onchain_carry_their_app() {
+        // A Farcaster key (its real KeyRegistry metadata), a key with no
+        // signed key request, and a removal, which doesn't count.
+        let metadata = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAjwAAAAAAAAAAAAAAAAALveQ3XmTo1/YR8BT7drpQNBVWWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZkXc9QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBkm8PZXmsC5a/2h4CHNOJ+1vP3cEQcvCkzn7pGxnuiV8fz0SfwJzkTYNZO3syUdrWKe2rOJmaBvrTewq+CW2LdRwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let event = |key: &str, kind: &str, extra: &str| {
+            format!(
+                r#"{{"type":"HUB_EVENT_TYPE_MERGE_ON_CHAIN_EVENT","id":1,"mergeOnChainEventBody":{{"onChainEvent":{{"type":"EVENT_TYPE_SIGNER","fid":1096125,"signerEventBody":{{"key":"{key}","keyType":1,"eventType":"SIGNER_EVENT_TYPE_{kind}"{extra}}}}}}}}}"#
+            )
+        };
+        let key = "0xaacf883b539a3e30e0b918c626f9b8b89fbd09feecfba3f8bf27c3ffd178a2ee";
+        let page = format!(
+            r#"{{"events":[{},{},{}]}}"#,
+            event(key, "ADD", &format!(r#","metadata":"{metadata}","metadataType":1"#)),
+            event("0x0102030405", "ADD", ""),
+            event(key, "REMOVE", ""),
+        );
+        let page = activity(page.as_bytes()).unwrap();
+        let fid = 1_096_125u64;
+        assert_eq!(page.keys, [(fid << 32 | 0xaacf883b, 9152), (fid << 32 | 0x01020304, 0)]);
+        assert!(page.actions.is_empty());
+    }
+
+    #[test]
+    fn key_sets_round_trip_and_split_between_accounts() {
+        assert_eq!(key_pair(42, "0xaacf883b539a"), Some(42 << 32 | 0xaacf883b));
+        assert_eq!(key_pair(42, "0xAACF883B539A"), key_pair(42, "0xaacf883b539a"));
+        assert_eq!(key_pair(42, "0xnothex0"), None);
+        assert_eq!(key_pair(42, "0x01"), Some(42 << 32 | 1));
+        assert_eq!(key_pair(42, "0x"), None);
+        assert_eq!(key_pair(1 << 31, "0x01"), None);
+        let biggest = ((1u64 << 31) - 1) << 32 | u64::from(u32::MAX);
+        assert_eq!(key_pair((1 << 31) - 1, "0xffffffff00"), Some(biggest));
+        assert_eq!(pair_fid(biggest), (1 << 31) - 1);
+        let keys = Keys::of([biggest, 7 << 32 | 2, 7 << 32 | 1, 9 << 32, 7 << 32 | 2]);
+        assert_eq!(keys.len(), 4);
+        assert_eq!(Keys::decode(&keys.encode()), Some(keys.clone()));
+        assert_eq!(Keys::decode(""), Some(Keys::default()));
+        // A varint longer than a u64 holds.
+        assert_eq!(Keys::decode("_____________w"), None);
+        // An fid set can't hold a key.
+        assert_eq!(Fids::decode(&keys.encode()), None);
+        let mut more = Keys::of([9 << 32, 10 << 32]);
+        more.extend(&keys);
+        assert_eq!(more.as_slice(), [7 << 32 | 1, 7 << 32 | 2, 9 << 32, 10 << 32, biggest]);
+        // Runs of about 2, never splitting an account's keys.
+        let chunks: Vec<Vec<u64>> = more.chunks(1).into_iter().map(<[u64]>::to_vec).collect();
+        assert_eq!(chunks, [vec![7 << 32 | 1, 7 << 32 | 2], vec![9 << 32], vec![10 << 32], vec![biggest]]);
+        assert_eq!(more.chunks(3).len(), 2);
+        assert!(Keys::default().chunks(3).is_empty());
+    }
+
+    #[test]
+    fn a_batch_keeps_the_keys_that_signed_by_hour() {
+        let at = 20_000 * 86_400 + 3_600;
+        let actions = [
+            Action { fid: 2, signer: "0x0a".into(), at, family: Family::Cast },
+            Action { fid: 2, signer: "0x0a".into(), at: at + 1, family: Family::Reaction },
+            Action { fid: 3, signer: "0x0b".into(), at: at + 1, family: Family::Reaction },
+        ];
+        let batch = Batch::of(&actions);
+        assert_eq!(batch.keys[&(bucket(at))], Keys::of([2 << 32 | 10]));
+        assert_eq!(batch.keys[&(bucket(at) + 1)], Keys::of([2 << 32 | 10, 3 << 32 | 11]));
+    }
+
+    #[test]
+    fn accounts_by_app_add_up_and_say_how_much_is_known() {
+        let counts = [(Some(9152), 3), (Some(0), 1), (None, 2), (Some(309_857), 5), (Some(9152), 4), (None, 1)];
+        let window = AppsWindow::of(7_200, 7_300, 50, counts);
+        assert_eq!(window.apps, [AppActive { app: 9152, active: 7 }, AppActive { app: 309_857, active: 5 }]);
+        assert_eq!((window.none, window.unknown), (1, 3));
+        assert_eq!((window.through(9152), window.through(5)), (7, 0));
+        assert_eq!(window.known_percent(), 94);
+        assert_eq!(AppsWindow::of(0, 0, 0, []).known_percent(), 100);
+        assert_eq!(AppsWindow { unknown: 1, ..AppsWindow::of(0, 0, 1_000, []) }.known_percent(), 99);
+        let only = window.only(|app| app == 309_857);
+        assert_eq!((only.apps.len(), only.active, only.unknown), (1, 50, 3));
+        let json = serde_json::to_string(&window).unwrap();
+        assert_eq!(serde_json::from_str::<AppsWindow>(&json).unwrap(), window);
+    }
+
+    #[test]
+    fn accounts_are_counted_by_app_once_an_hour_once_a_window_of_keys_is_kept() {
+        let to = 500_000 * 3_600;
+        let mut f = follow(to - 3 * 86_400, to + 600);
+        // Keys kept from half a day before the window: not a whole window yet.
+        f.keys_since = Some(to - 86_400 / 2);
+        assert!(!f.apps_due(to, to + 600));
+        f.keys_since = Some(to - 86_400);
+        assert!(f.apps_due(to, to + 600));
+        // Counted for this window: not again until the next, unless more
+        // than 1% of accounts' apps were unknown, then every 10 minutes.
+        f.apps_24h = Some(AppsWindow::of(to, to + 600, 1_000, [(Some(9152), 995), (None, 5)]));
+        assert!(!f.apps_due(to, to + 3_000));
+        // The next window, once read to its end.
+        assert!(!f.apps_due(to + 3_600, to + 3_660));
+        f.reached.iter_mut().for_each(|r| r.at = to + 3_700);
+        assert!(f.apps_due(to + 3_600, to + 3_700));
+        f.apps_24h = Some(AppsWindow::of(to, to + 600, 1_000, [(Some(9152), 900), (None, 100)]));
+        assert!(!f.apps_due(to, to + 1_100));
+        assert!(f.apps_due(to, to + 1_200));
     }
 
     #[test]
