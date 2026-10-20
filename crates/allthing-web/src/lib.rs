@@ -8,6 +8,7 @@ mod components;
 mod host;
 #[cfg(not(feature = "static-host"))]
 mod keys;
+mod leanings;
 mod nav;
 mod pages;
 mod preload;
@@ -59,6 +60,7 @@ pub fn start() {
 fn App() -> impl IntoView {
     provide_context(Viewer::new());
     provide_context(WhoList::new());
+    provide_context(leanings::Leaning::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]

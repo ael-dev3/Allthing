@@ -7,7 +7,7 @@ use allthing_core::api::{Annotations, HomePayload, IndexCoverage, LatestPayload,
 use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
-use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted};
+use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted_for};
 use allthing_core::time::format_date;
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
@@ -105,6 +105,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
 /// as the reader scrolls.
 #[component]
 fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+    let leaning = crate::leanings::use_leaning();
     let window = Memo::new(move |_| range.get().window());
     let data = LocalResource::new(move || {
         let window = window.get();
@@ -242,14 +243,18 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
                 let query = use_query_map();
                 let client = Memo::new(move |_| client_param(&query.read()));
-                // Re-sorting reorders the list in place instead of rebuilding the page.
+                // Re-sorting, or a favorite made, reorders the list in place
+                // instead of rebuilding the page.
                 let casts = Memo::new(move |_| {
                     let order = sort.get();
-                    let mut all = sorted(&pool, order);
+                    let leanings = leaning.leanings();
+                    let mut all = sorted_for(&pool, order, &leanings);
                     more.with(|pages| {
                         for page in pages {
                             all.extend(
-                                sorted(&page.casts, order).into_iter().filter(|c| !first_hashes.contains(&c.hash)),
+                                sorted_for(&page.casts, order, &leanings)
+                                    .into_iter()
+                                    .filter(|c| !first_hashes.contains(&c.hash)),
                             );
                         }
                     });

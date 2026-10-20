@@ -11,7 +11,7 @@ use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::{Cast, Channel, ExternalLink, UserSummary};
 use allthing_core::params::channel_key_from_decoded;
-use allthing_core::ranking::{Sort, sorted};
+use allthing_core::ranking::{Sort, sorted_for};
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 
@@ -32,6 +32,7 @@ const LINK: &str = "M6.8 9.2l2.4-2.4M7.4 4.6l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.6 
 
 #[component]
 pub fn ChannelPage() -> impl IntoView {
+    let leaning = crate::leanings::use_leaning();
     let params = use_params_map();
     let query = use_query_map();
     let id = use_query_param("id");
@@ -84,7 +85,7 @@ pub fn ChannelPage() -> impl IntoView {
                 let pinned_hash = pinned.as_ref().map(|c| c.hash.clone());
                 let pool: Vec<Cast> =
                     top_level(&payload.pool).into_iter().filter(|c| Some(&c.hash) != pinned_hash.as_ref()).collect();
-                let casts = Signal::derive(move || sorted(&pool, sort.get()));
+                let casts = Signal::derive(move || sorted_for(&pool, sort.get(), &leaning.leanings()));
                 // The count of accounts that have cast here, when the header
                 // shows the Farcaster app's member and follower counts instead.
                 let casters =

@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use crate::Notes;
 use crate::api;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
+use crate::components::favorite::FavoriteMark;
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::quote::nested_quotes;
 use crate::components::text::CastText;
@@ -82,6 +83,7 @@ pub fn CastCard(
             <p class="deleted-note">"You deleted this cast."</p>
             <header class="cast-meta">
                 <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
+                <FavoriteMark fid=cast.author.fid/>
                 <span class="sep" aria-hidden="true">"·"</span>
                 // The post's own link: for keyboards and screen readers (the
                 // card's text is plain so it can be selected; a click on it

@@ -3,6 +3,7 @@
 //! downvotes, so a cast's points only ever count positive engagement.
 
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 use crate::model::{Cast, ThreadNode};
 
@@ -190,6 +191,46 @@ pub fn sorted(casts: &[Cast], sort: Sort) -> Vec<Cast> {
     out
 }
 
+/// A reader's own leanings about accounts, kept in their browser and never
+/// shared: their favorites' casts rise in hot and top. It isn't a label on an
+/// account, and it hides nothing: new stays in time order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Leanings {
+    pub favorites: BTreeSet<u64>,
+}
+
+/// A favorite's cast weighs in hot and top as if it had this many times its
+/// points.
+pub const FAVORITE_WEIGHT: f64 = 4.0;
+
+impl Leanings {
+    pub fn is_empty(&self) -> bool {
+        self.favorites.is_empty()
+    }
+
+    /// How much more, or less, `cast` weighs for this reader.
+    pub fn weight(&self, cast: &Cast) -> f64 {
+        if self.favorites.contains(&cast.author.fid) { FAVORITE_WEIGHT } else { 1.0 }
+    }
+}
+
+/// [`sorted`], with the reader's leanings: in hot and top a cast weighs its
+/// points times [`Leanings::weight`] (in hot, its log moves by the weight's);
+/// new is in time order whoever cast.
+pub fn sorted_for(casts: &[Cast], sort: Sort, leanings: &Leanings) -> Vec<Cast> {
+    let mut out = casts.to_vec();
+    if leanings.is_empty() || sort == Sort::New {
+        sort_casts(&mut out, sort);
+        return out;
+    }
+    let key = |cast: &Cast| match sort {
+        Sort::Top => points(cast) as f64 * leanings.weight(cast),
+        _ => hot_score(points(cast), cast.ts) + leanings.weight(cast).log10(),
+    };
+    out.sort_by(|a, b| key(b).total_cmp(&key(a)).then_with(|| newest_first(a, b)));
+    out
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CommentSort {
     #[default]
@@ -280,6 +321,37 @@ mod tests {
             mini_app: false,
             spam: false,
         }
+    }
+
+    #[test]
+    fn favorites_rise_in_hot_and_top_and_new_stays_in_time_order() {
+        let by = |fid: u64, mut c: Cast| {
+            c.author.fid = fid;
+            c
+        };
+        // A stranger's busy cast, a favorite's quieter one, and a stranger's
+        // newest, quietest one.
+        let casts = vec![
+            by(1, cast("busy", 30, 0, 0, "2026-10-17T00:00:00Z")),
+            by(2, cast("favorite", 10, 0, 0, "2026-10-17T00:00:00Z")),
+            by(3, cast("newest", 1, 0, 0, "2026-10-17T01:00:00Z")),
+        ];
+        let order = |sorted: Vec<Cast>| sorted.into_iter().map(|c| c.hash).collect::<Vec<_>>();
+        let none = Leanings::default();
+        for sort in [Sort::Hot, Sort::Top, Sort::New] {
+            assert_eq!(sorted_for(&casts, sort, &none), sorted(&casts, sort));
+        }
+        assert_eq!(order(sorted(&casts, Sort::Top)), ["busy", "favorite", "newest"]);
+        let leanings = Leanings { favorites: BTreeSet::from([2]) };
+        // 10 points weigh as 40, over 30.
+        assert_eq!(order(sorted_for(&casts, Sort::Top, &leanings)), ["favorite", "busy", "newest"]);
+        assert_eq!(order(sorted_for(&casts, Sort::Hot, &leanings)), ["favorite", "busy", "newest"]);
+        assert_eq!(order(sorted_for(&casts, Sort::New, &leanings)), ["newest", "busy", "favorite"]);
+        // Four times, no more: 10 points weigh less than 50.
+        let busier = vec![by(1, cast("busier", 50, 0, 0, "2026-10-17T00:00:00Z")), casts[1].clone()];
+        assert_eq!(order(sorted_for(&busier, Sort::Top, &leanings)), ["busier", "favorite"]);
+        assert_eq!(leanings.weight(&casts[1]), FAVORITE_WEIGHT);
+        assert_eq!(leanings.weight(&casts[0]), 1.0);
     }
 
     #[test]
