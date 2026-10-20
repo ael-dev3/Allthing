@@ -77,6 +77,9 @@ test("signed out, every write goes to the Farcaster app, with a code for the rea
   let { dialog, href } = await handedOff(page, "Like in Farcaster", /Open on farcaster\.xyz/);
   expect(href).toBe(castUrl(theirs));
   await expect(dialog).toContainText("The Farcaster app opens this cast. Like it there.");
+  // No note that Allthing doesn't act for the reader.
+  await expect(dialog).not.toContainText("doesn't act for you");
+  await page.screenshot({ path: test.info().outputPath("handoff-1280.png") });
   await expect(dialog.getByRole("img", { name: "QR code that opens it in the Farcaster app" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -189,7 +192,7 @@ test("signed in where the Worker endorses no keys: Delete, Unfollow and nothing 
   await expect(account.getByRole("button", { name: "Sign out" })).toBeVisible();
   await expect(account.getByRole("link", { name: "Scheduled casts" })).toHaveCount(0);
   await page.goto("/scheduled");
-  await expect(page.locator(".scheduled-empty")).toHaveText("Nothing scheduled. Allthing doesn't post for you right now: Cast opens your draft in the Farcaster app, ready to post there.");
+  await expect(page.locator(".scheduled-empty")).toHaveText("Nothing scheduled.");
   expect(calls.endorse).toBe(0);
 });
 
@@ -213,6 +216,8 @@ test("at 390, each write opens the Farcaster app: a link, no code, inside the sc
   const open = (await dialog.getByRole("link", { name: /Open in Farcaster/ }).boundingBox())!;
   expect(open.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(dialog).not.toContainText("doesn't act for you");
+  await page.screenshot({ path: testInfo.outputPath("handoff-390.png") });
   await dialog.getByRole("button", { name: "Close" }).tap();
   // Cast: the round button, and the draft's link straight to the app.
   await page.getByRole("button", { name: "Write a cast" }).tap();
@@ -220,6 +225,8 @@ test("at 390, each write opens the Farcaster app: a link, no code, inside the sc
   const post = page.getByRole("dialog", { name: "New cast" }).getByRole("link", { name: /Post in Farcaster/ });
   await expect(post).toBeInViewport();
   await expect(post).toHaveAttribute("href", `${COMPOSE}?text=gm%20from%20my%20phone`);
+  await expect(page.getByRole("dialog", { name: "New cast" })).not.toContainText("doesn't post");
+  await page.screenshot({ path: testInfo.outputPath("composer-390.png") });
   await page.keyboard.press("Escape");
   // Follow.
   await page.goto("/u/alice");

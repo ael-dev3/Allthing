@@ -91,7 +91,7 @@ mod with_worker {
                     let text = if writer.is_some_and(Writer::can_write) {
                         "Nothing scheduled. Write a cast, and the clock beside its GIF button picks when it goes out."
                     } else {
-                        "Nothing scheduled. Allthing doesn't post for you right now: Cast opens your draft in the Farcaster app, ready to post there."
+                        "Nothing scheduled."
                     };
                     return view! { <p class="scheduled-empty">{text}</p> }.into_any();
                 }
