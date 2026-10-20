@@ -17,8 +17,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use allthing_core::app_key::{
-    self, Endorse, KeyState, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
+    self, Endorse, KeyState, Writes, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
+use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Sent, Submitted};
@@ -38,7 +39,7 @@ use crate::components::chips::Avatar;
 use crate::components::handoff::{Ask, Dismissed, HandOff, use_hand_off};
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
-use crate::util::{cast_href, document, local_time, scheduled_href, trap_tab};
+use crate::util::{can_hover, cast_href, document, local_time, scheduled_href, trap_tab};
 
 /// How often the dialog asks the Farcaster app's API about the request (as
 /// Farcaster's own example does), and how often the node is asked whether
@@ -97,9 +98,11 @@ enum Can {
 enum Step {
     /// Making the key, and the request, and the code.
     Starting,
-    /// The code is up; the Farcaster app hasn't answered yet.
+    /// The link is up, drawn as a code where a phone has to scan it; the
+    /// Farcaster app hasn't answered yet.
     Waiting {
-        code: QrCode,
+        code: Option<QrCode>,
+        link: String,
     },
     /// Approved: the Farcaster app is adding the key to the account.
     Adding,
@@ -240,6 +243,8 @@ pub struct Writer {
     session: Session,
     hand_off: HandOff,
     can: RwSignal<Can>,
+    /// The account the Worker asks for readers' keys as, once it has said.
+    app: RwSignal<Option<u64>>,
     open: RwSignal<bool>,
     step: RwSignal<Step>,
     mine: RwSignal<Mine>,
@@ -300,6 +305,7 @@ impl Writer {
             session,
             hand_off: use_hand_off(),
             can: RwSignal::new(Can::No),
+            app: RwSignal::new(None),
             open: RwSignal::new(false),
             step: RwSignal::new(Step::Starting),
             mine: RwSignal::new(Mine { deleted: deleted_before(), ..Mine::default() }),
@@ -1032,9 +1038,11 @@ impl Writer {
         });
         self.can.set(Can::Checking);
         spawn_local(async move {
-            // Only whether the Worker endorses keys matters here.
-            let can = match api::get::<serde::de::IgnoredAny>(&writes_path()).await {
-                Ok(_) => kept_key(fid).await,
+            let can = match api::get::<Writes>(&writes_path()).await {
+                Ok(writes) => {
+                    self.app.set(Some(writes.data.app_fid));
+                    kept_key(fid).await
+                }
                 Err(_) => Can::No,
             };
             if CHECK.with(Cell::get) != check {
@@ -1298,12 +1306,20 @@ async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, Str
         Err(error) => return Err(key_message(error)),
     };
     let Some(request) = stored.request.clone() else { return Err(EXPIRED.into()) };
-    let code: QrCode =
-        api::post(&siwf::qr_path(), &QrRequest { url: request.link.clone() }).await.map_err(|f| f.message())?;
+    // A computer shows the link as a code for the reader's phone; a phone
+    // opens it in the Farcaster app.
+    let code = match can_hover() {
+        true => Some(
+            api::post::<_, QrCode>(&siwf::qr_path(), &QrRequest { url: request.link.clone() })
+                .await
+                .map_err(|f| f.message())?,
+        ),
+        false => None,
+    };
     if !current(run) {
         return Err(String::new());
     }
-    step.set(Step::Waiting { code });
+    step.set(Step::Waiting { code, link: request.link });
     loop {
         pause(POLL_MS).await;
         if !current(run) {
@@ -1563,17 +1579,31 @@ pub fn WriterDialog() -> impl IntoView {
                 }>
                     <div class="modal signin-modal key-modal" role="dialog" aria-modal="true" aria-labelledby="key-title" node_ref=dialog>
                         <header class="modal-head">
-                            <h2 id="key-title">"Like and recast"</h2>
+                            <h2 id="key-title">"Approve Allthing"</h2>
                             <button type="button" class="modal-close" aria-label="Close" node_ref=close_button on:click=move |_| writer.close()>"×"</button>
                         </header>
                         <div class="modal-body signin-body">
-                            <p class="signin-intro">"Scan the code with your phone's camera, then approve Allthing in the Farcaster app."</p>
-                            <div class="qr-frame" class:failed=move || failed().is_some()>
+                            <p class="signin-intro">
+                                {if can_hover() {
+                                    "Once, to post, like, recast and follow from here: scan the code with your phone's camera, then approve Allthing in the Farcaster app."
+                                } else {
+                                    "Once, to post, like, recast and follow from here: approve Allthing in the Farcaster app."
+                                }}
+                            </p>
+                            <div
+                                class="qr-frame"
+                                class:failed=move || failed().is_some()
+                                class:as-link=move || matches!(writer.step.get(), Step::Waiting { code: None, .. })
+                            >
                                 {move || match writer.step.get() {
-                                    Step::Waiting { code } => view! {
+                                    Step::Waiting { code: Some(code), .. } => view! {
                                         <svg class="qr" viewBox=format!("0 0 {0} {0}", code.size) role="img" aria-label="QR code to approve Allthing" shape-rendering="crispEdges">
                                             <path d=code.path/>
                                         </svg>
+                                    }
+                                    .into_any(),
+                                    Step::Waiting { code: None, link } => view! {
+                                        <a class="button key-approve" href=link>"Approve in Farcaster"</a>
                                     }
                                     .into_any(),
                                     // The reader, while their key is added.
@@ -1599,6 +1629,12 @@ pub fn WriterDialog() -> impl IntoView {
                                 {move || failed().unwrap_or_else(|| status().to_owned())}
                             </p>
                             <p class="signin-note muted small">
+                                // The Farcaster app names the account that asks, which here is
+                                // a person's.
+                                {move || {
+                                    (writer.app.get() == Some(ALLTHING_APP_FID))
+                                        .then_some("The Farcaster app shows the request as from @0xael.eth, who makes Allthing. ")
+                                }}
                                 "Allthing gets a key that can like, recast and post for you, and uses it only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it."
                             </p>
                         </div>

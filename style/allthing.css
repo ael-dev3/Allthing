@@ -4969,6 +4969,30 @@ p.jumbo .emoji img {
   border-style: dashed;
 }
 
+/* On the phone itself, the link to the Farcaster app instead of a code. */
+.qr-frame.as-link {
+  aspect-ratio: auto;
+  padding: 8px 0;
+  background: none;
+  border: 0;
+}
+
+.key-approve {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 11px 20px;
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  text-decoration: none;
+}
+
+.key-approve:hover {
+  color: #fff;
+  background: #4337c4;
+}
+
 .signin-status {
   margin: 0;
   min-height: 1.4em;

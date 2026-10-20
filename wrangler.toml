@@ -51,3 +51,11 @@ crons = ["* * * * *", "*/1 * * * *", "*/2 * * * *"]
 [observability]
 enabled = true
 head_sampling_rate = 0.05
+
+# The Farcaster account Allthing asks for readers' keys as, the app their
+# casts show as "via Allthing": its owner's, @0xael.eth. Public. Writing from
+# Allthing also needs that account's custody key, the ALLTHING_CUSTODY_KEY
+# secret, set in Cloudflare only (docs/DEPLOY.md#secrets); until it is set,
+# writes go to the Farcaster app.
+[vars]
+ALLTHING_FID = "539854"

@@ -11,9 +11,17 @@ use crate::model::{Cast, UserSummary};
 /// until 2025.
 pub const FARCASTER_APP_FID: u64 = 9152;
 
+/// The account Allthing asks for readers' keys as (`ALLTHING_FID`): its
+/// owner's own, @0xael.eth. Casts posted with those keys are Allthing's.
+pub const ALLTHING_APP_FID: u64 = 539_854;
+
 /// What to call the app casts were posted from.
 pub fn client_name(app: &UserSummary) -> &str {
-    if app.fid == FARCASTER_APP_FID { "Farcaster" } else { app.name() }
+    match app.fid {
+        FARCASTER_APP_FID => "Farcaster",
+        ALLTHING_APP_FID => "Allthing",
+        _ => app.name(),
+    }
 }
 
 /// The profile key (as `/u/<key>` takes it) for the app's account: its fid
@@ -154,6 +162,13 @@ mod tests {
         assert_eq!(client_name(&app(9152, "warpcast", "Warpcast")), "Farcaster");
         assert_eq!(client_name(&app(309857, "baseapp.base.eth", "Base App")), "Base App");
         assert_eq!(client_name(&app(42, "someapp", "")), "someapp");
+    }
+
+    #[test]
+    fn casts_from_keys_allthing_asked_for_are_allthings() {
+        assert_eq!(client_name(&app(ALLTHING_APP_FID, "0xael.eth", "ael")), "Allthing");
+        // Its account is the owner's profile.
+        assert_eq!(client_profile(&app(ALLTHING_APP_FID, "0xael.eth", "ael")), "0xael.eth");
     }
 
     #[test]

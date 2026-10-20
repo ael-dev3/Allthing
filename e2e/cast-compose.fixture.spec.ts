@@ -225,9 +225,10 @@ test("the first cast asks for a key, then goes out; at 390 it all fits", async (
   await expect(dialog).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await post.tap();
-  // No key yet: the dialog to approve one, over the composer.
-  const approve = page.getByRole("dialog", { name: "Like and recast" });
-  await expect(approve.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
+  // No key yet: the dialog to approve one, over the composer; on the phone
+  // itself, a link to the Farcaster app rather than a code to scan.
+  const approve = page.getByRole("dialog", { name: "Approve Allthing" });
+  await expect(approve.getByRole("link", { name: "Approve in Farcaster" })).toBeVisible();
   await expect(approve).toBeInViewport({ ratio: 1 });
   await expect(approve).toBeHidden();
   await expect(dialog).toBeHidden();

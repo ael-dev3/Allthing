@@ -95,24 +95,24 @@ async function serve(page: Page, options: Options = {}) {
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: first, children: [] }, notes: {}, meta } }));
   await page.route("**/api/v1/signer", (route) => {
     calls.writes += 1;
-    return writes ? route.fulfill({ json: { app_fid: 9152 } }) : route.fulfill({ status: 404, json: { error: "Liking and recasting from Allthing isn't set up on this server" } });
+    return writes ? route.fulfill({ json: { app_fid: 539854 } }) : route.fulfill({ status: 404, json: { error: "Liking and recasting from Allthing isn't set up on this server" } });
   });
   await page.route("**/api/v1/auth/signer", (route) => {
     key = route.request().postDataJSON().key;
     calls.endorse.push(key);
-    return route.fulfill({ json: { key, requestFid: 9152, signature: `0x${"5a".repeat(65)}`, deadline: Math.floor(Date.now() / 1000) + 3600 } });
+    return route.fulfill({ json: { key, requestFid: 539854, signature: `0x${"5a".repeat(65)}`, deadline: Math.floor(Date.now() / 1000) + 3600 } });
   });
   // The Worker draws the code itself.
   await page.route("**/api/v1/auth/qr", (route) => route.continue());
   await page.route(`${FARCASTER}/signed-key-requests`, async (route) => {
     if (await preflight(route)) return;
     calls.requests.push(route.request().postDataJSON());
-    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 9152, state: "pending" } } } });
+    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 539854, state: "pending" } } } });
   });
   await page.route(`${FARCASTER}/signed-key-request?*`, (route) => {
     expect(new URL(route.request().url()).searchParams.get("token")).toBe(TOKEN);
     calls.polls += 1;
-    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 9152, ...poll(calls.polls) } } } });
+    return route.fulfill({ headers: cors, json: { result: { signedKeyRequest: { token: TOKEN, deeplinkUrl: LINK, key, requestFid: 539854, ...poll(calls.polls) } } } });
   });
   await page.route(`${NODE}/signersByFid?*`, (route) => {
     calls.signers += 1;
@@ -176,7 +176,7 @@ test("signed out, the icons open the cast in the Farcaster app and never the lis
   await expect(page.getByRole("link", { name: "Signed in as @reader: your profile" })).toBeVisible();
   await expect.poll(() => calls.writes).toBe(1);
   await expect(like).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByRole("dialog", { name: "Like and recast" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Approve Allthing" })).toHaveCount(0);
   expect(calls.endorse).toHaveLength(0);
   // The full list: the preview's "See everyone", or a click on the count.
   await like.hover();
@@ -199,7 +199,7 @@ test("signed in from the header, a like approves a key, then likes", async ({ pa
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await like.click();
   // On to the key, approved in the Farcaster app.
-  const keyDialog = page.getByRole("dialog", { name: "Like and recast" });
+  const keyDialog = page.getByRole("dialog", { name: "Approve Allthing" });
   await expect(keyDialog.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
   expect(calls.signIns).toBe(1);
   expect(calls.writes).toBe(1);
@@ -228,7 +228,7 @@ test("on a server that endorses no keys, a signed-in reader likes and recasts in
   // The count is as it was, and no key is asked for.
   await page.keyboard.press("Escape");
   await expect(card(page, first).getByRole("button", { name: "3 likes: show who" })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Like and recast" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Approve Allthing" })).toHaveCount(0);
   expect(calls.endorse).toHaveLength(0);
   expect(calls.sent).toHaveLength(0);
 });
@@ -244,7 +244,7 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
   expect(calls.reactions).toEqual([]);
 
   await like.click();
-  const dialog = page.getByRole("dialog", { name: "Like and recast" });
+  const dialog = page.getByRole("dialog", { name: "Approve Allthing" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
   // The Worker's drawing of the request's link; no link to follow instead.
@@ -253,11 +253,14 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
   expect(await code.locator("path").getAttribute("d")).toMatch(/^M4 4h7v1h-7z/);
   await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(dialog).toContainText("Allthing's servers never see it");
+  // The Farcaster app will name the account that asks, a person's.
+  await expect(dialog).toContainText("The Farcaster app shows the request as from @0xael.eth, who makes Allthing.");
+  await page.screenshot({ path: test.info().outputPath("approve-1280.png") });
   // A fresh key, endorsed by the Worker and passed on as it is.
   expect(calls.endorse).toHaveLength(1);
   const key = calls.endorse[0];
   expect(key).toMatch(/^0x[0-9a-f]{64}$/);
-  expect(calls.requests).toEqual([expect.objectContaining({ key, requestFid: 9152, signature: `0x${"5a".repeat(65)}` })]);
+  expect(calls.requests).toEqual([expect.objectContaining({ key, requestFid: 539854, signature: `0x${"5a".repeat(65)}` })]);
   const pending = await kept(page);
   expect(pending).toEqual({ key, extractable: false, algorithm: "Ed25519", approved: false, token: TOKEN });
 
@@ -318,9 +321,13 @@ test("on a phone, the buttons are easy to tap and the dialog fits", async ({ bro
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await recast.tap();
-  const dialog = page.getByRole("dialog", { name: "Like and recast" });
-  await expect(dialog.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Approve Allthing" });
+  // On the phone itself, no code to scan: the link opens the Farcaster app.
+  const open = dialog.getByRole("link", { name: "Approve in Farcaster" });
+  await expect(open).toHaveAttribute("href", /^farcaster:\/\/signed-key-request\?token=/);
+  await expect(dialog.getByRole("img", { name: "QR code to approve Allthing" })).toHaveCount(0);
   await expect(dialog).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: testInfo.outputPath("approve-390.png") });
   await expect(dialog).toBeHidden();
   await expect.poll(() => calls.sent.length).toBe(1);
   expect(calls.sent[0]).toMatchObject({ type: 3, reaction: 2, fid: me.fid, target: { fid: 42, hash: first.hash } });
@@ -380,7 +387,7 @@ test("a key removed in the Farcaster app is forgotten, and a failed like is undo
   expect(calls.sent).toHaveLength(2);
   // So the next like asks for a new one.
   await like.click();
-  await expect(page.getByRole("dialog", { name: "Like and recast" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Approve Allthing" })).toBeVisible();
 });
 
 test("an approval from another account is refused, and signing out forgets the key", async ({ page }) => {
@@ -388,7 +395,7 @@ test("an approval from another account is refused, and signing out forgets the k
   const calls = await serve(page, { poll: (n) => (n < 2 ? { state: "pending" } : { state: "approved", userFid: 999 }) });
   await page.goto("/");
   await card(page, first).getByRole("button", { name: "Like", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Like and recast" });
+  const dialog = page.getByRole("dialog", { name: "Approve Allthing" });
   await expect(dialog.getByRole("status")).toHaveText(
     "That was approved from another Farcaster account (fid 999). Approve from the account you're signed in with.",
   );
