@@ -74,6 +74,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- On a phone, a tap on a cast's heart or recast, or anywhere else in a cast, no longer flashes the whole card in the browser's tap colour, which showed over the dialog the tap opened too.
 - A channel page shows its newest casts where it showed only its pinned cast, as /veg did. For some channels, Hypersnap sends the newest casts after a page or two with none on them, each with a cursor for more (/veg's after two, every time), and the page took the first, empty one for the whole channel. It now follows the cursor past up to three such pages. If it still finds none, the page keeps the last copy it had, or, with none, says the data source didn't answer and offers to try again, instead of showing the channel as empty.
 - In the emoji picker, the groups bar marks the group in view after a scroll that comes right after choosing a group: it could stay on the group chosen. A jump now remembers where it left the grid, rather than skipping the next scroll, which the browser merges with a scroll by hand in the same frame.
 - Casts about Gig Bot written as two words ("🚀 New Task on Gig Bot 2.0!", "Check out Gig Bot 2.0") are left out as spam, as those writing gig-bot or gigbot already were. One was in the home feed, and six turned up in search.

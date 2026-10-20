@@ -317,6 +317,10 @@ test("on a phone, the buttons are easy to tap and the dialog fits", async ({ bro
     expect(box.height).toBeGreaterThanOrEqual(24);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // A tap in a card doesn't flash the whole card, over the dialog it opens:
+  // Chrome highlights the largest element with a hand cursor around a tap.
+  const tapColour = (el: Element) => getComputedStyle(el).getPropertyValue("-webkit-tap-highlight-color");
+  expect(await card(page, first).evaluate(tapColour)).toBe("rgba(0, 0, 0, 0)");
   await recast.tap();
   const dialog = page.getByRole("dialog", { name: "Like and recast" });
   await expect(dialog.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
