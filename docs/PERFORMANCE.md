@@ -127,6 +127,15 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - On the front page, once the loaded pool runs out, the next trending page (`/api/v1/home?offset=100`, … up to 900) is fetched at the same point, so the next cards are usually ready before they are needed.
 - The end is checked again after cards or a server page arrive. Short and empty filtered pages keep filling without requiring the sentinel to leave and re-enter the viewport; failures still wait for retry backoff, and loading stops at offset 900.
 
+### Code loaded when used
+
+Parts of the app that most visits don't use are cut out of the module when it's built, and fetched the first time they're used.
+
+- **How.** A function marked `#[wasm_split(<part>, …)]` is the way into a part (allthing-web's `split.rs`). Before wasm-bindgen, `cargo xtask` runs wasm-split ([`wasm_split_cli_support`](https://github.com/WorldSEnder/wasm-split-prototype), what `cargo leptos --split` runs): the code only that function reaches goes into `<part>.wasm`, which shares the module's memory and function table, and `allthing-split.js` fetches it the first time the function is called. Calling it again is immediate. wasm-split finds what each function reaches from the relocations the linker keeps (`--emit-relocs` in `.cargo/config.toml`), and the parts reach the table through its export, which wasm-bindgen keeps (`--keep-lld-exports`). The splitting itself costs the module about 0.6 KB at brotli 11.
+- **Files.** The module, its JavaScript, the loader and the parts work only with one another, so one fingerprint names them all: `assets/allthing-<hash>.wasm`, which the Worker serves at `/wasm/` as before, and the folder `assets/allthing-<hash>/` with `allthing.js`, `allthing-split.js` and the parts. `index.html` preloads both scripts. A part is a static asset: fetching one costs no Worker request, and the edge compresses it.
+- **After a deploy.** A page opened before a deploy runs the previous version, whose files are gone. When a part can't be fetched, the page loads again, once per version and tab (`split::reload_once`), as the new version; if the part still can't come, the page says so and offers to try again.
+- **The DAU page's dashboard** is the first part (`split_dau.wasm`, 39 KB, 16.9 KB at brotli 11): its tiles, chart, tables and readouts. /dau fetches it while it fetches the counts. The module went from 2,145,244 to 2,119,212 bytes, and from 579,624 to 572,909 bytes at brotli 11: 6.6 KB (1.2%) less to download before anything renders, about 34 ms on a 1.6 Mbps "slow 4G" first visit (release builds on 20 October 2026). Until the dashboard's code has come, the page says it is loading the counts, as before.
+
 ## Measurements
 
 <!-- Keep these up to date when the numbers move. -->

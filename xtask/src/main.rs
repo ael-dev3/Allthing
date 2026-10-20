@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Build tasks, run with `cargo xtask <task>`:
 //!
-//! - `dist`: compile the browser app to WebAssembly, run wasm-bindgen (and
+//! - `dist`: compile the browser app to WebAssembly, cut the parts it loads
+//!   when used into modules of their own (wasm-split), run wasm-bindgen (and
 //!   wasm-opt when available), fingerprint the assets and write the static
 //!   site into `dist/`, which Workers Static Assets serves.
 //! - `pages [base]`: the same site for static hosting under `base` (default
@@ -152,35 +153,53 @@ fn site(site: &Site) -> Result<()> {
         cargo.args(["--features", "static-host"]);
     }
     run(&mut cargo)?;
+    let split_out = root.join("target/web-split");
+    let parts = split(&root.join("target/wasm32-unknown-unknown/release/allthing_web.wasm"), &split_out)?;
     let _ = fs::remove_dir_all(&bindgen_out);
     run(Command::new(tool("WASM_BINDGEN_BIN", "wasm-bindgen")).current_dir(&root).args([
         "--target",
         "web",
         "--no-typescript",
+        // The split parts reach the module's table by its export.
+        "--keep-lld-exports",
         "--out-name",
         "allthing",
         "--out-dir",
         "target/web-bindgen",
-        "target/wasm32-unknown-unknown/release/allthing_web.wasm",
+        "target/web-split/main.wasm",
     ]))?;
     let wasm_path = bindgen_out.join("allthing_bg.wasm");
     let wasm_opt = tool("WASM_OPT_BIN", "wasm-opt");
     if available(&wasm_opt) {
-        let optimized = bindgen_out.join("allthing_opt.wasm");
-        run(Command::new(&wasm_opt)
-            .args(["-Oz", "--strip-debug", "--strip-producers", "-o"])
-            .arg(&optimized)
-            .arg(&wasm_path))?;
-        fs::rename(&optimized, &wasm_path).map_err(|e| e.to_string())?;
+        for module in std::iter::once(&wasm_path).chain(&parts) {
+            optimize(&wasm_opt, module)?;
+        }
     } else {
-        eprintln!("xtask: wasm-opt not found; shipping the unoptimized module");
+        eprintln!("xtask: wasm-opt not found; shipping the unoptimized modules");
     }
 
     // Everything is rebuilt.
     let _ = fs::remove_dir_all(&dist);
 
+    // The module, its JavaScript, the split parts and their loader only work
+    // with one another (the parts share the module's memory and table): one
+    // fingerprint names them all. The module sits in assets/ for the
+    // Worker's /wasm/; the rest, which name each other, in a folder of
+    // their own.
     let wasm = read(&wasm_path)?;
-    let wasm_name = format!("allthing-{}.wasm", fingerprint(&wasm));
+    let js = read(&bindgen_out.join("allthing.js"))?;
+    let loader = read(&split_out.join(SPLIT_LOADER))?;
+    let mut together = [wasm.as_slice(), &js, &loader].concat();
+    let mut part_files = Vec::new();
+    for part in &parts {
+        let name = part.file_name().and_then(|n| n.to_str()).ok_or("a split part without a name")?.to_owned();
+        let bytes = read(part)?;
+        together.extend_from_slice(name.as_bytes());
+        together.extend_from_slice(&bytes);
+        part_files.push((name, bytes));
+    }
+    let build = format!("allthing-{}", fingerprint(&together));
+    let wasm_name = format!("{build}.wasm");
     write(&assets.join(&wasm_name), &wasm)?;
     // The Worker serves the module at /wasm/ from a copy compressed at
     // brotli's highest level; the static copy has no Worker.
@@ -190,9 +209,13 @@ fn site(site: &Site) -> Result<()> {
         brotli(&assets.join(&wasm_name), &assets.join(format!("{wasm_name}.br")));
         format!("/wasm/{wasm_name}")
     };
-    let js = read(&bindgen_out.join("allthing.js"))?;
-    let js_name = format!("allthing-{}.js", fingerprint(&js));
+    let js_name = format!("{build}/allthing.js");
     write(&assets.join(&js_name), &js)?;
+    let loader_name = format!("{build}/{SPLIT_LOADER}");
+    write(&assets.join(&loader_name), &loader)?;
+    for (name, bytes) in &part_files {
+        write(&assets.join(&build).join(name), bytes)?;
+    }
 
     let css = minify_css(&String::from_utf8(read(&root.join("style/allthing.css"))?).map_err(|e| e.to_string())?);
     let css_name = format!("allthing-{}.css", fingerprint(css.as_bytes()));
@@ -240,6 +263,7 @@ fn site(site: &Site) -> Result<()> {
     let html = html
         .replace("{{CSS}}", &format!("{base}/assets/{css_name}"))
         .replace("{{JS}}", &format!("{base}/assets/{js_name}"))
+        .replace("{{SPLIT_JS}}", &format!("{base}/assets/{loader_name}"))
         .replace("{{WASM}}", &wasm_url)
         .replace("{{BOOT}}", &format!("{base}/assets/{boot_name}"))
         .replace("{{BASE}}", base);
@@ -251,14 +275,50 @@ fn site(site: &Site) -> Result<()> {
     }
 
     let kb = |n: usize| n.div_ceil(1024);
+    let parts_shown: Vec<String> =
+        part_files.iter().map(|(name, bytes)| format!("{name} {} KB", kb(bytes.len()))).collect();
     eprintln!(
-        "xtask: {} ready: {wasm_name} {} KB, {js_name} {} KB, {css_name} {} KB",
+        "xtask: {} ready: {wasm_name} {} KB, {js_name} {} KB, {css_name} {} KB; loaded when used: {}",
         site.out,
         kb(wasm.len()),
         kb(js.len()),
-        kb(css.len())
+        kb(css.len()),
+        parts_shown.join(", ")
     );
     Ok(())
+}
+
+/// The loader the split parts are fetched with, as the module's JavaScript
+/// imports it.
+const SPLIT_LOADER: &str = "allthing-split.js";
+
+/// Cut the parts of the app marked `#[wasm_split]` (allthing-web's
+/// `split` module) out of the module `raw` into modules of their own, in
+/// `out` with the main module (`main.wasm`, for wasm-bindgen) and the
+/// JavaScript that fetches each part the first time it's called. The parts
+/// share the main module's memory and table, which wasm-split finds from
+/// the relocations the linker keeps (`--emit-relocs` in .cargo/config.toml).
+fn split(raw: &Path, out: &Path) -> Result<Vec<PathBuf>> {
+    let input = read(raw)?;
+    let _ = fs::remove_dir_all(out);
+    let main = out.join("main.wasm");
+    let mut options = wasm_split_cli_support::Options::new(&input);
+    options.output_dir = out;
+    options.main_out_path = &main;
+    let link_name = format!("./{SPLIT_LOADER}");
+    options.link_name = &link_name;
+    options.main_module = "./allthing.js";
+    let split = wasm_split_cli_support::transform(options).map_err(|e| format!("wasm-split: {e:#}"))?;
+    let mut parts = split.split_modules;
+    parts.sort();
+    Ok(parts)
+}
+
+/// Optimize a module for size in place with wasm-opt.
+fn optimize(wasm_opt: &str, module: &Path) -> Result<()> {
+    let optimized = module.with_extension("opt.wasm");
+    run(Command::new(wasm_opt).args(["-Oz", "--strip-debug", "--strip-producers", "-o"]).arg(&optimized).arg(module))?;
+    fs::rename(&optimized, module).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
