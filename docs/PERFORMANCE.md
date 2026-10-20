@@ -100,6 +100,11 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - **Casting, replying and quoting** with the reader's key added 8.1 KB more (463,702 → 471,779 bytes at brotli 11): the cast's encoding, mentions and the composer's post button. Mentions are looked up only when a cast is posted.
 - **Following and deleting** added 7.1 KB more (471,779 → 478,838 bytes at brotli 11): Follow and its lookup, Delete and its question, and a deleted cast shown as deleted in feeds, posts and threads. A profile view costs a reader who can follow one Hypersnap read from the browser, and no Worker request.
 - **Emoji** added 2.9 KB to the module at brotli 11 (483,806 → 486,790 bytes, release builds on 20 October 2026): the pack's table, the shortcodes and their view. The images cost nothing until a cast shows one. Each is a static file under `/assets/emoji/v1/`, cached for a year and loaded lazily: a median of 17 KB and 133 KB at most, or with reduced motion a still of about 2 KB. A page view makes no more Worker requests.
+- **The emoji picker** added 8.6 KB (486,790 → 495,615 bytes at brotli 11): its grid, search and recently used, and the composer's caret handling. Two choices kept it small:
+  - its tiles share six listeners on the grid, instead of six each;
+  - its results are drawn anew for each search instead of as a keyed list, which saved 3 KB.
+
+  Opening it the first time loads the stills in view, about 110 KB at 1280 px (all 103 are 220 KB), from the year-long cache after that. It makes no Worker requests.
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
 
 ### 5. Infinite scroll

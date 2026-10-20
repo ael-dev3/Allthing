@@ -168,6 +168,96 @@ pub fn shortcode_at(rest: &str) -> Option<(&'static Emoji, usize)> {
     find(&inner[..end]).map(|emoji| (emoji, end + 2))
 }
 
+/// The pack's emoji that match a picker's search, best first: those whose
+/// name starts with it, then those whose name has it, then those whose
+/// description has it, each in the pack's order. Colons, case and the
+/// `pepe_` every name starts with don't count, and spaces match
+/// underscores. An empty search, or one still typing "pepe_", matches all.
+pub fn search(query: &str) -> Vec<&'static Emoji> {
+    let query = query.trim().trim_matches(':').to_lowercase().replace(' ', "_");
+    let query = match query.strip_prefix("pepe_") {
+        Some(rest) => rest,
+        None if query.len() >= 3 && "pepe_".starts_with(&query) => "",
+        None => &query,
+    };
+    let mut found: Vec<(u8, &'static Emoji)> = PACK
+        .iter()
+        .filter_map(|emoji| {
+            let name = emoji.code.strip_prefix("pepe_").unwrap_or(emoji.code);
+            let rank = if name.starts_with(query) {
+                0
+            } else if name.contains(query) {
+                1
+            } else if emoji.what.to_lowercase().replace(' ', "_").contains(query) {
+                2
+            } else {
+                return None;
+            };
+            Some((rank, emoji))
+        })
+        .collect();
+    found.sort_by_key(|(rank, _)| *rank);
+    found.into_iter().map(|(_, emoji)| emoji).collect()
+}
+
+/// How many recently used emoji a picker keeps.
+pub const RECENT_MAX: usize = 16;
+
+/// The recently used emoji in `kept` (shortcodes, most recent first,
+/// separated by spaces), leaving out any no longer in the pack.
+pub fn recent(kept: &str) -> Vec<&'static Emoji> {
+    let mut recent: Vec<&'static Emoji> = Vec::new();
+    for emoji in kept.split_whitespace().filter_map(find) {
+        if !recent.contains(&emoji) && recent.len() < RECENT_MAX {
+            recent.push(emoji);
+        }
+    }
+    recent
+}
+
+/// `kept` with `emoji` as the most recent.
+pub fn remember(kept: &str, emoji: &Emoji) -> String {
+    let mut codes = vec![emoji.code];
+    codes.extend(recent(kept).iter().map(|e| e.code).filter(|code| *code != emoji.code));
+    codes.truncate(RECENT_MAX);
+    codes.join(" ")
+}
+
+/// `emoji`'s shortcode in `text` in place of the selection from `start` to
+/// `end` (in UTF-16 code units, as a text box counts them), with a space
+/// before it unless it starts the text or follows one, and after it unless
+/// one follows. Also where the caret goes: just after what was put in.
+pub fn insert(text: &str, start: usize, end: usize, emoji: &Emoji) -> (String, usize) {
+    let (start, end) = (byte_at(text, start.min(end)), byte_at(text, start.max(end)));
+    let (before, after) = (&text[..start], &text[end..]);
+    let mut out = before.to_owned();
+    if !before.is_empty() && !before.ends_with(char::is_whitespace) {
+        out.push(' ');
+    }
+    out.push(':');
+    out.push_str(emoji.code);
+    out.push(':');
+    if !after.starts_with(char::is_whitespace) {
+        out.push(' ');
+    }
+    let caret = out.encode_utf16().count();
+    out.push_str(after);
+    (out, caret)
+}
+
+/// The byte offset in `text` of the UTF-16 offset `at`, at a character's
+/// start; past the end, the end.
+fn byte_at(text: &str, at: usize) -> usize {
+    let mut units = 0;
+    for (i, c) in text.char_indices() {
+        if units >= at {
+            return i;
+        }
+        units += c.len_utf16();
+    }
+    text.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +298,59 @@ mod tests {
         let laugh = find("pepe_laugh").unwrap();
         assert!(laugh.animated);
         assert_eq!(laugh.still(), "/assets/emoji/v1/pepe_laugh.still.webp");
+    }
+
+    fn codes(found: &[&Emoji]) -> Vec<&'static str> {
+        found.iter().map(|e| e.code).collect()
+    }
+
+    #[test]
+    fn a_search_finds_names_first_then_descriptions() {
+        assert_eq!(search("").len(), PACK.len());
+        assert_eq!(search("  ").len(), PACK.len());
+        // Still typing "pepe_" or ":pepe_": everything.
+        assert_eq!(search("pep").len(), PACK.len());
+        assert_eq!(search(":pepe_").len(), PACK.len());
+        // Named "no…" first, then "nods yes".
+        assert_eq!(codes(&search("no")), ["pepe_no", "pepe_nopers", "pepe_yes"]);
+        assert_eq!(codes(&search(":PEPE_NO:"))[0], "pepe_no");
+        assert_eq!(codes(&search("heart hug")), ["pepe_heart_hug"]);
+        assert_eq!(codes(&search("big heart")), ["pepe_heart_hug"]);
+        assert_eq!(codes(&search("hug")), ["pepe_hug", "pepe_huggers", "pepe_heart_hug"]);
+        assert!(search("zzz").is_empty());
+    }
+
+    #[test]
+    fn recent_emoji_are_kept_newest_first_and_known() {
+        let no = find("pepe_no").unwrap();
+        let jam = find("pepe_jam").unwrap();
+        assert_eq!(remember("", no), "pepe_no");
+        assert_eq!(remember("pepe_no", jam), "pepe_jam pepe_no");
+        assert_eq!(remember("pepe_jam pepe_no", no), "pepe_no pepe_jam");
+        // Codes no longer in the pack, and repeats, are dropped.
+        assert_eq!(codes(&recent("pepe_gone pepe_no  PEPE_NO pepe_jam")), ["pepe_no", "pepe_jam"]);
+        let many: Vec<&str> = PACK.iter().map(|e| e.code).collect();
+        assert_eq!(recent(&many.join(" ")).len(), RECENT_MAX);
+        assert_eq!(remember(&many.join(" "), jam).split(' ').count(), RECENT_MAX);
+    }
+
+    #[test]
+    fn inserting_spaces_the_shortcode_and_puts_the_caret_after_it() {
+        let no = find("pepe_no").unwrap();
+        assert_eq!(insert("", 0, 0, no), (":pepe_no: ".to_owned(), 10));
+        assert_eq!(insert("gm", 2, 2, no), ("gm :pepe_no: ".to_owned(), 13));
+        assert_eq!(insert("gm ", 3, 3, no), ("gm :pepe_no: ".to_owned(), 13));
+        // In the middle, with a space after already.
+        assert_eq!(insert("a b", 1, 1, no), ("a :pepe_no: b".to_owned(), 11));
+        // In place of a selection, either way round.
+        assert_eq!(insert("say no!", 4, 6, no), ("say :pepe_no: !".to_owned(), 14));
+        assert_eq!(insert("say no!", 6, 4, no), ("say :pepe_no: !".to_owned(), 14));
+        // Offsets in UTF-16, past a character outside the BMP and an accent.
+        assert_eq!(insert("🐸é", 3, 3, no), ("🐸é :pepe_no: ".to_owned(), 14));
+        assert_eq!(insert("🐸é", 2, 2, no), ("🐸 :pepe_no: é".to_owned(), 13));
+        // Past the end: at the end.
+        assert_eq!(insert("gm", 99, 99, no), ("gm :pepe_no: ".to_owned(), 13));
+        assert_eq!(insert("gm\n", 3, 3, no), ("gm\n:pepe_no: ".to_owned(), 13));
     }
 
     /// The width and height a WebP says it has: its canvas (VP8X), or its

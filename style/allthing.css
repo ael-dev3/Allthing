@@ -3612,8 +3612,15 @@ p.jumbo .emoji img {
   background: var(--paper-2);
 }
 
+/* Two lines while a picker is open below it. */
+.compose-body.picking .compose-text {
+  min-height: 0;
+  height: 72px;
+}
+
 .compose-text:focus,
-.gif-search:focus {
+.gif-search:focus,
+.emoji-search:focus {
   outline: none;
   background: #fff;
   border-color: rgba(79, 67, 212, 0.45);
@@ -3681,6 +3688,28 @@ p.jumbo .emoji img {
 
 .gif-button:hover,
 .gif-button[aria-expanded="true"] {
+  background: var(--accent-soft);
+}
+
+/* The emoji button: one of the pack, as on Discord. */
+.emoji-button {
+  display: inline-grid;
+  place-items: center;
+  padding: 3px 7px;
+  border: 1px solid rgba(79, 67, 212, 0.35);
+  border-radius: 8px;
+  background: var(--card);
+  cursor: pointer;
+}
+
+.emoji-button img {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.emoji-button:hover,
+.emoji-button[aria-expanded="true"] {
   background: var(--accent-soft);
 }
 
@@ -3804,7 +3833,8 @@ p.jumbo .emoji img {
   background: var(--paper-2);
 }
 
-.gif-search {
+.gif-search,
+.emoji-search {
   width: 100%;
   font: 15px/1 var(--font-ui);
   color: var(--ink);
@@ -3892,6 +3922,104 @@ p.jumbo .emoji img {
   text-transform: uppercase;
   color: var(--ink-3);
   text-align: right;
+}
+
+/* The emoji picker: the Pepe pack, still until pointed at. */
+.emoji-picker {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+}
+
+.emoji-results {
+  max-height: min(236px, 32vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.emoji-section {
+  margin: 2px 2px 4px;
+  font: 600 11.5px/1.3 var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.emoji-grid {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 2px;
+}
+
+.emoji-tile {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.emoji-tile img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 34px;
+  object-fit: contain;
+}
+
+.emoji-tile:hover,
+.emoji-tile:focus-visible {
+  background: var(--accent-soft);
+}
+
+/* The emoji pointed at, larger, with its shortcode; or a word on what
+   other apps show. */
+.emoji-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.emoji-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.emoji-preview img {
+  display: block;
+  width: auto;
+  height: 32px;
+}
+
+.emoji-preview code,
+.emoji-hint code {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emoji-credits {
+  margin-left: auto;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 @media (max-width: 640px) {

@@ -197,6 +197,15 @@ A signed-in reader can write a cast, a reply or a quote (`components/compose.rs`
 - Requests use `content_filter=high` and `format_filter=gif,webp`. A tile is the small animated WebP (`sm`, about 120 KB). A cast embeds the medium GIF (`md`), or the nearest size whose link fits a cast's 256-byte embed.
 - Without the secret, the key endpoint answers 404 and the composer has no GIF button.
 
+**Emoji** come from Allthing's own pack ([above](#the-browser-app)), so the picker (`components/emoji_picker.rs`) needs no key and asks no one for anything.
+- **The button.** A Pepe, before the GIF button, opens a grid of the pack under a search box; one picker is open at a time, and Escape closes it before the dialog.
+- **Search.** The search matches names, then descriptions (`allthing_core::emoji::search`), and Enter picks the first match.
+- **Recently used.** Up to 16 come first, newest first, kept in localStorage (`allthing.emoji`).
+- **Motion.** Each emoji shows its still and moves while pointed at or focused (not with reduced motion), and the picker's foot shows the one pointed at with its shortcode.
+- **A pick** puts the shortcode in at the caret, or in place of the selection, spaced from the words beside it, and leaves the caret after it (`emoji::insert`, which counts in UTF-16 as a text box does). The composer keeps the caret itself while the text box hasn't focus, since a tap elsewhere can reset an unfocused text box's selection.
+- **Closing.** A click or Enter closes the picker and returns to the text, unless Shift is held; a tap on a touch screen leaves it open for another, and doesn't call up the phone's keyboard.
+- **Room.** While a picker is open, the text box is two lines tall, so text and picker fit the dialog together.
+
 The secret that signs the cookies is the Worker secret `SESSION_SECRET` ([DEPLOY.md](DEPLOY.md#secrets)); without it, `start` and `verify` answer 503. Sessions are stateless: no store holds them, and changing the secret signs everyone out. Every `/api/v1/auth/` call must be a POST whose `Origin` is the site's own, so other sites can't start, finish or end a sign-in, and its answers are never cached. The static copy has no Worker and so no sign-in; its header says it only reads.
 
 ### Liking and recasting
