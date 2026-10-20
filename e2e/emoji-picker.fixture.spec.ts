@@ -199,6 +199,14 @@ test("the groups' bar brings a group to the top, and marks the one in view as th
     g.scrollTo(0, love.offsetTop + 20);
   });
   await marked("Love");
+  // A scroll by hand in the same frame as a jump comes as one event with
+  // the jump's: the mark follows where the grid ended up.
+  await bar.getByRole("button", { name: "Food and drink" }).evaluate((button) => {
+    (button as HTMLElement).click();
+    button.closest(".emoji-picker")!.querySelector(".emoji-results")!.scrollTo(0, 0);
+  });
+  await marked("Classics");
+  await expect(bar.locator("[aria-current]")).toHaveCount(1);
   // The last group can't reach the top; chosen, it is still the one marked.
   await bar.getByRole("button", { name: "Signs" }).click();
   await marked("Signs");
