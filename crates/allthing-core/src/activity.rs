@@ -195,6 +195,14 @@ pub fn hour(at: i64) -> i64 {
     at.div_euclid(3_600)
 }
 
+/// The hour an action at Unix time `at` is counted in. Hour `h` holds
+/// `(h·3600, (h+1)·3600]`, start-exclusive and end-inclusive as SnapMeter's
+/// windows are, so the 24 hours before `t` (on the hour) are its rolling
+/// window `(t − 24 h, t]` exactly.
+pub fn bucket(at: i64) -> i64 {
+    (at - 1).div_euclid(3_600)
+}
+
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// Each base64 character's value, or 255.
@@ -470,7 +478,7 @@ impl Batch {
         let mut days: HashMap<i64, Vec<u64>> = HashMap::new();
         let mut counts: HashMap<i64, HashMap<Family, u64>> = HashMap::new();
         for a in actions {
-            hours.entry(hour(a.at)).or_default().push(a.fid);
+            hours.entry(bucket(a.at)).or_default().push(a.fid);
             days.entry(day(a.at)).or_default().push(a.fid);
             *counts.entry(day(a.at)).or_default().entry(a.family).or_default() += 1;
         }
@@ -489,7 +497,11 @@ pub struct ActivityPayload {
     /// How far the events had been read, Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reached: Option<i64>,
-    /// Accounts active in the 24 whole hours to the hour in progress, and
+    /// The end of the 24-hour windows, Unix seconds: the last hour read
+    /// whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolling_to: Option<i64>,
+    /// Accounts active in the 24 hours to `rolling_to`, `(t − 24 h, t]`, and
     /// in the 24 before them; none while those hours weren't all read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rolling_24h: Option<u64>,
@@ -507,24 +519,30 @@ pub struct ActivityPayload {
     pub meta: crate::api::Meta,
 }
 
-/// Accounts active in the 24 hours `last - 23` to `last` (the hour in
-/// progress, read up to where reading has reached), if all of them were
-/// read. `hours` holds their sets; an hour with no set had no activity.
-pub fn rolling(follow: &Follow, hours: &HashMap<i64, Fids>, last: i64) -> Option<u64> {
-    let reached = follow.reached()?;
-    let (from, to) = ((last - 23) * 3_600, ((last + 1) * 3_600).min(reached));
-    follow.covered(from, to).then(|| Fids::union_len(((last - 23)..=last).filter_map(|h| hours.get(&h))) as u64)
+/// Accounts active in the 24 hours to `to` (on the hour), `(to − 24 h, to]`,
+/// if all of them were read. `hours` holds their sets (see `bucket`); an
+/// hour with no set had no activity.
+pub fn rolling(follow: &Follow, hours: &HashMap<i64, Fids>, to: i64) -> Option<u64> {
+    let last = hour(to) - 1;
+    follow.covered(to - 86_400, to).then(|| Fids::union_len(((last - 23)..=last).filter_map(|h| hours.get(&h))) as u64)
 }
 
-/// The payload for `follow`'s counts, with the hourly sets of the past 48
-/// hours.
+/// The end of the 24-hour windows when events have been read to `reached`:
+/// the last hour read whole.
+pub fn rolling_to(reached: i64) -> i64 {
+    hour(reached) * 3_600
+}
+
+/// The payload for `follow`'s counts, with the sets of the 48 hours before
+/// the hour in progress.
 pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Meta) -> ActivityPayload {
     let reached = follow.reached();
-    let last = reached.map(hour);
+    let to = reached.map(rolling_to);
     ActivityPayload {
         reached,
-        rolling_24h: last.and_then(|h| rolling(follow, hours, h)),
-        previous_24h: last.and_then(|h| rolling(follow, hours, h - 24)),
+        rolling_to: to,
+        rolling_24h: to.and_then(|t| rolling(follow, hours, t)),
+        previous_24h: to.and_then(|t| rolling(follow, hours, t - 86_400)),
         active_30d: follow.active_30d,
         days: follow.days.iter().rev().take(KEEP_DAYS as usize).rev().cloned().collect(),
         since: follow.since,
@@ -673,8 +691,10 @@ mod tests {
             Action { fid: 2, signer: "0x01".into(), at: at + 1, family: Family::Reaction },
         ];
         let batch = Batch::of(&actions);
+        // An hour ends on its last second: 00:59:59 and 01:00:00 are in hour 0.
         assert_eq!(batch.hours[&hour(at)], Fids::of([1, 2]));
-        assert_eq!(batch.hours[&(hour(at) + 1)], Fids::of([2]));
+        assert_eq!(batch.hours.len(), 1);
+        assert_eq!((bucket(at + 1), bucket(at + 2)), (hour(at), hour(at) + 1));
         assert_eq!(batch.days[&20_000], Fids::of([1, 2]));
         assert_eq!(batch.actions[&20_000][&Family::Reaction], 2);
         assert_eq!(batch.actions[&20_000][&Family::Cast], 1);
@@ -682,22 +702,31 @@ mod tests {
 
     #[test]
     fn rolling_windows_count_each_account_once_and_only_when_read() {
+        // Read to 10 minutes into hour 500,000: the windows end as it began.
         let now_hour = 500_000;
+        let to = now_hour * 3_600;
         let mut hours = HashMap::new();
-        hours.insert(now_hour, Fids::of([1, 2]));
-        hours.insert(now_hour - 23, Fids::of([2, 3]));
-        hours.insert(now_hour - 24, Fids::of([4]));
-        hours.insert(now_hour - 47, Fids::of([4, 5]));
-        let reached = now_hour * 3_600 + 600;
-        let f = follow((now_hour - 47) * 3_600, reached);
-        assert_eq!(rolling(&f, &hours, now_hour), Some(3));
-        assert_eq!(rolling(&f, &hours, now_hour - 24), Some(2));
+        // The hour in progress isn't in a window yet.
+        hours.insert(now_hour, Fids::of([9]));
+        hours.insert(now_hour - 1, Fids::of([1, 2]));
+        hours.insert(now_hour - 24, Fids::of([2, 3]));
+        hours.insert(now_hour - 25, Fids::of([4]));
+        hours.insert(now_hour - 48, Fids::of([4, 5]));
+        hours.insert(now_hour - 49, Fids::of([6]));
+        let reached = to + 600;
+        assert_eq!(rolling_to(reached), to);
+        let f = follow((now_hour - 48) * 3_600, reached);
+        assert_eq!(rolling(&f, &hours, to), Some(3));
+        assert_eq!(rolling(&f, &hours, to - 86_400), Some(2));
         // Counting began after the earlier window started.
         let late = follow((now_hour - 30) * 3_600, reached);
-        assert_eq!(rolling(&late, &hours, now_hour - 24), None);
+        assert_eq!(rolling(&late, &hours, to - 86_400), None);
+        // A window not read to its end.
+        assert_eq!(rolling(&f, &hours, to + 3_600), None);
         let meta = crate::api::Meta::default();
         let payload = summary(&f, &hours, meta);
         assert_eq!((payload.rolling_24h, payload.previous_24h, payload.reached), (Some(3), Some(2), Some(reached)));
+        assert_eq!(payload.rolling_to, Some(to));
         let json = serde_json::to_string(&payload).unwrap();
         assert_eq!(serde_json::from_str::<ActivityPayload>(&json).unwrap(), payload);
     }

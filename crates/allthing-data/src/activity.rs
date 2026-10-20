@@ -119,7 +119,8 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let batch = Batch::of(&actions);
     let reached = follow.reached().unwrap_or(now);
     report.behind = Some(now - reached);
-    let (last_hour, today) = (hour(reached), day(reached));
+    // The windows end as the hour in progress began.
+    let (now_hour, today) = (hour(reached), day(reached));
     // The 30 days to the end of yesterday, once a day, when keeping up (the
     // day sets of a backlog are still filling) and yesterday was read whole.
     let keeping_up = report.behind.is_some_and(|b| b < CAUGHT_UP);
@@ -128,14 +129,14 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         && follow.active_30d.is_none_or(|w| w.day < today - 1);
     let mut names: BTreeSet<String> = batch.hours.keys().map(|&h| hour_set(h)).collect();
     names.extend(batch.days.keys().map(|&d| day_set(d)));
-    names.extend((last_hour - 47..=last_hour).map(hour_set));
+    names.extend((now_hour - 48..now_hour).map(hour_set));
     if due_30d {
         names.extend((today - 30..today).map(day_set));
     }
     let stored = store.activity_sets(names.into_iter().collect()).await?;
     let decoded = |name: &str| stored.get(name).and_then(|text| Fids::decode(text)).unwrap_or_default();
     let mut writes = Vec::new();
-    let mut hours: HashMap<i64, Fids> = (last_hour - 47..=last_hour).map(|h| (h, decoded(&hour_set(h)))).collect();
+    let mut hours: HashMap<i64, Fids> = (now_hour - 48..now_hour).map(|h| (h, decoded(&hour_set(h)))).collect();
     for (h, fids) in &batch.hours {
         let mut set = hours.remove(h).unwrap_or_else(|| decoded(&hour_set(*h)));
         set.extend(fids);
@@ -163,7 +164,7 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let payload: ActivityPayload = activity::summary(&follow, &hours, meta);
     let body = serde_json::to_string(&payload).map_err(|e| IndexError(e.to_string()))?;
     let state = serde_json::to_string(&follow).map_err(|e| IndexError(e.to_string()))?;
-    let keep_from = (last_hour - KEEP_HOURS, today - KEEP_DAYS);
+    let keep_from = (now_hour - KEEP_HOURS, today - KEEP_DAYS);
     store.save_activity(writes, keep_from, state, Snapshot { built: inv.now(), body }).await?;
     Ok(report)
 }
@@ -333,7 +334,7 @@ mod tests {
         let today = follow.days.last().unwrap();
         assert_eq!((today.day, today.active), (day(at), 3));
         assert_eq!(today.actions[&allthing_core::activity::Family::Cast], 2);
-        assert_eq!(Fids::decode(&store.sets.borrow()[&hour_set(hour(at))]), Some(Fids::of([7, 9, 42])));
+        assert_eq!(Fids::decode(&store.sets.borrow()[&hour_set(activity::bucket(at))]), Some(Fids::of([7, 9, 42])));
         let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
         // Counting began 90 seconds ago: no whole window yet.
         assert_eq!((payload.rolling_24h, payload.days.len(), payload.since), (None, 1, Some(at)));
