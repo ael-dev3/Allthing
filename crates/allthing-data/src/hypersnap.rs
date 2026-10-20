@@ -156,19 +156,23 @@ pub async fn channel(inv: &Invocation, key: &str) -> Result<Option<Channel>, Ups
     Ok(Some(Channel { id, name, parent_url, ..known.unwrap_or_default() }))
 }
 
-pub async fn channel_casts(inv: &Invocation, parent_url: &str, limit: u32) -> Result<Vec<RawCast>, UpstreamError> {
+/// A page of the casts of the channel at `parent_url`, newest first, from
+/// `cursor` (the newest without one). It may have none but a cursor for more
+/// (`RawFeed::is_empty_with_more`), which the channel page follows.
+pub async fn channel_page(
+    inv: &Invocation,
+    parent_url: &str,
+    limit: u32,
+    cursor: Option<&str>,
+) -> Result<RawFeed, UpstreamError> {
     let variants = parent_url_variants(parent_url).join(",");
-    let feed: Option<RawFeed> = get_json(
-        inv,
-        Upstream::Hypersnap,
-        &v2(
-            "feed/parent_urls",
-            &[("parent_urls", &variants), ("limit", &limit.to_string()), ("with_recasts", "false")],
-        ),
-        true,
-    )
-    .await?;
-    Ok(feed.map(|f| f.casts).unwrap_or_default())
+    let limit = limit.to_string();
+    let mut query = vec![("parent_urls", variants.as_str()), ("limit", limit.as_str()), ("with_recasts", "false")];
+    if let Some(cursor) = cursor {
+        query.push(("cursor", cursor));
+    }
+    let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2("feed/parent_urls", &query), true).await?;
+    Ok(feed.unwrap_or_default())
 }
 
 /// A backfill may finish only after a readable casts array, not an error

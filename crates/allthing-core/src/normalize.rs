@@ -256,6 +256,20 @@ pub struct RawFeed {
     pub next: Option<RawNext>,
 }
 
+impl RawFeed {
+    /// The cursor for the next page, if there is more.
+    pub fn cursor(&self) -> Option<&str> {
+        self.next.as_ref().and_then(|n| n.cursor.as_deref()).filter(|c| !c.is_empty())
+    }
+
+    /// A page with no casts that still has a cursor for more. Hypersnap
+    /// sends some channels' newest casts after a page or two like this,
+    /// each pointing to the next; the end of a feed has no cursor.
+    pub fn is_empty_with_more(&self) -> bool {
+        self.casts.is_empty() && self.cursor().is_some()
+    }
+}
+
 /// `channel/trending` wraps entries as `{ channel }` on Neynar.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -680,6 +694,25 @@ pub fn enrich_channel(channel: &mut Channel, app: &RawAppChannel, users: &[RawUs
 mod tests {
     use super::*;
     use crate::model::ChannelCount;
+
+    #[test]
+    fn a_feed_page_with_no_casts_but_a_cursor_is_empty_with_more() {
+        let feed = |json: &str| serde_json::from_str::<RawFeed>(json).unwrap();
+        assert!(feed(r#"{"casts":[],"next":{"cursor":"5b5b33312c3130342c313136"}}"#).is_empty_with_more());
+        assert!(feed(r#"{"next":{"cursor":"5b5b"}}"#).is_empty_with_more());
+        // The end of a feed, or a channel with no casts.
+        assert!(!feed(r#"{"casts":[],"next":{"cursor":""}}"#).is_empty_with_more());
+        assert!(!feed(r#"{"casts":[],"next":{"cursor":null}}"#).is_empty_with_more());
+        assert!(!feed(r#"{"casts":[],"next":null}"#).is_empty_with_more());
+        assert!(!feed(r#"{"casts":[]}"#).is_empty_with_more());
+        // A page with casts.
+        assert!(
+            !feed(r#"{"casts":[{"hash":"0x01","text":"gm","author":{"fid":2}}],"next":{"cursor":"5b5b"}}"#)
+                .is_empty_with_more()
+        );
+        assert_eq!(feed(r#"{"casts":[],"next":{"cursor":"5b5b"}}"#).cursor(), Some("5b5b"));
+        assert_eq!(feed(r#"{"casts":[],"next":{"cursor":""}}"#).cursor(), None);
+    }
 
     #[test]
     fn the_first_username_is_the_earliest_given_to_the_account() {
