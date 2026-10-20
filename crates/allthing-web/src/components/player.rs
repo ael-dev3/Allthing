@@ -623,8 +623,19 @@ pub fn HlsVideo(
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
                 </button>
+                // Words on a computer, when the pointer is over the video; a
+                // speaker on a phone, which has no hover.
                 <button class="video-sound" type="button" on:click=toggle_sound>
-                    {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path class="speaker" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>
+                        <path
+                            class="waves"
+                            d=move || if muted.get() { "M16 9.5l5 5M21 9.5l-5 5" } else { "M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10" }
+                        />
+                    </svg>
+                    <span class="video-sound-label">
+                        {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
+                    </span>
                 </button>
             </Show>
             {on_expand.map(|expand| view! {
