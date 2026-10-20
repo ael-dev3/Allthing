@@ -465,6 +465,7 @@ pub fn Account() -> impl IntoView {
                             <span class="muted">"@"{username.clone()}</span>
                         </p>
                         <a class="account-link" href=profile.clone()>"Your profile"</a>
+                        <crate::components::writer::ScheduledMenuItem/>
                         <crate::components::writer::WriterMenuItem/>
                         <button type="button" class="account-link sign-out" on:click=move |_| session.sign_out()>"Sign out"</button>
                     }

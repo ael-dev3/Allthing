@@ -19,7 +19,8 @@ use allthing_core::app_key::{
 };
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Submitted};
-use allthing_core::provenance::hex_encode;
+use allthing_core::provenance::{base64_encode, hex_encode};
+use allthing_core::scheduled::{SCHEDULED_PATH, Schedule, ScheduledCast};
 use allthing_core::siwf::{self, QrCode, QrRequest};
 use leptos::ev;
 use leptos::prelude::*;
@@ -33,7 +34,7 @@ use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
-use crate::util::{cast_href, document, trap_tab};
+use crate::util::{cast_href, document, local_time, scheduled_href, trap_tab};
 
 /// How often the dialog asks the Farcaster app's API about the request (as
 /// Farcaster's own example does), and how often the node is asked whether
@@ -152,6 +153,9 @@ pub struct Writer {
     step: RwSignal<Step>,
     mine: RwSignal<Mine>,
     notice: RwSignal<Option<Notice>>,
+    /// Moves on whenever the reader schedules, changes or cancels a cast,
+    /// for their list to be read again.
+    scheduled: RwSignal<u32>,
 }
 
 thread_local! {
@@ -197,6 +201,7 @@ impl Writer {
             step: RwSignal::new(Step::Starting),
             mine: RwSignal::new(Mine { deleted: deleted_before(), ..Mine::default() }),
             notice: RwSignal::new(None),
+            scheduled: RwSignal::new(0),
         };
         Effect::new(move |before: Option<Option<u64>>| {
             let fid = session.user.with(|u| u.as_ref().map(|u| u.fid));
@@ -333,6 +338,46 @@ impl Writer {
             }
             Err(Unsent::Failed(message)) => Err(message),
         }
+    }
+
+    /// Sign `cast` with the reader's key for `at` (Unix seconds), its
+    /// timestamp, and hand it to the Worker to give the node then
+    /// (`allthing_core::scheduled`); with `replaces`, in the place of one of
+    /// theirs. `draft` is what the composer had, kept for their list. Says
+    /// so when it's kept; otherwise, why not.
+    pub async fn schedule(
+        self,
+        cast: NewCast,
+        at: i64,
+        draft: String,
+        replaces: Option<i64>,
+    ) -> Result<ScheduledCast, String> {
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return Err(KEY_GONE.into()) };
+        let signer = app_key::parse_public_key(&stored.key).ok_or_else(|| KEY_GONE.to_owned())?;
+        let data = MessageData::new(stored.fid, at, Body::CastAdd(cast)).encode();
+        let hash = message::message_hash(&data);
+        let signature = keys::sign(&stored, &hash).await.map_err(key_message)?;
+        let message = base64_encode(&message::envelope(&data, &hash, &signature, &signer));
+        let kept = api::post::<_, ScheduledCast>(SCHEDULED_PATH, &Schedule { message, draft, replaces })
+            .await
+            .map_err(|failure| failure.message())?;
+        let text = if replaces.is_some() { "Changed: it goes out" } else { "Scheduled: it goes out" };
+        self.notify(Notice {
+            text: format!("{text} {}.", local_time(kept.at)),
+            link: Some((scheduled_href(), "View")),
+        });
+        self.rescheduled();
+        Ok(kept)
+    }
+
+    /// The reader's scheduled casts changed: their list is read again.
+    pub fn rescheduled(self) {
+        self.scheduled.update(|n| *n += 1);
+    }
+
+    /// Which change to the reader's scheduled casts the list is at.
+    pub fn scheduled_version(self) -> u32 {
+        self.scheduled.get()
     }
 
     /// React to `target` with `emoji`: a reply that is the emoji and
@@ -1122,6 +1167,15 @@ pub fn WriterDialog() -> impl IntoView {
         </p>
     }
     .into_any()
+}
+
+/// The account menu's link to the reader's scheduled casts, wherever they
+/// can write from here.
+#[component]
+pub fn ScheduledMenuItem() -> impl IntoView {
+    let Some(writer) = use_writer() else { return ().into_any() };
+    (move || writer.can_write().then(|| view! { <a class="account-link" href=scheduled_href()>"Scheduled casts"</a> }))
+        .into_any()
 }
 
 /// The account menu's line about likes and recasts: on in this browser,

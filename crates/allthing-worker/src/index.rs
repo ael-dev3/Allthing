@@ -3,26 +3,30 @@
 //! behind `allthing_data::indexer::Index`. Rankings are computed inside D1,
 //! so the Worker never handles more than one page of casts at a time. The
 //! same database keeps the daily active accounts' sets
-//! (`allthing_data::activity::ActivityStore`).
+//! (`allthing_data::activity::ActivityStore`), and readers' scheduled casts
+//! (`allthing_data::scheduled::ScheduledStore`, and `crate::scheduled_casts`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
+use allthing_core::scheduled::{Checked, ScheduledCast, State};
 use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
+use allthing_data::scheduled::{Due, Outcome, ScheduledStore, Settled, kept_since};
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde::Deserialize;
 use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 4] = [
+const SCHEMA: [&str; 5] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
     include_str!("../../../migrations/0004_signer_apps.sql"),
+    include_str!("../../../migrations/0005_scheduled.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -71,6 +75,34 @@ const COUNT_APPS: &str = "SELECT k.app AS app, COUNT(DISTINCT j.value >> 32) AS 
       json_group_array(CAST(j.value AS TEXT)) FILTER (WHERE k.pair IS NULL) AS unknown \
     FROM json_each(?1) AS j LEFT JOIN signer_apps AS k ON k.pair = j.value GROUP BY k.app";
 const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
+/// A reader's (?1) scheduled casts: waiting, and finished since ?2, soonest
+/// first.
+const SCHEDULED: &str = "SELECT id, at, hash, state, error, draft FROM scheduled \
+    WHERE fid = ?1 AND (state = 'waiting' OR done_at >= ?2) ORDER BY at, id";
+/// Schedule a cast, unless its reader has ?6 waiting already: its id.
+const SCHEDULE: &str = "INSERT INTO scheduled (fid, at, hash, message, draft) \
+    SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT COUNT(*) FROM scheduled WHERE fid = ?1 AND state = 'waiting') < ?6 \
+    RETURNING id";
+/// Put a cast in the place of one of the reader's that hasn't gone out:
+/// one waiting, or one that failed, while they have fewer than ?7 waiting.
+const RESCHEDULE: &str = "UPDATE scheduled SET at = ?3, hash = ?4, message = ?5, draft = ?6, state = 'waiting', \
+    tries = 0, error = NULL, done_at = NULL \
+    WHERE id = ?1 AND fid = ?2 AND (state = 'waiting' OR (state = 'failed' AND \
+      (SELECT COUNT(*) FROM scheduled WHERE fid = ?2 AND state = 'waiting') < ?7)) \
+    RETURNING id";
+/// Take one of the reader's casts off the list: one waiting (cancelled), or
+/// one that failed.
+const CANCEL: &str = "DELETE FROM scheduled WHERE id = ?1 AND fid = ?2 AND state <> 'posted' RETURNING id";
+/// Casts due at ?1, at most ?2, the earliest first.
+const DUE: &str = "SELECT id, hash, message, tries FROM scheduled \
+    WHERE state = 'waiting' AND at <= ?1 ORDER BY at, id LIMIT ?2";
+/// What became of a due cast, if the reader hasn't put another in its
+/// place since (?2, its hash).
+const POSTED: &str = "UPDATE scheduled SET state = 'posted', error = NULL, done_at = ?3 WHERE id = ?1 AND hash = ?2";
+const FAILED: &str = "UPDATE scheduled SET state = 'failed', error = ?3, done_at = ?4 WHERE id = ?1 AND hash = ?2";
+const AGAIN: &str = "UPDATE scheduled SET tries = tries + 1 WHERE id = ?1 AND hash = ?2";
+/// Drop casts that went out, or didn't, before ?1.
+const DROP_DONE: &str = "DELETE FROM scheduled WHERE state <> 'waiting' AND done_at < ?1";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
 
 thread_local! {
@@ -114,6 +146,29 @@ struct AppRow {
     app: Option<f64>,
     active: f64,
     unknown: String,
+}
+
+#[derive(Deserialize)]
+struct ScheduledRow {
+    id: f64,
+    at: f64,
+    hash: String,
+    state: String,
+    error: Option<String>,
+    draft: String,
+}
+
+#[derive(Deserialize)]
+struct DueRow {
+    id: f64,
+    hash: String,
+    message: String,
+    tries: f64,
+}
+
+#[derive(Deserialize)]
+struct IdRow {
+    id: f64,
 }
 
 #[derive(Deserialize)]
@@ -334,6 +389,99 @@ impl ActivityStore for D1Index {
             statements.push(db.prepare(SAVE_ACTIVITY_STATE).bind(&[state.into()]).map_err(failed)?);
             let args = [SUMMARY.into(), number(summary.built.floor()), summary.body.into()];
             statements.push(db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?);
+            db.batch(statements).await.map_err(failed)?;
+            Ok(())
+        }
+        .boxed_local()
+    }
+}
+
+/// A signed-in reader's scheduled casts, for `crate::scheduled_casts`.
+impl D1Index {
+    /// The reader's casts waiting, and those finished in the past week.
+    pub async fn scheduled(&self, fid: u64, now: i64) -> Result<Vec<ScheduledCast>, IndexError> {
+        ensure_schema(&self.db).await?;
+        let args = [number(fid as f64), number(kept_since(now) as f64)];
+        let statement = self.db.prepare(SCHEDULED).bind(&args).map_err(failed)?;
+        let rows = statement.all().await.map_err(failed)?.results::<ScheduledRow>().map_err(failed)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                Some(ScheduledCast {
+                    id: row.id as i64,
+                    at: row.at as i64,
+                    hash: row.hash,
+                    state: State::parse(&row.state)?,
+                    error: row.error,
+                    draft: row.draft,
+                })
+            })
+            .collect())
+    }
+
+    /// Keep a checked cast for the reader, or put it in the place of one of
+    /// theirs (`replaces`): its id, or `None` when they have `max` waiting
+    /// already, or the one to replace has gone out or isn't theirs.
+    pub async fn schedule(
+        &self,
+        fid: u64,
+        checked: &Checked,
+        message: &str,
+        draft: &str,
+        replaces: Option<i64>,
+        max: u32,
+    ) -> Result<Option<i64>, IndexError> {
+        ensure_schema(&self.db).await?;
+        let (fid, at, max) = (number(fid as f64), number(checked.at as f64), number(f64::from(max)));
+        let (hash, message, draft) = (checked.hash.as_str().into(), message.into(), draft.into());
+        let statement = match replaces {
+            Some(id) => self.db.prepare(RESCHEDULE).bind(&[number(id as f64), fid, at, hash, message, draft, max]),
+            None => self.db.prepare(SCHEDULE).bind(&[fid, at, hash, message, draft, max]),
+        }
+        .map_err(failed)?;
+        let row: Option<IdRow> = statement.first(None).await.map_err(failed)?;
+        Ok(row.map(|row| row.id as i64))
+    }
+
+    /// Cancel one of the reader's casts that hasn't gone out, or take one
+    /// that failed off the list: whether there was one.
+    pub async fn cancel(&self, fid: u64, id: i64) -> Result<bool, IndexError> {
+        ensure_schema(&self.db).await?;
+        let statement = self.db.prepare(CANCEL).bind(&[number(id as f64), number(fid as f64)]).map_err(failed)?;
+        let row: Option<IdRow> = statement.first(None).await.map_err(failed)?;
+        Ok(row.is_some())
+    }
+}
+
+impl ScheduledStore for D1Index {
+    fn due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            ensure_schema(&db).await?;
+            let statement = db.prepare(DUE).bind(&[number(now as f64), number(f64::from(limit))]).map_err(failed)?;
+            let rows = statement.all().await.map_err(failed)?.results::<DueRow>().map_err(failed)?;
+            Ok(rows
+                .into_iter()
+                .map(|row| Due { id: row.id as i64, hash: row.hash, message: row.message, tries: row.tries as u32 })
+                .collect())
+        }
+        .boxed_local()
+    }
+
+    fn settle(&self, settled: Vec<Settled>, now: i64) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let mut statements = Vec::new();
+            for Settled { id, hash, outcome } in settled {
+                let (id, hash) = (number(id as f64), JsValue::from(hash));
+                let statement = match outcome {
+                    Outcome::Posted => db.prepare(POSTED).bind(&[id, hash, number(now as f64)]),
+                    Outcome::Failed(why) => db.prepare(FAILED).bind(&[id, hash, why.into(), number(now as f64)]),
+                    Outcome::Again => db.prepare(AGAIN).bind(&[id, hash]),
+                };
+                statements.push(statement.map_err(failed)?);
+            }
+            statements.push(db.prepare(DROP_DONE).bind(&[number(kept_since(now) as f64)]).map_err(failed)?);
             db.batch(statements).await.map_err(failed)?;
             Ok(())
         }

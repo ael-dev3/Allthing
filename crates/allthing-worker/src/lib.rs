@@ -3,7 +3,10 @@
 //! and keyless public chain RPCs, built for the Workers Free plan; Sign In
 //! With Farcaster (`auth`), which says who is reading; and the endorsement
 //! of a reader's app key (`app_key`), which their browser keeps and signs
-//! their likes and recasts with. The Worker itself posts nothing.
+//! their likes and recasts with. The Worker posts nothing of its own and
+//! never has a reader's key: it only keeps the casts a reader's browser
+//! signed for later (`scheduled_casts`), and gives them to the node at
+//! their time.
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; `/api/*` runs here, and
@@ -18,6 +21,7 @@ mod auth;
 mod cache;
 mod host;
 mod index;
+mod scheduled_casts;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -28,9 +32,10 @@ use allthing_core::compose::gif_key_path;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::ranking::TrendingWindow;
+use allthing_core::scheduled::SCHEDULED_PATH;
 use allthing_core::time::iso_utc;
 use allthing_data::{Endpoint, Failure, Invocation, upstream};
-use allthing_data::{activity, indexer, pages};
+use allthing_data::{activity, indexer, pages, scheduled};
 use futures::future::FutureExt;
 use worker::{
     Context, Date, EncodeBody, Env, Headers, Method, Request, Response, ResponseBody, ResponseBuilder, Result,
@@ -85,6 +90,13 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         let inv = Rc::new(Invocation::new(Rc::new(host), SUBREQUEST_BUDGET));
         return auth::handle(name, req, &env, inv).await;
     }
+    // A signed-in reader's scheduled casts: GET, and POST (never cached).
+    if let Some(rest) = url.path().strip_prefix(SCHEDULED_PATH) {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        return scheduled_casts::handle(rest, req, &env, (Date::now().as_millis() / 1000) as i64).await;
+    }
     if !matches!(req.method(), Method::Get | Method::Head) {
         return error(405, "Allthing's API is read-only", None);
     }
@@ -122,7 +134,8 @@ const LATEST_CRON: &str = "*/1 * * * *";
 const ACTIVITY_CRON: &str = "*/2 * * * *";
 
 /// The cron triggers in wrangler.toml, every minute: the indexer (one page
-/// of casts into Allthing's index, see `allthing_core::index`), and the
+/// of casts into Allthing's index, see `allthing_core::index`), after the
+/// scheduled casts that are due (`allthing_data::scheduled`); and the
 /// stored copy of the newest casts (see `pages::store_latest`).
 /// The keyed Solana RPC, from the `SOLANA_RPC_URL` secret. Unset, Solana's
 /// wallet counts are read from the public endpoint, which usually refuses.
@@ -151,6 +164,12 @@ pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
             Err(error) => console_error!("activity: {error}"),
         }
         return;
+    }
+    // Scheduled casts first: they are due on the minute.
+    match scheduled::run(&inv, index.as_ref(), (inv.now() / 1000.0) as i64).await {
+        Ok(report) if report.due > 0 => console_log!("scheduled: {report:?}"),
+        Ok(_) => {}
+        Err(error) => console_error!("scheduled: {error}"),
     }
     match indexer::run(&inv, index.as_ref()).await {
         Ok(report) => console_log!("indexer: {report:?}"),

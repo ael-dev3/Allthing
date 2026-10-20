@@ -13,6 +13,7 @@ pub mod hypersnap;
 pub mod indexer;
 pub mod miniapps;
 pub mod pages;
+pub mod scheduled;
 pub mod upstream;
 
 use std::cell::Cell;
@@ -42,6 +43,12 @@ pub struct HttpRequest {
     pub url: String,
     /// A JSON body, for POST.
     pub body: Option<String>,
+    /// Bytes to POST as `application/octet-stream` instead: a signed
+    /// Farcaster message, for a node's `submitMessage`.
+    pub octets: Option<Vec<u8>>,
+    /// Read the body of any answer, not only of a 2xx one: a node says in
+    /// its 400 why it refused a message.
+    pub any_body: bool,
     pub timeout_ms: u32,
     /// The `Accept` header.
     pub accept: &'static str,
@@ -58,7 +65,7 @@ pub struct HttpResponse {
     pub status: u16,
     /// The `Retry-After` header, when the runtime can read it.
     pub retry_after: Option<String>,
-    /// The body of a 2xx answer.
+    /// The body of a 2xx answer (of any answer, with `any_body`).
     pub body: Option<Vec<u8>>,
 }
 

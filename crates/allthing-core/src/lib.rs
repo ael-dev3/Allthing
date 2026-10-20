@@ -30,6 +30,7 @@ pub mod profile;
 pub mod provenance;
 pub mod quotes;
 pub mod ranking;
+pub mod scheduled;
 pub mod siwf;
 pub mod spam;
 pub mod text;

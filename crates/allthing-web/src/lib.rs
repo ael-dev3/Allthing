@@ -30,6 +30,7 @@ use crate::pages::channels::ChannelsPage;
 use crate::pages::dau::DauPage;
 use crate::pages::home::Home;
 use crate::pages::post::PostPage;
+use crate::pages::scheduled::ScheduledPage;
 use crate::pages::search::SearchPage;
 use crate::pages::user::UserPage;
 
@@ -79,6 +80,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("/u") view=UserPage/>
                     <Route path=path!("/channels") view=ChannelsPage/>
                     <Route path=path!("/dau") view=DauPage/>
+                    <Route path=path!("/scheduled") view=ScheduledPage/>
                     <Route path=path!("/search") view=SearchPage/>
                 </Routes>
             </main>

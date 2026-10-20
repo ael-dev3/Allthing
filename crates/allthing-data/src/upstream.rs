@@ -236,6 +236,8 @@ pub async fn send(
         method,
         url: url.to_owned(),
         body: body.map(str::to_owned),
+        octets: None,
+        any_body: false,
         timeout_ms: upstream.timeout_ms(),
         accept: upstream.accept(),
         max_bytes: upstream.max_bytes(),
@@ -254,6 +256,40 @@ pub async fn send(
         Err(FetchError::Network(e)) => (Err(UpstreamError::Network(e)), None),
     };
     record(inv, upstream, &outcome, retry_after);
+    outcome
+}
+
+/// Give a node a signed Farcaster message (its protobuf bytes, as the
+/// browser would), through Hypersnap's guard: the node's answer, its status
+/// and body, for `allthing_core::message::submitted` to read. An answer that
+/// says the node is busy or down (429, 5xx) counts against its breaker, as
+/// any other read's does, and comes back as an error.
+pub async fn submit(inv: &Invocation, url: &str, message: Vec<u8>) -> Result<(u16, String), UpstreamError> {
+    let upstream = Upstream::Hypersnap;
+    admit(inv, upstream)?;
+    let request = HttpRequest {
+        method: HttpMethod::Post,
+        url: url.to_owned(),
+        body: None,
+        octets: Some(message),
+        any_body: true,
+        timeout_ms: upstream.timeout_ms(),
+        accept: upstream.accept(),
+        max_bytes: None,
+        stop_at: None,
+    };
+    let (outcome, retry_after) = match inv.fetch(request).await {
+        Ok(response) if response.status == 429 || response.status >= 500 => {
+            (Err(UpstreamError::Status(response.status)), response.retry_after.as_deref().and_then(parse_retry_after))
+        }
+        Ok(response) => {
+            let body = String::from_utf8_lossy(&response.body.unwrap_or_default()).into_owned();
+            (Ok((response.status, body)), None)
+        }
+        Err(FetchError::Timeout) => (Err(UpstreamError::Timeout), None),
+        Err(FetchError::Network(e)) => (Err(UpstreamError::Network(e)), None),
+    };
+    record(inv, upstream, &outcome.as_ref().map(|_| None).map_err(Clone::clone), retry_after);
     outcome
 }
 
