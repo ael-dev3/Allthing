@@ -131,6 +131,9 @@ struct Mine {
     /// hash, and the casts a reaction is being sent to.
     emoji: HashMap<String, Vec<&'static Emoji>>,
     reacting: HashSet<String>,
+    /// The reply each of those is, once it's known, by cast hash and
+    /// emoji: what taking it back deletes.
+    reaction_replies: HashMap<(String, &'static str), String>,
     /// Writes handed to the Farcaster app that show here before the node
     /// has them, by what they are about (`Expect::about`).
     pending: HashSet<String>,
@@ -459,8 +462,14 @@ impl Writer {
 
     /// Post `cast` with the reader's key: its hash, or why it didn't go out.
     pub async fn cast(self, cast: NewCast) -> Result<String, String> {
+        self.cast_in(cast, None).await
+    }
+
+    /// Post `cast`, as [`Writer::cast`]; one sent in the same `slot` as
+    /// another goes out at least a second after it (`send`).
+    async fn cast_in(self, cast: NewCast, slot: Option<String>) -> Result<String, String> {
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return Err(KEY_GONE.into()) };
-        match send(&stored, Body::CastAdd(cast), None).await {
+        match send(&stored, Body::CastAdd(cast), slot.as_ref()).await {
             Ok(hash) => Ok(hex_encode(&hash)),
             Err(Unsent::KeyGone) => {
                 self.forget_key(stored.fid);
@@ -530,11 +539,15 @@ impl Writer {
         spawn_local(async move {
             let reply =
                 NewCast { text: format!(":{}:", emoji.code), parent: Some(Parent::Cast(target)), ..NewCast::default() };
-            let outcome = self.cast(reply).await;
+            // Each in a slot of its own: a reaction taken back and made
+            // again goes out a second later at least, so it's a new reply
+            // and not the one deleted, which the node won't take again.
+            let outcome = self.cast_in(reply, Some(format!("react {hash} {}", emoji.code))).await;
             self.mine.update(|m| {
                 m.reacting.remove(&hash);
-                if outcome.is_ok() {
+                if let Ok(reply) = &outcome {
                     m.emoji.entry(hash.clone()).or_default().push(emoji);
+                    m.reaction_replies.insert((hash.clone(), emoji.code), reply.clone());
                 }
             });
             match outcome {
@@ -550,6 +563,12 @@ impl Writer {
     /// The emoji the reader reacted to `hash` with this visit.
     pub fn reactions(self, hash: &str) -> Vec<&'static Emoji> {
         self.mine.with(|m| m.emoji.get(hash).cloned().unwrap_or_default())
+    }
+
+    /// The reply that is the reader's reaction to `hash` with `emoji` this
+    /// visit, once it's known.
+    pub fn reaction_reply(self, hash: &str, emoji: &Emoji) -> Option<String> {
+        self.mine.with(|m| m.reaction_replies.get(&(hash.to_owned(), emoji.code)).cloned())
     }
 
     /// Whether a reaction to `hash` is being sent.
@@ -961,6 +980,9 @@ impl Writer {
                     let reacted = m.emoji.entry(hex_encode(&target.hash)).or_default();
                     if !reacted.contains(emoji) {
                         reacted.push(emoji);
+                    }
+                    if let Some(reply) = &hash {
+                        m.reaction_replies.insert((hex_encode(&target.hash), emoji.code), reply.clone());
                     }
                 });
                 "Reacted."

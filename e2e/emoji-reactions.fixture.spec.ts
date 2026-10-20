@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
+import { approvedKey, cast as castOf, envelope, removed, signIn, type Envelope } from "./helpers/farcaster";
 
 /*
  * Emoji reactions. Farcaster's own reactions are only likes and recasts, so
@@ -115,7 +115,7 @@ test("React opens the Pepe picker, and a pick goes out as a reply that is the em
   await expect(page.getByRole("status").getByRole("link", { name: "View" })).toHaveAttribute("href", /\/p\/0x[0-9a-f]{40}$/);
   const mine = chips(page).nth(2);
   await expect(mine).toHaveAttribute("aria-pressed", "true");
-  await expect(mine).toHaveAccessibleName("Pepe dances on the spot: 1 reaction, by you");
+  await expect(mine).toHaveAccessibleName("Pepe dances on the spot: 1 reaction, by you. Take yours back");
   // It's in the picker's recently used now.
   await react.click();
   await expect(panel.locator(".emoji-recent .emoji-tile").first()).toHaveAccessibleName("Pepe dances on the spot");
@@ -123,7 +123,7 @@ test("React opens the Pepe picker, and a pick goes out as a reply that is the em
   await expect(panel).toBeHidden();
 });
 
-test("a chip reacts with its emoji, once", async ({ page }) => {
+test("a chip reacts with its emoji; pressed again, it takes the reaction back", async ({ page }) => {
   const sent = await ready(page);
   const heart = chips(page).first();
   await expect(heart).toHaveAttribute("aria-pressed", "false");
@@ -132,11 +132,44 @@ test("a chip reacts with its emoji, once", async ({ page }) => {
   expect(castOf(sent[0]).text).toBe(":pepe_heart_hug:");
   await expect(heart.locator(".n")).toHaveText("3");
   await expect(heart).toHaveAttribute("aria-pressed", "true");
-  await expect(heart).toHaveAccessibleName("Pepe hugs a big heart: 3 reactions, by you, @bob, @carol");
-  // Pressed: another click sends nothing.
+  await expect(heart).toHaveAccessibleName("Pepe hugs a big heart: 3 reactions, by you, @bob, @carol. Take yours back");
+  // Pressed again: the reply that is the reaction is deleted, and the chip
+  // is as it was.
   await heart.click();
-  await page.waitForTimeout(300);
-  expect(sent).toHaveLength(1);
+  await expect.poll(() => sent.length).toBe(2);
+  expect([sent[1].type, sent[1].fid, removed(sent[1])]).toEqual([2, me.fid, sent[0].hash]);
+  await expect(heart.locator(".n")).toHaveText("2");
+  await expect(heart).toHaveAttribute("aria-pressed", "false");
+  await expect(heart).toHaveAccessibleName("Pepe hugs a big heart: 2 reactions, by @bob, @carol. React with it too");
+  // And reacts again from there: a new reply, a second later at least,
+  // not the one deleted, which the node wouldn't take again.
+  await heart.click();
+  await expect.poll(() => sent.length).toBe(3);
+  expect(castOf(sent[2]).text).toBe(":pepe_heart_hug:");
+  expect(sent[2].hash).not.toBe(sent[0].hash);
+  expect(sent[2].at).toBeGreaterThan(sent[0].at);
+  await expect(heart).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the reader's reaction from before is taken back from its chip, in the Farcaster app where Allthing doesn't post", async ({ page }) => {
+  // The reader's NO sign is a reply in the thread already, and Allthing
+  // doesn't write for them: taking it back opens that reply in the app.
+  const own = reply(7, me, ":pepe_no:", 35);
+  const withMine = { ...thread, children: [...thread.children, own] };
+  await signIn(page, me);
+  await serve(page);
+  await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: withMine, notes: {}, meta } }));
+  await page.route("**/api/v1/signer", (route) => route.fulfill({ status: 404, json: { error: "Liking and recasting from Allthing isn't set up on this server" } }));
+  // The node still has the reply: not deleted in the app yet.
+  await page.route(`${NODE}/castById?*`, (route) => route.fulfill({ headers: cors, json: { data: { type: "MESSAGE_TYPE_CAST_ADD" } } }));
+  await page.goto(`/p/${post.hash}`);
+  const no = chips(page).filter({ has: page.locator('img[src$="pepe_no.webp"]') });
+  await expect(no).toHaveAttribute("aria-pressed", "true");
+  await expect(no).toHaveAccessibleName("Pepe holds up a NO sign: 2 reactions, by @bob, @reader. Take yours back");
+  await no.click();
+  const dialog = page.getByRole("dialog", { name: "Delete in Farcaster" });
+  await expect(dialog).toContainText("Delete your reaction from its menu there.");
+  await expect(dialog.getByRole("link", { name: /Open on farcaster\.xyz/ })).toHaveAttribute("href", `https://farcaster.xyz/reader/${own.cast.hash.slice(0, 10)}`);
 });
 
 test("at 390, React's picker fits the screen and a tap reacts", async ({ browser }, testInfo) => {
