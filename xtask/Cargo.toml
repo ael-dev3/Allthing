@@ -10,3 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 publish = false
+
+[dependencies]
+# Cuts the browser app's #[wasm_split] parts into modules of their own.
+wasm_split_cli_support = "0.2.4"

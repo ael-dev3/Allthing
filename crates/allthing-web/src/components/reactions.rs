@@ -135,7 +135,7 @@ fn react_ask(hash: &str, emoji: &Emoji) -> crate::components::handoff::Ask {
 #[cfg(not(feature = "static-host"))]
 #[component]
 pub fn ReactButton(cast: Cast) -> impl IntoView {
-    use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
+    use crate::components::emoji_picker::{self, Pick, Tab};
     use crate::components::popover::Popover;
     use crate::components::writer::use_writer;
 
@@ -175,12 +175,30 @@ pub fn ReactButton(cast: Cast) -> impl IntoView {
                             <span class="react-label">{move || if writer.reacting(&hash) { "Reacting…" } else { "React" }}</span>
                         }
                     }
-                    content=move || view! { <EmojiPicker tab picked/> }
+                    content=move || crate::split::lazy_view(|| view! { <p class="muted react-pending">"Loading…"</p> }, react_picker(tab, picked))
+                    on_warm=Callback::new(|()| {
+                        leptos::task::spawn_local(async {
+                            let _ = preload_react_picker().await;
+                        });
+                    })
                 />
             }
         }
     })
     .into_any()
+}
+
+/// React's Pepe picker, whose code (the composer's emoji picker) is fetched
+/// the first time it opens, or as React is pointed at or focused
+/// (`crate::split`).
+#[cfg(not(feature = "static-host"))]
+#[leptos::wasm_split::wasm_split(react, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_react_picker))]
+fn react_picker(
+    tab: RwSignal<crate::components::emoji_picker::Tab>,
+    picked: Callback<crate::components::emoji_picker::Pick>,
+) -> Result<AnyView, leptos::wasm_split::SplitLoaderError> {
+    use crate::components::emoji_picker::EmojiPicker;
+    Ok(view! { <EmojiPicker tab picked/> }.into_any())
 }
 
 #[cfg(not(feature = "static-host"))]

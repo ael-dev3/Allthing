@@ -7,5 +7,9 @@ xtask = "run --quiet --release --package xtask --"
 # it, which takes the module from 441 KB to 393 KB brotli. It costs a
 # dynamic call per closure: 3–6 ms more to draw the first cards on a fast
 # CPU. See docs/PERFORMANCE.md.
+#
+# The linker keeps its relocations (`--emit-relocs`) for wasm-split, which
+# `cargo xtask` runs to cut out the parts of the app loaded when used, and
+# which strips them (docs/PERFORMANCE.md#code-loaded-when-used).
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg", "erase_components"]
+rustflags = ["--cfg", "erase_components", "-C", "link-arg=--emit-relocs"]
