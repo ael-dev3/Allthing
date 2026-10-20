@@ -40,7 +40,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Follow, and delete your casts.** With the same key, Follow beside a profile's name follows the account (hover Following to unfollow), and Delete under your own post or reply deletes it, after asking once more.
 - **Write, with a GIF or a Pepe.** Signed in, Cast at the top of the front page and of each channel (a round button over the feed on a phone), and Reply and Quote under a post, open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)) and a Pepe emoji picker (searchable, recently used first). Cast posts it from your browser with your key, @mentions included; the first post asks for the key, as a first like does.
 - **Pepe emoji.** `:pepe_name:` in a cast shows one of 103 Pepe emoji, most of them animated, served by Allthing itself; a cast of a few emoji and nothing else shows them large, and with reduced motion they stand still. Other Farcaster apps show the shortcode as written.
-- **Pepe stickers.** 32 larger animated Pepes, from the composer's Stickers tab. A sticker goes out as an image of its GIF, so every Farcaster app shows it.
+- **Pepe stickers.** 32 larger animated Pepes, from the composer's sticker button, recently used first. A sticker goes out as an image of its GIF, so every Farcaster app shows it.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
 ## Architecture

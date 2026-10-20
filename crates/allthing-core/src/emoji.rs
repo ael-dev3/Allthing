@@ -253,6 +253,29 @@ pub fn sticker_of(url: &str) -> Option<&'static Sticker> {
     sticker(file.strip_suffix(".gif")?)
 }
 
+/// How many recently used stickers a picker keeps: a row or two.
+pub const RECENT_STICKERS: usize = 8;
+
+/// The recently used stickers in `kept` (shortcodes, most recent first,
+/// separated by spaces), leaving out any that are no longer stickers.
+pub fn recent_stickers(kept: &str) -> Vec<&'static Sticker> {
+    let mut recent: Vec<&'static Sticker> = Vec::new();
+    for sticker in kept.split_whitespace().filter_map(sticker) {
+        if !recent.contains(&sticker) && recent.len() < RECENT_STICKERS {
+            recent.push(sticker);
+        }
+    }
+    recent
+}
+
+/// `kept` with `sticker` as the most recent.
+pub fn remember_sticker(kept: &str, sticker: &Sticker) -> String {
+    let mut codes = vec![sticker.code];
+    codes.extend(recent_stickers(kept).iter().map(|s| s.code).filter(|code| *code != sticker.code));
+    codes.truncate(RECENT_STICKERS);
+    codes.join(" ")
+}
+
 /// The stickers that match a picker's search, best first, as `search`
 /// ranks their emoji; all of them, in their own order, when it matches all.
 pub fn search_stickers(query: &str) -> Vec<&'static Sticker> {
@@ -506,6 +529,21 @@ mod tests {
         let all: Vec<&str> = search_stickers("").iter().map(|s| s.code).collect();
         assert_eq!(all, STICKERS.iter().map(|s| s.code).collect::<Vec<_>>());
         assert!(search_stickers("no").iter().all(|s| s.code != "pepe_no"));
+    }
+
+    #[test]
+    fn recent_stickers_are_kept_apart_newest_first() {
+        let jam = sticker("pepe_jam").unwrap();
+        let gm = sticker("pepe_gm").unwrap();
+        assert_eq!(remember_sticker("", jam), "pepe_jam");
+        assert_eq!(remember_sticker("pepe_jam", gm), "pepe_gm pepe_jam");
+        assert_eq!(remember_sticker("pepe_gm pepe_jam", jam), "pepe_jam pepe_gm");
+        // Emoji that aren't stickers, and repeats, are dropped.
+        let kept: Vec<&str> = recent_stickers("pepe_no pepe_gm pepe_gm pepe_jam").iter().map(|s| s.code).collect();
+        assert_eq!(kept, ["pepe_gm", "pepe_jam"]);
+        let all: Vec<&str> = STICKERS.iter().map(|s| s.code).collect();
+        assert_eq!(recent_stickers(&all.join(" ")).len(), RECENT_STICKERS);
+        assert_eq!(remember_sticker(&all.join(" "), gm).split(' ').count(), RECENT_STICKERS);
     }
 
     /// Every sticker has its GIF, 128 px tall at the width the table says,

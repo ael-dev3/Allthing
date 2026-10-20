@@ -9,6 +9,7 @@
 //! cast as an image embed of its GIF, which every Farcaster app shows.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use allthing_core::emoji::{self, Emoji, STICKER_HEIGHT, Sticker};
 use leptos::ev;
@@ -18,12 +19,15 @@ use web_sys::Element;
 
 use crate::util::{SOURCE_URL, can_hover, document, href, prefers_reduced_motion};
 
-/// Where the reader's recently used emoji are kept between visits.
-const RECENT_KEY: &str = "allthing.emoji";
+/// Where the reader's recently used emoji and stickers are kept between
+/// visits.
+const RECENT_EMOJI: &str = "allthing.emoji";
+const RECENT_STICKERS: &str = "allthing.stickers";
 
 thread_local! {
-    /// The recently used emoji for this page, for when localStorage is blocked.
-    static RECENT: RefCell<String> = const { RefCell::new(String::new()) };
+    /// The recently used emoji and stickers for this page, for when
+    /// localStorage is blocked.
+    static RECENT: RefCell<HashMap<&'static str, String>> = RefCell::new(HashMap::new());
 }
 
 /// An emoji picked, and whether the picker stays open for another: Shift
@@ -34,26 +38,36 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
-/// The reader's recently used emoji, as `emoji::remember` keeps them.
-fn kept() -> String {
-    match storage().map(|s| s.get_item(RECENT_KEY)) {
+/// The reader's recently used emoji or stickers, as `emoji::remember` and
+/// `emoji::remember_sticker` keep them.
+fn kept(key: &'static str) -> String {
+    match storage().map(|s| s.get_item(key)) {
         Some(Ok(Some(kept))) => kept,
-        _ => RECENT.with(|r| r.borrow().clone()),
+        _ => RECENT.with(|r| r.borrow().get(key).cloned().unwrap_or_default()),
     }
+}
+
+fn keep(key: &'static str, kept: String) {
+    if let Some(storage) = storage() {
+        let _ = storage.set_item(key, &kept);
+    }
+    RECENT.with(|r| r.borrow_mut().insert(key, kept));
 }
 
 /// Note `emoji` as the one the reader used last.
 pub fn used(emoji: &Emoji) {
-    let kept = emoji::remember(&kept(), emoji);
-    if let Some(storage) = storage() {
-        let _ = storage.set_item(RECENT_KEY, &kept);
-    }
-    RECENT.with(|r| *r.borrow_mut() = kept);
+    keep(RECENT_EMOJI, emoji::remember(&kept(RECENT_EMOJI), emoji));
 }
 
-/// What the picker shows.
+/// Note `sticker` as the one the reader used last.
+pub fn used_sticker(sticker: &Sticker) {
+    keep(RECENT_STICKERS, emoji::remember_sticker(&kept(RECENT_STICKERS), sticker));
+}
+
+/// What the picker shows. The composer holds it, so its emoji and sticker
+/// buttons say which is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab {
+pub enum Tab {
     Emoji,
     Stickers,
 }
@@ -146,16 +160,16 @@ fn sticker_tile(sticker: &'static Sticker) -> impl IntoView {
     }
 }
 
-/// The picker, of emoji or of stickers. Enter in its search box picks the
-/// first match.
+/// The picker, of emoji or of stickers (`tab`). Enter in its search box
+/// picks the first match.
 #[component]
-pub fn EmojiPicker(picked: Callback<Pick>, stuck: Callback<&'static Sticker>) -> impl IntoView {
-    let tab = RwSignal::new(Tab::Emoji);
+pub fn EmojiPicker(tab: RwSignal<Tab>, picked: Callback<Pick>, stuck: Callback<&'static Sticker>) -> impl IntoView {
     let query = RwSignal::new(String::new());
     let found = Memo::new(move |_| query.with(|q| emoji::search(q)));
     let stickers = Memo::new(move |_| query.with(|q| emoji::search_stickers(q)));
     let searching = Memo::new(move |_| query.with(|q| !q.trim().is_empty()));
-    let recent = StoredValue::new(emoji::recent(&kept()));
+    let recent = StoredValue::new(emoji::recent(&kept(RECENT_EMOJI)));
+    let recent_stickers = StoredValue::new(emoji::recent_stickers(&kept(RECENT_STICKERS)));
     // What is pointed at or focused, shown in the picker's foot.
     let shown = RwSignal::new(None::<Item>);
     let motion = !prefers_reduced_motion();
@@ -320,6 +334,15 @@ pub fn EmojiPicker(picked: Callback<Pick>, stuck: Callback<&'static Sticker>) ->
                     }
                     .into_any(),
                     Tab::Stickers => view! {
+                        {recent_stickers.with_value(|recent| (!recent.is_empty()).then(|| {
+                            let recent = recent.clone();
+                            view! {
+                                <div class="emoji-recent" hidden=move || searching.get()>
+                                    <h3 class="emoji-section">"Recently used"</h3>
+                                    <ul class="emoji-grid sticker-grid">{recent.into_iter().map(sticker_tile).collect_view()}</ul>
+                                </div>
+                            }
+                        }))}
                         <h3 class="emoji-section" aria-live="polite">{heading}</h3>
                         <ul class="emoji-grid sticker-grid">{move || stickers.get().into_iter().map(sticker_tile).collect_view()}</ul>
                     }

@@ -61,18 +61,23 @@ test.describe("in the composer", () => {
     const dialog = page.getByRole("dialog", { name: "New cast" });
     await expect(dialog.getByRole("textbox")).toBeFocused();
     await page.keyboard.type("gm");
-    await dialog.getByRole("button", { name: "Add an emoji or a sticker" }).click();
+    // The emoji button opens the Emoji tab; the arrow keys move to Stickers,
+    // and the sticker button says so.
+    const emojiButton = dialog.getByRole("button", { name: "Add an emoji" });
+    const stickerButton = dialog.getByRole("button", { name: "Add a sticker" });
+    await emojiButton.click();
     const picker = dialog.getByRole("region", { name: "Pepe emoji and stickers" });
     const emojiTab = picker.getByRole("tab", { name: "Emoji" });
     const stickerTab = picker.getByRole("tab", { name: "Stickers" });
     await expect(emojiTab).toHaveAttribute("aria-selected", "true");
-    // The arrow keys move between the tabs.
     await emojiTab.focus();
     await page.keyboard.press("ArrowRight");
     await expect(stickerTab).toBeFocused();
     await expect(stickerTab).toHaveAttribute("aria-selected", "true");
     await expect(picker.getByRole("tabpanel", { name: "Stickers" })).toBeVisible();
-    const tiles = picker.locator(".sticker-tile");
+    await expect(stickerButton).toHaveAttribute("aria-expanded", "true");
+    await expect(emojiButton).toHaveAttribute("aria-expanded", "false");
+    const tiles = picker.locator(".emoji-results > .sticker-grid .sticker-tile");
     await expect(tiles).toHaveCount(32);
     await expect(tiles.first()).toHaveAccessibleName("Sticker: Pepe jams with headphones");
     await expect(tiles.first().locator("img")).toHaveAttribute("src", /\/assets\/stickers\/v1\/pepe_jam\.still\.webp$/);
@@ -109,15 +114,65 @@ test.describe("in the composer", () => {
     expect(url.searchParams.getAll("embeds[]")).toEqual([`${STICKERS}/pepe_sad_dance.gif`]);
   });
 
+  test("the sticker button opens the Stickers tab, with the recently used first", async ({ page }) => {
+    await serve(page);
+    await page.goto("/");
+    await page.getByRole("button", { name: "Write a cast" }).click();
+    const dialog = page.getByRole("dialog", { name: "New cast" });
+    const emojiButton = dialog.getByRole("button", { name: "Add an emoji" });
+    const stickerButton = dialog.getByRole("button", { name: "Add a sticker" });
+    // Before the GIF button, after the emoji button.
+    const [emojiBox, stickerBox] = await Promise.all([emojiButton.boundingBox(), stickerButton.boundingBox()]);
+    expect(emojiBox!.x + emojiBox!.width).toBeLessThan(stickerBox!.x);
+    await stickerButton.click();
+    const picker = dialog.getByRole("region", { name: "Pepe emoji and stickers" });
+    await expect(picker.getByRole("tab", { name: "Stickers" })).toHaveAttribute("aria-selected", "true");
+    await expect(stickerButton).toHaveAttribute("aria-expanded", "true");
+    await expect(picker.getByRole("heading", { name: "Recently used" })).toHaveCount(0);
+    // Picking two, one after the other.
+    const grid = picker.locator(".emoji-results > .sticker-grid .sticker-tile");
+    await grid.nth(17).click();
+    await expect(picker).toHaveCount(0);
+    await expect(dialog.locator(".compose-sticker img")).toHaveAttribute("alt", "Sticker: Pepe says good morning");
+    await stickerButton.click();
+    await picker.locator(".emoji-results > .sticker-grid .sticker-tile").nth(0).click();
+    await expect(dialog.locator(".compose-sticker img")).toHaveAttribute("alt", "Sticker: Pepe jams with headphones");
+    // The newest first, kept apart from the emoji.
+    await stickerButton.click();
+    await expect(picker.getByRole("heading", { name: "Recently used" })).toBeVisible();
+    const recent = picker.locator(".emoji-recent .sticker-tile");
+    await expect(recent).toHaveCount(2);
+    await expect(recent.first()).toHaveAccessibleName("Sticker: Pepe jams with headphones");
+    await expect(recent.nth(1)).toHaveAccessibleName("Sticker: Pepe says good morning");
+    expect(await page.evaluate(() => [localStorage.getItem("allthing.stickers"), localStorage.getItem("allthing.emoji")])).toEqual(["pepe_jam pepe_gm", null]);
+    // The emoji button switches the open picker to Emoji; a second press closes it.
+    await emojiButton.click();
+    await expect(picker.getByRole("tab", { name: "Emoji" })).toHaveAttribute("aria-selected", "true");
+    await expect(picker.getByRole("heading", { name: "Recently used" })).toHaveCount(0);
+    await expect(emojiButton).toHaveAttribute("aria-expanded", "true");
+    await expect(stickerButton).toHaveAttribute("aria-expanded", "false");
+    await emojiButton.click();
+    await expect(picker).toHaveCount(0);
+    // Escape from the Stickers tab returns to the sticker button.
+    await stickerButton.click();
+    await expect(picker.getByRole("searchbox", { name: "Search stickers" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(picker).toHaveCount(0);
+    await expect(stickerButton).toBeFocused();
+  });
+
   test("at 390, the Stickers tab fits", async ({ browser }, testInfo) => {
     const { context, page } = await phone(browser, testInfo);
     await serve(page);
     await page.goto("/");
     await page.getByRole("button", { name: "Write a cast" }).tap();
     const dialog = page.getByRole("dialog", { name: "New cast" });
-    await dialog.getByRole("button", { name: "Add an emoji or a sticker" }).tap();
+    await dialog.getByRole("button", { name: "Add a sticker" }).tap();
     const picker = dialog.getByRole("region", { name: "Pepe emoji and stickers" });
-    await picker.getByRole("tab", { name: "Stickers" }).tap();
+    await expect(picker.getByRole("tab", { name: "Stickers" })).toHaveAttribute("aria-selected", "true");
+    // The bar's buttons and Post fit on one line.
+    const bar = await dialog.locator(".compose-bar").boundingBox();
+    expect(bar!.height).toBeLessThan(48);
     const columns = await picker.locator(".sticker-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
     expect(columns).toBeGreaterThanOrEqual(4);
     const box = await picker.boundingBox();
