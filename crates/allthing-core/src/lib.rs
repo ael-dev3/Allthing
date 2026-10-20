@@ -14,6 +14,7 @@ pub mod channels;
 pub mod clients;
 pub mod compose;
 pub mod embeds;
+pub mod emoji;
 pub mod format;
 pub mod guard;
 pub mod hls;

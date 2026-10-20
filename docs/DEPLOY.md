@@ -93,4 +93,4 @@ npx wrangler dev                       # http://127.0.0.1:8787, with a local Cac
 
 ## Limits to keep in mind
 
-See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 2.1 MB (634 KB compressed, limit 3 MB; the cryptography of sign-in and of endorsing readers' keys, and the QR encoder, are about 240 KB of it, 87 KB compressed), and `dist/` holds about 50 files (limit 20,000, each up to 25 MiB).
+See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 2.1 MB (634 KB compressed, limit 3 MB; the cryptography of sign-in and of endorsing readers' keys, and the QR encoder, are about 240 KB of it, 87 KB compressed), and `dist/` holds about 200 files, 185 of them the emoji's (limit 20,000, each up to 25 MiB).

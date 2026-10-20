@@ -39,6 +39,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Like and recast.** The heart and recast icons under each cast like and recast, and undo it. Signed out, a click signs you in first. The first like or recast asks for a key once: scan a QR code and approve Allthing in the Farcaster app. The key stays in your browser, where it signs; Allthing's servers never see it. Signing out deletes the key.
 - **Follow, and delete your casts.** With the same key, Follow beside a profile's name follows the account (hover Following to unfollow), and Delete under your own post or reply deletes it, after asking once more.
 - **Write, with a GIF.** Signed in, Cast at the top of the front page and of each channel (a round button over the feed on a phone), and Reply and Quote under a post, open a composer with a GIF picker (trending and search, from [KLIPY](https://klipy.com)). Cast posts it from your browser with your key, @mentions included; the first post asks for the key, as a first like does.
+- **Pepe emoji.** `:pepe_name:` in a cast shows one of 103 Pepe emoji, most of them animated, served by Allthing itself; a cast of a few emoji and nothing else shows them large, and with reduced motion they stand still. Other Farcaster apps show the shortcode as written.
 - **Accessible.** It works with the keyboard throughout, gives images alt text, keeps focus inside dialogs, respects reduced motion and fits a phone screen.
 
 ## Architecture
@@ -116,6 +117,7 @@ The AGPL is a strong copyleft license: if you distribute a modified version, **o
 
 - **Rust crates.** Everything compiled into the app, the Worker or the build tooling uses a license compatible with AGPL-3.0-or-later: MIT, Apache-2.0, BSD-3-Clause, BSL-1.0, CC0-1.0, Unicode-3.0, Unlicense or Zlib, and many crates are dual-licensed. `cargo deny check licenses` enforces the allowlist in [deny.toml](deny.toml), and CI runs it.
 - **Instrument Serif**, the display face, also outlined in the wordmark above: © The Instrument Serif Project Authors, under the [SIL Open Font License 1.1](web/fonts/OFL-InstrumentSerif.txt). It ships as separate font files with its license, as the OFL allows.
+- **Pepe emoji** (`web/emoji/v1/`): public emotes from 7TV, FrankerFaceZ and emoji.gg, each credited with its source and maker in [web/emoji/CREDITS.md](web/emoji/CREDITS.md). They belong to their makers and are not covered by the AGPL. Pepe the Frog was created by Matt Furie.
 - **Generated JavaScript glue** from wasm-bindgen and worker-build, under MIT or Apache-2.0.
 - **Development tools** (wrangler, workerd, Playwright and their npm dependencies) are used to build and test but are never shipped to readers. They are under MIT, Apache-2.0, ISC, 0BSD or CC0-1.0, apart from `sharp`'s libvips binaries, which are LGPL-3.0-or-later and also compatible.
 - **Data.** Farcaster content belongs to its authors and is shown as published.
