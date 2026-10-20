@@ -68,7 +68,7 @@ function requests(page: Page, part: string): string[] {
   return seen;
 }
 
-test.beforeEach(async ({ page }) => {
+async function routes(page: Page) {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   // "new" lists the payload's casts in its order.
   await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool, meta } }));
@@ -76,11 +76,22 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/reactions?*", (route) => route.fulfill({ json: {
     hash: hash(1), kind: "likes", users: [person(9, "on-hover", "Fetched On Hover")], meta,
   } }));
-});
+  // The authors' card facts.
+  await page.route("**/api/v1/vote?*", (route) => {
+    const fid = Number(new URL(route.request().url()).searchParams.get("fid"));
+    return route.fulfill({ json: { fid, onchain: "stay", app: "opted_in", meta } });
+  });
+  await page.route("**/api/v1/wallets?*", (route) => {
+    const fid = Number(new URL(route.request().url()).searchParams.get("fid"));
+    return route.fulfill({ json: { fid, addresses: [], chains: [], total: 0, sources: [], fetched_at: Date.now() } });
+  });
+}
 
-// Preloading is for pointers that hover; touch screens load popovers on tap.
+test.beforeEach(async ({ page }) => routes(page));
+
+// These hover; a phone's taps are tested on their own, below.
 test.beforeEach(({}, testInfo) => {
-  test.skip(Boolean(testInfo.project.use.hasTouch), "preloading needs a hovering pointer");
+  test.skip(Boolean(testInfo.project.use.hasTouch), "these tests hover");
 });
 
 test("cards in view preload who liked and recasted them in one batch, and their popovers open with it", async ({ page }) => {
@@ -177,4 +188,37 @@ test("with Save-Data nothing is preloaded, and popovers load when they open", as
   await expect(card.getByRole("dialog", { name: "Liked by", exact: true })).toContainText("Fetched On Hover");
   expect(reactions).toHaveLength(1);
   expect(engagement).toEqual([]);
+});
+
+test("on a phone, the cards in view preload who liked them and their authors' facts, so a tap opens each complete", async ({ browser }, testInfo) => {
+  const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  await routes(page);
+  await watchPopovers(page);
+  const engagement = requests(page, "/api/v1/engagement");
+  const reactions = requests(page, "/api/v1/reactions");
+  const votes = requests(page, "/api/v1/vote");
+  await page.goto("/?sort=new");
+  await expect(page.locator(".cast-card[data-hash]")).toHaveCount(10);
+  // The run of six in view brings its batch, as with a mouse, and the card
+  // the reader stopped at brings its author's facts.
+  await expect.poll(() => engagement.length).toBe(1);
+  await expect.poll(() => votes.some((url) => url.includes("fid=100"))).toBe(true);
+  const card = page.locator(`.cast-card[data-hash="${hash(0)}"]`);
+
+  // A tapped count: its people at once, and no request of its own.
+  await card.getByRole("button", { name: "10 likes: show who", exact: true }).tap();
+  await expect(card.getByRole("dialog", { name: "Liked by", exact: true })).toContainText("Batch Liker");
+  expect(reactions).toEqual([]);
+  expect(await loadingShown(page)).toBe(0);
+  await page.keyboard.press("Escape");
+
+  // A tapped author: the card complete in its first frame, no request either.
+  const asked = votes.length;
+  await card.locator(".cast-meta .user-chip a").first().tap();
+  const profile = page.locator(".popover-panel.profile-card");
+  await expect(profile.locator(".vote")).toHaveText("Voted yes", { timeout: 100 });
+  await expect(profile.locator(".vote-loading, .share-bar.loading")).toHaveCount(0);
+  expect(votes.length).toBe(asked);
+  await context.close();
 });

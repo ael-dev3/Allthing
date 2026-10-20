@@ -274,9 +274,23 @@ fn prefetch_observer() -> Option<IntersectionObserver> {
             }
             let Some(hash) = entry.target().get_attribute("data-hash") else { continue };
             let target = entry.target();
-            // The author's card facts, so hovering their name shows them at once.
+            // The author's card facts, so hovering their name, or tapping it,
+            // shows them at once. On a touch screen only for a card the
+            // reader stops at: a finger scrolls past many more.
             if let Some(fid) = target.get_attribute("data-fid").and_then(|f| f.parse::<u64>().ok()) {
-                idle(move || api::prefetch_card_facts(fid));
+                if crate::util::can_hover() {
+                    idle(move || api::prefetch_card_facts(fid));
+                } else {
+                    let card = target.clone();
+                    set_timeout(
+                        move || {
+                            if still_visible(&card) {
+                                idle(move || api::prefetch_card_facts(fid));
+                            }
+                        },
+                        std::time::Duration::from_millis(600),
+                    );
+                }
             }
             // Only cards that stay in view for a moment, and only when idle.
             set_timeout(

@@ -313,26 +313,31 @@ pub fn ready<T: DeserializeOwned>(path: &str) -> Option<Fetched<T>> {
     cached::<T>(path, js_sys::Date::now()).and_then(Result::ok)
 }
 
-/// Profile cards' facts (vote, wallets) prefetched per 5 minutes, at most.
+/// Profile cards' facts (vote, wallets) prefetched per 5 minutes, at most:
+/// with a mouse, and on a touch screen, where each card a reader scrolls
+/// past would otherwise cost two requests.
 const CARD_ACCOUNTS_PER_WINDOW: usize = 12;
+const TOUCH_CARD_ACCOUNTS_PER_WINDOW: usize = 6;
 const CARD_WINDOW_MS: f64 = 300_000.0;
 
 /// Load an account's vote and wallet activity ahead of its profile card,
 /// when it shows in view: queued behind other prefetches, two in flight,
-/// at most [`CARD_ACCOUNTS_PER_WINDOW`] accounts per five minutes, only where
-/// a pointer hovers (touch screens open cards with a tap), and never on
-/// Save-Data or 2g. Both endpoints are edge-cached for an hour or more.
+/// at most [`CARD_ACCOUNTS_PER_WINDOW`] accounts per five minutes
+/// ([`TOUCH_CARD_ACCOUNTS_PER_WINDOW`] on a touch screen), and never on
+/// Save-Data or 2g. A card a mouse hovers and one a finger taps open both
+/// complete. Both endpoints are edge-cached for an hour or more.
 pub fn prefetch_card_facts(fid: u64) {
-    if fid == 0 || !crate::util::can_hover() || constrained_network() {
+    if fid == 0 || constrained_network() {
         return;
     }
+    let cap = if crate::util::can_hover() { CARD_ACCOUNTS_PER_WINDOW } else { TOUCH_CARD_ACCOUNTS_PER_WINDOW };
     let now = js_sys::Date::now();
     let fresh = CARD_ACCOUNTS.with(|a| {
         let mut a = a.borrow_mut();
         if now - a.0 > CARD_WINDOW_MS {
             *a = (now, std::collections::HashSet::new());
         }
-        a.1.len() < CARD_ACCOUNTS_PER_WINDOW && a.1.insert(fid)
+        a.1.len() < cap && a.1.insert(fid)
     });
     if fresh {
         CARD_QUEUE.with(|q| {

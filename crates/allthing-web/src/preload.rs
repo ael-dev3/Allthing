@@ -17,9 +17,9 @@
 //!   10 a second an isolate's bucket refills (docs/PERFORMANCE.md). Later
 //!   cards load their previews when they open, as before.
 //! - Batches go through [`api::preload_engagement`], under the prefetch cap.
-//!   Nothing is preloaded on Save-Data or 2g, nor where no pointer can hover
-//!   (a tap opens the popover, and loads it then), nor in the static copy,
-//!   whose cards aren't observed.
+//!   They load on touch screens too, so a count tapped open is as complete
+//!   as one hovered. Nothing is preloaded on Save-Data or 2g, nor in the
+//!   static copy, whose cards aren't observed.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -103,7 +103,7 @@ enum Step {
 /// asked for, if the budget allows.
 fn next() {
     STATE.with(|state| state.borrow_mut().timer = None);
-    if api::constrained_network() || !crate::util::can_hover() {
+    if api::constrained_network() {
         return;
     }
     let page = crate::nav::location_key();
