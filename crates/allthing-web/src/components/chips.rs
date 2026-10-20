@@ -224,9 +224,9 @@ fn acting_stat(
         ReactionKind::Likes => (Reaction::Like, "Like"),
         ReactionKind::Recasts => (Reaction::Recast, "Recast"),
     };
-    let ask = move || match kind {
-        ReactionKind::Likes => Ask::like(url.clone()),
-        ReactionKind::Recasts => Ask::recast(url.clone()),
+    let ask = move |on: bool| match kind {
+        ReactionKind::Likes => Ask::like(url.clone(), on),
+        ReactionKind::Recasts => Ask::recast(url.clone(), on),
     };
     let key = hash.clone();
     let mine = Memo::new(move |_| writer.reacted(&key, reaction));
@@ -235,6 +235,7 @@ fn acting_stat(
     let key = hash.clone();
     let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
     let hands_off = Memo::new(move |_| writer.hands_off());
+    let shows_mine = Memo::new(move |_| writer.shows_mine());
     let lead = ViewFn::from(move || {
         let ask = ask.clone();
         view! {
@@ -242,11 +243,13 @@ fn acting_stat(
                 type="button"
                 class="act"
                 aria-label=action
-                // A toggle where Allthing writes; a way to the app otherwise.
-                aria-pressed=move || (!hands_off.get()).then(|| mine.get().to_string())
+                // A toggle where Allthing writes, and signed in where it
+                // hands off (what the reader did in the app shows); signed
+                // out, only a way to the app.
+                aria-pressed=move || (!hands_off.get() || shows_mine.get()).then(|| mine.get().to_string())
                 aria-haspopup=move || hands_off.get().then_some("dialog")
                 aria-busy=move || busy.get().then_some("true")
-                on:click=move |_| writer.toggle(target, reaction, ask())
+                on:click=move |_| writer.toggle(target, reaction, ask(mine.get_untracked()))
             >
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
             </button>

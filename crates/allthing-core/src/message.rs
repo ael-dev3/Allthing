@@ -391,6 +391,21 @@ pub fn reaction_url(fid: u64, kind: Reaction, target: &CastId) -> String {
     )
 }
 
+/// One of the reader's casts, if the node still has it.
+pub fn cast_url(target: &CastId) -> String {
+    format!("{NODE}/v1/castById?fid={}&hash={}", target.fid, percent_encode(&hex_encode(&target.hash)))
+}
+
+/// Whether the answer to [`cast_url`] says the cast is gone (deleted, as a
+/// node keeps no removed cast): `None` when the node couldn't say.
+pub fn cast_gone(status: u16, body: &str) -> Option<bool> {
+    if status == 200 {
+        return Some(false);
+    }
+    // The node answers a missing cast with a 400 that says so.
+    (status == 400 && body.contains("NotFound")).then_some(true)
+}
+
 /// The reader's follow of `target`, if there is one.
 pub fn link_url(fid: u64, target: u64) -> String {
     format!("{NODE}/v1/linkById?fid={fid}&target_fid={target}&link_type=follow")
@@ -664,6 +679,22 @@ mod tests {
         assert_eq!(reaction_found(400, missing), Some(false));
         assert_eq!(reaction_found(400, "Invalid query parameters: unknown variant"), None);
         assert_eq!(reaction_found(503, ""), None);
+    }
+
+    #[test]
+    fn reads_whether_the_node_still_has_a_cast() {
+        let target = CastId::new(3, "0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045").unwrap();
+        assert_eq!(
+            cast_url(&target),
+            format!("{NODE}/v1/castById?fid=3&hash=0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045")
+        );
+        let there = r#"{"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":3,"castAddBody":{"text":"gm"}},"hash":"0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045"}"#;
+        assert_eq!(cast_gone(200, there), Some(false));
+        // As Hypersnap answered on 20 October 2026.
+        let missing = r#"{"error":"Failed to get cast","error_detail":"status: NotFound, message: \"cast not found\", details: [], metadata: MetadataMap { headers: {} }"}"#;
+        assert_eq!(cast_gone(400, missing), Some(true));
+        assert_eq!(cast_gone(400, "Invalid query parameters"), None);
+        assert_eq!(cast_gone(503, ""), None);
     }
 
     #[test]

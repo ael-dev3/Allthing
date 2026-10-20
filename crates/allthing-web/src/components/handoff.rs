@@ -50,12 +50,22 @@ impl Ask {
         Ask { title: title.into(), line: line.into(), url, done: None }
     }
 
-    pub fn like(url: String) -> Ask {
-        Ask::new("Like in Farcaster", "The Farcaster app opens this cast. Like it there.", url)
+    /// A like, or, for a cast the reader likes, taking it back.
+    pub fn like(url: String, liked: bool) -> Ask {
+        if liked {
+            Ask::new("Unlike in Farcaster", "The Farcaster app opens this cast. Unlike it there.", url)
+        } else {
+            Ask::new("Like in Farcaster", "The Farcaster app opens this cast. Like it there.", url)
+        }
     }
 
-    pub fn recast(url: String) -> Ask {
-        Ask::new("Recast in Farcaster", "The Farcaster app opens this cast. Recast it there.", url)
+    /// A recast, or, for a cast the reader recasted, undoing it.
+    pub fn recast(url: String, recasted: bool) -> Ask {
+        if recasted {
+            Ask::new("Undo recast in Farcaster", "The Farcaster app opens this cast. Undo your recast there.", url)
+        } else {
+            Ask::new("Recast in Farcaster", "The Farcaster app opens this cast. Recast it there.", url)
+        }
     }
 
     pub fn follow(url: String, username: &str, following: bool) -> Ask {
@@ -101,6 +111,13 @@ impl HandOff {
     pub fn open(self, ask: Ask) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
         self.ask.set(Some(ask));
+    }
+
+    /// Close, if it still shows the hand-off to `url`: done in the app.
+    pub fn close_if(self, url: &str) {
+        if self.ask.with_untracked(|ask| ask.as_ref().is_some_and(|ask| ask.url == url)) {
+            self.close();
+        }
     }
 
     /// Close, and return focus to what opened it.

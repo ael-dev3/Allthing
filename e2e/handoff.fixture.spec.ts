@@ -55,6 +55,14 @@ async function serve(page: Page, { following = false } = {}) {
       : { error: "Failed to get link", error_detail: 'status: NotFound, message: "not found"' },
   }));
   await page.route("https://farcaster.xyz/**", (route) => route.fulfill({ body: "<title>Farcaster</title>", contentType: "text/html" }));
+  // Signed in, the reader's likes and recasts, and whether a hand-off has
+  // landed, are read from the node: none, here.
+  const node = "https://haatz.quilibrium.com/v1";
+  const cors = { "access-control-allow-origin": "*" };
+  const notFound = { status: 400, headers: cors, json: { error: "Failed to get it", error_detail: 'status: NotFound, message: "not found"' } };
+  await page.route(`${node}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
+  await page.route(`${node}/reactionById?*`, (route) => route.fulfill(notFound));
+  await page.route(`${node}/castById?*`, (route) => route.fulfill({ headers: cors, json: { data: { type: "MESSAGE_TYPE_CAST_ADD" } } }));
   return calls;
 }
 
