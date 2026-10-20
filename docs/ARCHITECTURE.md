@@ -231,8 +231,9 @@ Any reader can write a cast, a reply or a quote (`components/compose.rs`): **Cas
 - Without the secret, the key endpoint answers 404 and the composer has no GIF button.
 
 **Emoji** come from Allthing's own pack ([above](#the-browser-app)), so the picker (`components/emoji_picker.rs`) needs no key and asks no one for anything.
-- **The button.** A Pepe, before the GIF button, opens a grid of the pack under a search box; one picker is open at a time, and Escape closes it before the dialog.
-- **Search.** The search matches names, then descriptions (`allthing_core::emoji::search`), and Enter picks the first match.
+- **The button.** A Pepe, before the GIF button, opens the pack under a search box; one picker is open at a time, and Escape closes it before the dialog.
+- **Groups.** The pack shows group by group (`emoji::Group`), each under its heading. Above the grid, a bar has a button for each group, with its first emoji as its face: it brings the group's heading to the top of the grid, and the group whose heading has reached the top is marked (`aria-current`). The last groups, which can't scroll that far, stay marked when chosen. With the bar, the grid is shorter by as much, so the picker grows no taller.
+- **Search.** The search matches the start of a word, in names first, then descriptions (`allthing_core::emoji::search`), and shows one grid of what it found, without groups; Enter picks the first match.
 - **Recently used.** Up to 16 come first, newest first, kept in localStorage (`allthing.emoji`).
 - **Motion.** Each emoji shows its still and moves while pointed at or focused (not with reduced motion), and the picker's foot shows the one pointed at with its shortcode.
 - **A pick** puts the shortcode in at the caret, or in place of the selection, spaced from the words beside it, and leaves the caret after it (`emoji::insert`, which counts in UTF-16 as a text box does). The composer keeps the caret itself while the text box hasn't focus, since a tap elsewhere can reset an unfocused text box's selection.

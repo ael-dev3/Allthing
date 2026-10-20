@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 /*
  * The composer's emoji picker: Allthing's Pepe pack, searched, picked into
@@ -13,6 +13,8 @@ const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
 const cast = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "Say it with a Pepe", ts: 1792235681, likes: 3, replies: 0 };
+/** The pack's groups, in order (`allthing_core::emoji::Group`). */
+const GROUPS = ["Classics", "Reactions", "Happy", "Love", "Sad and scared", "Music and party", "Hi and bye", "Food and drink", "Doing things", "Dressed up", "Signs"];
 
 async function serve(target: Page) {
   await target.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
@@ -68,7 +70,11 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   const tiles = picker.locator(".emoji-results > .emoji-grid .emoji-tile");
   await expect(tiles).toHaveCount(179);
   await expect(picker.getByRole("heading", { name: "Recently used" })).toHaveCount(0);
-  await expect(picker.getByRole("heading", { name: "Pepe", exact: true })).toBeVisible();
+  // Under its groups' headings, with a bar of the groups, the first marked.
+  await expect(picker.getByRole("heading", { level: 4 })).toHaveText(GROUPS);
+  const bar = picker.getByRole("group", { name: "Groups" });
+  expect(await bar.getByRole("button").evaluateAll((buttons) => buttons.map((b) => b.getAttribute("aria-label")))).toEqual(GROUPS);
+  await expect(bar.getByRole("button", { name: "Classics" })).toHaveAttribute("aria-current", "true");
   // The five first, still; an animated one moves while pointed at, and the foot names it.
   await expect(tiles.first()).toHaveAccessibleName("Pepe holds up a NO sign");
   await expect(tiles.first().locator("img")).toHaveAttribute("src", /\/assets\/emoji\/v1\/pepe_no\.webp$/);
@@ -162,6 +168,57 @@ test("one picker at a time, and Escape closes the picker before the dialog", asy
   await expect(dialog).toHaveCount(0);
 });
 
+/** How far below the top of the grid a group's heading is, in pixels. */
+function headingTop(picker: Locator, name: string) {
+  return picker.locator(".emoji-results").evaluate((grid, name) => {
+    const heading = [...grid.querySelectorAll("h4")].find((h) => h.textContent === name)!;
+    // `+ 0`: a hair above rounds to -0, which isn't 0 to `toBe`.
+    return Math.round(heading.getBoundingClientRect().top - grid.getBoundingClientRect().top) + 0;
+  }, name);
+}
+
+test("the groups' bar brings a group to the top, and marks the one in view as the grid scrolls", async ({ page }) => {
+  await serve(page);
+  const { dialog } = await compose(page);
+  await dialog.getByRole("button", { name: "Add an emoji" }).click();
+  const picker = dialog.getByRole("region", { name: "Pepe emoji" });
+  const bar = picker.getByRole("group", { name: "Groups" });
+  const grid = picker.locator(".emoji-results");
+  const marked = (name: string) => expect(bar.getByRole("button", { name, exact: true })).toHaveAttribute("aria-current", "true");
+  // Each button's face is its group's first emoji, still.
+  await expect(bar.getByRole("button", { name: "Food and drink" }).locator("img")).toHaveAttribute("src", /pepe_tea\.still\.webp$/);
+  await bar.getByRole("button", { name: "Food and drink" }).click();
+  await expect.poll(() => headingTop(picker, "Food and drink")).toBe(0);
+  await marked("Food and drink");
+  await expect(bar.locator("[aria-current]")).toHaveCount(1);
+  // Scrolled by hand, the mark follows the heading that has reached the top.
+  await grid.evaluate((g) => g.scrollTo(0, 0));
+  await marked("Classics");
+  await grid.evaluate((g) => {
+    const love = [...g.querySelectorAll("h4")].find((h) => h.textContent === "Love") as HTMLElement;
+    g.scrollTo(0, love.offsetTop + 20);
+  });
+  await marked("Love");
+  // The last group can't reach the top; chosen, it is still the one marked.
+  await bar.getByRole("button", { name: "Signs" }).click();
+  await marked("Signs");
+  await expect(picker.getByRole("heading", { level: 4, name: "Signs" })).toBeInViewport();
+  // From the keyboard too.
+  await bar.getByRole("button", { name: "Happy" }).focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => headingTop(picker, "Happy")).toBe(0);
+  await marked("Happy");
+  // A search shows what it found, without groups; cleared, they're back.
+  await picker.getByRole("searchbox").fill("wizard");
+  await expect(bar).toBeHidden();
+  await expect(picker.getByRole("heading", { level: 4 })).toHaveCount(0);
+  await expect(picker.getByRole("heading", { name: "1 emoji for “wizard”" })).toBeVisible();
+  await picker.getByRole("searchbox").fill("");
+  await expect(bar).toBeVisible();
+  await expect(picker.getByRole("heading", { level: 4 })).toHaveCount(GROUPS.length);
+  await marked("Classics");
+});
+
 test("with reduced motion, the emoji stay still", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await serve(page);
@@ -196,6 +253,18 @@ test("at 390, the picker fits, and a tap leaves it open for another", async ({ b
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   const columns = await picker.locator(".emoji-grid").last().evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
   expect(columns).toBeGreaterThanOrEqual(7);
+  // The groups' bar fits on one row, each button wide enough to tap.
+  const bar = picker.getByRole("group", { name: "Groups" });
+  const barBox = (await bar.boundingBox())!;
+  expect(barBox.x + barBox.width).toBeLessThanOrEqual(box!.x + box!.width);
+  for (const button of await bar.getByRole("button").all()) {
+    const b = (await button.boundingBox())!;
+    expect(b.width).toBeGreaterThanOrEqual(24);
+    expect(b.height).toBeGreaterThanOrEqual(24);
+    expect(Math.abs(b.y - barBox.y)).toBeLessThan(1);
+  }
+  await bar.getByRole("button", { name: "Hi and bye" }).tap();
+  await expect.poll(() => headingTop(picker, "Hi and bye")).toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   // The draft's post button stays in view, below what scrolls.
   await expect(dialog.getByRole("button", { name: "Post in Farcaster" }).or(dialog.getByRole("link", { name: /Post in Farcaster/ }))).toBeInViewport();
