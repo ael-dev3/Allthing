@@ -788,6 +788,21 @@ code {
   white-space: nowrap;
 }
 
+/* Allthing's emoji (allthing_core::emoji), in cast text: a little taller
+   than a capital, and large when a cast is only a few of them. */
+.emoji img {
+  height: 1.6em;
+  width: auto;
+  margin: -0.2em 0.05em;
+  vertical-align: -0.38em;
+}
+
+p.jumbo .emoji img {
+  height: 48px;
+  margin: 2px 4px 0 0;
+  vertical-align: middle;
+}
+
 .channel-name {
   color: var(--cyan);
   font-weight: 500;

@@ -63,6 +63,8 @@ pub enum Token {
     Mention(String),
     /// A "/channel" reference, lowercased, without the "/".
     Channel(String),
+    /// A shortcode of Allthing's emoji pack, ":pepe_no:".
+    Emoji(&'static crate::emoji::Emoji),
 }
 
 /// Length of the "http://" or "https://" prefix `rest` starts with, if any.
@@ -154,8 +156,9 @@ pub fn split_mentions(text: &str, fid_of: impl Fn(&str) -> Option<u64>) -> (Stri
     (out, mentions)
 }
 
-/// Split cast text into plain text, URLs, mentions and /channel references.
-/// Only "@names" that the cast actually mentions become mention tokens.
+/// Split cast text into plain text, URLs, mentions, /channel references and
+/// emoji shortcodes. Only "@names" that the cast actually mentions become
+/// mention tokens, and only shortcodes of the pack emoji.
 pub fn tokenize(text: &str, mentions: &[Mention]) -> Vec<Token> {
     let known: Vec<String> = mentions.iter().map(|m| m.username.to_lowercase()).collect();
     let mut tokens: Vec<Token> = Vec::new();
@@ -202,6 +205,14 @@ pub fn tokenize(text: &str, mentions: &[Mention]) -> Vec<Token> {
                 last = i;
                 continue;
             }
+        } else if ch == ':'
+            && let Some((emoji, len)) = crate::emoji::shortcode_at(rest)
+        {
+            push_text(&mut tokens, &text[last..i]);
+            tokens.push(Token::Emoji(emoji));
+            i += len;
+            last = i;
+            continue;
         } else if ch == '/' && prev.is_none_or(|p| p.is_whitespace() || p == '(') {
             let run_end =
                 rest[1..].find(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).map_or(rest.len(), |n| n + 1);
@@ -249,6 +260,32 @@ mod tests {
 
     fn mention(username: &str, fid: u64) -> Mention {
         Mention { username: username.into(), fid }
+    }
+
+    #[test]
+    fn emoji_shortcodes_of_the_pack_become_emoji() {
+        let no = crate::emoji::find("pepe_no").unwrap();
+        let gm = crate::emoji::find("pepe_gm").unwrap();
+        assert_eq!(
+            tokenize("gm :pepe_gm: frens :pepe_no::PEPE_NO:", &[]),
+            vec![
+                Token::Text("gm ".into()),
+                Token::Emoji(gm),
+                Token::Text(" frens ".into()),
+                Token::Emoji(no),
+                Token::Emoji(no),
+            ]
+        );
+        // Unknown ones, times, and a link's colons stay as they are.
+        assert_eq!(
+            tokenize("at 10:30:45 :smile: :pepe_nope:", &[]),
+            vec![Token::Text("at 10:30:45 :smile: :pepe_nope:".into())]
+        );
+        // A link keeps its colons (bar a trailing one, as for any link).
+        assert_eq!(
+            tokenize("https://x.com/:pepe_no:", &[]),
+            vec![Token::Url("https://x.com/:pepe_no".into()), Token::Text(":".into())]
+        );
     }
 
     #[test]
