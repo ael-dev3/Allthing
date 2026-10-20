@@ -2143,6 +2143,127 @@ p.jumbo .emoji img {
   gap: 6px;
 }
 
+/* With accounts counted by app, each app's segment opens its card, as its
+   legend entry does: the bar neither clips nor animates, either of which
+   would hold the card inside it, and its ends are the segments' own. */
+.client-share .share-bar.counted {
+  overflow: visible;
+  animation: none;
+  background: none;
+}
+
+.share-bar.counted .seg-slot {
+  display: flex;
+  min-width: 4px;
+}
+
+.share-bar.counted > :first-child .seg,
+.share-bar.counted > .seg:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.share-bar.counted > :last-child .seg,
+.share-bar.counted > .seg:last-child {
+  border-radius: 0 999px 999px 0;
+}
+
+.share-bar.counted > :only-child .seg {
+  border-radius: 999px;
+}
+
+.seg-pop {
+  display: flex;
+  flex: 1;
+}
+
+.seg-pop .seg {
+  position: relative;
+  flex: 1;
+}
+
+/* A taller target than the 6 px the segment shows. */
+.seg-pop .seg::after {
+  content: "";
+  position: absolute;
+  inset: -5px 0 -6px;
+}
+
+.seg-pop:hover .seg,
+.seg-pop:has(.popover-panel) .seg {
+  filter: brightness(1.12) saturate(1.1);
+}
+
+/* An open card lifts the bar above the feed's cards. */
+.client-share:has(.popover-panel) {
+  position: relative;
+  z-index: 30;
+}
+
+.popover-panel.client-card {
+  width: min(260px, 86vw);
+  padding: 12px 14px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.client-card-body p {
+  margin: 0;
+}
+
+.client-card-body .client-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.client-card-active {
+  color: var(--ink-2);
+}
+
+.client-card-active strong {
+  color: var(--ink);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.client-card-window,
+.client-card-share,
+.client-card-note {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.client-card-body .client-card-share {
+  margin-top: 6px;
+}
+
+.client-card-body .client-card-note {
+  margin-top: 4px;
+}
+
+/* In a legend entry's card, not the legend's own inherited link color. */
+.popover-panel .client-card-filter {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.client-card-filter:hover,
+.client-card-filter:focus-visible {
+  text-decoration: underline;
+}
+
+.client-rest-active {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .client-legend .pct {
   color: var(--ink);
   font-variant-numeric: tabular-nums;

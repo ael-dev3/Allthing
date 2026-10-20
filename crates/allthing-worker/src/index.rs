@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
-use allthing_data::activity::{ActivityStore, SUMMARY};
+use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde::Deserialize;
@@ -18,10 +18,11 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 3] = [
+const SCHEMA: [&str; 4] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
+    include_str!("../../../migrations/0004_signer_apps.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -51,10 +52,24 @@ const ACTIVITY_SETS: &str = "SELECT name, body FROM activity WHERE name IN (SELE
 const STORE_SETS: &str = "INSERT INTO activity (name, body) \
     SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true \
     ON CONFLICT (name) DO UPDATE SET body = excluded.body";
-/// Drop hourly sets before hour ?1 and daily ones before day ?2.
+/// Drop hourly sets (of fids, `h`, and of keys, `k`) before hour ?1 and
+/// daily ones before day ?2.
 const DROP_SETS: &str = "DELETE FROM activity WHERE \
-    (substr(name, 1, 1) = 'h' AND CAST(substr(name, 2) AS INTEGER) < ?1) OR \
+    (substr(name, 1, 1) IN ('h', 'k') AND CAST(substr(name, 2) AS INTEGER) < ?1) OR \
     (substr(name, 1, 1) = 'd' AND CAST(substr(name, 2) AS INTEGER) < ?2)";
+/// Keys' apps, given as one JSON array of `[pair, app]`. A key's app never
+/// changes, so a key already there is left as it is.
+const STORE_KEYS: &str = "INSERT OR IGNORE INTO signer_apps (pair, app) \
+    SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1)";
+/// The apps of the keys given as one JSON array. Pairs reach 2^63, past a
+/// JavaScript number: they come back as text.
+const KEY_APPS: &str = "SELECT CAST(pair AS TEXT) AS pair, app FROM signer_apps \
+    WHERE pair IN (SELECT value FROM json_each(?1))";
+/// Accounts active by app among the keys given as one JSON array, the app
+/// NULL for keys not looked up yet, which come back too.
+const COUNT_APPS: &str = "SELECT k.app AS app, COUNT(DISTINCT j.value >> 32) AS active, \
+      json_group_array(CAST(j.value AS TEXT)) FILTER (WHERE k.pair IS NULL) AS unknown \
+    FROM json_each(?1) AS j LEFT JOIN signer_apps AS k ON k.pair = j.value GROUP BY k.app";
 const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
 
@@ -89,6 +104,19 @@ struct SetRow {
 }
 
 #[derive(Deserialize)]
+struct KeyRow {
+    pair: String,
+    app: f64,
+}
+
+#[derive(Deserialize)]
+struct AppRow {
+    app: Option<f64>,
+    active: f64,
+    unknown: String,
+}
+
+#[derive(Deserialize)]
 struct MetaRow {
     name: String,
     built: f64,
@@ -109,6 +137,10 @@ impl D1Index {
 
 fn failed(error: worker::Error) -> IndexError {
     IndexError(error.to_string())
+}
+
+fn to_json(value: &impl serde::Serialize) -> Result<String, IndexError> {
+    serde_json::to_string(value).map_err(|e| IndexError(e.to_string()))
 }
 
 fn number(n: f64) -> JsValue {
@@ -242,19 +274,60 @@ impl ActivityStore for D1Index {
         .boxed_local()
     }
 
-    fn save_activity(
-        &self,
-        sets: Vec<(String, String)>,
-        keep_from: (i64, i64),
-        state: String,
-        summary: Snapshot,
-    ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+    fn key_apps(&self, pairs: Vec<u64>) -> LocalBoxFuture<'static, Result<HashMap<u64, u64>, IndexError>> {
         let db = self.db.clone();
         async move {
+            let pairs = serde_json::to_string(&pairs).map_err(|e| IndexError(e.to_string()))?;
+            let statement = db.prepare(KEY_APPS).bind(&[pairs.into()]).map_err(failed)?;
+            let rows = statement.all().await.map_err(failed)?.results::<KeyRow>().map_err(failed)?;
+            Ok(rows.into_iter().filter_map(|r| Some((r.pair.parse().ok()?, r.app as u64))).collect())
+        }
+        .boxed_local()
+    }
+
+    fn count_apps(
+        &self,
+        keys: Vec<(u64, u64)>,
+        chunks: Vec<Vec<u64>>,
+    ) -> LocalBoxFuture<'static, Result<Vec<AppCount>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let mut statements = Vec::new();
+            if !keys.is_empty() {
+                statements.push(db.prepare(STORE_KEYS).bind(&[to_json(&keys)?.into()]).map_err(failed)?);
+            }
+            let stored = statements.len();
+            for chunk in &chunks {
+                statements.push(db.prepare(COUNT_APPS).bind(&[to_json(chunk)?.into()]).map_err(failed)?);
+            }
+            let mut out = Vec::new();
+            if statements.is_empty() {
+                return Ok(out);
+            }
+            for result in db.batch(statements).await.map_err(failed)?.into_iter().skip(stored) {
+                for row in result.results::<AppRow>().map_err(failed)? {
+                    let unknown: Vec<String> = serde_json::from_str(&row.unknown).unwrap_or_default();
+                    let unknown = unknown.iter().filter_map(|p| p.parse().ok()).collect();
+                    out.push((row.app.map(|app| app as u64), row.active as u64, unknown));
+                }
+            }
+            Ok(out)
+        }
+        .boxed_local()
+    }
+
+    fn save_activity(&self, saving: Saving) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let Saving { sets, keep_from, keys, state, summary } = saving;
             let mut statements = Vec::new();
             if !sets.is_empty() {
                 let rows = serde_json::to_string(&sets).map_err(|e| IndexError(e.to_string()))?;
                 statements.push(db.prepare(STORE_SETS).bind(&[rows.into()]).map_err(failed)?);
+            }
+            if !keys.is_empty() {
+                let rows = serde_json::to_string(&keys).map_err(|e| IndexError(e.to_string()))?;
+                statements.push(db.prepare(STORE_KEYS).bind(&[rows.into()]).map_err(failed)?);
             }
             let keep = [number(keep_from.0 as f64), number(keep_from.1 as f64)];
             statements.push(db.prepare(DROP_SETS).bind(&keep).map_err(failed)?);

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The share of casts each app posted, from the casts' provenance.
+//! The share of casts each app posted, from the casts' provenance, and,
+//! once the cron has counted them by app, each app's active accounts on
+//! hovering it.
 
+use allthing_core::activity::{AppsWindow, day, day_name};
 use allthing_core::clients::{client_name, client_shares, other_clients};
+use allthing_core::format::{full_number, plural};
 use allthing_core::model::Cast;
 use allthing_core::ranking::TrendingWindow;
 use leptos::prelude::*;
@@ -9,7 +13,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::Notes;
 use crate::components::popover::Popover;
-use crate::util::{href, with_query};
+use crate::util::{href, now, with_query};
 
 /// The feed's URL with the reader's sort and time range kept, and the client
 /// filter set to `client` (or cleared).
@@ -47,10 +51,71 @@ const TOP_APPS: usize = 4;
 /// Casts with a known app needed before shares mean anything.
 const MIN_KNOWN: u64 = 20;
 
-/// A thin bar of the apps `casts` (trending over `window`) were posted from,
-/// by share, with a legend. Nothing while too few of their apps are known yet.
+/// When a window of accounts by app ends: "14:00 UTC", with its date if
+/// that isn't today.
+fn window_end(to: i64) -> String {
+    let time = format!("{:02}:00 UTC", to.div_euclid(3_600).rem_euclid(24));
+    if day(to) == day(now()) { time } else { format!("{} {time}", day_name(day(to))) }
+}
+
+/// The card hovering an app in the bar or its legend opens: the accounts
+/// active through it in the past 24 hours, and its share of the casts.
 #[component]
-pub fn ClientShareBar(casts: Vec<Cast>, notes: Notes, window: TrendingWindow) -> impl IntoView {
+fn ClientCard(
+    name: String,
+    fid: u64,
+    swatch: usize,
+    /// "60%" of `period` trending casts.
+    share: String,
+    period: &'static str,
+    counted: AppsWindow,
+) -> impl IntoView {
+    let query = use_query_map();
+    let target = move || {
+        let q = query.read();
+        client_href(q.get("sort"), q.get("t"), Some(fid))
+    };
+    let active = counted.through(fid);
+    let known = counted.known_percent();
+    // While apps aren't known for every account, some of them may be this
+    // app's: its count is a floor.
+    let count = match active {
+        0 if known < 100 => view! { "No active accounts known yet" }.into_any(),
+        0 => view! { "No active accounts" }.into_any(),
+        n => view! {
+            {(known < 99).then_some("At least ")}
+            <strong>{full_number(n)}</strong>" "{if n == 1 { "active account" } else { "active accounts" }}
+        }
+        .into_any(),
+    };
+    view! {
+        <div class="client-card-body">
+            <p class="client-card-name">
+                <span class=format!("swatch client-{swatch}") aria-hidden="true"></span>
+                {name.clone()}
+            </p>
+            <p class="client-card-active">{count}</p>
+            <p class="client-card-window">"in the 24 hours to "{window_end(counted.to)}</p>
+            <p class="client-card-share">{share}" of "{period}" trending casts"</p>
+            {(known < 100).then(|| view! {
+                <p class="client-card-note">{format!("Apps are known for {known}% of active accounts so far.")}</p>
+            })}
+            <a class="client-card-filter" href=target>"Show only casts from "{name}</a>
+        </div>
+    }
+}
+
+/// A thin bar of the apps `casts` (trending over `window`) were posted from,
+/// by share, with a legend. Nothing while too few of their apps are known
+/// yet. With `counted` (the cron's accounts by app), hovering, focusing or
+/// tapping an app opens its card.
+#[component]
+pub fn ClientShareBar(
+    casts: Vec<Cast>,
+    notes: Notes,
+    window: TrendingWindow,
+    #[prop(optional_no_strip)] counted: Option<AppsWindow>,
+) -> impl IntoView {
     let Some(shares) = client_shares(&casts, &notes, TOP_APPS, MIN_KNOWN) else { return ().into_any() };
     let query = use_query_map();
     let current = move || client_param(&query.read());
@@ -68,32 +133,87 @@ pub fn ClientShareBar(casts: Vec<Cast>, notes: Notes, window: TrendingWindow) ->
     let note = format!(
         "Apps that posted {known} of {period} trending casts, from the app that registered each cast's signing key."
     );
+    let pct_of = |percent: u32| if percent == 0 { "<1%".to_owned() } else { format!("{percent}%") };
+    // An app's card, for its segment and its legend entry.
+    let card = {
+        let counted = counted.clone();
+        move |i: usize, fid: u64, name: String, share: String| {
+            let counted = counted.clone()?;
+            Some(ViewFn::from(move || {
+                view! {
+                    <ClientCard name=name.clone() fid swatch=i share=share.clone() period counted=counted.clone()/>
+                }
+            }))
+        }
+    };
+    let card_label = |name: &str| format!("{name}: active accounts");
+    let counted_rest = StoredValue::new(counted.clone());
     view! {
         <section class="client-share" aria-label=format!("Apps posting {period} trending casts") title=note>
-            <div class="share-bar" role="img" aria-label=summary>
-                {shares.iter().enumerate().filter(|(_, s)| s.percent > 0).map(|(i, s)| view! {
-                    <span class=format!("seg client-{i}") style=format!("flex-grow: {}", s.percent) title=format!("{}: {}%", s.name, s.percent)></span>
+            <div class="share-bar" class:counted=counted.is_some() role="img" aria-label=summary>
+                {shares.iter().enumerate().filter(|(_, s)| s.percent > 0).map(|(i, s)| {
+                    let grow = format!("flex-grow: {}", s.percent);
+                    let title = format!("{}: {}%", s.name, s.percent);
+                    match s.fid.and_then(|fid| Some((fid, card(i, fid, s.name.clone(), pct_of(s.percent))?))) {
+                        // The legend's links are the ones to tab to and to read out.
+                        Some((fid, content)) => {
+                            let target = move || {
+                                let q = query.read();
+                                client_href(q.get("sort"), q.get("t"), Some(fid))
+                            };
+                            view! {
+                                <span class="seg-slot" style=grow>
+                                    <Popover
+                                        label=card_label(&s.name)
+                                        hover=true
+                                        links=true
+                                        class="seg-pop"
+                                        panel_class="client-card"
+                                        trigger=move || view! {
+                                            <a class=format!("seg client-{i}") href=target tabindex="-1" aria-hidden="true"></a>
+                                        }
+                                        content=content
+                                    />
+                                </span>
+                            }
+                            .into_any()
+                        }
+                        None => view! { <span class=format!("seg client-{i}") style=grow title=title></span> }.into_any(),
+                    }
                 }).collect_view()}
             </div>
             <ul class="client-legend">
                 {shares.iter().enumerate().map(|(i, s)| {
                     let label = s.name.clone();
-                    let pct = if s.percent == 0 { "<1%".to_owned() } else { format!("{}%", s.percent) };
+                    let pct = pct_of(s.percent);
                     match s.fid {
                         Some(fid) => {
                             let target = move || {
                                 let q = query.read();
                                 client_href(q.get("sort"), q.get("t"), Some(fid))
                             };
-                            view! {
-                                <li>
-                                    <a href=target aria-current=move || (current() == Some(fid)).then_some("true")>
-                                        <span class=format!("swatch client-{i}") aria-hidden="true"></span>
-                                        {label}" "<strong class="pct">{pct}</strong>
-                                    </a>
-                                </li>
+                            let link = move || view! {
+                                <a href=target aria-current=move || (current() == Some(fid)).then_some("true")>
+                                    <span class=format!("swatch client-{i}") aria-hidden="true"></span>
+                                    {label.clone()}" "<strong class="pct">{pct.clone()}</strong>
+                                </a>
+                            };
+                            match card(i, fid, s.name.clone(), pct_of(s.percent)) {
+                                Some(content) => view! {
+                                    <li>
+                                        <Popover
+                                            label=card_label(&s.name)
+                                            hover=true
+                                            links=true
+                                            panel_class="client-card"
+                                            trigger=link
+                                            content=content
+                                        />
+                                    </li>
+                                }
+                                .into_any(),
+                                None => view! { <li>{link()}</li> }.into_any(),
                             }
-                            .into_any()
                         }
                         None => view! {
                             <li>
@@ -116,7 +236,17 @@ pub fn ClientShareBar(casts: Vec<Cast>, notes: Notes, window: TrendingWindow) ->
                                                     let q = query.read();
                                                     client_href(q.get("sort"), q.get("t"), Some(fid))
                                                 };
-                                                view! { <li><a href=target>{name}" "<strong class="pct">{pct}</strong></a></li> }
+                                                let active = counted_rest.get_value().map(|c| c.through(fid)).filter(|n| *n > 0).map(|n| {
+                                                    view! { <span class="client-rest-active">{plural(n, "active account", "active accounts")}</span> }
+                                                });
+                                                view! {
+                                                    <li>
+                                                        <a href=target>
+                                                            <span>{name}" "<strong class="pct">{pct}</strong></span>
+                                                            {active}
+                                                        </a>
+                                                    </li>
+                                                }
                                             }).collect_view()}
                                         </ul>
                                     }

@@ -263,7 +263,7 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                     <Columns>
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
-                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown/>
+                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>

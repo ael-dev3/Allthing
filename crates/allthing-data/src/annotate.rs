@@ -49,7 +49,7 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
     }
 }
 
-type SignerApps = Rc<HashMap<String, Option<u64>>>;
+pub(crate) type SignerApps = Rc<HashMap<String, Option<u64>>>;
 
 const SIGNERS_TTL_MS: f64 = 3_600_000.0;
 const APPS_TTL_MS: f64 = 86_400_000.0;
@@ -76,7 +76,7 @@ pub fn carried(previous: Option<&[u8]>) -> Annotations {
 /// A cast to attribute: (author fid, cast hash), in display priority order.
 pub type Target = (u64, String);
 
-async fn signer_apps(inv: &Invocation, fid: u64) -> Option<SignerApps> {
+pub(crate) async fn signer_apps(inv: &Invocation, fid: u64) -> Option<SignerApps> {
     let now = inv.now();
     let cached = SIGNERS
         .with(|s| s.borrow().get(&fid).filter(|(at, _)| now - at < SIGNERS_TTL_MS).map(|(_, apps)| apps.clone()));

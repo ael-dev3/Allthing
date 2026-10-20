@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
+use allthing_core::activity::AppsWindow;
 use allthing_core::api::{
     self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, EngagementPayload, EngagementRequest, HomePayload,
     IndexCoverage, LatestPayload, Meta, QuotedCast, ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload,
@@ -262,25 +263,46 @@ pub async fn home(
 ) -> Result<Built, Failure> {
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
+    // Only the first page heads the list with the client bar.
+    let counted = async { if offset == 0 { apps_24h(&inv).await } else { None } };
     if let Some(span) = Span::of(window)
         && let Some(ranking) = ranking(&inv, span).await
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
-        let (raw, casts) = ranked_casts(&inv, &hashes).await?;
+        let (ranked, counted) = join(ranked_casts(&inv, &hashes), counted).await;
+        let (raw, casts) = ranked?;
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
         let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
-        let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index) };
+        let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
+        let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index), apps_24h };
         return Built::json(&payload, api::INDEXED_HOME_CACHE);
     }
     let window = if window.is_indexed() { TrendingWindow::Week } else { window };
-    let raw = hypersnap::trending_casts(&inv, POOL_SIZE, offset, window).await.map_err(Failure::upstream)?;
+    let (trending, counted) = join(hypersnap::trending_casts(&inv, POOL_SIZE, offset, window), counted).await;
+    let raw = trending.map_err(Failure::upstream)?;
     let casts = raw.iter().map(normalize::cast).collect();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
-    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None }, api::HOME_CACHE)
+    let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
+    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h }, api::HOME_CACHE)
+}
+
+/// Accounts active by app in the past 24 hours, as the cron last counted
+/// them: one D1 read, given an index and a subrequest for it.
+async fn apps_24h(inv: &Invocation) -> Option<AppsWindow> {
+    #[derive(serde::Deserialize)]
+    struct Counted {
+        apps_24h: Option<AppsWindow>,
+    }
+    let index = inv.index()?;
+    if !inv.take_subrequests(1) {
+        return None;
+    }
+    let stored = index.snapshot(crate::activity::SUMMARY).await.ok().flatten()?;
+    serde_json::from_str::<Counted>(&stored.body).ok()?.apps_24h
 }
 
 /// A span's ranking from the index, if there is an index, it answers, and
