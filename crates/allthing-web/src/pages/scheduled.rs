@@ -35,9 +35,13 @@ fn list() -> impl IntoView {
     }
 }
 
+/// The list: code of its own, fetched when the page opens (`crate::split`).
 #[cfg(not(feature = "static-host"))]
 fn list() -> impl IntoView {
-    view! { <with_worker::List/> }
+    crate::split::lazy_page(
+        || view! { <p class="muted scheduled-loading">"Loading your scheduled casts…"</p> },
+        with_worker::list(),
+    )
 }
 
 #[cfg(not(feature = "static-host"))]
@@ -54,6 +58,11 @@ mod with_worker {
     use crate::components::signin::use_session;
     use crate::components::writer::{Writer, use_writer};
     use crate::util::{cast_href, local_time, now};
+
+    #[leptos::wasm_split::wasm_split(scheduled, wasm_split_path = ::leptos::wasm_split, fallible)]
+    pub fn list() -> Result<AnyView, leptos::wasm_split::SplitLoaderError> {
+        Ok(view! { <List/> }.into_any())
+    }
 
     #[component]
     pub fn List() -> impl IntoView {
