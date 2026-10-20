@@ -112,7 +112,7 @@ test.describe("performance budget", () => {
     });
     await page.locator(".sort-tabs a", { hasText: "new" }).click();
     await page.locator(".sort-tabs a", { hasText: "top" }).click();
-    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes").first().focus();
+    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").first().focus();
     await page.keyboard.press("Escape");
     await page.waitForTimeout(500);
     const worst = await page.evaluate(() => Math.max(0, ...((window as any).__events as number[])));

@@ -25,10 +25,12 @@ const FARCASTER = "https://api.farcaster.xyz/v2";
 const NODE = "https://haatz.quilibrium.com/v1";
 const TOKEN = "0xfc0185a4609110983be9ace986f913c28e50092821297f9d";
 const LINK = `farcaster://signed-key-request?token=${TOKEN}`;
-const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
+const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type" };
+const RELAY = "https://relay.farcaster.xyz/v1";
+const CHANNEL = "210f1718-427e-46a4-99e3-2207f21f83ec";
 
 type Sent = { type: number; fid: number; at: number; network: number; reaction: number; target: { fid: number; hash: string }; signer: string };
-type Calls = { writes: number; endorse: string[]; requests: object[]; polls: number; signers: number; sent: Sent[]; reactions: string[] };
+type Calls = { writes: number; endorse: string[]; requests: object[]; polls: number; signers: number; sent: Sent[]; reactions: string[]; signIns: number };
 type Options = {
   writes?: boolean;
   /** The Farcaster app's answer to each poll of the request. */
@@ -52,10 +54,40 @@ const reacted = (hash: string, kind: "LIKE" | "RECAST") => ({
 
 async function serve(page: Page, options: Options = {}) {
   const { writes = true, poll = (n: number) => (n < 3 ? { state: "pending" } : n < 4 ? { state: "approved", userFid: me.fid } : { state: "completed", userFid: me.fid }) } = options;
-  const calls: Calls = { writes: 0, endorse: [], requests: [], polls: 0, signers: 0, sent: [], reactions: [] };
+  const calls: Calls = { writes: 0, endorse: [], requests: [], polls: 0, signers: 0, sent: [], reactions: [], signIns: 0 };
   let key = "";
   const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
+  // Who liked or recasted: two people, and more for "See everyone".
+  await page.route("**/api/v1/reactions?*", (route) => {
+    const url = new URL(route.request().url());
+    const all = url.searchParams.get("limit") !== "10";
+    return route.fulfill({ json: { hash: url.searchParams.get("hash"), kind: url.searchParams.get("type"), users: [alice, bob], more: !all, meta } });
+  });
+  // Signing in, by the relay and the Worker: the Farcaster app approves on
+  // the relay's second poll, and the Worker's check signs the reader in.
+  await page.route("**/api/v1/auth/start", (route) => {
+    const origin = new URL(page.url()).origin;
+    return route.fulfill({ json: { nonce: "nonce1abcdef012345", domain: new URL(origin).host, uri: origin, expiration_time: new Date(Date.now() + 600_000).toISOString() } });
+  });
+  await page.route("**/api/v1/auth/verify", (route) => {
+    calls.signIns += 1;
+    const cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify(me))}; Path=/; Max-Age=600; Secure; SameSite=Lax`;
+    return route.fulfill({ json: { user: me }, headers: { "set-cookie": cookie } });
+  });
+  let relayPolls = 0;
+  await page.route(`${RELAY}/channel`, (route) => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    relayPolls = 0;
+    return route.fulfill({ status: 201, headers: cors, json: { channelToken: CHANNEL, url: `https://farcaster.xyz/~/siwf?channelToken=${CHANNEL}`, nonce: route.request().postDataJSON().nonce } });
+  });
+  await page.route(`${RELAY}/channel/status`, (route) => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    relayPolls += 1;
+    return relayPolls < 2
+      ? route.fulfill({ status: 202, headers: cors, json: { state: "pending" } })
+      : route.fulfill({ headers: cors, json: { state: "completed", message: "allthing.social wants you to sign in…", signature: `0x${"ab".repeat(65)}`, fid: me.fid, username: me.username } });
+  });
   await page.route("**/api/v1/home**", (route) => {
     const later = new URL(route.request().url()).searchParams.has("offset");
     return route.fulfill({ json: { pool: later ? [] : [first, second], notes: {}, meta } });
@@ -116,20 +148,75 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-test("signed out, or on a server that endorses no keys, casts have no like or recast buttons", async ({ page }) => {
+test("signed out, the icons sign in first and never open the list; the preview is as it was", async ({ page }) => {
+  const calls = await serve(page);
+  await page.goto("/");
+  const like = card(page, first).getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("aria-pressed", "false");
+  await expect(card(page, first).getByRole("button", { name: "Recast", exact: true })).toBeVisible();
+  // Pointing at the heart previews who liked, as pointing at the count does.
+  await like.hover();
+  const preview = card(page, first).getByRole("dialog", { name: "Liked by" });
+  await expect(preview).toContainText("@alice");
+  // A click on it signs in; the list doesn't open.
+  await like.click();
+  const signIn = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  await expect(signIn).toBeVisible();
+  await expect(page.locator(".who-modal")).toHaveCount(0);
+  // Closed without signing in, the like is dropped: signing in later from
+  // the header neither likes nor asks for a key.
+  await page.keyboard.press("Escape");
+  await expect(signIn).toBeHidden();
+  await expect(like).toBeFocused();
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).click();
+  await expect(page.getByRole("link", { name: "Signed in as @reader: your profile" })).toBeVisible();
+  await expect.poll(() => calls.writes).toBe(1);
+  await page.waitForTimeout(300);
+  await expect(page.getByRole("dialog", { name: "Like and recast" })).toHaveCount(0);
+  expect(calls.endorse).toHaveLength(0);
+  // The full list: the preview's "See everyone", or a click on the count.
+  await like.hover();
+  await preview.getByRole("button", { name: "See everyone →" }).click();
+  const list = page.locator(".who-modal");
+  await expect(list).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list).toHaveCount(0);
+  await card(page, first).getByRole("button", { name: "3 likes: show who" }).click();
+  await expect(list).toBeVisible();
+  expect(calls.sent).toHaveLength(0);
+});
+
+test("a like clicked signed out signs in, approves a key, then likes", async ({ page }) => {
+  const calls = await serve(page);
+  await page.goto("/");
+  const like = card(page, first).getByRole("button", { name: "Like", exact: true });
+  await like.click();
+  await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toBeVisible();
+  // Approved in the Farcaster app: signed in, and on to the key.
+  const keyDialog = page.getByRole("dialog", { name: "Like and recast" });
+  await expect(keyDialog.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
+  expect(calls.signIns).toBe(1);
+  expect(calls.writes).toBe(1);
+  // Approved too: the like that started it all goes out.
+  await expect(keyDialog).toBeHidden();
+  await expect.poll(() => calls.sent.length).toBe(1);
+  expect(calls.sent[0]).toMatchObject({ type: 3, reaction: 1, fid: me.fid, target: { fid: 42, hash: first.hash }, signer: calls.endorse[0] });
+  await expect(like).toHaveAttribute("aria-pressed", "true");
+  await expect(card(page, first).locator(".stat-likes .n")).toHaveText("4");
+  await expect(page.locator(".who-modal")).toHaveCount(0);
+});
+
+test("on a server that endorses no keys, a signed-in reader's icons are pictures", async ({ page }) => {
+  await signIn(page);
   const calls = await serve(page, { writes: false });
   await page.goto("/");
   await expect(card(page, first)).toBeVisible();
-  await expect(page.locator(".engagement .act")).toHaveCount(0);
-  expect(calls.writes).toBe(0);
-
-  await signIn(page);
-  await page.reload();
-  await expect(card(page, first)).toBeVisible();
   await expect.poll(() => calls.writes).toBe(1);
   await expect(page.locator(".engagement .act")).toHaveCount(0);
-  // The counts are as before: the icon, the number and the popover.
-  await expect(card(page, first).locator("button.stat-likes")).toHaveAccessibleName("3 likes: show who");
+  // A click on the icon does nothing; the count is as it was.
+  await card(page, first).locator(".stat-likes .icon").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(card(page, first).getByRole("button", { name: "3 likes: show who" })).toBeVisible();
   expect(calls.endorse).toHaveLength(0);
 });
 
@@ -229,6 +316,32 @@ test("on a phone, the buttons are easy to tap and the dialog fits", async ({ bro
   await context.close();
 });
 
+test("on a phone, signed out, a tap on the heart signs in; one on the count previews who", async ({ browser }, testInfo) => {
+  const { context, page } = await phone(browser, testInfo);
+  const calls = await serve(page);
+  await page.goto("/");
+  // The count is a target of its own beside the heart, as tall as the heart's.
+  const count = card(page, first).getByRole("button", { name: "3 likes: show who" });
+  const box = (await count.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(24);
+  await count.tap();
+  const preview = card(page, first).getByRole("dialog", { name: "Liked by" });
+  await expect(preview).toContainText("@alice");
+  await expect(page.locator(".who-modal")).toHaveCount(0);
+  await preview.getByRole("button", { name: "See everyone →" }).tap();
+  const list = page.locator(".who-modal");
+  await expect(list).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list).toHaveCount(0);
+  await card(page, first).getByRole("button", { name: "Like", exact: true }).tap();
+  const signIn = page.getByRole("dialog", { name: "Sign in with Farcaster" });
+  await expect(signIn).toBeInViewport({ ratio: 1 });
+  await expect(list).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(calls.sent).toHaveLength(0);
+  await context.close();
+});
+
 test("a key removed in the Farcaster app is forgotten, and a failed like is undone", async ({ page }) => {
   await signIn(page);
   const calls = await serve(page, { submit: (n) => (n === 1 ? [503, { error: "unavailable" }] : [400, { error: "Failed to submit message", error_detail: 'status: InvalidArgument, message: "bad_request.validation_failure/invalid signer"' }]) });
@@ -278,7 +391,8 @@ test("an approval from another account is refused, and signing out forgets the k
   await page.getByRole("dialog", { name: "Your account" }).getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sign in with Farcaster" })).toBeVisible();
   await expect.poll(() => kept(page)).toBeNull();
-  await expect(page.locator(".engagement .act")).toHaveCount(0);
+  // Signed out, the hearts are there to sign in with, none pressed.
+  await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-pressed", "false");
 });
 
 test("the real Worker endorses keys only for a session, from Allthing, and draws only Farcaster's links", async ({ request, baseURL }) => {

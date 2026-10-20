@@ -7,7 +7,9 @@
 //! The trigger is a button, or the caller's own links (`links`), such as a
 //! profile's picture and name: a mouse click or the keyboard follows them as
 //! usual, a tap on a touch screen opens the panel instead, and keyboard focus
-//! that rests on them opens it after the hover dwell.
+//! that rests on them opens it after the hover dwell. A `lead` before the
+//! trigger, such as a like button before its count, is inside the popover:
+//! pointing at it opens the panel, but its clicks are its own.
 
 use std::time::Duration;
 
@@ -44,10 +46,20 @@ pub fn Popover(
     /// Accessible name of the panel.
     #[prop(into)]
     label: String,
-    /// Accessible name of the trigger button (unused with `links`).
+    /// Accessible name of the trigger button (unused with `links`): it may
+    /// change, with the count it names.
     #[prop(into, optional)]
-    trigger_label: String,
+    trigger_label: MaybeProp<String>,
     #[prop(into, optional)] trigger_class: String,
+    /// Before the trigger, in the popover but not part of it: pointing at
+    /// it opens the panel too, but a click or tap on it is its own (a like
+    /// button before its count).
+    #[prop(into, optional)]
+    lead: Option<ViewFn>,
+    /// Nothing to show (a count of 0): the trigger is plain text, and
+    /// nothing opens until there is.
+    #[prop(into, optional)]
+    idle: Option<Signal<bool>>,
     /// Open on hover and focus (desktop); otherwise only on click.
     #[prop(optional)]
     hover: bool,
@@ -228,7 +240,8 @@ pub fn Popover(
             );
         }
     };
-    let hovering = move || hover && can_hover();
+    let idle = move || idle.is_some_and(|idle| idle.get());
+    let hovering = move || hover && can_hover() && !idle();
     let open_delay = if links { LINKS_OPEN_DELAY } else { OPEN_DELAY };
 
     let enter = move |_: ev::MouseEvent| {
@@ -486,20 +499,27 @@ pub fn Popover(
     let trigger = if links {
         trigger.run()
     } else {
-        view! {
-            <button
-                node_ref=button
-                type="button"
-                class=format!("popover-trigger {trigger_class}")
-                aria-label=trigger_label
-                aria-expanded=move || (state.get() == State::Open).to_string()
-                aria-controls=id.clone()
-                on:click=click
-                on:focusin=focus_in
-            >
-                {trigger.run()}
-            </button>
-        }
+        let id = id.clone();
+        (move || {
+            if idle() {
+                return view! { <span class=format!("popover-idle {trigger_class}")>{trigger.run()}</span> }.into_any();
+            }
+            view! {
+                <button
+                    node_ref=button
+                    type="button"
+                    class=format!("popover-trigger {trigger_class}")
+                    aria-label=move || trigger_label.get()
+                    aria-expanded=move || (state.get() == State::Open).to_string()
+                    aria-controls=id.clone()
+                    on:click=click
+                    on:focusin=focus_in
+                >
+                    {trigger.run()}
+                </button>
+            }
+            .into_any()
+        })
         .into_any()
     };
     view! {
@@ -514,6 +534,7 @@ pub fn Popover(
             on:pointerdown=pointer_down
             on:click=link_click
         >
+            {lead.map(|lead| lead.run())}
             {trigger}
             <Show when=move || state.get() != State::Closed>
                 <div
