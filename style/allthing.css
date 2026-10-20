@@ -624,6 +624,10 @@ code {
      re-lays out only what is on screen. */
   content-visibility: auto;
   contain-intrinsic-size: auto 180px;
+  /* A tap on anything in a card would flash the whole card in the browser's
+     tap colour, over a dialog the tap opens too: Chrome highlights the
+     largest element with a hand cursor around the tap, which is the card. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* A card whose popover is open must not clip it: its containment is off. */
