@@ -8,6 +8,7 @@
 //! Everything here compiles both for the browser app and for the Worker, so it
 //! avoids heavy dependencies (no regex, URL or date crates).
 
+pub mod activity;
 pub mod api;
 pub mod app_key;
 pub mod channels;
