@@ -190,3 +190,30 @@ The phone run before the change overlapped its deploy, so the phone's before and
 | Slowest interaction | 40 ms | 32 ms | 112 ms | 112 ms |
 
 On the phone profile the front page shows its first cast about 0.23 s sooner, the time 47 KB takes at 1.6 Mbps. Production's phone numbers after the change match: first cast 3,052 ms (samples 3,040–3,070), slowest interaction 104 ms.
+
+**Since then, 20 October 2026 (3cc5cd0).** Production, median of 7 on a CI runner (run 39483304275), against 040d095 the day before (run 39251478185), each run's own profile:
+
+| Desktop, 1280 px | 19 Oct (040d095) | 20 Oct (3cc5cd0) |
+|---|---|---|
+| Time to first byte | 66 ms | 127 ms |
+| WebAssembly on the wire | 384.5 KB | 565.9 KB |
+| In by | 510 ms | 764 ms |
+| Data in by | 227 ms | 278 ms |
+| First cast | 563 ms | 846 ms |
+| LCP | 992 ms | 1,820 ms |
+| Slowest interaction | 40 ms | 56 ms |
+
+| Phone, 390 px | 19 Oct (040d095) | 20 Oct (3cc5cd0) |
+|---|---|---|
+| Time to first byte | 50 ms | 97 ms |
+| WebAssembly on the wire | 384.5 KB | 565.9 KB |
+| In by | 2,823 ms | 3,798 ms |
+| Data in by | 1,031 ms | 1,045 ms |
+| First cast | 3,052 ms | 4,160 ms (samples 4,148–4,179) |
+| LCP | 3,052 ms | 4,160 ms |
+| Slowest interaction | 104 ms | 176 ms |
+
+- **The phone shows its first cast 1.1 s later, and the WebAssembly is nearly all of it.** It is 181 KB (47%) bigger on the wire, which is 0.9 s at 1.6 Mbps; the data came in when it did. The module grew with what came after 040d095: writing from Allthing (liking and recasting alone added 29.5 KB) and the hand-off to the Farcaster app, emoji and stickers, scheduled casts, favorites and show-less, the DAU page. Most are listed above with their sizes.
+- **The slowest sort switch on the phone, 176 ms with the CPU slowed 4×, is over the 100 ms that `e2e/perf.spec.ts` allows**, which it checks unthrottled (56 ms there, as at 1280).
+- **Time to first byte doubled on both profiles**, for `index.html`, a static asset the Worker doesn't run for: the runner's network that day, not the app. The desktop's first-cast samples were noisy too (809 to 3,648 ms, median 846).
+- **The budget still holds unthrottled.** The same run's `e2e/perf.spec.ts` measured home LCP at 456 ms (median of 2,012, 456 and 424), a post opening in 46 ms, and the slowest interaction at 56 ms.
