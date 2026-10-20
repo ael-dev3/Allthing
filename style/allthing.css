@@ -3071,6 +3071,38 @@ p.jumbo .emoji img {
   font-size: 11.5px;
 }
 
+/* The links to the source on GitHub, with its mark in the text's colour. */
+.github-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.site-footer .footer-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: bottom;
+}
+
+.site-footer .footer-source:hover,
+.site-footer .footer-source:focus-visible {
+  color: var(--accent);
+}
+
+.account-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-source .github-mark {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-2);
+}
+
 .noscript {
   max-width: 560px;
   margin: 40px auto;

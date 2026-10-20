@@ -9,7 +9,7 @@ use leptos_router::hooks::{use_location, use_navigate};
 
 use crate::api::Failure;
 use crate::components::search::SearchBox;
-use crate::util::{BASE, SOURCE_URL, href, with_query};
+use crate::util::{BASE, GITHUB_MARK, SOURCE_URL, href, with_query};
 
 #[component]
 pub fn Wordmark() -> impl IntoView {
@@ -80,7 +80,10 @@ pub fn SiteFooter() -> impl IntoView {
         <footer class="site-footer">
             <a href=format!("{SOURCE_URL}/blob/main/LICENSE")>"AGPL-3.0"</a>
             <span aria-hidden="true">" · "</span>
-            <a href=SOURCE_URL>"Source"</a>
+            <a class="footer-source" href=SOURCE_URL aria-label="Source on GitHub">
+                <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d=GITHUB_MARK/></svg>
+                "Source"
+            </a>
             <span aria-hidden="true">" · "</span>
             <span class="version" title=format!("Allthing {} built from commit {}", crate::VERSION, crate::COMMIT)>
                 {format!("v{} ({})", crate::VERSION, crate::COMMIT)}

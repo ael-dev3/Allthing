@@ -24,7 +24,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::popover::Popover;
-use crate::util::{document, trap_tab, user_href};
+use crate::util::{GITHUB_MARK, SOURCE_URL, document, trap_tab, user_href};
 
 /// How often the dialog asks the relay whether the app has answered, and
 /// how long a code lasts.
@@ -461,6 +461,10 @@ pub fn Account() -> impl IntoView {
                         <a class="account-link" href=profile.clone()>"Your profile"</a>
                         <crate::components::writer::ScheduledMenuItem/>
                         <crate::components::writer::WriterMenuItem/>
+                        <a class="account-link account-source" href=SOURCE_URL>
+                            <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d=GITHUB_MARK/></svg>
+                            "Allthing on GitHub"
+                        </a>
                         <button type="button" class="account-link sign-out" on:click=move |_| session.sign_out()>"Sign out"</button>
                     }
                 />
