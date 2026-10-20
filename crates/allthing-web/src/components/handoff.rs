@@ -221,7 +221,6 @@ pub fn HandOffDialog() -> impl IntoView {
                                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=OUT/></svg>
                             </a>
                             {done.map(|_| view! { <button type="button" class="handoff-done" on:click=move |_| finish()>"Done"</button> })}
-                            <p class="signin-note muted small">"Allthing doesn't act for you: you do this in the Farcaster app, as yourself."</p>
                         </div>
                     </div>
                 </div>

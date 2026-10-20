@@ -4207,10 +4207,6 @@ p.jumbo .emoji img {
   box-shadow: none;
 }
 
-.compose-note {
-  margin: 0;
-}
-
 /* A write handed to the Farcaster app: the code for the reader's phone on a
    computer, what to do there, and the link, in the accent. */
 .handoff-line {

@@ -820,9 +820,6 @@ pub fn ComposerDialog() -> impl IntoView {
                                     (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
                                 }}
                             </div>
-                            {move || (posts_here.get() == Some(false)).then(|| view! {
-                                <p class="compose-note muted small">"Allthing doesn't post: this opens the Farcaster app with your cast ready to post."</p>
-                            })}
                         </footer>
                     </div>
                 </div>
