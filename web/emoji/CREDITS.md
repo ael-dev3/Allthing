@@ -52,12 +52,17 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_weird_clap:` | claps, unimpressed | peepoWeirdClap | tanoshi13 | https://7tv.app/emotes/01F717TSW80001G6FGBXSTW8JH | 7TV public |
 | `:pepe_yikes:` | says yikes | PepeYikes | woodywizzard | https://7tv.app/emotes/01FSZCYM8R000CS587T97X91JW | 7TV public |
 | `:pepe_sus:` | looks sus | Susge | bodybuffalo28 | https://7tv.app/emotes/01FHSS9BA0000B2A95MSMDGH34 | 7TV public |
+| `:pepe_plot:` | plots, rubbing his hands | Plotge | esuesuesuuu | https://7tv.app/emotes/01FY7MJN3G000FWWXFD46PAVNC | 7TV public |
+| `:pepe_saved:` | wipes his brow, saved | Saved | khosi | https://7tv.app/emotes/01F6SD865R0004VBRD7RGY6XAX | 7TV public |
+| `:pepe_yep:` | stares, eyes wide: yep | YEP | jackiechain | https://7tv.app/emotes/01GF7TAVM8000ED6FFSMGYA9NC | 7TV public |
+| `:pepe_sure:` | agrees: sure | Sure | andreimonty | https://7tv.app/emotes/01GMTDJ83R000E68X75B8CJGAZ | 7TV public |
 | `:pepe_okay:` | says okay | Okayge | joonwi | https://7tv.app/emotes/01F7GJ0N4R00074A83FVHRDMDB | 7TV public |
 | `:pepe_like:` | gives a thumbs up | peepoLIKE | shaderpc | https://7tv.app/emotes/01G4ZNHZQG0002P97QQ94BDS6G | 7TV public |
 | `:pepe_feels_weird:` | feels weird | FeelsWeirdMan | clyvere | https://7tv.app/emotes/01EZPJDH88000C438200A44F3C | 7TV public |
 | `:pepe_amazed:` | is amazed | FeelsAmazingMan | itsfuntum | https://7tv.app/emotes/01FAPBB2400009222ZMH0DD1HS | 7TV public |
 | `:pepe_big_brain:` | has a big brain | peepoBigBrain | kushalatv | https://7tv.app/emotes/01FCGN7J000003YFMSVPT64W72 | 7TV public |
 | `:pepe_what:` | asks what? | peepoWhat | sour_appl | https://7tv.app/emotes/01GX4SRMCG000CKRN0S30MQPGB | 7TV public |
+| `:pepe_woke:` | wide awake in bed | Wokege | aftonxy | https://7tv.app/emotes/01FEEK9MRG000FR0PC38FM26SD | 7TV public |
 | `:pepe_laugh:` | laughs | PepeLaugh | mistrzu__ | https://7tv.app/emotes/01F6Q76NN80005589X3BDK9CN1 | 7TV public |
 | `:pepe_giggle:` | giggles | peepoGiggle | islabacate | https://7tv.app/emotes/01G35ERGSR000BQDJ6KT43KGJP | 7TV public |
 | `:pepe_money:` | throws money | peepoMoney | elperroluis | https://7tv.app/emotes/01FHPG3BCR00093JSPCMYFBG0E | 7TV public |
@@ -70,11 +75,14 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_lmao:` | laughs his head off | pepeLMAO | neverdiepool | https://7tv.app/emotes/01HQ2HZVW80003F4PCSCF2J6YE | 7TV public |
 | `:pepe_win:` | wins | peepoWin | soaral | https://7tv.app/emotes/01FECAHZD80009A6HE33HVHTKK | 7TV public |
 | `:pepe_proud:` | is proud, with a medal | peepoProud | calvinjcandy | https://7tv.app/emotes/01H1BWTTN00005EZED5J0EZ8QC | 7TV public |
+| `:pepe_sit_happy:` | sits back in a chair, happy | peepoSithappy | a7med_madx | https://7tv.app/emotes/01G1R1PT1G000FTHW56240KASV | 7TV public |
+| `:pepe_summer:` | in shades in the sun | peepoSummer | ayyybubu | https://7tv.app/emotes/01G6X4KKG0000C5DHX3RQKTXQ0 | 7TV public |
 | `:pepe_happy:` | looks happy | peepoHappy | brian6932 | https://7tv.app/emotes/01F6RC8C1G0003SBEQ3QZTEE99 | 7TV public |
 | `:pepe_wide_happy:` | smiles wide | widepeepoHappy | soda_ | https://7tv.app/emotes/01GF1Y2Q5G0000BGNJSP34TQRD | 7TV public |
 | `:pepe_feels_good:` | feels good | FeelsGoodMan | rubydota | https://7tv.app/emotes/01F7YR10C00004BT9YH569GV48 | 7TV public |
 | `:pepe_stonks:` | says stonks | peepoStonks | brian6932 | https://7tv.app/emotes/01F6RC4YNG000B4N55W5NRD7X8 | 7TV public |
 | `:pepe_star:` | is a star | peepoStar | on_a_stack | https://7tv.app/emotes/01F7H84EJ00000DMFASJT21SPH | 7TV public |
+| `:pepe_rainbow:` | under a rainbow | peepoRainbow | stayster | https://7tv.app/emotes/01GYTV59R80008K3C4JXZ8R91B | 7TV public |
 | `:pepe_huggers:` | opens his arms | peepoHuggers | khosi | https://7tv.app/emotes/01F6TSBBD00002K1FKHYT1FY2J | 7TV public |
 | `:pepe_kiss:` | blows kisses | peepoKiss | justrogan | https://7tv.app/emotes/01F8ZV12B000030TA5GZWXCWXY | 7TV public |
 | `:pepe_wink:` | winks | peepoWink | kushalatv | https://7tv.app/emotes/01FCGRBK5G0001A3QAR5SE6WRD | 7TV public |
@@ -95,12 +103,15 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_agony:` | writhes in agony | pepeAgony | mustikiing | https://7tv.app/emotes/01F6Q8JVQ800061RJDY0D7N96T | 7TV public |
 | `:pepe_sad_dance:` | dances sadly | peeposaddance | freakshowz88 | https://7tv.app/emotes/01H6HPEQP0000EQDE1EG26A60D | 7TV public |
 | `:pepe_nervous:` | shakes nervously | monkaSHAKE | mistrzu__ | https://7tv.app/emotes/01F6QVZ2D0000FV61SYRPQB68H | 7TV public |
+| `:pepe_tremble:` | trembles, eyes wide | peepoS | yoim5th | https://7tv.app/emotes/01F5PA6DCG00034VRANA2SYMTF | 7TV public |
 | `:pepe_sadge:` | looks sad | Sadge | mauriplss | https://7tv.app/emotes/01EZPG1FN80001SNAW00ADK2DY | 7TV public |
 | `:pepe_sad:` | looks sad, a small one | peepoSad | zjawa | https://7tv.app/emotes/01FAJVVKXG00093YGWG35VAPNZ | 7TV public |
 | `:pepe_monkas:` | looks nervous | monkaS | corolado | https://7tv.app/emotes/01F78CHJ2G0005TDSTZFBDGMK4 | 7TV public |
 | `:pepe_monkaw:` | looks nervous, close up | monkaW | justrogan | https://7tv.app/emotes/01F6NPHCN0000BEKN8ZXWQNSDC | 7TV public |
 | `:pepe_madge:` | looks mad | Madge | askhp | https://7tv.app/emotes/01F6ASPNM00009TPCEMWQTT4XX | 7TV public |
 | `:pepe_feels_bad:` | feels bad | FeelsBadMan | trippycolour | https://7tv.app/emotes/01GB8HJ61R0000X4MX5ZF49QE8 | 7TV public |
+| `:pepe_smadge:` | cries, cross | Smadge | khosi | https://7tv.app/emotes/01F763W03G0005BGS0Y3M6JDP9 | 7TV public |
+| `:pepe_despair:` | in grey despair | Despairge | kaitorius | https://7tv.app/emotes/01FTGK77VG0009FNT3YE4024KV | 7TV public |
 | `:pepe_pls:` | dances on the spot | PepePls | zjawa | https://7tv.app/emotes/01FAJSRS8000093YGWG35GMV60 | 7TV public |
 | `:pepe_jam:` | jams with headphones | pepeJAM | shakothewacko | https://7tv.app/emotes/01EZY967K0000CYST6006V20T8 | 7TV public |
 | `:pepe_bounce:` | bounces | peepoBounce | imsub | https://7tv.app/emotes/01GFWSPP1R000B3AB9N5P1AMFN | 7TV public |
@@ -116,6 +127,8 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_piano:` | plays the piano | peepoPiano | sblectric | https://7tv.app/emotes/01FJZCM250000B1FXDJGM9CX37 | 7TV public |
 | `:pepe_sing:` | sings | peepoSing | maltesaa | https://7tv.app/emotes/01FB0N8F180001AXCAFYDCJEQM | 7TV public |
 | `:pepe_vibe:` | vibes slowly | slowJAM | mistrzu__ | https://7tv.app/emotes/01F6Q9P5KG0005CV1Y3Z4YJWX0 | 7TV public |
+| `:pepe_party_hat:` | in a party hat, confetti flying | PeepoParty | dewwicc | https://7tv.app/emotes/01F90PV2T00002APF87XX4RRD1 | 7TV public |
+| `:pepe_torch:` | holds a torch high | peepoFire | robo02wwe | https://7tv.app/emotes/01FPJSQ1P8000DZKS9B24504CW | 7TV public |
 | `:pepe_balloon:` | holds a balloon | peepoBalloon | renderjoose | https://7tv.app/emotes/01FCS10RV00004VGMWEWM8FY0P | 7TV public |
 | `:pepe_vanish:` | vanishes | peepoVanish | shmovy | https://7tv.app/emotes/01G9N52F28000D5R8HGE37V31V | 7TV public |
 | `:pepe_hey:` | waves hey | peepoHey | justrogan | https://7tv.app/emotes/01F6NMMEER00015NVG2J8ZH77N | 7TV public |
@@ -144,8 +157,14 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_noodles:` | slurps noodles | peepoNoodles | dreiinfinity | https://7tv.app/emotes/01G58NVKER0003DDQSC82GNXY2 | 7TV public |
 | `:pepe_sushi:` | eats sushi | peepoSushi | umukei | https://7tv.app/emotes/01G2RNWM7G000BQDJ6KT43JDMA | 7TV public |
 | `:pepe_juice:` | sips a juice box | peepoJuice | thisisdara | https://7tv.app/emotes/01FENEEWK0000EM7RFQAJ79BV5 | 7TV public |
+| `:pepe_banana:` | eats a banana | peepoBanana | giyo | https://7tv.app/emotes/01F73H3M20000ACWAXS41QQ3AS | 7TV public |
+| `:pepe_watermelon:` | eats watermelon | peepoWatermelon | pufomint | https://7tv.app/emotes/01H365YFKG000F8489H898SVQD | 7TV public |
 | `:pepe_cake:` | holds a birthday cake | peepoCake | kigrath | https://7tv.app/emotes/01GYWMK3AG000EW6AGPE8ZJ9JD | 7TV public |
 | `:pepe_donut:` | sits in a donut | peepoDonut | 4w3official | https://7tv.app/emotes/01GP53X10R0000FZKW7C6270EM | 7TV public |
+| `:pepe_bread:` | the baker holds a loaf | peepoBread | ashleyidk | https://7tv.app/emotes/01G7GC6GQG000DJJQKZ99T08JD | 7TV public |
+| `:pepe_toast:` | as a slice of bread | peepoBread | erdna2013 | https://7tv.app/emotes/01H5AGFX3000097PHH2ATEHKA4 | 7TV public |
+| `:pepe_egg:` | in an egg | peepoEgg | kushalatv | https://7tv.app/emotes/01FCGPW8GR0003YFMSVPT64W9K | 7TV public |
+| `:pepe_cheese:` | with a wedge of cheese | peepoCheese | tustinbear | https://7tv.app/emotes/01HCKS8WMG0001C8YPQMEMS8KX | 7TV public |
 | `:pepe_blanket:` | wraps up in a blanket | peepoBlanket | henri_with_i | https://7tv.app/emotes/01HMC8V8R00008ZXCSHVC8M6HC | 7TV public |
 | `:pepe_smash:` | smashes the keyboard | peepoSmash | boopiskat | https://7tv.app/emotes/01F6NVTBW8000BEKN8ZXWQXKG3 | 7TV public |
 | `:pepe_sleep:` | sleeps | peepoSleep | supernoahtv | https://7tv.app/emotes/01F640EPQG0003B9G1Z40HFHWQ | 7TV public |
@@ -170,6 +189,11 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_plant:` | waters a plant | peepoPlant | ayyybubu | https://7tv.app/emotes/01G75NT1A0000AZHM5CT7YMCGF | 7TV public |
 | `:pepe_pogo:` | bounces on a pogo stick | peepoPogo | fabby | https://7tv.app/emotes/01F6N4M1Z80003R9X8PYEEPAFS | 7TV public |
 | `:pepe_work:` | works at his desk | pepeWork | ypy555 | https://7tv.app/emotes/01GPGQAGYR0006GRZXMXVQYXRR | 7TV public |
+| `:pepe_candle:` | holds up a lit candle | peepoCandle | baykakabay | https://7tv.app/emotes/01G2JPSVC80006W03Y0X6BG93J | 7TV public |
+| `:pepe_bike:` | rides a bike | peepoBike | virmolian | https://7tv.app/emotes/01G0PRQRR0000CNVP1H4AWJ6FM | 7TV public |
+| `:pepe_yoga:` | does yoga | peepoYoga | stonko_ | https://7tv.app/emotes/01GGSG5KT80001W0Y8MK8ERJ0W | 7TV public |
+| `:pepe_fishing:` | fishes in a helmet | PeepoFishing | slashzxmictlan | https://7tv.app/emotes/01JYTY3JRZWJHS9RHHGQ7SH7M0 | 7TV public |
+| `:pepe_cloud:` | floats on a cloud | peepoCloud | kat_the_lad | https://7tv.app/emotes/01H37W7TAR0000XRQSVQBP6TMS | 7TV public |
 | `:pepe_bedge:` | lies in bed | Bedge | paruna | https://7tv.app/emotes/01F6MXJD8R000F76KNAAV5HDGD | 7TV public |
 | `:pepe_cozy:` | snuggles in a hood | peepoCozy | alencarrg | https://7tv.app/emotes/01F6RBZJSG0006GRP49Q72VRVF | 7TV public |
 | `:pepe_meditate:` | meditates | peepoMeditate | vioo | https://7tv.app/emotes/01HA0D7W600001DRZQ963WKXF5 | 7TV public |
@@ -177,11 +201,19 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_camera:` | takes a photo | peepoCamera | juanca137 | https://7tv.app/emotes/01FYTEJGF0000FQVENQBNM32JF | 7TV public |
 | `:pepe_selfie:` | takes a selfie | peepoSelfie | kushalatv | https://7tv.app/emotes/01FCGQSK00000DGV6QGPJ773NV | 7TV public |
 | `:pepe_boat:` | sails | peepoBoat | fumtastic_ | https://7tv.app/emotes/01FXNVDPN0000B09ZDT0P8QWH2 | 7TV public |
+| `:pepe_business:` | in a suit with a briefcase | peepoBusiness | clarobollo | https://7tv.app/emotes/01FK49ST9R000CCCJ7DMGD0EXT | 7TV public |
+| `:pepe_gym:` | does pull-ups | peepoGym | ste_ndhal_ | https://7tv.app/emotes/01HZQ4GGG0000A9JQ25Y1DJH3N | 7TV public |
 | `:pepe_poof:` | vanishes in a puff, dressed as a samurai | PepeSamuraiPoof | 𝙔𝘽𝙉 | https://emoji.gg/emoji/8389_PepeSamuraiPoof | emoji.gg free |
 | `:pepe_detective:` | investigates | peepoDetective | poduszkowiec_ | https://7tv.app/emotes/01F6Y8F4J00002R7R2A7Z0GGYB | 7TV public |
 | `:pepe_ninja:` | is a ninja | peepoNinja | ggently | https://7tv.app/emotes/01FBDBTYZ80003NJSBX91KSTZ9 | 7TV public |
 | `:pepe_wizard:` | casts a spell | peepoWizard | frikiii | https://7tv.app/emotes/01G3YRGZ1G000C2T35N8NWC8KB | 7TV public |
 | `:pepe_clown:` | is a clown | peepoClown | corolado | https://7tv.app/emotes/01F79P6BFR0005BGS0Y3M4DPPT | 7TV public |
+| `:pepe_pumpkin:` | in a pumpkin hat | peepoPumpkin | letsiii | https://7tv.app/emotes/01GF3X7P28000DZ3CYDB1JNN32 | 7TV public |
+| `:pepe_winter:` | in a bobble hat in the snow | peepoWinter | ayyybubu | https://7tv.app/emotes/01GH3S3C18000BNFA5KNE2QFAP | 7TV public |
+| `:pepe_snow:` | in a Santa hat in the snow | peepoSnow | eternal_pestilence | https://7tv.app/emotes/01FBG2BRH80002BEVDT2RFXK8X | 7TV public |
+| `:pepe_cowboy:` | in a cowboy hat | peepocowboy | leli_h | https://7tv.app/emotes/01K4XQ3K2E53BYG1CJYQNYMHVJ | 7TV public |
+| `:pepe_pirate:` | the pirate, eye patch and hat | PeepoPirate | mic_stargazer | https://7tv.app/emotes/01GEQJEP6R0008M43N8RKPNVV2 | 7TV public |
+| `:pepe_knight:` | in a knight's helmet | peepoKnight | turtoise | https://7tv.app/emotes/01FQ6RJM10000EGST92RS32H82 | 7TV public |
 | `:pepe_samurai:` | dressed as a samurai | PepeSamurai | 𝙔𝘽𝙉 | https://emoji.gg/emoji/7770_PepeSamurai | emoji.gg free |
 | `:pepe_king:` | wears a crown | pepeking | NimaAMD | https://7tv.app/emotes/01FS168WCG0005FHRFCCZBTXCV | 7TV public |
 | `:pepe_angel:` | is an angel | peepoAngel | hanomgwow | https://7tv.app/emotes/01FH09XCXR00096T3FQZKZQTP9 | 7TV public |
@@ -190,6 +222,14 @@ If you made one of these and would rather it were credited differently, or not h
 | `:pepe_bunny:` | wears bunny ears | peepoBunny | jadedzilla | https://7tv.app/emotes/01GR79S14000009JQGEPSN8P0D | 7TV public |
 | `:pepe_shark:` | is a shark | peepoShark | manorefantazio | https://7tv.app/emotes/01FHNJ68E8000FFDX954T14JYB | 7TV public |
 | `:pepe_dino:` | is a dino | peepoDino | crash_0715 | https://7tv.app/emotes/01FTR60STR0003AV56G21Q79NS | 7TV public |
+| `:pepe_skeleton:` | in a skeleton costume | PeepoHalloween | xrennisx | https://7tv.app/emotes/01GFMKWNC0000BJT9TBR97Q0MA | 7TV public |
+| `:pepe_witch:` | in a witch's hat | peepowitch | johnyowan | https://7tv.app/emotes/01FH689K40000B0N4N9E5WDYEY | 7TV public |
+| `:pepe_vampire:` | as a vampire | peepoVampire | sylwekm10 | https://7tv.app/emotes/01FH6P7BRR00078YF3X87GP47B | 7TV public |
+| `:pepe_santa:` | dressed as Santa | PeepoXmas | scoo0p | https://7tv.app/emotes/01FPZY7WTR0000BWV34BQ1MVBV | 7TV public |
+| `:pepe_viking:` | in a horned helmet | peepoViking | LastDudeStanding | https://7tv.app/emotes/01FCAXF270000DPWTP68F083C0 | 7TV public |
+| `:pepe_firefighter:` | in a firefighter's helmet | peepoFirefighter | rementin | https://7tv.app/emotes/01GDK9HZDG00063HNVJ35T9NE8 | 7TV public |
+| `:pepe_farmer:` | in a straw hat | peepoFarmer | khosi | https://7tv.app/emotes/01F6TSNBQ0000FJZQCBYN0XQRF | 7TV public |
+| `:pepe_artist:` | the artist, beret and palette | peepoArtist | tiirazziil | https://7tv.app/emotes/01G3PYCBJR000576R8TFCGG490 | 7TV public |
 | `:pepe_boba:` | holds a BOBA sign | peepoBoba | onlyjohno | https://7tv.app/emotes/01G9GXC4Z00005CFW1EB5PF91D | 7TV public |
 | `:pepe_cutie:` | holds a CUTIE sign | CUTIE | peepoghost | https://7tv.app/emotes/01FJDNDTH80005ZW4QCZF2K971 | 7TV public |
 | `:pepe_gg:` | holds a GG sign | PeepoGG | s3sh | https://7tv.app/emotes/01FE8Z19V80006P4AFHZBZ6JDM | 7TV public |

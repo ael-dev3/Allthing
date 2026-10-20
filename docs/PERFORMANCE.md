@@ -103,7 +103,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
   - its tiles share six listeners on the grid, instead of six each;
   - its results are drawn anew for each search instead of as a keyed list, which saved 3 KB.
 
-  Opening it the first time loads the stills in view, about 110 KB at 1280 px (all 179 are 402 KB), from the year-long cache after that. It makes no Worker requests.
+  Opening it the first time loads the stills in view, about 110 KB at 1280 px (all 219 are 509 KB), from the year-long cache after that. It makes no Worker requests.
 - **Stickers** added 4.7 KB more (495,615 → 500,468 bytes at brotli 11): the sticker button and the picker's Stickers tab with its recently used, a sticker as the cast's attachment, and stickers in casts. A cast's sticker loads its GIF from the site itself, cached for a year: a median of 74 KB (12 to 269 KB), or with reduced motion a still of about 4 KB. The picker's tab shows the stills until a sticker is pointed at. No Worker requests.
 - **Handing writes to the Farcaster app** added 5.8 KB (551,831 → 557,797 bytes at brotli 11, release builds on 20 October 2026): its dialog, the links to casts, profiles and drafts, and the like, recast, follow, delete and composer buttons shown to every reader. The QR code is drawn by the Worker, as sign-in's is, so the browser ships no encoder; a phone asks for none.
 - **A bigger Pepe pack**, 179 emoji where there were 103, added 1.1 KB (558,162 → 559,284 bytes at brotli 11, release builds on 20 October 2026): the table's 76 new rows, and each emoji's group. The new images, a median of 16 KB and 100 KB at most, cost nothing until a cast or the picker shows them.
@@ -111,6 +111,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - **Whole GIFs in the picker** added 1.3 KB to the module (2,080,264 → 2,081,551 bytes) and nothing measurable at brotli 11 (562,328 → 562,200 bytes, release builds on 20 October 2026; on the main before the groups' bar the same change measured +1.0 KB, as a small change reorders the module and moves brotli's result by about a kilobyte either way): each tile's shape and the rows' CSS, Enter's search, and leaving a phone's keyboard down. The tiles load what they did.
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
 - **The sound badge and looping** added 1.7 KB to the module (2,080,264 → 2,081,974 bytes) and nothing measurable at brotli 11 (562,328 → 562,142 bytes, release builds on 20 October 2026; on the main before the groups' bar the same change measured +1.0 KB, as a small change reorders the module and moves brotli's result by about a kilobyte either way): the badge's speaker, and the player's going on segment by segment and ending a stream once its last segment is in. A playlist that drifts from its media now costs one request per segment, where the player had fetched its last two segments in turn without end.
+- **40 more Pepes**, 219 where there were 179, added 4.3 KB to the module and 0.8 KB at brotli 11 (2,083,253 → 2,087,558 bytes, and 562,884 → 563,723 at brotli 11, release builds on 20 October 2026): the table's 40 new rows. The new images, a median of 7 KB and 77 KB at most, cost nothing until a cast or the picker shows them.
 
 ### 5. Infinite scroll
 
