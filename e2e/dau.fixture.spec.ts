@@ -110,14 +110,35 @@ test.describe("with the Worker", () => {
     await serve(page, payload());
     await page.goto("/dau");
     const chart = page.locator(".dau-chart");
-    const bars = chart.locator("rect");
+    const bars = chart.locator("rect.dau-bar");
     await expect(bars).toHaveCount(30);
     await expect(bars.first()).toHaveClass(/partial/);
     await expect(bars.last()).toHaveClass(/today/);
     await expect(bars.nth(12)).not.toHaveClass(/partial|today/);
     await expect(chart.getByRole("img")).toHaveAttribute("aria-label", new RegExp(`most 7,200 on ${short(today - 17)}$`));
-    await expect(bars.nth(12).locator("title")).toHaveText(/7,200 accounts$/);
-    await expect(bars.last().locator("title")).toHaveText(/2,100 accounts so far$/);
+    // No native tooltip: a day's count and date show above its bar on hover,
+    // on keyboard focus (the arrows go from day to day), and on a tap.
+    await expect(chart.locator("svg title")).toHaveCount(0);
+    const hits = chart.locator("rect.dau-hit");
+    const tip = chart.locator(".dau-tip");
+    await expect(tip).toBeHidden();
+    await hits.nth(12).hover();
+    await expect(tip).toContainText("7,200 accounts");
+    await expect(tip.locator(".dau-tip-day")).toHaveText(new RegExp(`^${short(today - 17)} `));
+    await expect(bars.nth(12)).toHaveClass(/\bon\b/);
+    await page.screenshot({ path: test.info().outputPath("dau-tip-1280.png") });
+    await hits.last().hover();
+    await expect(tip).toContainText("2,100 accounts so far");
+    await page.mouse.move(2, 2);
+    await expect(tip).toBeHidden();
+    await chart.locator("svg").focus();
+    await expect(tip).toContainText("2,100 accounts so far");
+    await page.keyboard.press("ArrowLeft");
+    await expect(tip.locator(".dau-tip-day")).toHaveText(new RegExp(`^${short(today - 1)} `));
+    await page.keyboard.press("Home");
+    await expect(tip.locator(".dau-tip-day")).toHaveText(new RegExp(`^${short(today - 29)} `));
+    await page.keyboard.press("Escape");
+    await expect(tip).toBeHidden();
     // A label a week, ending under today's bar.
     await expect(chart.locator(".dau-ticks span")).toHaveText([28, 21, 14, 7, 0].map((back) => short(today - back)));
     // The table: newest first.
@@ -211,12 +232,15 @@ test.describe("with the Worker", () => {
     // The chart ends today, not read yet; the day being read is partly
     // counted so far, not today's.
     const chart = page.locator(".dau-chart");
-    const bars = chart.locator("rect");
+    const bars = chart.locator("rect.dau-bar");
     await expect(bars).toHaveCount(2);
     await expect(bars.last()).toHaveClass(/partial/);
     await expect(bars.last()).not.toHaveClass(/today/);
-    await expect(bars.last().locator("title")).toHaveText(/3,047 accounts \(read so far\)$/);
-    await expect(bars.first().locator("title")).toHaveText(/134 accounts \(partly counted\)$/);
+    const hits = chart.locator("rect.dau-hit");
+    await hits.last().hover();
+    await expect(chart.locator(".dau-tip")).toContainText("3,047 accounts (read so far)");
+    await hits.first().hover();
+    await expect(chart.locator(".dau-tip")).toContainText("134 accounts (partly counted)");
     const [svg, last] = await Promise.all([chart.locator("svg").boundingBox(), bars.last().boundingBox()]);
     // Yesterday's bar sits one slot in from the right, today's slot empty.
     expect(svg!.x + svg!.width - (last!.x + last!.width)).toBeGreaterThan(svg!.width / 30);
@@ -236,8 +260,8 @@ test.describe("with the Worker", () => {
     await serve(page, payload({ days: days.slice(-3) }));
     await page.goto("/dau");
     const svg = page.locator(".dau-chart svg");
-    await expect(svg.locator("rect")).toHaveCount(3);
-    const [chart, last] = await Promise.all([svg.boundingBox(), svg.locator("rect").last().boundingBox()]);
+    await expect(svg.locator("rect.dau-bar")).toHaveCount(3);
+    const [chart, last] = await Promise.all([svg.boundingBox(), svg.locator("rect.dau-bar").last().boundingBox()]);
     expect(chart!.x + chart!.width - (last!.x + last!.width)).toBeLessThan(chart!.width / 30);
     expect(last!.width).toBeLessThan(chart!.width / 25);
   });
@@ -272,6 +296,18 @@ test.describe("with the Worker", () => {
       expect(box.x + box.width, section).toBeLessThanOrEqual(390);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    // A tapped day's count and date, on the card.
+    const chart = page.locator(".dau-chart");
+    await chart.locator("rect.dau-hit").nth(12).tap();
+    const tip = chart.locator(".dau-tip");
+    await expect(tip).toContainText("7,200 accounts");
+    const [shown, card] = [(await tip.boundingBox())!, (await chart.boundingBox())!];
+    expect(shown.x).toBeGreaterThanOrEqual(card.x);
+    expect(shown.x + shown.width).toBeLessThanOrEqual(card.x + card.width);
+    // Focused by the tap, the chart draws no ring.
+    await expect(chart.locator("svg")).toHaveCSS("outline-style", "none");
+    await chart.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("dau-tip-month-390.png") });
     await context.close();
   });
 
@@ -280,8 +316,17 @@ test.describe("with the Worker", () => {
     await serve(page, catchingUp);
     await page.goto("/dau");
     const chart = page.locator(".dau-chart");
-    const last = chart.locator("rect").last();
-    await expect(last.locator("title")).toHaveText(new RegExp(`^${short(today - 1)} `));
+    const last = chart.locator("rect.dau-bar").last();
+    // A tap shows the day's count and date above its bar, on the card.
+    await chart.locator("rect.dau-hit").last().tap();
+    const tip = chart.locator(".dau-tip");
+    await expect(tip).toContainText("3,047 accounts (read so far)");
+    await expect(tip.locator(".dau-tip-day")).toHaveText(new RegExp(`^${short(today - 1)} `));
+    const shown = (await tip.boundingBox())!;
+    const onCard = (await chart.boundingBox())!;
+    expect(shown.x).toBeGreaterThanOrEqual(onCard.x);
+    expect(shown.x + shown.width).toBeLessThanOrEqual(onCard.x + onCard.width);
+    await page.screenshot({ path: testInfo.outputPath("dau-tip-390.png") });
     const label = chart.locator(".dau-ticks span").last();
     await expect(label).toHaveText(short(today - 1));
     const [bar, tick, card] = [(await last.boundingBox())!, (await label.boundingBox())!, (await chart.boundingBox())!];
