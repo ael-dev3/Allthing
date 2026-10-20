@@ -27,6 +27,65 @@ pub struct Emoji {
     /// Its size in pixels, twice what it shows at in cast text.
     pub width: u16,
     pub height: u16,
+    /// Where a picker shows it.
+    pub group: Group,
+}
+
+/// A run of the pack, under its own heading in a picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// Close matches for the five Pepes Allthing was asked for first, and
+    /// their nearest kin.
+    Classics,
+    Reactions,
+    Happy,
+    Love,
+    Sad,
+    Party,
+    Hello,
+    Food,
+    Doing,
+    DressedUp,
+    Signs,
+}
+
+impl Group {
+    /// Every group, in a picker's order.
+    pub const ALL: [Group; 11] = [
+        Group::Classics,
+        Group::Reactions,
+        Group::Happy,
+        Group::Love,
+        Group::Sad,
+        Group::Party,
+        Group::Hello,
+        Group::Food,
+        Group::Doing,
+        Group::DressedUp,
+        Group::Signs,
+    ];
+
+    /// Its heading.
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Classics => "Classics",
+            Group::Reactions => "Reactions",
+            Group::Happy => "Happy",
+            Group::Love => "Love",
+            Group::Sad => "Sad and scared",
+            Group::Party => "Music and party",
+            Group::Hello => "Hi and bye",
+            Group::Food => "Food and drink",
+            Group::Doing => "Doing things",
+            Group::DressedUp => "Dressed up",
+            Group::Signs => "Signs",
+        }
+    }
+
+    /// Its emoji, in the pack's order.
+    pub fn emoji(self) -> impl Iterator<Item = &'static Emoji> {
+        PACK.iter().filter(move |e| e.group == self)
+    }
 }
 
 impl Emoji {
@@ -46,116 +105,193 @@ impl Emoji {
     }
 }
 
-const fn e(code: &'static str, what: &'static str, animated: bool, width: u16, height: u16) -> Emoji {
-    Emoji { code, what, animated, width, height }
+const fn e(code: &'static str, what: &'static str, animated: bool, width: u16, height: u16, group: Group) -> Emoji {
+    Emoji { code, what, animated, width, height, group }
 }
 
-/// The pack, in the order a picker shows it: close matches for the five
-/// Pepes Allthing was asked for first, then the rest, animated before still.
+/// The pack, in the order a picker shows it: group by group, in
+/// `Group::ALL`'s order, close matches for the five Pepes Allthing was asked
+/// for first, then in each other group the animated before the still.
 pub const PACK: &[Emoji] = &[
-    e("pepe_no", "holds up a NO sign", false, 73, 64),
-    e("pepe_smug", "looks smug", false, 64, 64),
-    e("pepe_blush", "blushes", false, 64, 64),
-    e("pepe_heart_hug", "hugs a big heart", false, 82, 64),
-    e("pepe_sit", "sits, a small blob", false, 64, 64),
-    e("pepe_nopers", "shakes his head no", true, 64, 64),
-    e("pepe_shy", "blushes and looks away", true, 64, 64),
-    e("pepe_love", "holds a heart", true, 64, 64),
-    e("pepe_hug", "hugs", true, 82, 64),
-    e("pepe_sit_clap", "sits and claps", true, 64, 64),
-    e("pepe_comfy", "snuggles under a blanket", true, 64, 64),
-    e("pepe_smirk", "smirks", false, 64, 64),
-    e("pepe_laugh", "laughs", true, 64, 64),
-    e("pepe_giggle", "giggles", true, 64, 64),
-    e("pepe_pls", "dances", true, 46, 64),
-    e("pepe_jam", "jams with headphones", true, 66, 64),
-    e("pepe_bounce", "bounces", true, 64, 64),
-    e("pepe_spin", "spins", true, 64, 64),
-    e("pepe_shake", "shakes", true, 64, 64),
-    e("pepe_yes", "nods yes", true, 64, 64),
-    e("pepe_hands", "cries into his hands", true, 64, 64),
-    e("pepe_vanish", "vanishes", true, 118, 64),
-    e("pepe_blanket", "wraps up in a blanket", true, 64, 64),
-    e("pepe_huggers", "opens his arms", true, 64, 64),
-    e("pepe_kiss", "blows kisses", true, 64, 64),
-    e("pepe_wink", "winks", true, 64, 64),
-    e("pepe_headbang", "headbangs", true, 64, 64),
-    e("pepe_tea", "sips tea", true, 64, 64),
-    e("pepe_boba", "holds a BOBA sign", true, 64, 64),
-    e("pepe_eat", "eats", true, 64, 64),
-    e("pepe_cookie", "eats a cookie", true, 64, 64),
-    e("pepe_pizza", "eats pizza", true, 64, 64),
-    e("pepe_money", "throws money", true, 64, 64),
-    e("pepe_smash", "smashes the keyboard", true, 64, 64),
-    e("pepe_hey", "waves hey", true, 64, 64),
-    e("pepe_think", "thinks", true, 64, 64),
-    e("pepe_scared", "is scared", true, 64, 64),
-    e("pepe_sleep", "sleeps", true, 64, 64),
-    e("pepe_bye", "waves bye", true, 64, 64),
-    e("pepe_read", "reads", true, 94, 64),
-    e("pepe_typing", "types", true, 64, 64),
-    e("pepe_writing", "writes", true, 98, 64),
-    e("pepe_phone", "talks on the phone", true, 62, 64),
-    e("pepe_tub", "takes a bath", true, 64, 64),
-    e("pepe_birthday", "blows a party horn", true, 64, 64),
-    e("pepe_side_eye", "gives a side-eye", true, 64, 64),
-    e("pepe_cool", "wears sunglasses", true, 64, 64),
-    e("pepe_run", "runs", true, 64, 64),
-    e("pepe_clap", "claps", true, 64, 64),
-    e("pepe_glad", "is glad", true, 64, 64),
-    e("pepe_smile", "smiles", true, 64, 64),
-    e("pepe_wow", "says wow", true, 64, 64),
-    e("pepe_point", "points and laughs", true, 64, 64),
-    e("pepe_cutie", "holds a CUTIE sign", true, 64, 64),
-    e("pepe_flower", "offers a flower", true, 64, 64),
-    e("pepe_cheer", "cheers with pom-poms", true, 64, 64),
-    e("pepe_strong", "cries, but stays strong", true, 64, 64),
-    e("pepe_salute", "salutes", true, 64, 64),
-    e("pepe_shrug", "shrugs", true, 64, 64),
-    e("pepe_exit", "heads for the exit", true, 64, 64),
-    e("pepe_hi", "says hi", true, 64, 64),
-    e("pepe_gn", "says good night", true, 64, 64),
-    e("pepe_gm", "says good morning", true, 64, 64),
-    e("pepe_gg", "holds a GG sign", true, 64, 64),
-    e("pepe_thanks", "says thanks", true, 64, 64),
-    e("pepe_pat", "pats a heart", true, 64, 64),
-    e("pepe_drama", "holds a DRAMA sign", true, 64, 64),
-    e("pepe_wave", "waves", true, 64, 64),
-    e("pepe_arrive", "arrives", true, 64, 64),
-    e("pepe_leave", "leaves", true, 64, 64),
-    e("pepe_party", "parties", true, 74, 64),
-    e("pepe_dance", "dances", true, 64, 64),
-    e("pepe_coffee", "drinks coffee", true, 64, 64),
-    e("pepe_cry", "cries", true, 64, 64),
-    e("pepe_talk", "talks", true, 64, 64),
-    e("pepe_nerd", "pushes up his glasses", true, 64, 64),
-    e("pepe_popcorn", "eats popcorn", true, 64, 64),
-    e("pepe_chat", "types in chat", true, 64, 64),
-    e("pepe_rain", "stands under an umbrella", true, 64, 64),
-    e("pepe_music", "listens to music", true, 64, 64),
-    e("pepe_gamer", "plays games", true, 64, 64),
-    e("pepe_gift", "gives a gift", true, 74, 64),
-    e("pepe_meltdown", "melts down", true, 64, 64),
-    e("pepe_agony", "writhes in agony", true, 64, 64),
-    e("pepe_sad_dance", "dances sadly", true, 72, 64),
-    e("pepe_yum", "licks his lips", true, 64, 64),
-    e("pepe_zip", "zips his mouth", true, 64, 64),
-    e("pepe_poof", "vanishes in a puff, dressed as a samurai", true, 64, 64),
-    e("pepe_sadge", "looks sad", false, 84, 64),
-    e("pepe_sad", "looks sad, a small one", false, 64, 64),
-    e("pepe_monkas", "looks nervous", false, 64, 64),
-    e("pepe_monkaw", "looks nervous, close up", false, 64, 64),
-    e("pepe_happy", "looks happy", false, 86, 64),
-    e("pepe_wide_happy", "smiles wide", false, 160, 64),
-    e("pepe_okay", "says okay", false, 84, 64),
-    e("pepe_madge", "looks mad", false, 84, 64),
-    e("pepe_bedge", "lies in bed", false, 64, 64),
-    e("pepe_cute", "wears a bow", false, 72, 64),
-    e("pepe_cozy", "snuggles in a hood", false, 64, 64),
-    e("pepe_cake", "holds a birthday cake", false, 64, 64),
-    e("pepe_feels_good", "feels good", false, 86, 64),
-    e("pepe_feels_bad", "feels bad", false, 64, 64),
-    e("pepe_samurai", "dressed as a samurai", false, 64, 64),
+    e("pepe_no", "holds up a NO sign", false, 73, 64, Group::Classics),
+    e("pepe_smug", "looks smug", false, 64, 64, Group::Classics),
+    e("pepe_blush", "blushes", false, 64, 64, Group::Classics),
+    e("pepe_heart_hug", "hugs a big heart", false, 82, 64, Group::Classics),
+    e("pepe_sit", "sits, a small blob", false, 64, 64, Group::Classics),
+    e("pepe_nopers", "shakes his head no", true, 64, 64, Group::Classics),
+    e("pepe_shy", "blushes and looks away", true, 64, 64, Group::Classics),
+    e("pepe_love", "holds a heart", true, 64, 64, Group::Classics),
+    e("pepe_hug", "hugs", true, 82, 64, Group::Classics),
+    e("pepe_sit_clap", "sits and claps", true, 64, 64, Group::Classics),
+    e("pepe_comfy", "snuggles under a blanket", true, 64, 64, Group::Classics),
+    e("pepe_smirk", "smirks", false, 64, 64, Group::Classics),
+    e("pepe_yes", "nods yes", true, 64, 64, Group::Reactions),
+    e("pepe_think", "thinks", true, 64, 64, Group::Reactions),
+    e("pepe_side_eye", "gives a side-eye", true, 64, 64, Group::Reactions),
+    e("pepe_clap", "claps", true, 64, 64, Group::Reactions),
+    e("pepe_wow", "says wow", true, 64, 64, Group::Reactions),
+    e("pepe_point", "points and laughs", true, 64, 64, Group::Reactions),
+    e("pepe_salute", "salutes", true, 64, 64, Group::Reactions),
+    e("pepe_shrug", "shrugs", true, 64, 64, Group::Reactions),
+    e("pepe_thanks", "says thanks", true, 64, 64, Group::Reactions),
+    e("pepe_nerd", "pushes up his glasses", true, 64, 64, Group::Reactions),
+    e("pepe_zip", "zips his mouth", true, 64, 64, Group::Reactions),
+    e("pepe_facepalm", "facepalms", true, 64, 64, Group::Reactions),
+    e("pepe_shocked", "is shocked", true, 64, 64, Group::Reactions),
+    e("pepe_hmm", "goes hmm", true, 64, 64, Group::Reactions),
+    e("pepe_sweat", "sweats", true, 64, 64, Group::Reactions),
+    e("pepe_stare", "stares", true, 64, 64, Group::Reactions),
+    e("pepe_confused", "is confused", true, 64, 64, Group::Reactions),
+    e("pepe_noted", "takes notes", true, 98, 64, Group::Reactions),
+    e("pepe_sigh", "sighs", true, 64, 64, Group::Reactions),
+    e("pepe_weird_clap", "claps, unimpressed", true, 64, 64, Group::Reactions),
+    e("pepe_yikes", "says yikes", true, 64, 64, Group::Reactions),
+    e("pepe_sus", "looks sus", true, 84, 64, Group::Reactions),
+    e("pepe_okay", "says okay", false, 84, 64, Group::Reactions),
+    e("pepe_like", "gives a thumbs up", false, 74, 64, Group::Reactions),
+    e("pepe_feels_weird", "feels weird", false, 68, 64, Group::Reactions),
+    e("pepe_amazed", "is amazed", false, 64, 64, Group::Reactions),
+    e("pepe_big_brain", "has a big brain", false, 64, 64, Group::Reactions),
+    e("pepe_what", "asks what?", false, 56, 64, Group::Reactions),
+    e("pepe_laugh", "laughs", true, 64, 64, Group::Happy),
+    e("pepe_giggle", "giggles", true, 64, 64, Group::Happy),
+    e("pepe_money", "throws money", true, 64, 64, Group::Happy),
+    e("pepe_cool", "wears sunglasses", true, 64, 64, Group::Happy),
+    e("pepe_glad", "is glad", true, 64, 64, Group::Happy),
+    e("pepe_smile", "smiles", true, 64, 64, Group::Happy),
+    e("pepe_cheer", "cheers with pom-poms", true, 64, 64, Group::Happy),
+    e("pepe_hype", "gets hyped", true, 64, 64, Group::Happy),
+    e("pepe_flex", "flexes", true, 64, 64, Group::Happy),
+    e("pepe_lmao", "laughs his head off", true, 64, 64, Group::Happy),
+    e("pepe_win", "wins", true, 64, 64, Group::Happy),
+    e("pepe_proud", "is proud, with a medal", true, 64, 64, Group::Happy),
+    e("pepe_happy", "looks happy", false, 86, 64, Group::Happy),
+    e("pepe_wide_happy", "smiles wide", false, 160, 64, Group::Happy),
+    e("pepe_feels_good", "feels good", false, 86, 64, Group::Happy),
+    e("pepe_stonks", "says stonks", false, 66, 64, Group::Happy),
+    e("pepe_star", "is a star", false, 64, 64, Group::Happy),
+    e("pepe_huggers", "opens his arms", true, 64, 64, Group::Love),
+    e("pepe_kiss", "blows kisses", true, 64, 64, Group::Love),
+    e("pepe_wink", "winks", true, 64, 64, Group::Love),
+    e("pepe_flower", "offers a flower", true, 64, 64, Group::Love),
+    e("pepe_pat", "pats a heart", true, 64, 64, Group::Love),
+    e("pepe_gift", "gives a gift", true, 74, 64, Group::Love),
+    e("pepe_pray", "prays", true, 64, 64, Group::Love),
+    e("pepe_headpat", "gets a head pat", true, 64, 64, Group::Love),
+    e("pepe_cat", "hugs a cat", true, 64, 64, Group::Love),
+    e("pepe_friends", "hugs a friend", true, 64, 64, Group::Love),
+    e("pepe_cute", "wears a bow", false, 72, 64, Group::Love),
+    e("pepe_hands", "cries into his hands", true, 64, 64, Group::Sad),
+    e("pepe_scared", "is scared", true, 64, 64, Group::Sad),
+    e("pepe_strong", "cries, but stays strong", true, 64, 64, Group::Sad),
+    e("pepe_cry", "cries", true, 64, 64, Group::Sad),
+    e("pepe_rain", "stands under an umbrella", true, 64, 64, Group::Sad),
+    e("pepe_meltdown", "melts down", true, 64, 64, Group::Sad),
+    e("pepe_agony", "writhes in agony", true, 64, 64, Group::Sad),
+    e("pepe_sad_dance", "dances sadly", true, 72, 64, Group::Sad),
+    e("pepe_nervous", "shakes nervously", true, 64, 64, Group::Sad),
+    e("pepe_sadge", "looks sad", false, 84, 64, Group::Sad),
+    e("pepe_sad", "looks sad, a small one", false, 64, 64, Group::Sad),
+    e("pepe_monkas", "looks nervous", false, 64, 64, Group::Sad),
+    e("pepe_monkaw", "looks nervous, close up", false, 64, 64, Group::Sad),
+    e("pepe_madge", "looks mad", false, 84, 64, Group::Sad),
+    e("pepe_feels_bad", "feels bad", false, 64, 64, Group::Sad),
+    e("pepe_pls", "dances on the spot", true, 46, 64, Group::Party),
+    e("pepe_jam", "jams with headphones", true, 66, 64, Group::Party),
+    e("pepe_bounce", "bounces", true, 64, 64, Group::Party),
+    e("pepe_spin", "spins", true, 64, 64, Group::Party),
+    e("pepe_shake", "shakes", true, 64, 64, Group::Party),
+    e("pepe_headbang", "headbangs", true, 64, 64, Group::Party),
+    e("pepe_birthday", "blows a party horn", true, 64, 64, Group::Party),
+    e("pepe_party", "parties", true, 74, 64, Group::Party),
+    e("pepe_dance", "dances with his arms out", true, 64, 64, Group::Party),
+    e("pepe_music", "listens to music", true, 64, 64, Group::Party),
+    e("pepe_dj", "DJs", true, 64, 64, Group::Party),
+    e("pepe_guitar", "plays the guitar", true, 64, 64, Group::Party),
+    e("pepe_piano", "plays the piano", true, 64, 64, Group::Party),
+    e("pepe_sing", "sings", true, 64, 64, Group::Party),
+    e("pepe_vibe", "vibes slowly", true, 64, 64, Group::Party),
+    e("pepe_balloon", "holds a balloon", false, 94, 64, Group::Party),
+    e("pepe_vanish", "vanishes", true, 118, 64, Group::Hello),
+    e("pepe_hey", "waves hey", true, 64, 64, Group::Hello),
+    e("pepe_bye", "waves bye", true, 64, 64, Group::Hello),
+    e("pepe_exit", "heads for the exit", true, 64, 64, Group::Hello),
+    e("pepe_hi", "says hi", true, 64, 64, Group::Hello),
+    e("pepe_gn", "says good night", true, 64, 64, Group::Hello),
+    e("pepe_gm", "says good morning", true, 64, 64, Group::Hello),
+    e("pepe_wave", "waves", true, 64, 64, Group::Hello),
+    e("pepe_arrive", "arrives", true, 64, 64, Group::Hello),
+    e("pepe_leave", "leaves", true, 64, 64, Group::Hello),
+    e("pepe_peek", "peeks in", true, 64, 64, Group::Hello),
+    e("pepe_sneak", "sneaks by", true, 64, 64, Group::Hello),
+    e("pepe_afk", "is AFK, asleep at the keyboard", true, 64, 64, Group::Hello),
+    e("pepe_lurk", "lurks at the window", true, 64, 64, Group::Hello),
+    e("pepe_tea", "sips tea", true, 64, 64, Group::Food),
+    e("pepe_eat", "eats", true, 64, 64, Group::Food),
+    e("pepe_cookie", "eats a cookie", true, 64, 64, Group::Food),
+    e("pepe_pizza", "eats pizza", true, 64, 64, Group::Food),
+    e("pepe_coffee", "drinks coffee", true, 64, 64, Group::Food),
+    e("pepe_popcorn", "eats popcorn", true, 64, 64, Group::Food),
+    e("pepe_yum", "licks his lips", true, 64, 64, Group::Food),
+    e("pepe_chef", "cooks", true, 64, 64, Group::Food),
+    e("pepe_ice_cream", "eats ice cream", true, 110, 64, Group::Food),
+    e("pepe_burger", "eats a burger", true, 64, 64, Group::Food),
+    e("pepe_noodles", "slurps noodles", true, 64, 64, Group::Food),
+    e("pepe_sushi", "eats sushi", true, 64, 64, Group::Food),
+    e("pepe_juice", "sips a juice box", true, 64, 64, Group::Food),
+    e("pepe_cake", "holds a birthday cake", false, 64, 64, Group::Food),
+    e("pepe_donut", "sits in a donut", false, 76, 64, Group::Food),
+    e("pepe_blanket", "wraps up in a blanket", true, 64, 64, Group::Doing),
+    e("pepe_smash", "smashes the keyboard", true, 64, 64, Group::Doing),
+    e("pepe_sleep", "sleeps", true, 64, 64, Group::Doing),
+    e("pepe_read", "reads", true, 94, 64, Group::Doing),
+    e("pepe_typing", "types", true, 64, 64, Group::Doing),
+    e("pepe_writing", "writes", true, 98, 64, Group::Doing),
+    e("pepe_phone", "talks on the phone", true, 62, 64, Group::Doing),
+    e("pepe_tub", "takes a bath", true, 64, 64, Group::Doing),
+    e("pepe_run", "runs", true, 64, 64, Group::Doing),
+    e("pepe_talk", "talks", true, 64, 64, Group::Doing),
+    e("pepe_chat", "types in chat", true, 64, 64, Group::Doing),
+    e("pepe_gamer", "plays games", true, 64, 64, Group::Doing),
+    e("pepe_build", "builds, in a hard hat", true, 64, 64, Group::Doing),
+    e("pepe_rocket", "rides a rocket", true, 64, 64, Group::Doing),
+    e("pepe_swim", "swims", true, 64, 64, Group::Doing),
+    e("pepe_drive", "drives", true, 64, 64, Group::Doing),
+    e("pepe_fly", "flies a plane", true, 64, 64, Group::Doing),
+    e("pepe_chess", "plays chess", true, 74, 64, Group::Doing),
+    e("pepe_paint", "paints", true, 64, 64, Group::Doing),
+    e("pepe_chill", "chills in an armchair", true, 64, 64, Group::Doing),
+    e("pepe_fish", "catches a fish", true, 102, 64, Group::Doing),
+    e("pepe_plant", "waters a plant", true, 102, 64, Group::Doing),
+    e("pepe_pogo", "bounces on a pogo stick", true, 64, 64, Group::Doing),
+    e("pepe_work", "works at his desk", true, 64, 64, Group::Doing),
+    e("pepe_bedge", "lies in bed", false, 64, 64, Group::Doing),
+    e("pepe_cozy", "snuggles in a hood", false, 64, 64, Group::Doing),
+    e("pepe_meditate", "meditates", false, 64, 64, Group::Doing),
+    e("pepe_study", "studies", false, 66, 64, Group::Doing),
+    e("pepe_camera", "takes a photo", false, 76, 64, Group::Doing),
+    e("pepe_selfie", "takes a selfie", false, 64, 64, Group::Doing),
+    e("pepe_boat", "sails", false, 64, 64, Group::Doing),
+    e("pepe_poof", "vanishes in a puff, dressed as a samurai", true, 64, 64, Group::DressedUp),
+    e("pepe_detective", "investigates", true, 64, 64, Group::DressedUp),
+    e("pepe_ninja", "is a ninja", true, 64, 64, Group::DressedUp),
+    e("pepe_wizard", "casts a spell", true, 64, 64, Group::DressedUp),
+    e("pepe_clown", "is a clown", true, 64, 64, Group::DressedUp),
+    e("pepe_samurai", "dressed as a samurai", false, 64, 64, Group::DressedUp),
+    e("pepe_king", "wears a crown", false, 64, 64, Group::DressedUp),
+    e("pepe_angel", "is an angel", false, 74, 64, Group::DressedUp),
+    e("pepe_doctor", "is a doctor", false, 64, 64, Group::DressedUp),
+    e("pepe_bee", "is a bee", false, 64, 64, Group::DressedUp),
+    e("pepe_bunny", "wears bunny ears", false, 64, 64, Group::DressedUp),
+    e("pepe_shark", "is a shark", false, 64, 64, Group::DressedUp),
+    e("pepe_dino", "is a dino", false, 64, 64, Group::DressedUp),
+    e("pepe_boba", "holds a BOBA sign", true, 64, 64, Group::Signs),
+    e("pepe_cutie", "holds a CUTIE sign", true, 64, 64, Group::Signs),
+    e("pepe_gg", "holds a GG sign", true, 64, 64, Group::Signs),
+    e("pepe_drama", "holds a DRAMA sign", true, 64, 64, Group::Signs),
+    e("pepe_l", "holds an L sign", true, 64, 64, Group::Signs),
+    e("pepe_w", "holds a W sign", true, 64, 64, Group::Signs),
+    e("pepe_live", "holds a LIVE sign", true, 64, 64, Group::Signs),
 ];
 
 /// Where stickers are served, below the site's base path; cached for a
@@ -305,10 +441,12 @@ pub fn shortcode_at(rest: &str) -> Option<(&'static Emoji, usize)> {
 }
 
 /// The pack's emoji that match a picker's search, best first: those whose
-/// name starts with it, then those whose name has it, then those whose
-/// description has it, each in the pack's order. Colons, case and the
-/// `pepe_` every name starts with don't count, and spaces match
-/// underscores. An empty search, or one still typing "pepe_", matches all.
+/// name starts with it, then those with a later word of the name starting
+/// with it, then those with a word of the description starting with it,
+/// each in the pack's order: "eat" finds "eats a cookie", not "sweats".
+/// Colons, case and the `pepe_` every name starts with don't count, and
+/// spaces match underscores. An empty search, or one still typing "pepe_",
+/// matches all.
 pub fn search(query: &str) -> Vec<&'static Emoji> {
     let query = query.trim().trim_matches(':').to_lowercase().replace(' ', "_");
     let query = match query.strip_prefix("pepe_") {
@@ -316,15 +454,17 @@ pub fn search(query: &str) -> Vec<&'static Emoji> {
         None if query.len() >= 3 && "pepe_".starts_with(&query) => "",
         None => &query,
     };
+    // A word's start: just after an underscore, as both are written here.
+    let word = format!("_{query}");
     let mut found: Vec<(u8, &'static Emoji)> = PACK
         .iter()
         .filter_map(|emoji| {
             let name = emoji.code.strip_prefix("pepe_").unwrap_or(emoji.code);
             let rank = if name.starts_with(query) {
                 0
-            } else if name.contains(query) {
+            } else if name.contains(&word) {
                 1
-            } else if emoji.what.to_lowercase().replace(' ', "_").contains(query) {
+            } else if format!("_{}", emoji.what.to_lowercase().replace(' ', "_")).contains(&word) {
                 2
             } else {
                 return None;
@@ -546,13 +686,43 @@ mod tests {
         // Still typing "pepe_" or ":pepe_": everything.
         assert_eq!(search("pep").len(), PACK.len());
         assert_eq!(search(":pepe_").len(), PACK.len());
-        // Named "no…" first, then "nods yes".
-        assert_eq!(codes(&search("no")), ["pepe_no", "pepe_nopers", "pepe_yes"]);
+        // Named "no…" first, then "nods yes"; not the piano, nor the dino.
+        assert_eq!(codes(&search("no")), ["pepe_no", "pepe_nopers", "pepe_noted", "pepe_noodles", "pepe_yes"]);
+        // A word's start, in a name or a description; not its middle.
+        assert_eq!(codes(&search("clap")), ["pepe_clap", "pepe_sit_clap", "pepe_weird_clap"]);
+        assert!(codes(&search("eat")).contains(&"pepe_cookie"));
+        assert!(!codes(&search("eat")).contains(&"pepe_sweat"));
+        assert_eq!(codes(&search("spell")), ["pepe_wizard"]);
         assert_eq!(codes(&search(":PEPE_NO:"))[0], "pepe_no");
         assert_eq!(codes(&search("heart hug")), ["pepe_heart_hug"]);
         assert_eq!(codes(&search("big heart")), ["pepe_heart_hug"]);
-        assert_eq!(codes(&search("hug")), ["pepe_hug", "pepe_huggers", "pepe_heart_hug"]);
+        assert_eq!(codes(&search("hug")), ["pepe_hug", "pepe_huggers", "pepe_heart_hug", "pepe_cat", "pepe_friends"]);
         assert!(search("zzz").is_empty());
+    }
+
+    #[test]
+    fn the_pack_runs_group_by_group_with_the_five_first() {
+        // Each group is one run of the pack, in `Group::ALL`'s order.
+        let mut runs: Vec<Group> = Vec::new();
+        for e in PACK {
+            if runs.last() != Some(&e.group) {
+                assert!(!runs.contains(&e.group), "{:?} comes in two runs", e.group);
+                runs.push(e.group);
+            }
+        }
+        assert_eq!(runs, Group::ALL);
+        let first: Vec<&str> = PACK.iter().take(5).map(|e| e.code).collect();
+        assert_eq!(first, ["pepe_no", "pepe_smug", "pepe_blush", "pepe_heart_hug", "pepe_sit"]);
+        assert_eq!(Group::ALL.iter().map(|g| g.emoji().count()).sum::<usize>(), PACK.len());
+        let labels: BTreeSet<&str> = Group::ALL.iter().map(|g| g.label()).collect();
+        assert_eq!(labels.len(), Group::ALL.len());
+    }
+
+    #[test]
+    fn every_emoji_says_what_it_shows_in_its_own_words() {
+        // Two alike would be two buttons with one name.
+        let whats: BTreeSet<&str> = PACK.iter().map(|e| e.what).collect();
+        assert_eq!(whats.len(), PACK.len());
     }
 
     #[test]
@@ -716,7 +886,18 @@ mod tests {
             }
             let credit = credits.lines().find(|l| l.starts_with(&format!("| `:{}:` |", e.code)));
             let credit = credit.unwrap_or_else(|| panic!("no credit for {}", e.code));
-            assert!(credit.contains("| https://"), "no source for {}", e.code);
+            // Its terms, as the credits explain them, are its source's.
+            let terms = if credit.contains("| https://7tv.app/emotes/") {
+                "7TV public"
+            } else if credit.contains("| https://www.frankerfacez.com/emoticon/") {
+                "FFZ public"
+            } else if credit.contains("| https://emoji.gg/emoji/") {
+                "emoji.gg free"
+            } else {
+                panic!("no source for {}", e.code)
+            };
+            assert_eq!(credit.rsplit('|').nth(1).map(str::trim), Some(terms), "{}", e.code);
+            assert!(credits.contains(&format!("- **{terms}**: ")), "the terms {terms} aren't explained");
         }
         assert_eq!(files, expected, "files that aren't in the pack, or missing");
     }

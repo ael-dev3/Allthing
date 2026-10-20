@@ -79,7 +79,7 @@ test("a post's emoji replies gather as chips, each account once, most first", as
   await expect(chips(page).first().locator("img")).toHaveAttribute("src", /\/assets\/emoji\/v1\/pepe_heart_hug\.webp$/);
   // A reply's own: the dancing Pepe under the words.
   const words = page.locator(".comment", { hasText: "Words, not a reaction" }).first();
-  await expect(words.locator(":scope > .comment-body .reaction-chip").first()).toHaveAccessibleName(/^Pepe dances: 1 reaction, by @alice/);
+  await expect(words.locator(":scope > .comment-body .reaction-chip").first()).toHaveAccessibleName(/^Pepe dances on the spot: 1 reaction, by @alice/);
   // The replies stay in the thread too, as replies.
   await expect(page.locator(".comment")).toHaveCount(5);
   // Signed out: React is there, and a chip hands its Pepe to the Farcaster
@@ -105,7 +105,7 @@ test("React opens the Pepe picker, and a pick goes out as a reply that is the em
   // Emoji only: a sticker isn't a reaction.
   await expect(picker.getByRole("tab")).toHaveCount(0);
   await picker.getByRole("searchbox", { name: "Search emoji" }).fill("pls");
-  await picker.getByRole("button", { name: "Pepe dances", exact: true }).first().click();
+  await picker.getByRole("button", { name: "Pepe dances on the spot", exact: true }).click();
   await expect(panel).toBeHidden();
   await expect.poll(() => sent.length).toBe(1);
   expect([sent[0].type, sent[0].fid]).toEqual([1, me.fid]);
@@ -115,10 +115,10 @@ test("React opens the Pepe picker, and a pick goes out as a reply that is the em
   await expect(page.getByRole("status").getByRole("link", { name: "View" })).toHaveAttribute("href", /\/p\/0x[0-9a-f]{40}$/);
   const mine = chips(page).nth(2);
   await expect(mine).toHaveAttribute("aria-pressed", "true");
-  await expect(mine).toHaveAccessibleName("Pepe dances: 1 reaction, by you");
+  await expect(mine).toHaveAccessibleName("Pepe dances on the spot: 1 reaction, by you");
   // It's in the picker's recently used now.
   await react.click();
-  await expect(panel.locator(".emoji-recent .emoji-tile").first()).toHaveAccessibleName("Pepe dances");
+  await expect(panel.locator(".emoji-recent .emoji-tile").first()).toHaveAccessibleName("Pepe dances on the spot");
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
 });
