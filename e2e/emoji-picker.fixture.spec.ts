@@ -66,7 +66,7 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await expect(search).toBeFocused();
   // The pack's grid; the recently used have one of their own.
   const tiles = picker.locator(".emoji-results > .emoji-grid .emoji-tile");
-  await expect(tiles).toHaveCount(103);
+  await expect(tiles).toHaveCount(179);
   await expect(picker.getByRole("heading", { name: "Recently used" })).toHaveCount(0);
   await expect(picker.getByRole("heading", { name: "Pepe", exact: true })).toBeVisible();
   // The five first, still; an animated one moves while pointed at, and the foot names it.
@@ -108,13 +108,13 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   const recent = picker.locator(".emoji-recent .emoji-tile");
   await expect(recent).toHaveCount(1);
   await expect(recent.first()).toHaveAccessibleName("Pepe hugs a big heart");
-  await picker.getByRole("button", { name: "Pepe dances", exact: true }).first().click({ modifiers: ["Shift"] });
+  await picker.getByRole("button", { name: "Pepe dances on the spot", exact: true }).first().click({ modifiers: ["Shift"] });
   await expect(picker).toBeVisible();
   await expect(text).toHaveValue("gm :pepe_heart_hug: frens :pepe_pls: ");
   // A search hides the recently used.
   await search.fill("no");
   await expect(picker.locator(".emoji-recent")).toBeHidden();
-  await expect(tiles).toHaveCount(3);
+  await expect(tiles).toHaveCount(5);
   // A plain click picks, closes, and puts the caret after it.
   await tiles.first().click();
   await expect(picker).toHaveCount(0);
