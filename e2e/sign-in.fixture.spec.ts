@@ -185,11 +185,18 @@ test("on a phone, the code fits the screen, with no link to the Farcaster app", 
   const account = page.getByRole("link", { name: "Signed in as @alice: your profile" });
   await expect(account).toBeInViewport({ ratio: 1 });
   // On a touch screen, a tap on the picture opens the menu, which has the
-  // profile and Sign out, rather than following the link.
-  await account.tap();
+  // profile and Sign out, rather than following the link. The picture takes
+  // a tap a little way around it, a fingertip's 44 px.
+  const picture = (await account.boundingBox())!;
+  await page.touchscreen.tap(picture.x - 4, picture.y + picture.height / 2);
   const menu = page.getByRole("dialog", { name: "Your account" });
   await expect(menu).toBeInViewport({ ratio: 1 });
   await expect(page).toHaveURL(/\/$/);
+  // Its rows are a fingertip tall too, once it has popped in.
+  await menu.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+  for (const row of await menu.locator(".account-link").all()) {
+    expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
   await expect(menu.getByRole("link", { name: "Your profile" })).toHaveAttribute("href", "/u/alice");
   await menu.getByRole("button", { name: "Sign out" }).tap();
   await expect(signIn).toBeVisible();

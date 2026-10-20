@@ -339,6 +339,32 @@ code {
   color: var(--ink);
 }
 
+/* The picture answers a tap with its ring, not the browser's tap colour. */
+.account-button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* On a touch screen, a fingertip's size: the menu's rows are 44 px tall,
+   and the picture takes a tap 6 px around it, as a 44 px target. */
+@media (pointer: coarse) {
+  .account-link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .account-button {
+    position: relative;
+  }
+
+  .account-button::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+  }
+}
+
 /* A thin line of light drifting along the header: the farcaster portal. It
    never stops, so it moves by transform, which the compositor animates on
    its own: a strip two gradients wide slides by one. Animating the
