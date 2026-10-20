@@ -9,6 +9,7 @@ pub mod compose;
 #[cfg(not(feature = "static-host"))]
 pub mod emoji_picker;
 pub mod facts;
+pub mod favorite;
 pub mod layout;
 pub mod media;
 pub mod player;

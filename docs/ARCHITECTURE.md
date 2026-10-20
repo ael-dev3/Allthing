@@ -162,6 +162,10 @@ Allthing counts Farcaster's daily active accounts as [SnapMeter](https://github.
 - **Boot.** `index.html` shows a static header and a soft glow while `boot.js` imports the wasm-bindgen glue and instantiates the module. The app then mounts into `#app` and removes the placeholder. `www.allthing.social` is sent to the apex before anything loads.
 - **Routing.** Routes: `/`, `/c/<id>` (or `/c?id=`), `/p/<hash>` (or `/p?hash=`), `/u/<name>` (or `/u?name=`), `/channels`, `/search?q=`, `/dau`, `/scheduled`. The query forms keep links from the old static site working. Any other path renders "not found".
 - **One request per page.** Each page reads one payload (`api.rs`, with a 5-minute in-memory cache). Sorting (hot, new, top) re-ranks the pool locally (`allthing_core::ranking`). Lists show 25 cards at a time and grow as the reader scrolls. Profiles also read `/wallets` and `/vote`, and so does a profile card when it opens.
+- **Favorites.** Favorite, beside Follow on anyone's profile but the reader's own, makes the account one of the reader's favorites (`leanings.rs`, `components/favorite.rs`).
+  - They are kept in this browser's localStorage (`allthing.favorites`) and sent nowhere, so they need no sign-in and the static copy has them too. The reader's other tabs follow a change (the `storage` event).
+  - In the reader's hot and top feeds, on the front page and in channels, a favorite's cast weighs as if it had four times its points (`allthing_core::ranking::sorted_for`; in hot, its log moves by log10 4), and carries a small star (not on the account's own profile, where Favorite is). A feed on screen re-sorts in place when one is made or undone.
+  - New stays in time order, and nothing is hidden: a favorite only moves the reader's own feeds, and only theirs.
 - **Speed** ([PERFORMANCE.md](PERFORMANCE.md)):
   - posts open instantly from the feed's own data;
   - cards prefetch on hover and in idle time, within caps, and the cards in view have who liked and recasted them preloaded in batches;

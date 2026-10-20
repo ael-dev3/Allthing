@@ -19,6 +19,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
 use crate::components::facts::{JoinedFact, VoteFact, WalletShares};
+use crate::components::favorite::FavoriteButton;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
 use crate::components::text::CastText;
@@ -138,6 +139,7 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                     <div class="profile-name-row">
                         <h1 class="profile-name">{user.name().to_owned()}</h1>
                         {follow_button(user.fid, &user.username)}
+                        {favorite_button(user.fid, &user.username)}
                     </div>
                     <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" · fid {}", user.fid)}</span></p>
                     {if has_card {
@@ -179,6 +181,24 @@ fn follow_button(fid: u64, username: &str) -> AnyView {
 #[cfg(feature = "static-host")]
 fn follow_button(_: u64, _: &str) -> AnyView {
     ().into_any()
+}
+
+/// Favorite, on anyone's profile but the reader's own.
+#[cfg(not(feature = "static-host"))]
+fn favorite_button(fid: u64, username: &str) -> AnyView {
+    let session = crate::components::signin::use_session();
+    let username = username.to_owned();
+    (move || {
+        let mine = session.user.with(|u| u.as_ref().is_some_and(|u| u.fid == fid));
+        (!mine).then(|| view! { <FavoriteButton fid username=username.clone()/> })
+    })
+    .into_any()
+}
+
+/// The static copy has no one signed in: Favorite on every profile.
+#[cfg(feature = "static-host")]
+fn favorite_button(fid: u64, username: &str) -> AnyView {
+    view! { <FavoriteButton fid username=username.to_owned()/> }.into_any()
 }
 
 /// The follower count, with the reader's follow or unfollow here.
