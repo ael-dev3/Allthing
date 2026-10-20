@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Inline playback for Farcaster videos, which are HLS streams on Cloudflare
-//! Stream. Browsers with native HLS (Safari, iOS, recent Chrome on Android)
-//! get the playlist URL directly. Everywhere else a small Media Source
+//! Stream. Browsers with native HLS (Safari, iOS, Chrome on Android, and
+//! Chrome on computers since about version 142) get the playlist URL directly.
+//! Everywhere else (Firefox) a small Media Source
 //! Extensions player written here in Rust feeds the stream's fMP4 segments to
 //! the video element, so no third-party player script is needed. Segments are
 //! fetched straight from the video host, never through Allthing's Worker.
@@ -205,8 +206,10 @@ struct Track {
     playlist: MediaPlaylist,
     base: String,
     buffer: SourceBuffer,
-    /// The segment appended last, to step over gaps between segments.
-    last: Option<usize>,
+    /// The segment appended last, and where it took the end of the buffered
+    /// range the playhead was in (NaN when it didn't extend that range by
+    /// about its own length): buffering goes on from there by index.
+    last: Option<(usize, f64)>,
 }
 
 impl Track {
@@ -349,30 +352,44 @@ async fn run(
                 complete = false;
                 continue;
             }
-            let edge = track.buffered_until(playhead).unwrap_or(playhead);
+            let range_end = track.buffered_until(playhead);
+            let edge = range_end.unwrap_or(playhead);
             let count = track.playlist.segments.len();
             if count == 0 || edge >= track.playlist.duration() - 0.1 {
                 continue;
+            }
+            let mut index = track.playlist.segment_at(edge + 0.05);
+            if let Some((last, end)) = track.last
+                && (index == last || range_end.is_some_and(|range_end| (range_end - end).abs() < 0.001))
+            {
+                // Going on from the last append, or it did not reach past
+                // this point (a gap): the next segment. A playlist can be off
+                // from its media by a little per segment, so looking the edge
+                // up by time can land on a segment already in, or skip one.
+                if last + 1 >= count {
+                    // All in, though the media may end a little before the
+                    // playlist says: the stream must end now, or the video
+                    // stalls on its last frame instead of looping.
+                    continue;
+                }
+                index = last + 1;
             }
             complete = false;
             if edge - playhead > BUFFER_AHEAD_SECS {
                 continue;
             }
-            let mut index = track.playlist.segment_at(edge + 0.05);
-            if track.last == Some(index) {
-                // The last append did not reach past this point: a gap.
-                if index + 1 >= count {
-                    continue;
-                }
-                index += 1;
-            }
             let segment = &track.playlist.segments[index];
+            let length = segment.duration;
             let data = fetch_buffer(&resolve_url(&segment.uri, &track.base), signal).await?;
             if signal.aborted() {
                 return Ok(());
             }
             track.append(&data, playhead, signal).await?;
-            track.last = Some(index);
+            // (Audio codecs trim a little from a stream's edges, which
+            // matters for a short last segment.)
+            let grown =
+                track.buffered_until(playhead).filter(|end| (end - edge - length).abs() < (length / 2.0).max(0.25));
+            track.last = Some((index, grown.unwrap_or(f64::NAN)));
             worked = true;
             ended = false;
         }

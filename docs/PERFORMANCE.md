@@ -109,6 +109,7 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - **A bigger Pepe pack**, 179 emoji where there were 103, added 1.1 KB (558,162 → 559,284 bytes at brotli 11, release builds on 20 October 2026): the table's 76 new rows, and each emoji's group. The new images, a median of 16 KB and 100 KB at most, cost nothing until a cast or the picker shows them.
 - **The emoji picker's groups** added 2.8 KB (559,284 → 562,128 bytes at brotli 11): headings, the bar of groups with its faces, and following the grid's scroll to mark the group in view. The bar's faces are 11 of the stills the grid shows anyway.
 - **Preconnects** to `imagedelivery.net` and `stream.farcaster.xyz`, where nearly all media is hosted.
+- **The sound badge and looping** added 1.7 KB to the module (2,080,264 → 2,081,974 bytes) and nothing measurable at brotli 11 (562,328 → 562,142 bytes, release builds on 20 October 2026; on the main before the groups' bar the same change measured +1.0 KB, as a small change reorders the module and moves brotli's result by about a kilobyte either way): the badge's speaker, and the player's going on segment by segment and ending a stream once its last segment is in. A playlist that drifts from its media now costs one request per segment, where the player had fetched its last two segments in turn without end.
 
 ### 5. Infinite scroll
 
