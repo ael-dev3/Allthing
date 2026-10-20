@@ -213,12 +213,15 @@ test("on a phone, the cards in view preload who liked them and their authors' fa
   expect(await loadingShown(page)).toBe(0);
   await page.keyboard.press("Escape");
 
-  // A tapped author: the card complete in its first frame, no request either.
-  const asked = votes.length;
+  // A tapped author: the card complete in its first frame, and no request
+  // for them. Others' facts may still come: the other cards' authors, and
+  // the people the list named, each preloaded in its own time.
+  const theirs = () => votes.filter((url) => /[?&]fid=100(&|$)/.test(url));
+  expect(theirs()).toHaveLength(1);
   await card.locator(".cast-meta .user-chip a").first().tap();
   const profile = page.locator(".popover-panel.profile-card");
   await expect(profile.locator(".vote")).toHaveText("Voted yes", { timeout: 100 });
   await expect(profile.locator(".vote-loading, .share-bar.loading")).toHaveCount(0);
-  expect(votes.length).toBe(asked);
+  expect(theirs(), `every /vote asked: ${JSON.stringify(votes)}`).toHaveLength(1);
   await context.close();
 });
