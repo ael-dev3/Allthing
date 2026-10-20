@@ -529,8 +529,11 @@ pub fn first_username_at_in(payload: &[u8], fid: u64) -> Option<i64> {
 /// refreshed soon, so the gap isn't kept for the usual five minutes.
 pub const USER_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 300, keep: 86_400, browser: 15 };
 pub const WALLET_CACHE: CachePolicy = CachePolicy { fresh: 21_600, stale: 86_400, keep: 172_800, browser: 3600 };
-/// Wallet activity with an EVM chain still unread: read again in minutes.
-pub const WALLET_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 172_800, browser: 60 };
+/// Wallet activity with an EVM chain still unread: read again in minutes,
+/// and not served from the background for long, since its shares leave a
+/// chain out. Ten minutes on, a reader waits for a new read instead (or gets
+/// this copy if that read fails).
+pub const WALLET_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 600, keep: 172_800, browser: 60 };
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 pub const REACTIONS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 86_400, browser: 300 };
@@ -731,6 +734,10 @@ mod tests {
         }
         // A partial batch is rebuilt well before a complete one.
         const { assert!(ENGAGEMENT_PARTIAL_CACHE.fresh * 10 <= ENGAGEMENT_CACHE.fresh) };
+        // Wallet activity missing a chain is never served for long: on 20 Oct
+        // 2026 a copy from the day before, with Base unread, still showed
+        // 0xael.eth at Optimism 58%, Monad 41% to the first reader.
+        const { assert!(WALLET_RETRY_CACHE.stale <= 600 && WALLET_RETRY_CACHE.fresh * 12 <= WALLET_CACHE.fresh) };
     }
 
     fn hash(n: u32) -> String {

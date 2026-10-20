@@ -15,7 +15,7 @@ The wallet chart on a profile (and on its hover card) shows where an account's v
 - **Solana**: there is no nonce. The count is the number of signatures involving the address, which includes transfers in. A count at the 1,000 cap shows as "1,000+".
 - **Shares**: a chain under 1% of the total (count × 100 < total) is not shown. The shares of the shown chains are divided by their own total, and rounded with the largest-remainder method, so they sum to exactly 100 and the spare points go only to shown chains. The browser works them out from the counts, so they follow these rules whatever the age of the payload. Example: 0xael.eth on 18 October 2026, where Optimism's 95 of 33,090 (0.29%) is hidden and Base shows 99%, Ethereum 1%.
 - **Display**: the chart and its list show only the shown chains. One chain at 100% is the only row.
-- **Unread chains**: if an EVM chain can't be read just now (rate limited, unreachable), it keeps its last good count from the previous copy of the account's wallet activity, when the account's verified addresses haven't changed, and the chart says that some counts are from an earlier read. A count only grows, so this is closer to the truth than leaving the chain out, which scaled the other chains up to its share (on 19 October 2026, 0xael.eth's chart showed Optimism 58% and Monad 41% while Base and Ethereum were unread). A chain with no earlier count is left out of the shares, the chart says some chains weren't read, and the copy is read again within minutes instead of hours. When the account has verified Solana addresses and Solana can't be read, the chart says that Solana couldn't be read, and the payload's `sources` says so too.
+- **Unread chains**: if an EVM chain can't be read just now (rate limited, unreachable), it keeps its last good count from the previous copy of the account's wallet activity, when the account's verified addresses haven't changed, and the chart says that some counts are from an earlier read. A count only grows, so this is closer to the truth than leaving the chain out, which scaled the other chains up to its share (on 19 October 2026, 0xael.eth's chart showed Optimism 58% and Monad 41% while Base and Ethereum were unread). A chain with no earlier count is left out of the shares, the chart says some chains weren't read, and the copy is read again within minutes instead of hours. It is served from the background for ten minutes at most: after that, a reader waits for a new read, and gets this copy only if that read fails. When the account has verified Solana addresses and Solana can't be read, the chart says that Solana couldn't be read, and the payload's `sources` says so too.
 
 ## Cross-checks (18 October 2026)
 
@@ -32,8 +32,25 @@ Block explorers can't give the sent count directly, so the check is nonce-based:
 
 **Not checked**: Ethereum mainnet and the other EVM chains (Etherscan blocked the request), and Solana (no explorer reachable from this environment).
 
+## Cross-check (20 October 2026)
+
+0xael.eth's two verified EVM addresses, read directly from each chain's public RPC (`eth_getTransactionCount`, `latest`) and summed, against what `/api/v1/wallets?fid=539854` served:
+
+| Chain | 0x76d0…8942 | 0x5d13…c5ea | Sum (RPC) | Allthing | Result |
+|---|---|---|---|---|---|
+| Base | 6,668 | 25,857 | 32,525 | 32,525 | matches |
+| Ethereum | 193 | 195 | 388 | 388 | matches |
+| Optimism | 36 | 59 | 95 | 95 | matches |
+| Monad | 58 | 8 | 66 | 66 | matches |
+| Arbitrum | 7 | 12 | 19 | 19 | matches |
+| Celo | 2 | 0 | 2 | 2 | matches |
+| Polygon, Zora, Unichain | 0 | 0 | 0 | 0 | matches |
+
+The shares the profile and its card show, Base 99% and Ethereum 1%, follow from these: the four chains under 1% (0.55% together) are left out, and Base's 32,525 is 98.8% of the 32,913 shown. Solana wasn't counted: production has no keyed Solana endpoint, and the public one refuses the Worker (403). This checks Allthing's reads and sums against the chains; the nonce method itself was checked against Basescan on 18 October.
+
 ## Known errors and fixes
 
 - A rate-limited chain was dropped from the shares without a word, so the chart looked complete. It now says that some chains weren't read.
 - Chains under 1% showed as "<1%" rows. They are now hidden, so the chart shows only chains with a whole percent.
 - For up to a day after that change, the edge kept serving wallet payloads it had cached with the old shares, so a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.29%, on 18 October 2026). The browser now works out the shares from the counts itself.
+- A copy cached before unread chains kept their last good count, with Base unread, was still served a day later (20 October 2026): the first reader of 0xael.eth's profile saw Optimism 58% and Monad 41%, while the copy refreshed behind it. A copy missing a chain is now served from the background for ten minutes at most.
