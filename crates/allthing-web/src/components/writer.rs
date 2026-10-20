@@ -1629,11 +1629,11 @@ pub fn WriterDialog() -> impl IntoView {
                                 {move || failed().unwrap_or_else(|| status().to_owned())}
                             </p>
                             <p class="signin-note muted small">
-                                // The Farcaster app names the account that asks, which here is
-                                // a person's.
+                                // The Farcaster app names the account that asks: Allthing's
+                                // own, so a reader can check it is.
                                 {move || {
                                     (writer.app.get() == Some(ALLTHING_APP_FID))
-                                        .then_some("The Farcaster app shows the request as from @0xael.eth, who makes Allthing. ")
+                                        .then_some("The Farcaster app shows the request as from Allthing, @allthingapp. ")
                                 }}
                                 "Allthing gets a key that can like, recast and post for you, and uses it only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it."
                             </p>

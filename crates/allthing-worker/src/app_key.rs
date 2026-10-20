@@ -6,7 +6,7 @@
 //! It is an EIP-712 signature by the custody address of the account
 //! Allthing asks as over the account's fid, the key and a deadline, in the
 //! domain of Farcaster's SignedKeyRequestValidator. The account is
-//! `ALLTHING_FID` (`wrangler.toml`: its owner's own, @0xael.eth); its custody
+//! `ALLTHING_FID` (`wrangler.toml`: Allthing's own, @allthingapp); its custody
 //! key is the `ALLTHING_CUSTODY_KEY` Worker secret, which controls that whole
 //! account, and is set in Cloudflare only. With `ALLTHING_SPONSOR` set to
 //! `1`, the account also pays the onchain fee, which the Farcaster app takes
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn the_status_names_the_custody_address_never_the_key() {
-        let app = App::new("539854", KEY, None).unwrap();
+        let app = App::new("3356318", KEY, None).unwrap();
         assert_eq!(app.address(), ADDRESS);
         assert!(!app.address().contains(&KEY[2..]));
     }
