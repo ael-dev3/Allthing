@@ -5111,6 +5111,18 @@ p.jumbo .emoji img {
   margin-right: auto;
 }
 
+/* While the cron catches up after a deploy or an outage: how far it has
+   read, above the counts. */
+.dau-behind {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: rgba(185, 130, 42, 0.1);
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
 .dau-card .dau-note {
   margin: 8px 0 0;
   padding: 8px 10px;
