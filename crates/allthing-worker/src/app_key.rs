@@ -3,13 +3,14 @@
 //! `SignedKeyRequest` that the Farcaster app shows as Allthing's request,
 //! and that the key registry on OP Mainnet checks before it adds the key.
 //!
-//! It is an EIP-712 signature by the custody address of Allthing's own
-//! Farcaster account over the account's fid, the key and a deadline, in the
+//! It is an EIP-712 signature by the custody address of the account
+//! Allthing asks as over the account's fid, the key and a deadline, in the
 //! domain of Farcaster's SignedKeyRequestValidator. The account is
-//! `ALLTHING_FID`; its custody key is the `ALLTHING_CUSTODY_KEY` Worker
-//! secret. With `ALLTHING_SPONSOR` set to `1`, the account also pays the
-//! onchain fee, which the Farcaster app takes in warps: a second
-//! signature, EIP-191, over the first.
+//! `ALLTHING_FID` (`wrangler.toml`: its owner's own, @0xael.eth); its custody
+//! key is the `ALLTHING_CUSTODY_KEY` Worker secret, which controls that whole
+//! account, and is set in Cloudflare only. With `ALLTHING_SPONSOR` set to
+//! `1`, the account also pays the onchain fee, which the Farcaster app takes
+//! in warps: a second signature, EIP-191, over the first.
 //!
 //! The custody key only endorses keys here. Readers' keys are made and kept
 //! by their browsers, so the Worker never sees them and can't sign anything
@@ -53,6 +54,13 @@ impl App {
 
     pub fn sponsors(&self) -> bool {
         self.sponsor
+    }
+
+    /// The custody key's address, to check that it is the account's (the ID
+    /// registry's custody address for `fid`): public, unlike the key.
+    pub fn address(&self) -> String {
+        let point = self.custody.verifying_key().to_sec1_point(false);
+        hex_encode(&Keccak256::digest(&point.as_bytes()[1..])[12..])
     }
 
     /// The signed key request for `key`, good until `deadline` (Unix
@@ -142,6 +150,13 @@ mod tests {
     fn address_of(key: &SigningKey) -> String {
         let point = key.verifying_key().to_sec1_point(false);
         hex_encode(&Keccak256::digest(&point.as_bytes()[1..])[12..])
+    }
+
+    #[test]
+    fn the_status_names_the_custody_address_never_the_key() {
+        let app = App::new("539854", KEY, None).unwrap();
+        assert_eq!(app.address(), ADDRESS);
+        assert!(!app.address().contains(&KEY[2..]));
     }
 
     #[test]

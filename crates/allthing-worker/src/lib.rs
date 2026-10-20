@@ -354,11 +354,17 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // Whether the GIF picker has KLIPY's key (the KLIPY_API_KEY
         // secret), never the key.
         "gifs": { "keyed": auth::klipy_key(env).is_some() },
-        // Whether readers can approve an app key to like and recast with
-        // (the ALLTHING_FID and ALLTHING_CUSTODY_KEY secrets), and which
-        // account asks; never the key.
+        // Whether readers can approve an app key to write with (the
+        // ALLTHING_FID variable and the ALLTHING_CUSTODY_KEY secret), which
+        // account asks, and the custody address of the key set, to check
+        // against the account's; never the key.
         "writes": match app_key::app(env) {
-            Some(app) => serde_json::json!({ "ready": true, "app_fid": app.fid, "sponsored": app.sponsors() }),
+            Some(app) => serde_json::json!({
+                "ready": true,
+                "app_fid": app.fid,
+                "address": app.address(),
+                "sponsored": app.sponsors(),
+            }),
             None => serde_json::json!({ "ready": false }),
         },
     });

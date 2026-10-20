@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Handing a write to the Farcaster app. Allthing has no Farcaster account
-//! and no key of its own, so where it doesn't write for the reader (signed
-//! out, or where the Worker endorses no keys, as on allthing.social), a like,
+//! Handing a write to the Farcaster app. Where Allthing doesn't write for
+//! the reader (signed out, or where the Worker endorses no keys: on
+//! allthing.social, until the `ALLTHING_CUSTODY_KEY` secret is set), a like,
 //! a recast, a follow, a delete or a Pepe reaction opens this dialog. It
 //! sends the reader to the cast, the profile or a reply ready to post, in
 //! the Farcaster app (`allthing_core::compose::cast_url` and the like), to
