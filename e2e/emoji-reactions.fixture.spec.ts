@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
 import { approvedKey, cast as castOf, envelope, removed, signIn, type Envelope } from "./helpers/farcaster";
 
 /*
@@ -202,5 +202,19 @@ test("at 390, React's picker fits the screen and a tap reacts", async ({ browser
   await expect.poll(() => sent.length).toBe(1);
   expect(castOf(sent[0]).text).toBe(":pepe_no:");
   await expect(panel).toBeHidden();
+  // A tap on its chip takes it back, and the chip looks like any other
+  // again: a phone keeps :hover on what was last tapped, which mustn't look
+  // like a reaction of the reader's.
+  const no = chips(page).filter({ has: page.locator('img[src$="pepe_no.webp"]') });
+  const heart = chips(page).filter({ has: page.locator('img[src$="pepe_heart_hug.webp"]') });
+  await expect(no).toHaveAttribute("aria-pressed", "true");
+  await no.tap();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(removed(sent[1])).toBe(sent[0].hash);
+  await expect(no).toHaveAttribute("aria-pressed", "false");
+  // The tap's :hover lands on the chip a moment later, and stays.
+  await expect.poll(() => no.evaluate((el) => el.matches(":hover"))).toBe(true);
+  const look = (chip: Locator) => chip.evaluate((el) => [getComputedStyle(el).borderColor, getComputedStyle(el).color]);
+  expect(await look(no)).toEqual(await look(heart));
   await context.close();
 });
