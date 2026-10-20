@@ -4194,6 +4194,24 @@ p.jumbo .emoji img {
   gap: 10px;
 }
 
+/* The bar while the composer's code comes, the first time it opens: the
+   post button's box, quiet, so nothing moves when the bar comes. */
+.compose-post.compose-loading,
+.compose-post.compose-loading:hover {
+  color: var(--ink-3);
+  background: var(--paper-2);
+  border-color: var(--line);
+  cursor: progress;
+}
+
+/* Where a part of a page (the composer's bar, React's picker) couldn't be
+   fetched. */
+.part-unloaded {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
 .gif-button {
   font: 700 12.5px/1 var(--font-ui);
   letter-spacing: 0.04em;
@@ -5418,6 +5436,13 @@ p.jumbo .emoji img {
 .react-panel .emoji-picker {
   border: 0;
   background: none;
+}
+
+/* React's picker while its code comes, the first time it opens. */
+.react-pending {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
 }
 
 .reaction-chips {

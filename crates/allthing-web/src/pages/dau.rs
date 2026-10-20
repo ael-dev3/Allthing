@@ -104,7 +104,7 @@ pub fn DauPage() -> impl IntoView {
                 None => loading().into_any(),
                 Some(Err(Failure::Busy { .. })) => view! { <NotCounted/> }.into_any(),
                 Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
-                Some(Ok(fetched)) => crate::split::lazy_view(loading, dashboard(fetched.data.as_ref().clone())).into_any(),
+                Some(Ok(fetched)) => crate::split::lazy_page(loading, dashboard(fetched.data.as_ref().clone())).into_any(),
             }}
         </section>
     }
