@@ -68,7 +68,7 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await expect(search).toBeFocused();
   // The pack's grid; the recently used have one of their own.
   const tiles = picker.locator(".emoji-results > .emoji-grid .emoji-tile");
-  await expect(tiles).toHaveCount(179);
+  await expect(tiles).toHaveCount(219);
   await expect(picker.getByRole("heading", { name: "Recently used" })).toHaveCount(0);
   // Under its groups' headings, with a bar of the groups, the first marked.
   await expect(picker.getByRole("heading", { level: 4 })).toHaveText(GROUPS);
