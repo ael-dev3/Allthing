@@ -32,8 +32,11 @@ fn names_promo_site(lower: &str) -> bool {
 /// gig-bot as it is written in text, usernames and hosts.
 const GIG_BOT: &[&str] = &["gig-bot", "gigbot", "gig_bot"];
 
+/// gig-bot as above, or as two words one after the other ("Gig Bot 2.0",
+/// "gig  bot", a line break between).
 fn mentions_gig_bot(lower: &str) -> bool {
-    GIG_BOT.iter().any(|name| lower.contains(name))
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    GIG_BOT.iter().any(|name| lower.contains(name)) || words.windows(2).any(|pair| pair == ["gig", "bot"])
 }
 
 /// A link that is spam by itself: an app on `vercel.app`, a gig-bot host, or
@@ -110,6 +113,14 @@ mod tests {
         assert!(is_spam("hello @someone", [], ["gig-bot"]));
         assert!(is_spam("", ["https://gig-bot.xyz/claim"], []));
         assert!(!text("I played a gig last night, what a bot of a crowd"));
+        // As two words, as these casts on allthing.social wrote it.
+        assert!(text("🚀 New Task on Gig Bot 2.0!\n\n🎁 Reward: $0.25 in DEGEN per eligible user"));
+        assert!(text("Check out Gig Bot 2.0"));
+        assert!(text("🚀 Grow Your Project with Gig Bot 2.0! 💙"));
+        assert!(text("what happened to gig  bot?"));
+        assert!(text("Gig\nBot is back"));
+        assert!(!text("a gigabit bot"));
+        assert!(!text("my gig, then a bot battle"));
     }
 
     #[test]
