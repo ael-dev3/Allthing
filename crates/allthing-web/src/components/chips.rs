@@ -121,20 +121,29 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
     );
     let likes = reaction_stat(&cast, ReactionKind::Likes, cast.likes, who);
     let recasts = reaction_stat(&cast, ReactionKind::Recasts, cast.recasts, who);
+    // With the reader's replies handed to the Farcaster app since, at once.
+    let (n, pending) = replies_shown(&cast.hash, cast.replies);
     let replies = if cast.replies == 0 {
-        view! { <span class="stat stat-replies">{stat_body(BUBBLE, 0, " reply", " replies")}</span> }.into_any()
+        view! {
+            <span class=move || format!("stat stat-replies{}", if pending.get() { " pending" } else { "" })>
+                {move || stat_body(BUBBLE, n.get(), " reply", " replies")}
+            </span>
+        }
+        .into_any()
     } else {
-        let n = cast.replies;
         let target = reply_href.unwrap_or_else(|| cast_href(&cast.hash));
         let hash = cast.hash.clone();
         view! {
             <Popover
                 label="Replies"
-                trigger_label=format!("{} {}: preview", compact_number(n), if n == 1 { "reply" } else { "replies" })
+                trigger_label=Signal::derive(move || {
+                    let n = n.get();
+                    format!("{} {}: preview", compact_number(n), if n == 1 { "reply" } else { "replies" })
+                })
                 trigger_class="stat stat-replies"
                 hover=true
                 on_activate=Callback::new(move |()| navigate(&target, Default::default()))
-                trigger=move || stat_body(BUBBLE, n, " reply", " replies")
+                trigger=move || view! { <span class="stat-body" class:pending=pending>{move || stat_body(BUBBLE, n.get(), " reply", " replies")}</span> }
                 content=move || view! { <RepliesPreview hash=hash.clone()/> }
             />
         }
@@ -143,6 +152,25 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
     // The ranking note is for screen readers: a native tooltip on the row
     // would sit on top of the counts' own popovers.
     view! { <div class="engagement">{likes}{recasts}{replies}<span class="visually-hidden">{title}</span></div> }
+}
+
+/// The reply count of the cast `hash`, `read` as the page has it, with the
+/// reader's replies handed to the Farcaster app since, and whether one of
+/// those isn't posted yet.
+pub fn replies_shown(hash: &str, read: u64) -> (Signal<u64>, Signal<bool>) {
+    #[cfg(not(feature = "static-host"))]
+    if let Some(writer) = crate::components::writer::use_writer() {
+        // Memos: the reader's likes loading, or any other change of theirs,
+        // doesn't redraw every card's count.
+        let hash = hash.to_ascii_lowercase();
+        let pending = {
+            let hash = hash.clone();
+            Memo::new(move |_| writer.replying(&hash))
+        };
+        return (Memo::new(move |_| writer.replies_shown(&hash, read)).into(), pending.into());
+    }
+    let _ = hash;
+    (Signal::stored(read), Signal::stored(false))
 }
 
 /// A like or recast: its icon, then its count. Pointing at either previews
@@ -234,6 +262,8 @@ fn acting_stat(
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
     let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
+    let key = hash.clone();
+    let pending = Memo::new(move |_| writer.pending_reaction(&key, reaction));
     let hands_off = Memo::new(move |_| writer.hands_off());
     let shows_mine = Memo::new(move |_| writer.shows_mine());
     let lead = ViewFn::from(move || {
@@ -256,7 +286,9 @@ fn acting_stat(
         }
     });
     view! {
-        <span class=move || format!("stat {class} acting{}", if mine.get() { " mine" } else { "" })>
+        <span class=move || {
+            format!("stat {class} acting{}{}", if mine.get() { " mine" } else { "" }, if pending.get() { " pending" } else { "" })
+        }>
             {count_stat(kind, shown.into(), hash, who, lead)}
         </span>
     }

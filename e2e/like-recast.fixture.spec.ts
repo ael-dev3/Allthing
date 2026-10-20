@@ -223,7 +223,7 @@ test("on a server that endorses no keys, a signed-in reader likes and recasts in
   await expect(recast).toHaveAttribute("aria-pressed", "false");
   await recast.click();
   const handOff = page.getByRole("dialog", { name: "Recast in Farcaster" });
-  await expect(handOff).toContainText("The Farcaster app opens this cast. Recast it there.");
+  await expect(handOff.locator(".handoff-line")).toHaveCount(0);
   await expect(handOff.getByRole("link", { name: /Open on farcaster\.xyz/ })).toHaveAttribute("href", `https://farcaster.xyz/alice/${first.hash.slice(0, 10)}`);
   // The count is as it was, and no key is asked for.
   await page.keyboard.press("Escape");

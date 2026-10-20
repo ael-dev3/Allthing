@@ -109,6 +109,9 @@ pub fn PostPage() -> impl IntoView {
                 sort_thread(&mut replies, sort.get());
                 let shown = count_nodes(&replies);
                 let path = cast_href(&hash);
+                let mut in_thread = std::collections::HashSet::from([cast.hash.to_ascii_lowercase()]);
+                thread_hashes(&replies, &mut in_thread);
+                let (count, _) = crate::components::chips::replies_shown(&cast.hash, cast.replies.max(shown as u64));
                 view! {
                     <Columns>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
@@ -116,7 +119,7 @@ pub fn PostPage() -> impl IntoView {
                         <StaleNotice stale/>
                         <section class="replies" aria-label="Replies">
                             <div class="replies-head">
-                                <h2>{if cast.replies.max(shown as u64) == 1 { "Reply" } else { "Replies" }}<span class="num">{full_number(cast.replies.max(shown as u64))}</span></h2>
+                                <h2>{move || if count.get() == 1 { "Reply" } else { "Replies" }}<span class="num">{move || full_number(count.get())}</span></h2>
                                 <nav class="sort-tabs" aria-label="Sort replies">
                                     {CommentSort::ALL
                                         .into_iter()
@@ -127,6 +130,7 @@ pub fn PostPage() -> impl IntoView {
                                         .collect_view()}
                                 </nav>
                             </div>
+                            {crate::components::outgoing_replies(in_thread)}
                             {if replies.is_empty() {
                                 view! { <p class="empty">"No replies yet."</p> }.into_any()
                             } else {
@@ -234,5 +238,13 @@ fn PostedVia(cast: Cast, notes: Notes) -> impl IntoView {
         }
         .into_any(),
         None => ().into_any(),
+    }
+}
+
+/// The hashes of `nodes` and their replies, lowercase.
+fn thread_hashes(nodes: &[allthing_core::model::ThreadNode], into: &mut std::collections::HashSet<String>) {
+    for node in nodes {
+        into.insert(node.cast.hash.to_ascii_lowercase());
+        thread_hashes(&node.children, into);
     }
 }

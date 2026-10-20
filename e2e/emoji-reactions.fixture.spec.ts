@@ -87,7 +87,7 @@ test("a post's emoji replies gather as chips, each account once, most first", as
   await expect(page.locator(".post").getByRole("button", { name: "React to @alice's cast with an emoji" })).toBeVisible();
   await chips(page).first().click();
   const handOff = page.getByRole("dialog", { name: "React in Farcaster" });
-  await expect(handOff).toContainText("The Farcaster app opens a reply with :pepe_heart_hug:, ready to post.");
+  await expect(handOff).toContainText("A reply with :pepe_heart_hug:, ready to post.");
   const url = new URL((await handOff.getByRole("link", { name: /Open on farcaster\.xyz/ }).getAttribute("href"))!);
   expect(url.origin + url.pathname).toBe("https://farcaster.xyz/~/compose");
   expect(url.searchParams.get("text")).toBe(":pepe_heart_hug:");

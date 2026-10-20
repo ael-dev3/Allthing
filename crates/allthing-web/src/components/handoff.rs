@@ -33,67 +33,55 @@ thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
 }
 
-/// A write to hand off: the dialog's title, what the reader does in the
-/// app, and the link that opens it there.
+/// A write to hand off: the dialog's title, a line on what to do in the
+/// app where the title doesn't say it all, and the link that opens it there.
 #[derive(Clone)]
 pub struct Ask {
     pub title: String,
-    pub line: String,
+    pub line: Option<String>,
     pub url: String,
     /// A draft from the composer: cleared, and the composer closed, once it
     /// has gone to the app.
     pub done: Option<Callback<()>>,
+    /// Closed without going to the app: what the write shows here is taken
+    /// back (`Writer::hand_off`).
+    pub dismissed: Option<Dismissed>,
 }
 
+/// Run when a hand-off closes without going to the app. Not a `Callback`:
+/// what opened it may be gone by then.
+pub type Dismissed = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 impl Ask {
-    fn new(title: impl Into<String>, line: impl Into<String>, url: String) -> Ask {
-        Ask { title: title.into(), line: line.into(), url, done: None }
+    fn new(title: impl Into<String>, line: Option<String>, url: String) -> Ask {
+        Ask { title: title.into(), line, url, done: None, dismissed: None }
     }
 
     /// A like, or, for a cast the reader likes, taking it back.
     pub fn like(url: String, liked: bool) -> Ask {
-        if liked {
-            Ask::new("Unlike in Farcaster", "The Farcaster app opens this cast. Unlike it there.", url)
-        } else {
-            Ask::new("Like in Farcaster", "The Farcaster app opens this cast. Like it there.", url)
-        }
+        Ask::new(if liked { "Unlike in Farcaster" } else { "Like in Farcaster" }, None, url)
     }
 
     /// A recast, or, for a cast the reader recasted, undoing it.
     pub fn recast(url: String, recasted: bool) -> Ask {
-        if recasted {
-            Ask::new("Undo recast in Farcaster", "The Farcaster app opens this cast. Undo your recast there.", url)
-        } else {
-            Ask::new("Recast in Farcaster", "The Farcaster app opens this cast. Recast it there.", url)
-        }
+        Ask::new(if recasted { "Undo recast in Farcaster" } else { "Recast in Farcaster" }, None, url)
     }
 
     pub fn follow(url: String, username: &str, following: bool) -> Ask {
         let verb = if following { "Unfollow" } else { "Follow" };
-        Ask::new(
-            format!("{verb} in Farcaster"),
-            format!("The Farcaster app opens @{username}'s profile. {verb} them there."),
-            url,
-        )
+        Ask::new(format!("{verb} @{username} in Farcaster"), None, url)
     }
 
     pub fn delete(url: String, noun: &str) -> Ask {
-        Ask::new(
-            "Delete in Farcaster",
-            format!("The Farcaster app opens your {noun}. Delete it from its menu there."),
-            url,
-        )
+        Ask::new("Delete in Farcaster", Some(format!("Delete your {noun} from its menu there.")), url)
     }
 
     pub fn react(url: String, code: &str) -> Ask {
-        Ask::new("React in Farcaster", format!("The Farcaster app opens a reply with :{code}:, ready to post."), url)
+        Ask::new("React in Farcaster", Some(format!("A reply with :{code}:, ready to post.")), url)
     }
 
     pub fn post(url: String, noun: &str, done: Callback<()>) -> Ask {
-        Ask {
-            done: Some(done),
-            ..Ask::new("Post in Farcaster", format!("The Farcaster app opens your {noun}, ready to post."), url)
-        }
+        Ask { done: Some(done), ..Ask::new("Post in Farcaster", Some(format!("Your {noun}, ready to post.")), url) }
     }
 }
 
@@ -111,6 +99,14 @@ impl HandOff {
     pub fn open(self, ask: Ask) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
         self.ask.set(Some(ask));
+    }
+
+    /// Close without going to the app: the reader changed their mind.
+    pub fn dismiss(self) {
+        if let Some(dismissed) = self.ask.with_untracked(|ask| ask.as_ref().and_then(|ask| ask.dismissed.clone())) {
+            dismissed();
+        }
+        self.close();
     }
 
     /// Close, if it still shows the hand-off to `url`: done in the app.
@@ -166,7 +162,7 @@ pub fn HandOffDialog() -> impl IntoView {
         match ev.key().as_str() {
             "Escape" => {
                 ev.prevent_default();
-                hand_off.close();
+                hand_off.dismiss();
             }
             "Tab" => {
                 if let Some(root) = dialog.get_untracked() {
@@ -200,17 +196,17 @@ pub fn HandOffDialog() -> impl IntoView {
             view! {
                 <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
                     if ev.target() == ev.current_target() {
-                        hand_off.close();
+                        hand_off.dismiss();
                     }
                 }>
                     <div class="modal signin-modal handoff-modal" role="dialog" aria-modal="true" aria-labelledby="handoff-title" node_ref=dialog>
                         <header class="modal-head">
                             <h2 id="handoff-title">{ask.title.clone()}</h2>
-                            <button type="button" class="modal-close" aria-label="Close" on:click=move |_| hand_off.close()>"×"</button>
+                            <button type="button" class="modal-close" aria-label="Close" on:click=move |_| hand_off.dismiss()>"×"</button>
                         </header>
                         <div class="modal-body signin-body">
                             {code.map(|code| view! {
-                                <p class="signin-intro">"Scan the code with your phone's camera."</p>
+                                <p class="signin-intro">"Scan with your phone."</p>
                                 <div class="qr-frame">
                                     {move || match code.get() {
                                         None => view! { <span class="qr-loading" aria-hidden="true"></span> }.into_any(),
@@ -224,7 +220,7 @@ pub fn HandOffDialog() -> impl IntoView {
                                     }}
                                 </div>
                             })}
-                            <p class="handoff-line">{ask.line.clone()}</p>
+                            {ask.line.clone().map(|line| view! { <p class="handoff-line">{line}</p> })}
                             <a
                                 class="button handoff-open"
                                 href=ask.url.clone()

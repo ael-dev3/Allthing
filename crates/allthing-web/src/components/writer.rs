@@ -21,7 +21,7 @@ use allthing_core::app_key::{
 };
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
-use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Submitted};
+use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Sent, Submitted};
 use allthing_core::provenance::{base64_encode, hex_encode};
 use allthing_core::scheduled::{SCHEDULED_PATH, Schedule, ScheduledCast};
 use allthing_core::siwf::{self, QrCode, QrRequest};
@@ -35,7 +35,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::chips::Avatar;
-use crate::components::handoff::{Ask, HandOff, use_hand_off};
+use crate::components::handoff::{Ask, Dismissed, HandOff, use_hand_off};
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
 use crate::util::{cast_href, document, local_time, scheduled_href, trap_tab};
@@ -58,9 +58,13 @@ const TIMEOUT_MS: i32 = 15_000;
 const NOTICE_MS: i32 = 6000;
 /// After a write goes to the Farcaster app, how often the node is asked
 /// whether the reader did it there (and at once when the page is back in
-/// view), and for how long.
+/// view): every 3 s for a minute, then every 10 s; and for how long. A
+/// cast takes longer to write there than a like takes to tap.
 const WATCH_MS: i32 = 3000;
+const WATCH_SLOW_MS: i32 = 10_000;
+const SLOW_AFTER_MS: f64 = 60_000.0;
 const WATCH_FOR_MS: f64 = 180_000.0;
+const POSTING_FOR_MS: f64 = 600_000.0;
 /// The site's other tabs hear on this when a key is approved or forgotten.
 const TABS: &str = "allthing-keys";
 /// The casts the reader deleted, kept for the tab: a page read from a cache
@@ -124,6 +128,11 @@ struct Mine {
     /// hash, and the casts a reaction is being sent to.
     emoji: HashMap<String, Vec<&'static Emoji>>,
     reacting: HashSet<String>,
+    /// Writes handed to the Farcaster app that show here before the node
+    /// has them, by what they are about (`Expect::about`).
+    pending: HashSet<String>,
+    /// Casts handed to the Farcaster app this visit, oldest first.
+    outgoing: Vec<Outgoing>,
 }
 
 impl Mine {
@@ -153,17 +162,28 @@ struct Notice {
     link: Option<(String, &'static str)>,
 }
 
-/// What a write handed to the Farcaster app asks the reader to do there:
-/// once the node has it, it shows here as if done here.
+/// What a write handed to the Farcaster app asks the reader to do there.
+/// Signed in, it shows here at once, as theirs but not done yet
+/// (`pending`), and as done once the node has it.
 #[derive(Clone)]
 pub enum Expect {
     /// Their like or recast of `target`, now `on`.
     Reaction { target: CastId, kind: Reaction, on: bool },
     /// Their follow of `fid`, now `on`.
     Follow { fid: u64, on: bool },
-    /// One of their casts, gone.
+    /// One of their casts, gone: shown once it is, not before.
     Deleted { target: CastId },
+    /// Their emoji reaction to `target`: a reply that is the emoji.
+    Reacted { target: CastId, emoji: &'static Emoji },
+    /// A cast, a reply or a quote. `settle` hears whether it was posted,
+    /// for the composer to let the draft go, or to have it back.
+    Posted { cast: Outgoing, settle: Option<Settle> },
 }
+
+/// What the composer does once its draft, handed to the Farcaster app, is
+/// posted there (`true`), or isn't in time (`false`). Not a `Callback`: the
+/// composer that made it may be gone by then.
+pub type Settle = std::sync::Arc<dyn Fn(bool) + Send + Sync>;
 
 impl Expect {
     /// What it is about: a newer hand-off of the same takes its place.
@@ -172,8 +192,46 @@ impl Expect {
             Expect::Reaction { target, kind, .. } => format!("{kind:?} {}", hex_encode(&target.hash)),
             Expect::Follow { fid, .. } => format!("follow {fid}"),
             Expect::Deleted { target } => format!("delete {}", hex_encode(&target.hash)),
+            Expect::Reacted { target, emoji } => format!("react {} {}", hex_encode(&target.hash), emoji.code),
+            Expect::Posted { cast, .. } => format!("post {}", cast.id),
         }
     }
+}
+
+/// A cast handed to the Farcaster app to post, shown here as the reader's
+/// at once (`components::outgoing`), and as posted once the node has it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Outgoing {
+    /// Which hand-off it is.
+    pub id: u64,
+    pub sent: Sent,
+    pub text: String,
+    /// The GIF it embeds, as its tile.
+    pub image: Option<String>,
+    /// Whose cast it quotes, or replies to.
+    pub quoting: Option<String>,
+    pub replying_to: Option<String>,
+    /// The channel it goes to.
+    pub channel: Option<String>,
+    /// For a reply, its cast's reply count when it went.
+    pub replies_before: u64,
+    /// Its hash, once the node has it.
+    pub hash: Option<String>,
+}
+
+/// How to take back what a hand-off shows before it's done.
+enum Undo {
+    Reaction { key: (String, Reaction), before: Option<bool> },
+    Follow { fid: u64, before: Option<bool> },
+    Reacted { hash: String, emoji: &'static Emoji },
+    Posted { id: u64, settle: Option<Settle> },
+}
+
+/// What the node says of a hand-off: not yet, or done there (with the
+/// cast it posted, for a cast).
+enum Landed {
+    No,
+    Yes(Option<String>),
 }
 
 /// The reader's likes, recasts and casts, held by the app.
@@ -216,14 +274,18 @@ thread_local! {
     /// The last timestamp each like or recast was sent with: a message that
     /// undoes another goes out at least a second later, so it wins.
     static SENT_AT: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
-    /// The page came back into view since the last poll: poll at once.
-    static WOKEN: Cell<bool> = const { Cell::new(false) };
+    /// Moves on when the page comes back into view: every poll waiting
+    /// then asks at once.
+    static WAKES: Cell<u64> = const { Cell::new(0) };
     static NOTICE_RUN: Cell<u64> = const { Cell::new(0) };
     static TABS_CHANNEL: RefCell<Option<web_sys::BroadcastChannel>> = const { RefCell::new(None) };
     /// The hand-offs being looked for on the node, by what they are about,
     /// and the run each is.
     static WATCHES: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
     static WATCH_RUN: Cell<u64> = const { Cell::new(0) };
+    /// How to take back what each shows until it lands, by what it is about,
+    /// with the run that showed it.
+    static UNDO: RefCell<HashMap<String, (u64, Undo)>> = RefCell::new(HashMap::new());
 }
 
 pub fn use_writer() -> Option<Writer> {
@@ -362,13 +424,30 @@ impl Writer {
                 self.connect();
             }
             Can::Checking => PENDING.with(|p| *p.borrow_mut() = Some((Box::new(then), ask, expect))),
-            Can::No => {
-                let url = ask.url.clone();
-                self.hand_off.open(ask);
-                if let Some(expect) = expect {
-                    self.watch(expect, url);
-                }
+            Can::No => self.hand_off(ask, expect),
+        }
+    }
+
+    /// Hand a write to the Farcaster app: the dialog opens with `ask`, and,
+    /// signed in, what it asks for (`expect`) shows here at once, as theirs
+    /// but not done yet, until the node has it. Closing the dialog without
+    /// going to the app takes it back; it still shows if it lands.
+    pub fn hand_off(self, ask: Ask, expect: Option<Expect>) {
+        match expect.filter(|_| self.fid().is_some()) {
+            Some(expect) => {
+                let (about, run) = self.went(expect, ask.url.clone());
+                let dismissed: Dismissed = std::sync::Arc::new(move || self.take_back(&about, run));
+                self.hand_off.open(Ask { dismissed: Some(dismissed), ..ask });
             }
+            None => self.hand_off.open(ask),
+        }
+    }
+
+    /// A write that went to the Farcaster app by a link of its own, as a
+    /// phone's "Post in Farcaster" does: as `hand_off`, without the dialog.
+    pub fn went_to_app(self, expect: Expect, url: String) {
+        if self.fid().is_some() {
+            self.went(expect, url);
         }
     }
 
@@ -436,7 +515,7 @@ impl Writer {
         }
         if self.can.get_untracked() != Can::Yes {
             let again = ask.clone();
-            self.when_ready(move || self.react(target, emoji, again), ask, None);
+            self.when_ready(move || self.react(target, emoji, again), ask, Some(Expect::Reacted { target, emoji }));
             return;
         }
         self.mine.update(|m| {
@@ -629,40 +708,150 @@ impl Writer {
         }
     }
 
-    /// After a write went to the Farcaster app (`url`): ask the node every
-    /// few seconds, and at once when the page is back in view, whether the
-    /// reader did it there; once they have, it shows here, the dialog
-    /// closes if it's still open, and a notice says so. Asked first right
-    /// away, before the reader can have: then it was so already, and the
-    /// page was behind (a like older than their latest). A newer hand-off
-    /// of the same takes its place; signing out, or a few minutes, ends it.
-    fn watch(self, expect: Expect, url: String) {
-        let Some(reader) = self.fid() else { return };
-        let about = expect.about();
+    /// Show `expect` at once as the reader's, not done yet, and look for it
+    /// on the node: what it is about, and the run it is.
+    fn went(self, mut expect: Expect, url: String) -> (String, u64) {
         let run = WATCH_RUN.with(|r| {
             r.set(r.get() + 1);
             r.get()
         });
+        if let Expect::Posted { cast, .. } = &mut expect {
+            cast.id = run;
+        }
+        let about = expect.about();
+        // A newer hand-off of the same, taken back, goes back to where the
+        // first began.
+        let earlier = UNDO.with(|u| u.borrow_mut().remove(&about)).map(|(_, undo)| undo);
+        let undo = self
+            .mine
+            .try_update(|m| {
+                let undo = match &expect {
+                    Expect::Reaction { target, kind, on } => {
+                        let key = (hex_encode(&target.hash), *kind);
+                        let before = m.changed.insert(key.clone(), *on);
+                        Some(Undo::Reaction { key, before })
+                    }
+                    Expect::Follow { fid, on } => {
+                        let before = m.follow_changed.insert(*fid, *on);
+                        Some(Undo::Follow { fid: *fid, before })
+                    }
+                    Expect::Deleted { .. } => None,
+                    Expect::Reacted { target, emoji } => {
+                        let hash = hex_encode(&target.hash);
+                        let reacted = m.emoji.entry(hash.clone()).or_default();
+                        (!reacted.contains(emoji)).then(|| {
+                            reacted.push(emoji);
+                            Undo::Reacted { hash, emoji }
+                        })
+                    }
+                    Expect::Posted { cast, settle } => {
+                        m.outgoing.push(cast.clone());
+                        Some(Undo::Posted { id: cast.id, settle: settle.clone() })
+                    }
+                };
+                if undo.is_some() {
+                    m.pending.insert(about.clone());
+                }
+                undo
+            })
+            .flatten();
+        if let Some(undo) = earlier.or(undo) {
+            UNDO.with(|u| u.borrow_mut().insert(about.clone(), (run, undo)));
+        }
+        self.watch(expect, url, run);
+        (about, run)
+    }
+
+    /// Take back what a hand-off shows, if it hasn't landed: closed without
+    /// going to the app, or not done there in time.
+    fn take_back(self, about: &str, run: u64) {
+        let Some(undo) = UNDO.with(|u| {
+            let mut undos = u.borrow_mut();
+            if undos.get(about).is_some_and(|(by, _)| *by == run) {
+                undos.remove(about).map(|(_, undo)| undo)
+            } else {
+                None
+            }
+        }) else {
+            return;
+        };
+        let mut settle = None;
+        self.mine.update(|m| {
+            m.pending.remove(about);
+            match undo {
+                Undo::Reaction { key, before } => {
+                    match before {
+                        Some(was) => m.changed.insert(key, was),
+                        None => m.changed.remove(&key),
+                    };
+                }
+                Undo::Follow { fid, before } => {
+                    match before {
+                        Some(was) => m.follow_changed.insert(fid, was),
+                        None => m.follow_changed.remove(&fid),
+                    };
+                }
+                Undo::Reacted { hash, emoji } => {
+                    if let Some(reacted) = m.emoji.get_mut(&hash) {
+                        reacted.retain(|e| *e != emoji);
+                    }
+                }
+                Undo::Posted { id, settle: then } => {
+                    m.outgoing.retain(|cast| cast.id != id);
+                    settle = then;
+                }
+            }
+        });
+        if let Some(settle) = settle {
+            settle(false);
+        }
+    }
+
+    /// Look for a write that went to the Farcaster app (`url`) on the node:
+    /// at once, and then every few seconds and when the page is back in
+    /// view. Once it's there, it shows as done, the dialog closes if it's
+    /// still open, and a notice says so. Found at once, before the reader
+    /// can have done anything, a like or a follow was so already, and the
+    /// page was behind (a like older than their latest). A newer hand-off of
+    /// the same takes its place; signing out ends it; not done in time, what
+    /// shows is taken back.
+    fn watch(self, expect: Expect, url: String, run: u64) {
+        let Some(reader) = self.fid() else { return };
+        let about = expect.about();
         WATCHES.with(|w| w.borrow_mut().insert(about.clone(), run));
         let current =
             move |about: &str| WATCHES.with(|w| w.borrow().get(about) == Some(&run)) && self.fid() == Some(reader);
         let started = js_sys::Date::now();
+        let since = (started / 1000.0) as i64;
+        let window = if matches!(expect, Expect::Posted { .. }) { POSTING_FOR_MS } else { WATCH_FOR_MS };
         spawn_local(async move {
             let mut first = true;
-            while current(&about) && js_sys::Date::now() - started < WATCH_FOR_MS {
+            let mut landed = false;
+            while current(&about) && js_sys::Date::now() - started < window {
                 if !first {
-                    pause(WATCH_MS).await;
+                    pause(if js_sys::Date::now() - started < SLOW_AFTER_MS { WATCH_MS } else { WATCH_SLOW_MS }).await;
                 }
-                if current(&about) && self.landed(reader, &expect).await == Some(true) && current(&about) {
-                    if first {
-                        self.was_so(&expect);
+                if !current(&about) {
+                    break;
+                }
+                if let Some(Landed::Yes(hash)) = self.landed(reader, &expect, since).await
+                    && current(&about)
+                {
+                    UNDO.with(|u| u.borrow_mut().remove(&about));
+                    let already = first && matches!(expect, Expect::Reaction { .. } | Expect::Follow { .. });
+                    if already {
+                        self.was_so(&expect, &about)
                     } else {
-                        self.show(&expect);
+                        self.show(&expect, &about, hash)
                     }
                     self.hand_off.close_if(&url);
+                    landed = true;
                     break;
                 }
                 first = false;
+            }
+            if !landed && current(&about) {
+                self.take_back(&about, run);
             }
             WATCHES.with(|w| {
                 let mut watches = w.borrow_mut();
@@ -673,52 +862,69 @@ impl Writer {
         });
     }
 
-    /// Whether the node has what `expect` asks for from `reader`: `None`
-    /// when it couldn't say.
-    async fn landed(self, reader: u64, expect: &Expect) -> Option<bool> {
+    /// Whether the node has what `expect` asks for from `reader`, posted
+    /// since `since` (Unix seconds) for a cast: `None` when it couldn't say.
+    async fn landed(self, reader: u64, expect: &Expect, since: i64) -> Option<Landed> {
+        let yes = |done: bool| if done { Landed::Yes(None) } else { Landed::No };
+        let posted = |sent: Sent| async move {
+            let (status, body) = fetch("GET", &message::casts_url(reader), None).await.ok()?;
+            let casts = message::latest_casts(status, &body)?;
+            Some(match sent.found(&casts, since) {
+                Some(cast) => Landed::Yes(Some(cast.hash.clone())),
+                None => Landed::No,
+            })
+        };
         match expect {
             Expect::Reaction { target, kind, on } => {
                 let (status, body) = fetch("GET", &message::reaction_url(reader, *kind, target), None).await.ok()?;
-                message::reaction_found(status, &body).map(|found| found == *on)
+                message::reaction_found(status, &body).map(|found| yes(found == *on))
             }
             Expect::Follow { fid, on } => {
                 let (status, body) = fetch("GET", &message::link_url(reader, *fid), None).await.ok()?;
-                message::follows(status, &body).map(|found| found == *on)
+                message::follows(status, &body).map(|found| yes(found == *on))
             }
             Expect::Deleted { target } => {
                 let (status, body) = fetch("GET", &message::cast_url(target), None).await.ok()?;
-                message::cast_gone(status, &body)
+                message::cast_gone(status, &body).map(yes)
             }
+            Expect::Reacted { target, emoji } => {
+                posted(Sent::Reaction { parent: hex_encode(&target.hash), code: emoji.code.to_owned() }).await
+            }
+            Expect::Posted { cast, .. } => posted(cast.sent.clone()).await,
         }
     }
 
     /// Show what the node had before the hand-off, as it says: the button
-    /// turns, and the count, which had it, stays as it is.
-    fn was_so(self, expect: &Expect) {
-        self.mine.update(|m| match expect {
-            Expect::Reaction { target, kind, on } => {
-                let key = (hex_encode(&target.hash), *kind);
-                m.changed.remove(&key);
-                if *on {
-                    m.known.insert(key);
-                } else {
-                    m.known.remove(&key);
+    /// stays turned, and the count, which had it, stays as it was.
+    fn was_so(self, expect: &Expect, about: &str) {
+        self.mine.update(|m| {
+            m.pending.remove(about);
+            match expect {
+                Expect::Reaction { target, kind, on } => {
+                    let key = (hex_encode(&target.hash), *kind);
+                    m.changed.remove(&key);
+                    if *on {
+                        m.known.insert(key);
+                    } else {
+                        m.known.remove(&key);
+                    }
                 }
-            }
-            Expect::Follow { fid, on } => {
-                m.follow_changed.remove(fid);
-                m.follows.insert(*fid, *on);
-            }
-            Expect::Deleted { target } => {
-                m.deleted.insert(hex_encode(&target.hash));
-                remember_deleted(&m.deleted);
+                Expect::Follow { fid, on } => {
+                    m.follow_changed.remove(fid);
+                    m.follows.insert(*fid, *on);
+                }
+                Expect::Deleted { .. } | Expect::Reacted { .. } | Expect::Posted { .. } => {}
             }
         });
-        self.say("Already done in Farcaster.".to_owned());
+        self.say("Already done.".to_owned());
     }
 
-    /// Show what the reader did in the Farcaster app, as if done here.
-    fn show(self, expect: &Expect) {
+    /// Show what the reader did in the Farcaster app as done: `hash` is the
+    /// cast it posted, for a cast.
+    fn show(self, expect: &Expect, about: &str, hash: Option<String>) {
+        self.mine.update(|m| {
+            m.pending.remove(about);
+        });
         let text = match expect {
             Expect::Reaction { target, kind, on } => {
                 self.mine.update(|m| {
@@ -742,10 +948,79 @@ impl Writer {
                     m.deleted.insert(hex_encode(&target.hash));
                     remember_deleted(&m.deleted);
                 });
-                "Deleted. It leaves Farcaster as the network catches up."
+                "Deleted."
+            }
+            Expect::Reacted { target, emoji } => {
+                self.mine.update(|m| {
+                    let reacted = m.emoji.entry(hex_encode(&target.hash)).or_default();
+                    if !reacted.contains(emoji) {
+                        reacted.push(emoji);
+                    }
+                });
+                "Reacted."
+            }
+            Expect::Posted { cast, settle } => {
+                self.mine.update(|m| {
+                    if let Some(sent) = m.outgoing.iter_mut().find(|sent| sent.id == cast.id) {
+                        sent.hash = hash.clone();
+                    }
+                });
+                if let Some(settle) = settle {
+                    settle(true);
+                }
+                match hash {
+                    Some(hash) => return self.posted(&hash),
+                    None => "Posted.",
+                }
             }
         };
         self.say(text.to_owned());
+    }
+
+    /// Whether the reader's like or recast of `hash` shows before it's done
+    /// in the Farcaster app.
+    pub fn pending_reaction(self, hash: &str, kind: Reaction) -> bool {
+        self.mine.with(|m| m.pending.contains(&format!("{kind:?} {hash}")))
+    }
+
+    /// Whether the reader's follow of `fid`, or unfollow, shows before it's
+    /// done in the Farcaster app.
+    pub fn pending_follow(self, fid: u64) -> bool {
+        self.mine.with(|m| m.pending.contains(&format!("follow {fid}")))
+    }
+
+    /// Whether the reader's reaction to `hash` with `emoji` shows before it's
+    /// posted in the Farcaster app.
+    pub fn pending_emoji(self, hash: &str, emoji: &Emoji) -> bool {
+        self.mine.with(|m| m.pending.contains(&format!("react {hash} {}", emoji.code)))
+    }
+
+    /// The casts handed to the Farcaster app this visit, oldest first.
+    pub fn outgoing(self) -> Vec<Outgoing> {
+        self.mine.with(|m| m.outgoing.clone())
+    }
+
+    /// Whether one of the reader's replies to `hash`, handed to the
+    /// Farcaster app, isn't posted yet.
+    pub fn replying(self, hash: &str) -> bool {
+        self.mine.with(|m| {
+            m.outgoing
+                .iter()
+                .any(|c| c.hash.is_none() && matches!(&c.sent, Sent::Reply { parent, .. } if parent == hash))
+        })
+    }
+
+    /// `hash`'s reply count, `read` as the page has it, with the reader's
+    /// replies handed to the Farcaster app since.
+    pub fn replies_shown(self, hash: &str, read: u64) -> u64 {
+        self.mine.with(|m| {
+            let mut mine =
+                m.outgoing.iter().filter(|c| matches!(&c.sent, Sent::Reply { parent, .. } if parent == hash));
+            match mine.next() {
+                Some(first) => read.max(first.replies_before + 1 + mine.count() as u64),
+                None => read,
+            }
+        })
     }
 
     /// Find out whether `fid` can like and recast here: whether the Worker
@@ -784,6 +1059,8 @@ impl Writer {
         KEY.with(|k| k.borrow_mut().take());
         WAITING.with(|w| w.borrow_mut().take());
         PENDING.with(|p| p.borrow_mut().take());
+        // What showed of the reader's hand-offs goes with them.
+        UNDO.with(|u| u.borrow_mut().clear());
         // What was deleted stays deleted, whoever is signed in.
         self.mine.update(|m| *m = Mine { deleted: std::mem::take(&mut m.deleted), ..Mine::default() });
         if self.open.get_untracked() {
@@ -1206,9 +1483,10 @@ async fn fetch(method: &str, url: &str, body: Option<(&str, JsValue)>) -> Result
 
 /// Wait `ms`, or less if the page comes back into view meanwhile.
 async fn pause(ms: i32) {
+    let wakes = WAKES.with(Cell::get);
     let mut waited = 0;
     while waited < ms {
-        if WOKEN.with(|w| w.replace(false)) {
+        if WAKES.with(Cell::get) != wakes {
             return;
         }
         crate::video::sleep(250).await;
@@ -1249,7 +1527,7 @@ pub fn WriterDialog() -> impl IntoView {
     // Back in view (the phone's own app, another tab): ask at once.
     let woken = |_| {
         if !document().hidden() {
-            WOKEN.with(|w| w.set(true));
+            WAKES.with(|w| w.set(w.get() + 1));
         }
     };
     let shown = window_event_listener_untyped("visibilitychange", woken);
@@ -1402,6 +1680,7 @@ pub fn FollowButton(fid: u64, username: String) -> impl IntoView {
                     type="button"
                     class="follow-button"
                     class:following=following
+                    class:pending=move || writer.pending_follow(fid)
                     class:unknown=move || writer.reader().is_some() && known.get().is_none()
                     aria-label=label.clone()
                     aria-pressed=move || writer.reader().is_some().then(|| following().to_string())

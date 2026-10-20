@@ -119,6 +119,7 @@ pub fn ChannelPage() -> impl IntoView {
                         })}
                         <div class="listing-head">{move || view! { <SortTabs path=path.clone() current=sort.get()/> }}</div>
                         <StaleNotice stale/>
+                        {crate::components::outgoing_feed(Some(channel.id.clone()))}
                         <CastList casts notes/>
                     </Columns>
                 }

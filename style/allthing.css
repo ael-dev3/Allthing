@@ -689,6 +689,87 @@ code {
   margin-top: 9px;
 }
 
+/* A write handed to the Farcaster app shows at once, and pulses until
+   Farcaster has it. */
+.stat.acting.pending .act,
+.stat-replies.pending,
+.stat-body.pending > *,
+.reaction-chip.pending,
+.follow-button.pending,
+.cast-card.outgoing:not(.posted) .outgoing-state .icon {
+  animation: handoff-pending 1.4s ease-in-out infinite;
+}
+
+/* The reply count's own box, inside its popover's trigger: laid out as the
+   trigger's children. */
+.stat-body {
+  display: contents;
+}
+
+@keyframes handoff-pending {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* The reader's casts handed to the Farcaster app, where they will be. */
+.outgoing-casts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cast-card.outgoing {
+  border-style: dashed;
+  border-color: rgba(79, 67, 212, 0.35);
+  content-visibility: visible;
+}
+
+.cast-card.outgoing.posted {
+  border-style: solid;
+}
+
+.outgoing-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.outgoing-state .icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cast-card.outgoing.posted .outgoing-state {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.outgoing-image {
+  display: block;
+  max-width: min(100%, 240px);
+  max-height: 240px;
+  margin: 8px 0 2px;
+  border-radius: var(--radius-sm);
+}
+
+.outgoing-quote {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* A reply on its way: no "No replies yet." under it. */
+.outgoing-casts + .empty {
+  display: none;
+}
+
 .quote-chip {
   display: inline-block;
   margin-top: 8px;
@@ -5090,6 +5171,15 @@ p.jumbo .emoji img {
 
   .wordmark {
     background-position: 100% 0;
+  }
+
+  .stat.acting.pending .act,
+  .stat-replies.pending,
+  .stat-body.pending > *,
+  .reaction-chip.pending,
+  .follow-button.pending,
+  .cast-card.outgoing:not(.posted) .outgoing-state .icon {
+    opacity: 0.55;
   }
 }
 

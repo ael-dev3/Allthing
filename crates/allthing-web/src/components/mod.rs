@@ -14,6 +14,8 @@ pub mod favorite;
 pub mod handoff;
 pub mod layout;
 pub mod media;
+#[cfg(not(feature = "static-host"))]
+pub mod outgoing;
 pub mod player;
 pub mod popover;
 pub mod profile_card;
@@ -40,5 +42,36 @@ pub fn deleted(hash: &str) -> leptos::prelude::Signal<bool> {
     {
         let _ = hash;
         leptos::prelude::Signal::stored(false)
+    }
+}
+
+/// The reader's replies, handed to the Farcaster app, to the cast `hashes`
+/// (a post's, and its replies'), above its replies; none in the static
+/// copy, which has no sign-in.
+pub fn outgoing_replies(hashes: std::collections::HashSet<String>) -> leptos::prelude::AnyView {
+    use leptos::prelude::*;
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <outgoing::OutgoingCasts place=outgoing::Place::Replies(hashes)/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = hashes;
+        ().into_any()
+    }
+}
+
+/// The reader's casts and quotes, handed to the Farcaster app, above a
+/// feed: a channel's (`channel`), its own; none in the static copy.
+pub fn outgoing_feed(channel: Option<String>) -> leptos::prelude::AnyView {
+    use leptos::prelude::*;
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <outgoing::OutgoingCasts place=outgoing::Place::Feed(channel)/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = channel;
+        ().into_any()
     }
 }

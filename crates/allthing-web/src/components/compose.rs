@@ -40,7 +40,7 @@ use allthing_core::compose::{
     Draft, Gif, GifKey, GifPage, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path, gifs_url,
 };
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
-use allthing_core::message::MAX_CAST_BYTES;
+use allthing_core::message::{MAX_CAST_BYTES, Sent};
 use allthing_core::model::Cast;
 use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, ScheduledCast};
 use allthing_core::text::mention_names;
@@ -57,7 +57,7 @@ use crate::api;
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
 use crate::components::signin::use_session;
-use crate::components::writer::{Writer, fids_of, use_writer};
+use crate::components::writer::{Expect, Outgoing, Settle, Writer, fids_of, use_writer};
 use crate::util::{
     BASE, can_hover, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab,
 };
@@ -180,6 +180,8 @@ pub struct Composer {
     /// The channel URL of a scheduled cast being changed, whose channel page
     /// the browser may not hold.
     channel_url: RwSignal<Option<String>>,
+    /// For a reply, its cast's reply count as the page read it.
+    replies: RwSignal<u64>,
 }
 
 impl Composer {
@@ -196,6 +198,7 @@ impl Composer {
             when: RwSignal::new(None),
             editing: RwSignal::new(None),
             channel_url: RwSignal::new(None),
+            replies: RwSignal::new(0),
         }
     }
 
@@ -355,6 +358,7 @@ impl Composer {
             }
         };
         let ask = self.hand_off_ask();
+        let expect = self.expect();
         writer.when_ready(
             move || {
                 self.posting.set(true);
@@ -384,7 +388,7 @@ impl Composer {
                 });
             },
             ask,
-            None,
+            Some(expect),
         );
     }
 
@@ -395,6 +399,62 @@ impl Composer {
             Target::Quote(_) => "quote",
             Target::Cast(_) => "cast",
         }
+    }
+
+    /// The draft as it goes to the Farcaster app: what finds it there once
+    /// it's posted, and what shows here meanwhile.
+    fn outgoing(self) -> Outgoing {
+        let draft = self.draft();
+        let text = draft.text.trim().to_owned();
+        let (sent, quoting, replying_to) = match self.target.get_untracked() {
+            Target::Reply(to) => {
+                (Sent::Reply { parent: to.hash.to_ascii_lowercase(), text: text.clone() }, None, Some(to.username))
+            }
+            Target::Quote(of) => (Sent::Quote { quoted: of.hash.to_ascii_lowercase() }, Some(of.username), None),
+            Target::Cast(_) => (Sent::Cast { text: text.clone() }, None, None),
+        };
+        Outgoing {
+            id: 0,
+            sent,
+            text,
+            image: self.gif.with_untracked(|gif| gif.as_ref().map(|g| g.tile.url.clone())),
+            quoting,
+            replying_to,
+            channel: draft.channel,
+            replies_before: self.replies.get_untracked(),
+            hash: None,
+        }
+    }
+
+    /// What the composer does once the draft, handed to the Farcaster app,
+    /// is posted there (`true`): lets it go, if it still holds it. Not
+    /// posted in time, it has it back, closed and holding no other.
+    fn settle(self) -> Settle {
+        let held = (self.target.get_untracked(), self.text.get_untracked(), self.gif.get_untracked());
+        std::sync::Arc::new(move |posted: bool| {
+            let (target, text, gif) = &held;
+            if posted {
+                let holds = self.target.with_untracked(|t| t == target)
+                    && self.text.with_untracked(|t| t == text)
+                    && self.gif.with_untracked(|g| g == gif);
+                if holds {
+                    self.clear();
+                    self.close();
+                }
+            } else if !self.open.get_untracked()
+                && self.text.with_untracked(|t| t.trim().is_empty())
+                && self.gif.with_untracked(Option::is_none)
+            {
+                self.target.set(target.clone());
+                self.text.set(text.clone());
+                self.gif.set(gif.clone());
+            }
+        })
+    }
+
+    /// The draft as a hand-off that shows here until it's posted.
+    fn expect(self) -> Expect {
+        Expect::Posted { cast: self.outgoing(), settle: Some(self.settle()) }
     }
 
     /// The draft, handed to the Farcaster app: once it has gone, it is
@@ -523,6 +583,7 @@ pub fn CastFab() -> impl IntoView {
 pub fn ReplyButton(cast: Cast) -> impl IntoView {
     let composer = use_composer();
     let to = Other::of(&cast);
+    let replies = cast.replies;
     let label = format!("Reply to @{}", to.username);
     view! {
         <button
@@ -531,7 +592,10 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
             aria-label=label
             on:pointerenter=move |_| warm()
             on:focus=move |_| warm()
-            on:click=move |_| composer.start(Target::Reply(to.clone()))
+            on:click=move |_| {
+                composer.replies.set(replies);
+                composer.start(Target::Reply(to.clone()));
+            }
         >
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
             "Reply"
@@ -873,6 +937,7 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
 fn PostLink(composer: Composer) -> impl IntoView {
     let empty = Memo::new(move |_| composer.draft().is_empty());
     let hand_off = use_hand_off();
+    let writer = use_writer();
     move || {
         if empty.get() {
             view! { <button type="button" class="button compose-post" disabled=true>"Post in Farcaster"</button> }
@@ -883,7 +948,10 @@ fn PostLink(composer: Composer) -> impl IntoView {
                     type="button"
                     class="button compose-post"
                     aria-haspopup="dialog"
-                    on:click=move |_| hand_off.open(composer.hand_off_ask())
+                    on:click=move |_| match writer {
+                        Some(writer) => writer.hand_off(composer.hand_off_ask(), Some(composer.expect())),
+                        None => hand_off.open(composer.hand_off_ask()),
+                    }
                 >
                     "Post in Farcaster"
                 </button>
@@ -897,6 +965,9 @@ fn PostLink(composer: Composer) -> impl IntoView {
                     target="_blank"
                     rel="noopener noreferrer"
                     on:click=move |_| {
+                        if let Some(writer) = writer {
+                            writer.went_to_app(composer.expect(), composer.draft().compose_url());
+                        }
                         // After the link has opened.
                         set_timeout(
                             move || {
