@@ -4547,6 +4547,8 @@ p.jumbo .emoji img {
 
 /* The emoji picker: the Pepe pack, still until pointed at. */
 .emoji-picker {
+  /* A held sticker's large preview covers it. */
+  position: relative;
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -4683,17 +4685,66 @@ p.jumbo .emoji img {
   background: var(--accent-soft);
 }
 
-/* Stickers: fewer, larger tiles. */
+/* Stickers: fewer, larger tiles, moving while in view, in a taller panel
+   (four rows on a phone, as on Telegram). A sticker held down shows large;
+   the phone's own menu for a held image stays away. */
 .sticker-grid {
   grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
 }
 
+.emoji-picker.stickers .emoji-results {
+  max-height: min(352px, 42vh);
+}
+
 .sticker-tile {
   height: 80px;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .sticker-tile img {
   height: 68px;
+}
+
+/* On a computer, five larger stickers to a row, as Telegram's panel has. */
+@media (min-width: 641px) {
+  .sticker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  }
+
+  .sticker-tile {
+    height: 100px;
+  }
+
+  .sticker-tile img {
+    height: 88px;
+  }
+}
+
+.sticker-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  border-radius: inherit;
+  background: rgba(251, 250, 246, 0.88);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  animation: pop-in 0.16s var(--ease) both;
+}
+
+.sticker-preview img {
+  display: block;
+  width: auto;
+  height: 160px;
+}
+
+.sticker-preview span {
+  font-size: 13px;
+  color: var(--ink-2);
 }
 
 /* The emoji pointed at, larger, with its shortcode; or a word on what

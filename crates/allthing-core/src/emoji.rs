@@ -369,6 +369,12 @@ impl Sticker {
         format!("{STICKER_DIR}/{}.still.webp", self.code)
     }
 
+    /// It moving in the picker: an animated WebP made from its GIF, the
+    /// same size and about a third of the bytes.
+    pub fn tile(&self) -> String {
+        format!("{STICKER_DIR}/{}.tile.webp", self.code)
+    }
+
     /// What a cast embeds: its GIF at allthing.social.
     pub fn embed(&self) -> String {
         format!("{STICKER_ORIGIN}{}", self.file())
@@ -858,8 +864,8 @@ mod tests {
     }
 
     /// Every sticker has its GIF, 128 px tall at the width the table says,
-    /// and a still of the same size, and a credit with its source; every
-    /// file is one of theirs.
+    /// a still and a moving tile of the same size, and a credit with its
+    /// source; every file is one of theirs.
     #[test]
     fn every_sticker_has_its_files_and_a_credit() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/stickers");
@@ -875,8 +881,14 @@ mod tests {
             assert!(gif.len() <= 300_000, "{} is {} bytes", sticker.code, gif.len());
             let still = fs::read(dir.join("v1").join(format!("{}.still.webp", sticker.code))).unwrap();
             assert_eq!(webp_size(&still), (u32::from(sticker.width), u32::from(STICKER_HEIGHT)), "{}", sticker.code);
+            let tile = fs::read(dir.join("v1").join(format!("{}.tile.webp", sticker.code))).unwrap();
+            assert_eq!(webp_size(&tile), (u32::from(sticker.width), u32::from(STICKER_HEIGHT)), "{}", sticker.code);
+            // Animated (VP8X's animation flag), and lighter than the GIF.
+            assert!(&tile[12..16] == b"VP8X" && tile[20] & 0x02 != 0, "{} doesn't move", sticker.code);
+            assert!(tile.len() < gif.len(), "{}'s tile is {} bytes", sticker.code, tile.len());
             expected.insert(format!("{}.gif", sticker.code));
             expected.insert(format!("{}.still.webp", sticker.code));
+            expected.insert(format!("{}.tile.webp", sticker.code));
             let credit = credits.lines().find(|l| l.starts_with(&format!("| `{}` |", sticker.code)));
             let credit = credit.unwrap_or_else(|| panic!("no credit for {}", sticker.code));
             assert!(credit.contains("| https://7tv.app/emotes/"), "no source for {}", sticker.code);
