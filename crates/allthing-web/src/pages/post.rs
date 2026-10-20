@@ -161,7 +161,7 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
         (crate::components::writer::use_writer(), allthing_core::message::CastId::new(cast.author.fid, &cast.hash))
     {
         Effect::new(move |_| {
-            if writer.ready() {
+            if writer.shows_mine() {
                 writer.look_up(target);
             }
         });

@@ -219,7 +219,8 @@ test("on a server that endorses no keys, a signed-in reader likes and recasts in
   await expect(card(page, first)).toBeVisible();
   await expect.poll(() => calls.writes).toBe(1);
   const recast = card(page, first).getByRole("button", { name: "Recast", exact: true });
-  await expect(recast).not.toHaveAttribute("aria-pressed");
+  // Pressed or not as the reader recasted, in any app: here, not.
+  await expect(recast).toHaveAttribute("aria-pressed", "false");
   await recast.click();
   const handOff = page.getByRole("dialog", { name: "Recast in Farcaster" });
   await expect(handOff).toContainText("The Farcaster app opens this cast. Recast it there.");
