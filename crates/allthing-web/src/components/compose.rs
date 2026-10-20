@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Writing a cast, a reply or a quote, with a GIF, for the signed-in reader.
+//! Writing a cast, a reply or a quote, with a GIF or emoji, for the
+//! signed-in reader.
 //! Cast, at the top right of the front page's feed or a channel's (a round
 //! button over the feed on a phone), starts a cast, in the channel on a
 //! channel page; Reply and Quote under a post or a reply start a reply to it
@@ -17,8 +18,9 @@
 //! in the order KLIPY gives them, in a grid of their own, under a search box
 //! that says "Search KLIPY". The key comes from the Worker
 //! (`/api/v1/gifs/key`, for a signed-in session); without one (no
-//! `KLIPY_API_KEY` secret) the composer has no GIF button. Not in the
-//! static copy, which has no sign-in.
+//! `KLIPY_API_KEY` secret) the composer has no GIF button. Emoji come from
+//! Allthing's own pack (`components::emoji_picker`). Not in the static copy,
+//! which has no sign-in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -28,6 +30,7 @@ use std::time::Duration;
 use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
 use allthing_core::compose::{Draft, Gif, GifKey, GifPage, Quoted, SEARCH_PLACEHOLDER, gif_key_path, gifs_url};
+use allthing_core::emoji;
 use allthing_core::message::MAX_CAST_BYTES;
 use allthing_core::model::Cast;
 use allthing_core::text::mention_names;
@@ -41,9 +44,10 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
 
 use crate::api;
+use crate::components::emoji_picker::{self, EmojiPicker, Pick};
 use crate::components::signin::use_session;
 use crate::components::writer::{Writer, fids_of, use_writer};
-use crate::util::{BASE, document, trap_tab};
+use crate::util::{BASE, document, href, trap_tab};
 
 /// How long typing pauses before a search is sent.
 const DEBOUNCE: Duration = Duration::from_millis(350);
@@ -90,6 +94,25 @@ impl Other {
     }
 }
 
+/// The picker open under the draft, if one is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Picker {
+    Closed,
+    Gifs,
+    Emoji,
+}
+
+impl Picker {
+    /// The button that opens it, for focus to go back to.
+    fn button(self) -> Option<&'static str> {
+        match self {
+            Picker::Closed => None,
+            Picker::Gifs => Some(".gif-button"),
+            Picker::Emoji => Some(".emoji-button"),
+        }
+    }
+}
+
 /// What a draft is for.
 #[derive(Clone, Debug, PartialEq)]
 enum Target {
@@ -107,7 +130,7 @@ pub struct Composer {
     target: RwSignal<Target>,
     text: RwSignal<String>,
     gif: RwSignal<Option<Gif>>,
-    picking: RwSignal<bool>,
+    picker: RwSignal<Picker>,
     /// Being posted with the reader's key, and why it didn't go out.
     posting: RwSignal<bool>,
     error: RwSignal<Option<String>>,
@@ -120,7 +143,7 @@ impl Composer {
             target: RwSignal::new(Target::Cast(None)),
             text: RwSignal::new(String::new()),
             gif: RwSignal::new(None),
-            picking: RwSignal::new(false),
+            picker: RwSignal::new(Picker::Closed),
             posting: RwSignal::new(false),
             error: RwSignal::new(None),
         }
@@ -134,7 +157,7 @@ impl Composer {
             self.target.set(target);
             self.clear();
         }
-        self.picking.set(false);
+        self.picker.set(Picker::Closed);
         self.error.set(None);
         self.open.set(true);
     }
@@ -148,10 +171,15 @@ impl Composer {
     /// Close, keeping the draft, and return focus to where it was.
     fn close(self) {
         self.open.set(false);
-        self.picking.set(false);
+        self.picker.set(Picker::Closed);
         if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
             let _ = element.focus();
         }
+    }
+
+    /// Open `picker`, or close it if it is open.
+    fn toggle(self, picker: Picker) {
+        self.picker.update(|open| *open = if *open == picker { Picker::Closed } else { picker });
     }
 
     fn draft(self) -> Draft {
@@ -392,11 +420,12 @@ pub fn ComposerDialog() -> impl IntoView {
             // The picker first, then the dialog.
             "Escape" => {
                 ev.prevent_default();
-                if composer.picking.get_untracked() {
-                    composer.picking.set(false);
-                    focus_soon(".gif-button");
-                } else {
-                    composer.close();
+                match composer.picker.get_untracked().button() {
+                    Some(button) => {
+                        composer.picker.set(Picker::Closed);
+                        focus_soon(button);
+                    }
+                    None => composer.close(),
                 }
             }
             // Focus stays in the dialog.
@@ -455,8 +484,35 @@ pub fn ComposerDialog() -> impl IntoView {
             let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
             let picked = Callback::new(move |gif: Gif| {
                 composer.gif.set(Some(gif));
-                composer.picking.set(false);
+                composer.picker.set(Picker::Closed);
                 focus_soon(".compose-text");
+            });
+            // Where the caret was when the text lost focus, or after the last
+            // emoji put in: a tap elsewhere can move an unfocused text box's
+            // own selection to its start.
+            let caret = StoredValue::new(None::<(usize, usize)>);
+            let selection = move |area: &web_sys::HtmlTextAreaElement| {
+                let (from, to) = (area.selection_start().ok().flatten(), area.selection_end().ok().flatten());
+                from.zip(to).map(|(from, to)| (from as usize, to as usize))
+            };
+            // An emoji's shortcode goes in at the caret, or in place of what
+            // is selected, and the caret after it.
+            let insert = Callback::new(move |(emoji, again): Pick| {
+                let Some(area) = text.get_untracked() else { return };
+                let value = area.value();
+                let focused = document().active_element().is_some_and(|el| el.is_same_node(Some(&area)));
+                let end = value.encode_utf16().count();
+                let (from, to) = if focused { selection(&area) } else { caret.get_value() }.unwrap_or((end, end));
+                let (value, at) = emoji::insert(&value, from, to, emoji);
+                area.set_value(&value);
+                composer.text.set(value);
+                caret.set_value(Some((at, at)));
+                emoji_picker::used(emoji);
+                if !again {
+                    composer.picker.set(Picker::Closed);
+                    let _ = area.focus();
+                }
+                let _ = area.set_selection_range(at as u32, at as u32);
             });
             view! {
                 <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
@@ -469,7 +525,8 @@ pub fn ComposerDialog() -> impl IntoView {
                             <h2 id="compose-title">{title}</h2>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
                         </header>
-                        <div class="modal-body compose-body">
+                        // A picker open makes the text smaller, to fit both.
+                        <div class="modal-body compose-body" class:picking=move || composer.picker.get() != Picker::Closed>
                             {context}
                             <textarea
                                 class="compose-text"
@@ -479,6 +536,11 @@ pub fn ComposerDialog() -> impl IntoView {
                                 aria-label=placeholder
                                 prop:value=move || composer.text.get()
                                 on:input=move |ev| composer.text.set(event_target_value(&ev))
+                                on:blur=move |_| {
+                                    if let Some(area) = text.get_untracked() {
+                                        caret.set_value(selection(&area));
+                                    }
+                                }
                             ></textarea>
                             {move || composer.gif.get().map(|gif| view! {
                                 <figure class="compose-gif">
@@ -489,20 +551,31 @@ pub fn ComposerDialog() -> impl IntoView {
                                     }>"×"</button>
                                 </figure>
                             })}
-                            {move || composer.picking.get().then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
+                            {move || (composer.picker.get() == Picker::Gifs).then(gif_key).flatten().map(|key| view! { <GifPicker key picked/> })}
+                            {move || (composer.picker.get() == Picker::Emoji).then(|| view! { <EmojiPicker picked=insert/> })}
                             {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
                         </div>
                         // Below what scrolls, so the picker never hides it.
                         <footer class="compose-foot">
                             <div class="compose-bar">
+                                <button
+                                    type="button"
+                                    class="emoji-button"
+                                    aria-label="Add an emoji"
+                                    aria-expanded=move || (composer.picker.get() == Picker::Emoji).to_string()
+                                    aria-controls="emoji-picker"
+                                    on:click=move |_| composer.toggle(Picker::Emoji)
+                                >
+                                    <img src=href(&emoji::find("pepe_smirk").unwrap_or(&emoji::PACK[0]).still()) alt="" width="22" height="22"/>
+                                </button>
                                 {move || gif_key().map(|_| view! {
                                     <button
                                         type="button"
                                         class="gif-button"
                                         aria-label="Add a GIF"
-                                        aria-expanded=move || composer.picking.get().to_string()
+                                        aria-expanded=move || (composer.picker.get() == Picker::Gifs).to_string()
                                         aria-controls="gif-picker"
-                                        on:click=move |_| composer.picking.update(|p| *p = !*p)
+                                        on:click=move |_| composer.toggle(Picker::Gifs)
                                     >"GIF"</button>
                                 })}
                                 {move || (used.get() > COUNT_FROM).then(|| view! {
