@@ -4,11 +4,13 @@ import { signIn } from "./helpers/farcaster";
 
 /*
  * A write handed to the Farcaster app, as on allthing.social (where the
- * Worker endorses no keys), shows here once the reader has done it there:
- * signed in, the browser asks the node every few seconds, and the like, the
- * follow or the delete lands on the page, the dialog closes, and a notice
- * says so. The node and farcaster.xyz are stubbed; what the reader "does in
- * the app" is a flag the stubs read.
+ * Worker endorses no keys): signed in, a like or a follow shows at once,
+ * pending, and as done once the reader has done it there. The browser asks
+ * the node every few seconds; once it has it, the pending mark goes, the
+ * dialog closes, and a notice says so. Closing the dialog without going to
+ * the app takes it back. A delete shows once done. The node and
+ * farcaster.xyz are stubbed; what the reader "does in the app" is a flag
+ * the stubs read.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker to hand off with");
@@ -105,16 +107,21 @@ test("a like done in the Farcaster app shows here: the heart fills, the count go
   await like.click();
   const dialog = page.getByRole("dialog", { name: "Like in Farcaster" });
   await expect(dialog).toBeVisible();
-  // Not yet done in the app: the node is asked, and nothing changes.
-  await expect.poll(() => asked.reaction, { timeout: 10_000 }).toBeGreaterThan(0);
+  // At once: the heart is the reader's, one more, pending.
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bmine\b/);
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bpending\b/);
+  await expect(likes(page, theirs.hash)).toContainText("4");
+  // Not yet done in the app: the node is asked, and it stays pending.
+  await expect.poll(() => asked.reaction, { timeout: 10_000 }).toBeGreaterThan(1);
   await expect(dialog).toBeVisible();
-  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bmine\b/);
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bpending\b/);
   await expect(dialog.getByRole("img", { name: /QR code/ })).toBeVisible();
   await page.screenshot({ path: info.outputPath("handoff-lands-1280-waiting.png") });
 
   // The reader likes it in the app.
   done.liked = true;
   await expect(dialog).toHaveCount(0, { timeout: 10_000 });
+  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bpending\b/);
   await expect(likes(page, theirs.hash)).toHaveClass(/\bmine\b/);
   await expect(likes(page, theirs.hash)).toContainText("4");
   await expect(page.getByRole("status").filter({ hasText: "Liked." })).toBeVisible();
@@ -128,16 +135,39 @@ test("a like done in the Farcaster app shows here: the heart fills, the count go
   await page.waitForTimeout(4_000);
   expect(asked.reaction).toBe(after);
 
-  // Taking it back goes the same way, and the dialog says so.
+  // Taking it back goes the same way: at once, then done.
   await like.click();
   const unlike = page.getByRole("dialog", { name: "Unlike in Farcaster" });
-  await expect(unlike).toContainText("Unlike it there.");
+  await expect(unlike).toBeVisible();
+  await expect(like).toHaveAttribute("aria-pressed", "false");
+  await expect(likes(page, theirs.hash)).toContainText("3");
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bpending\b/);
   done.liked = false;
   await expect(unlike).toHaveCount(0, { timeout: 10_000 });
-  await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(likes(page, theirs.hash)).not.toHaveClass(/\bmine\b/);
+  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bpending\b/);
   await expect(likes(page, theirs.hash)).toContainText("3");
   await expect(page.getByRole("status").filter({ hasText: "Unliked." })).toBeVisible();
+});
+
+test("closing the dialog without going to the app takes the like back; done there after all, it shows", async ({ page }) => {
+  await signIn(page, me);
+  const done: Done = { liked: false, following: false, deleted: false };
+  await serve(page, done);
+  await page.goto("/");
+  const like = card(page, theirs.hash).getByRole("button", { name: "Like", exact: true });
+  await like.click();
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bpending\b/);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toHaveCount(0);
+  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bmine\b/);
+  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bpending\b/);
+  await expect(likes(page, theirs.hash)).toContainText("3");
+  // Scanned the code and liked it on the phone, then closed the dialog.
+  done.liked = true;
+  await expect(likes(page, theirs.hash)).toHaveClass(/\bmine\b/, { timeout: 10_000 });
+  await expect(likes(page, theirs.hash)).toContainText("4");
+  await expect(page.getByRole("status").filter({ hasText: "Liked." })).toBeVisible();
 });
 
 test("a like from before, older than the reader's latest, is found at once: the heart fills and the count stays", async ({ page }) => {
@@ -152,8 +182,9 @@ test("a like from before, older than the reader's latest, is found at once: the 
   // Asked before the reader can have done anything: nothing to do.
   await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toHaveCount(0, { timeout: 2_000 });
   await expect(like).toHaveAttribute("aria-pressed", "true");
+  await expect(likes(page, theirs.hash)).not.toHaveClass(/\bpending\b/);
   await expect(likes(page, theirs.hash)).toContainText("3");
-  await expect(page.getByRole("status").filter({ hasText: "Already done in Farcaster." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Already done." })).toBeVisible();
   const after = asked.reaction;
   await page.waitForTimeout(4_000);
   expect(asked.reaction).toBe(after);
@@ -167,17 +198,25 @@ test("a follow and a delete done in the Farcaster app show here", async ({ page 
   const follow = page.getByRole("button", { name: "Follow @alice" });
   await expect(follow).toHaveAttribute("aria-pressed", "false");
   await follow.click();
-  await expect(page.getByRole("dialog", { name: "Follow in Farcaster" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Follow @alice in Farcaster" });
+  await expect(dialog).toBeVisible();
+  // At once, pending.
+  await expect(follow).toHaveAttribute("aria-pressed", "true");
+  await expect(follow).toHaveClass(/\bpending\b/);
+  await expect(page.getByText("13 followers")).toBeVisible();
   done.following = true;
-  await expect(follow).toHaveAttribute("aria-pressed", "true", { timeout: 10_000 });
+  await expect(follow).not.toHaveClass(/\bpending\b/, { timeout: 10_000 });
   await expect(follow).toContainText("Following");
-  await expect(page.getByRole("dialog", { name: "Follow in Farcaster" })).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByText("13 followers")).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Following." })).toBeVisible();
 
   await page.goto(`/p/${mine.hash}`);
   await page.locator(".post").getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("dialog", { name: "Delete in Farcaster" })).toBeVisible();
+  // A delete shows once it's done, not before.
+  await page.waitForTimeout(1_000);
+  await expect(page.locator(".post")).not.toHaveClass(/\bdeleted\b/);
   done.deleted = true;
   await expect(page.locator(".post")).toHaveClass(/\bdeleted\b/, { timeout: 10_000 });
   await expect(page.locator(".post .deleted-note")).toBeVisible();

@@ -84,7 +84,9 @@ test("signed out, every write goes to the Farcaster app, with a code for the rea
   await like.click();
   let { dialog, href } = await handedOff(page, "Like in Farcaster", /Open on farcaster\.xyz/);
   expect(href).toBe(castUrl(theirs));
-  await expect(dialog).toContainText("The Farcaster app opens this cast. Like it there.");
+  // The title says it all: no line under it, and few words around the code.
+  await expect(dialog.locator(".handoff-line")).toHaveCount(0);
+  await expect(dialog).toContainText("Scan with your phone.");
   // No note that Allthing doesn't act for the reader.
   await expect(dialog).not.toContainText("doesn't act for you");
   await page.screenshot({ path: test.info().outputPath("handoff-1280.png") });
@@ -154,9 +156,8 @@ test("signed out, every write goes to the Farcaster app, with a code for the rea
   const follow = page.getByRole("button", { name: "Follow @alice" });
   await expect(follow).not.toHaveAttribute("aria-pressed");
   await follow.click();
-  ({ dialog, href } = await handedOff(page, "Follow in Farcaster", /Open on farcaster\.xyz/));
+  ({ dialog, href } = await handedOff(page, "Follow @alice in Farcaster", /Open on farcaster\.xyz/));
   expect(href).toBe("https://farcaster.xyz/alice");
-  await expect(dialog).toContainText("The Farcaster app opens @alice's profile. Follow them there.");
 
   // Nobody was asked to sign in, and no key was asked for.
   await expect(page.getByRole("dialog", { name: "Sign in with Farcaster" })).toHaveCount(0);
@@ -175,7 +176,7 @@ test("signed in where the Worker endorses no keys: Delete, Unfollow and nothing 
   await remove.click();
   const { dialog, href } = await handedOff(page, "Delete in Farcaster", /Open on farcaster\.xyz/);
   expect(href).toBe(castUrl(mine));
-  await expect(dialog).toContainText("The Farcaster app opens your cast. Delete it from its menu there.");
+  await expect(dialog).toContainText("Delete your cast from its menu there.");
   await expect(page.getByRole("group", { name: /^Delete this/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(remove).toBeFocused();
@@ -187,7 +188,7 @@ test("signed in where the Worker endorses no keys: Delete, Unfollow and nothing 
   const follow = page.getByRole("button", { name: "Follow @alice" });
   await expect(follow).toHaveAttribute("aria-pressed", "true");
   await follow.click();
-  await handedOff(page, "Unfollow in Farcaster", /Open on farcaster\.xyz/);
+  await handedOff(page, "Unfollow @alice in Farcaster", /Open on farcaster\.xyz/);
   await page.keyboard.press("Escape");
   // No clock, no Scheduled casts in the menu, and the list says why.
   await page.goto("/");
@@ -239,7 +240,7 @@ test("at 390, each write opens the Farcaster app: a link, no code, inside the sc
   // Follow.
   await page.goto("/u/alice");
   await page.getByRole("button", { name: "Follow @alice" }).tap();
-  const followed = await handedOff(page, "Follow in Farcaster", /Open in Farcaster/);
+  const followed = await handedOff(page, "Follow @alice in Farcaster", /Open in Farcaster/);
   expect(followed.href).toBe("https://farcaster.xyz/alice");
   await expect(followed.dialog).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

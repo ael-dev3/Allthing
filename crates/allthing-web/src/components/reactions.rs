@@ -71,6 +71,11 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
             <ul class="reaction-chips" aria-label="Emoji reactions">
                 {chips.into_iter().map(|(emoji, count, own, who)| {
                     let src = href(&if motion { emoji.file() } else { emoji.still() });
+                    // The reader's, handed to the Farcaster app and not posted yet.
+                    #[cfg(not(feature = "static-host"))]
+                    let pending = own && writer.is_some_and(|w| w.pending_emoji(&hash, emoji));
+                    #[cfg(feature = "static-host")]
+                    let pending = false;
                     let label = format!(
                         "{}: {count} {}, by {who}{}",
                         emoji.label(),
@@ -95,6 +100,7 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                             <button
                                 type="button"
                                 class="reaction-chip"
+                                class:pending=pending
                                 aria-pressed=own.to_string()
                                 aria-label=label
                                 on:click=react

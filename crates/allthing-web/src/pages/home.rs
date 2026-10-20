@@ -271,6 +271,7 @@ fn Trending(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                         <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
+                        {crate::components::outgoing_feed(None)}
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                     </Columns>

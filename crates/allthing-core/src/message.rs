@@ -406,6 +406,112 @@ pub fn cast_gone(status: u16, body: &str) -> Option<bool> {
     (status == 400 && body.contains("NotFound")).then_some(true)
 }
 
+/// How many of the reader's latest casts [`casts_url`] asks for.
+const LATEST_CASTS: u32 = 5;
+/// How far a cast's timestamp, set by the device that posted it, may be
+/// behind this browser's clock and still count as posted since.
+const CLOCK_SLACK: i64 = 30;
+
+/// The reader's latest casts, newest first: where a cast handed to the
+/// Farcaster app turns up once it's posted.
+pub fn casts_url(fid: u64) -> String {
+    format!("{NODE}/v1/castsByFid?fid={fid}&pageSize={LATEST_CASTS}&reverse=true")
+}
+
+/// One of the reader's casts, as much of it as a hand-off is found by.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Posted {
+    /// `0x…`, lowercase.
+    pub hash: String,
+    /// Unix seconds.
+    pub ts: i64,
+    pub text: String,
+    /// The cast it replies to, by hash, lowercase.
+    pub parent: Option<String>,
+    /// The casts it quotes, by hash, lowercase, and the links it embeds.
+    pub quotes: Vec<String>,
+    pub urls: Vec<String>,
+}
+
+/// The casts in an answer to [`casts_url`], newest first: `None` when it
+/// isn't one.
+pub fn latest_casts(status: u16, body: &str) -> Option<Vec<Posted>> {
+    if status != 200 {
+        return None;
+    }
+    let page = serde_json::from_str::<Value>(body).ok()?;
+    let lower = |value: &Value| value.as_str().map(str::to_ascii_lowercase);
+    Some(
+        page.get("messages")?
+            .as_array()?
+            .iter()
+            .filter_map(|message| {
+                let data = message.get("data")?;
+                let cast = data.get("castAddBody")?;
+                let embeds = cast.get("embeds").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+                Some(Posted {
+                    hash: lower(message.get("hash")?)?,
+                    ts: data.get("timestamp")?.as_i64()? + EPOCH,
+                    text: cast.get("text").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    parent: cast.get("parentCastId").and_then(|id| lower(id.get("hash")?)),
+                    quotes: embeds.iter().filter_map(|e| lower(e.get("castId")?.get("hash")?)).collect(),
+                    urls: embeds.iter().filter_map(|e| Some(e.get("url")?.as_str()?.to_owned())).collect(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// What went to the Farcaster app to be posted, by what finds it among the
+/// reader's casts there. Hashes are `0x…`, lowercase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Sent {
+    /// A cast that isn't a reply or a quote.
+    Cast { text: String },
+    /// A reply to `parent`.
+    Reply { parent: String, text: String },
+    /// A cast quoting `quoted`.
+    Quote { quoted: String },
+    /// An emoji reaction: a reply to `parent` that is `:code:` and nothing
+    /// else.
+    Reaction { parent: String, code: String },
+}
+
+impl Sent {
+    /// Whether `cast` is it. The reader may change the text in the app
+    /// before posting, so only a reaction goes by it.
+    fn is(&self, cast: &Posted) -> bool {
+        match self {
+            Sent::Cast { .. } => cast.parent.is_none() && cast.quotes.is_empty(),
+            Sent::Reply { parent, .. } => cast.parent.as_ref() == Some(parent),
+            // The Farcaster app quotes a cast as its id; a link to it, by its
+            // hash's first digits, counts too.
+            Sent::Quote { quoted } => {
+                cast.quotes.contains(quoted)
+                    || quoted
+                        .get(..10)
+                        .is_some_and(|short| cast.urls.iter().any(|url| url.to_ascii_lowercase().contains(short)))
+            }
+            Sent::Reaction { parent, code } => {
+                cast.parent.as_ref() == Some(parent) && cast.text.trim() == format!(":{code}:")
+            }
+        }
+    }
+
+    /// The first of `casts` (newest first, from [`latest_casts`]) the reader
+    /// posted since `since` (Unix seconds, by this browser's clock) that is
+    /// it, the one with the same text first.
+    pub fn found<'a>(&self, casts: &'a [Posted], since: i64) -> Option<&'a Posted> {
+        let candidates = || casts.iter().rev().filter(move |cast| cast.ts >= since - CLOCK_SLACK && self.is(cast));
+        let text = match self {
+            Sent::Cast { text } | Sent::Reply { text, .. } => Some(text.split_whitespace().collect::<Vec<_>>()),
+            Sent::Quote { .. } | Sent::Reaction { .. } => None,
+        };
+        text.and_then(|text| candidates().find(|cast| cast.text.split_whitespace().collect::<Vec<_>>() == text))
+            .or_else(|| candidates().next())
+    }
+}
+
 /// The reader's follow of `target`, if there is one.
 pub fn link_url(fid: u64, target: u64) -> String {
     format!("{NODE}/v1/linkById?fid={fid}&target_fid={target}&link_type=follow")
@@ -695,6 +801,80 @@ mod tests {
         assert_eq!(cast_gone(400, missing), Some(true));
         assert_eq!(cast_gone(400, "Invalid query parameters"), None);
         assert_eq!(cast_gone(503, ""), None);
+    }
+
+    #[test]
+    fn reads_the_readers_latest_casts() {
+        assert_eq!(casts_url(3), format!("{NODE}/v1/castsByFid?fid=3&pageSize=5&reverse=true"));
+        // As Hypersnap answered on 20 October 2026, shortened.
+        let body = r#"{"messages":[
+            {"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":3,"timestamp":182745002,"castAddBody":{"embeds":[{"url":"https://imagedelivery.net/x/original"}],"mentions":[],"text":""}},"hash":"0x0256AE66308d546514fa666cda44052abbfea066"},
+            {"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":3,"timestamp":182744608,"castAddBody":{"embeds":[{"castId":{"fid":37,"hash":"0xF454b8d3e5ee2c9252a0b7574ad4942e9ba502d2"}}],"text":"Neat"}},"hash":"0xec0c8a227d7f34ad3e2243ae098b46459b7d1847"},
+            {"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":3,"timestamp":182651500,"castAddBody":{"parentCastId":{"fid":10695,"hash":"0x01e2c6a1839d389c824ad1550f3b6c2c817abb99"},"text":"I just want it for me."}},"hash":"0x40a0d26b7ea3c4ef79b1f574ff2261a535cb84c6"}
+        ],"nextPageToken":""}"#;
+        let casts = latest_casts(200, body).unwrap();
+        assert_eq!(casts.len(), 3);
+        assert_eq!(
+            casts[0],
+            Posted {
+                hash: "0x0256ae66308d546514fa666cda44052abbfea066".into(),
+                ts: 182745002 + EPOCH,
+                urls: vec!["https://imagedelivery.net/x/original".into()],
+                ..Posted::default()
+            }
+        );
+        assert_eq!(casts[1].quotes, vec!["0xf454b8d3e5ee2c9252a0b7574ad4942e9ba502d2".to_owned()]);
+        assert_eq!(casts[2].parent.as_deref(), Some("0x01e2c6a1839d389c824ad1550f3b6c2c817abb99"));
+        assert_eq!(latest_casts(200, r#"{"messages":[]}"#), Some(vec![]));
+        assert_eq!(latest_casts(503, ""), None);
+        assert_eq!(latest_casts(200, "not json"), None);
+    }
+
+    #[test]
+    fn finds_a_handed_off_cast_among_the_readers_latest() {
+        let since = 1_000_000;
+        let cast = |hash: &str, ago: i64, text: &str| Posted {
+            hash: hash.into(),
+            ts: since - ago,
+            text: text.into(),
+            ..Posted::default()
+        };
+        let parent = "0x01e2c6a1839d389c824ad1550f3b6c2c817abb99".to_owned();
+        let reply = |hash: &str, ago: i64, text: &str| Posted { parent: Some(parent.clone()), ..cast(hash, ago, text) };
+        // Newest first, as the node lists them.
+        let casts = vec![
+            reply("0xd", -20, ":pepe_love:"),
+            reply("0xc", -10, "edited in the app"),
+            cast("0xb", -5, "gm  everyone"),
+            Posted { quotes: vec![parent.clone()], ..cast("0xa", -2, "look") },
+            reply("0x9", 60, "from before the hand-off"),
+        ];
+        // The reader may change a reply's text: any reply to the cast since.
+        let sent = Sent::Reply { parent: parent.clone(), text: "my reply".into() };
+        assert_eq!(sent.found(&casts, since).map(|c| c.hash.as_str()), Some("0xc"));
+        // The same text first, spaces aside.
+        let sent = Sent::Reply { parent: parent.clone(), text: ":pepe_love:".into() };
+        assert_eq!(sent.found(&casts, since).map(|c| c.hash.as_str()), Some("0xd"));
+        let sent = Sent::Cast { text: "gm everyone".into() };
+        assert_eq!(sent.found(&casts, since).map(|c| c.hash.as_str()), Some("0xb"));
+        assert_eq!(Sent::Quote { quoted: parent.clone() }.found(&casts, since).map(|c| c.hash.as_str()), Some("0xa"));
+        // A reaction is the emoji and nothing else.
+        let sent = Sent::Reaction { parent: parent.clone(), code: "pepe_love".into() };
+        assert_eq!(sent.found(&casts, since).map(|c| c.hash.as_str()), Some("0xd"));
+        let sent = Sent::Reaction { parent: parent.clone(), code: "pepe_sad".into() };
+        assert_eq!(sent.found(&casts, since), None);
+        // Older than the hand-off, by more than the clocks may differ: not it.
+        assert_eq!(Sent::Reply { parent: parent.clone(), text: String::new() }.found(&casts[4..], since), None);
+        assert_eq!(
+            Sent::Reply { parent: parent.clone(), text: String::new() }
+                .found(&casts[4..], since - 40)
+                .map(|c| c.hash.as_str()),
+            Some("0x9")
+        );
+        // A quote as a link to the cast, by its hash's first digits.
+        let linked = Posted { urls: vec!["https://farcaster.xyz/alice/0x01E2C6A1".into()], ..cast("0xe", -1, "") };
+        assert!(Sent::Quote { quoted: parent.clone() }.found(&[linked], since).is_some());
+        assert_eq!(Sent::Cast { text: "x".into() }.found(&[reply("0xf", -1, "x")], since), None);
     }
 
     #[test]
