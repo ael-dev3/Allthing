@@ -80,7 +80,7 @@ pub fn SiteFooter() -> impl IntoView {
         <footer class="site-footer">
             <a href=format!("{SOURCE_URL}/blob/main/LICENSE")>"AGPL-3.0"</a>
             <span aria-hidden="true">" · "</span>
-            <a class="footer-source" href=SOURCE_URL aria-label="Source on GitHub">
+            <a class="footer-source" href=SOURCE_URL target="_blank" rel="noopener" aria-label="Source on GitHub">
                 <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d=GITHUB_MARK/></svg>
                 "Source"
             </a>
