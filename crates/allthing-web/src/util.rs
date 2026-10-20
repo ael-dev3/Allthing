@@ -86,6 +86,11 @@ pub fn cast_href(hash: &str) -> String {
     href(&format!("/p/{hash}"))
 }
 
+/// Farcaster's daily active accounts.
+pub fn dau_href() -> String {
+    href("/dau")
+}
+
 pub fn user_href(username: &str) -> String {
     href(&format!("/u/{}", percent_encode(username)))
 }

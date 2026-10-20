@@ -13,7 +13,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::Notes;
 use crate::components::popover::Popover;
-use crate::util::{href, now, with_query};
+use crate::util::{dau_href, href, now, with_query};
 
 /// The feed's URL with the reader's sort and time range kept, and the client
 /// filter set to `client` (or cleared).
@@ -79,14 +79,16 @@ fn ClientCard(
     let known = counted.known_percent();
     // While apps aren't known for every account, some of them may be this
     // app's: its count is a floor.
+    let floor = (known < 99).then_some("At least ");
+    let accounts = if active == 1 { "active account" } else { "active accounts" };
+    let said = match active {
+        0 if known < 100 => "No active accounts known yet".to_owned(),
+        0 => "No active accounts".to_owned(),
+        n => format!("{}{} {accounts}", floor.unwrap_or_default(), full_number(n)),
+    };
     let count = match active {
-        0 if known < 100 => view! { "No active accounts known yet" }.into_any(),
-        0 => view! { "No active accounts" }.into_any(),
-        n => view! {
-            {(known < 99).then_some("At least ")}
-            <strong>{full_number(n)}</strong>" "{if n == 1 { "active account" } else { "active accounts" }}
-        }
-        .into_any(),
+        0 => view! { {said.clone()} }.into_any(),
+        n => view! { {floor}<strong>{full_number(n)}</strong>" "{accounts} }.into_any(),
     };
     view! {
         <div class="client-card-body">
@@ -94,13 +96,21 @@ fn ClientCard(
                 <span class=format!("swatch client-{swatch}") aria-hidden="true"></span>
                 {name.clone()}
             </p>
-            <p class="client-card-active">{count}</p>
+            // The count opens the page of every app's.
+            <p class="client-card-active">
+                <a href=dau_href() aria-label=format!("{said}, on the page of every app's active accounts")>
+                    {count}
+                    <span class="client-card-go" aria-hidden="true">"\u{a0}→"</span>
+                </a>
+            </p>
             <p class="client-card-window">"in the 24 hours to "{window_end(counted.to)}</p>
             <p class="client-card-share">{share}" of "{period}" trending casts"</p>
             {(known < 100).then(|| view! {
                 <p class="client-card-note">{format!("Apps are known for {known}% of active accounts so far.")}</p>
             })}
-            <a class="client-card-filter" href=target>"Show only casts from "{name}</a>
+            <p class="client-card-links">
+                <a class="client-card-filter" href=target>"Show only casts from "{name}</a>
+            </p>
         </div>
     }
 }

@@ -7,7 +7,7 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' https://static.cloudflareinsights.com 'sha256-7yv+5f2NZ0zaBGDmMLm/C+hL5/A+IyrdcoHxn6kaiA4=' 'sha256-OCdcCySGf2C2Sgd561xC2Uhc6d8FplAkPrG7w63LhsE='; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' blob: https:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://streamable.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' https://static.cloudflareinsights.com 'sha256-DCrUURfYR3xbxTdfT0YkdnrG6ej8pDLgT4fuYwhVgfU=' 'sha256-OCdcCySGf2C2Sgd561xC2Uhc6d8FplAkPrG7w63LhsE='; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' blob: https:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://streamable.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
