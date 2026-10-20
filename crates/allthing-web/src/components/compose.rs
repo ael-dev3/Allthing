@@ -952,8 +952,10 @@ fn GifPicker(key: String, picked: Callback<Gif>) -> impl IntoView {
     let revision = RwSignal::new(0u64);
     let timer = StoredValue::new(None::<TimeoutHandle>);
     let input = NodeRef::<leptos::html::Input>::new();
+    // Into the search box where there's a keyboard to type with; on a
+    // phone, the keyboard would cover the GIFs.
     Effect::new(move |_| {
-        if let Some(input) = input.get() {
+        if let Some(input) = input.get().filter(|_| can_hover()) {
             let _ = input.focus();
         }
     });
@@ -1003,6 +1005,25 @@ fn GifPicker(key: String, picked: Callback<Gif>) -> impl IntoView {
         }
         timer.set_value(set_timeout_with_handle(move || search(q), DEBOUNCE).ok());
     };
+    // Enter searches at once, without waiting for typing to pause, and on
+    // a phone puts the keyboard away so the GIFs show.
+    let on_keydown = move |ev: ev::KeyboardEvent| {
+        if ev.key() != "Enter" {
+            return;
+        }
+        ev.prevent_default();
+        if let Some(handle) = timer.try_update_value(Option::take).flatten() {
+            handle.clear();
+        }
+        let q = event_target_value(&ev).trim().to_owned();
+        let n = q.chars().count();
+        if q != query.get_value() && !(n > 0 && n < MIN_QUERY) {
+            search(q);
+        }
+        if let Some(input) = input.get_untracked().filter(|_| !can_hover()) {
+            let _ = input.blur();
+        }
+    };
     on_cleanup(move || {
         if let Some(Some(handle)) = timer.try_get_value() {
             handle.clear();
@@ -1024,6 +1045,7 @@ fn GifPicker(key: String, picked: Callback<Gif>) -> impl IntoView {
                 autocomplete="off"
                 enterkeyhint="search"
                 on:input=on_input
+                on:keydown=on_keydown
             />
             <p class="gif-heading muted small" aria-live="polite">{heading}</p>
             <div class="gif-results">
@@ -1068,12 +1090,16 @@ fn GifPicker(key: String, picked: Callback<Gif>) -> impl IntoView {
     }
 }
 
+/// A GIF in the picker, whole: its tile grows from a basis of its shape
+/// (`--shape`, width over height) at the row's height, so a row of them
+/// shares one height and fills its width.
 #[component]
 fn GifTile(gif: Gif, picked: Callback<Gif>) -> impl IntoView {
     let (src, width, height, title) = (gif.tile.url.clone(), gif.tile.width, gif.tile.height, gif.title.clone());
+    let shape = if width > 0 && height > 0 { f64::from(width) / f64::from(height) } else { 1.0 };
     view! {
-        <li>
-            <button type="button" class="gif-tile" title=title.clone() aria-label=title on:click=move |_| picked.run(gif.clone())>
+        <li style=format!("--shape: {shape:.3}")>
+            <button type="button" class="gif-tile" aria-label=title on:click=move |_| picked.run(gif.clone())>
                 // In view as the picker opens: not left to lazy loading.
                 <img src=src width=width height=height alt="" decoding="async"/>
             </button>
