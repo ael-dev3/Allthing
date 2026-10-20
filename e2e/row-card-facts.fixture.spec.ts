@@ -33,6 +33,21 @@ const replyCards = {
   "8": { bio: "Replies less.", followers: 6, following: 2, registered_at: 1759222921 },
 };
 
+/** Wallets of their own: Person 101's five chains and an unread Solana, the
+ * tallest a card has had; Person 105's none. Everyone else: Base and
+ * Ethereum. */
+const wallets: Record<number, object[]> = {
+  101: [
+    { chain: "base", name: "Base", kind: "evm", count: 40, percent: 40 },
+    { chain: "ethereum", name: "Ethereum", kind: "evm", count: 25, percent: 25 },
+    { chain: "optimism", name: "Optimism", kind: "evm", count: 15, percent: 15 },
+    { chain: "arbitrum", name: "Arbitrum", kind: "evm", count: 12, percent: 12 },
+    { chain: "zora", name: "Zora", kind: "evm", count: 8, percent: 8 },
+    { chain: "solana", name: "Solana", kind: "solana", count: 0, percent: 0, error: "upstream returned HTTP 403" },
+  ],
+  105: [],
+};
+
 /**
  * The facts endpoints answer after `delay` ms, and not before `gate` opens.
  * Every read is logged by kind and fid as it is asked for, and in `served`
@@ -62,7 +77,9 @@ async function serve(page: Page, { delay = 120, gate = Promise.resolve() }: { de
     reads.push(`vote ${fid}`);
     await gate;
     await new Promise((r) => setTimeout(r, delay));
-    await route.fulfill({ json: { fid, onchain: fid % 2 ? "stay" : "no_vote", app: "opted_in", meta } });
+    // Person 107's vote can't be read at all.
+    const vote = fid === 107 ? { onchain: null, app: null } : { onchain: fid % 2 ? "stay" : "no_vote", app: "opted_in" };
+    await route.fulfill({ json: { fid, ...vote, meta } });
     reads.served.push(`vote ${fid}`);
   });
   await page.route("**/api/v1/wallets?*", async (route) => {
@@ -72,7 +89,7 @@ async function serve(page: Page, { delay = 120, gate = Promise.resolve() }: { de
     await new Promise((r) => setTimeout(r, delay));
     await route.fulfill({ json: {
       fid, addresses: [{ address: hex(fid), kind: "evm", primary: true }],
-      chains: [
+      chains: wallets[fid] ?? [
         { chain: "base", name: "Base", kind: "evm", count: 30, percent: 75 },
         { chain: "ethereum", name: "Ethereum", kind: "evm", count: 10, percent: 25 },
       ],
@@ -206,21 +223,55 @@ test("a card opened before its facts are in waits for them out of sight", async 
   expect(new Set(people(reads, fids)).size).toBe(20);
 });
 
-test("a card whose facts are slow still shows after half a second, then fills in", async ({ page }) => {
-  const { gate, open } = held();
-  await serve(page, { gate });
-  await page.goto("/");
-  await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes").hover();
-  const list = page.getByRole("dialog", { name: "Liked by" });
-  await list.getByRole("link", { name: /Person 100/ }).hover();
-  const card = page.getByRole("dialog", { name: "Profile: Person 100 (@user100)" });
-  // The facts never came: the card shows anyway, saying they're loading.
-  await expect(card).toHaveCSS("opacity", "1", { timeout: 2_000 });
-  await expect(card.locator(".share-bar.loading")).toHaveCount(1);
-  open();
-  await expect(card.locator(".share-list")).toContainText("Base");
-  await expect(card.locator(".vote")).toHaveText("Didn't vote");
-});
+// Facts slower than the half second a card waits: it shows without them,
+// at the size it keeps when they come, whatever they say.
+const slow = [
+  { fid: 100, what: "two chains", vote: "Didn't vote", legend: [/Base\s*75%/, /Ethereum\s*25%/] },
+  { fid: 101, what: "five chains and an unread Solana", vote: "Voted yes", legend: [/Base\s*40%/, /Ethereum\s*25%/, "+3"], note: "partial" },
+  { fid: 105, what: "no wallets", vote: "Voted yes", message: "No onchain activity from verified wallets." },
+  { fid: 107, what: "a vote that can't be read", vote: "Unknown", legend: [/Base\s*75%/, /Ethereum\s*25%/] },
+];
+for (const width of [1280, 390]) {
+  for (const c of slow) {
+    test(`at ${width}, a card shown before its facts keeps its size when they come: ${c.what}`, async ({ browser }, testInfo) => {
+      const mobile = width === 390;
+      const context = await browser.newContext({
+        baseURL: testInfo.project.use.baseURL, viewport: { width, height: mobile ? 844 : 900 }, isMobile: mobile, hasTouch: mobile,
+      });
+      const page = await context.newPage();
+      const { gate, open } = held();
+      await serve(page, { gate });
+      await page.goto("/");
+      const count = page.locator(".cast-card:not(.skeleton)").first().getByRole("button", { name: "10 likes: show who" });
+      if (mobile) await count.tap();
+      else await count.hover();
+      const name = page.getByRole("dialog", { name: "Liked by" }).getByRole("link", { name: new RegExp(`Person ${c.fid}\\b`) });
+      if (mobile) await name.tap();
+      else await name.hover();
+      const card = page.getByRole("dialog", { name: `Profile: Person ${c.fid} (@user${c.fid})` });
+      // The facts never came in time: the card shows anyway, waiting.
+      await expect(card).toHaveCSS("opacity", "1", { timeout: 3_000 });
+      await expect(card.locator(".vote-loading")).toHaveCount(1);
+      await expect(card.locator(".share-bar.loading")).toHaveCount(1);
+      const shown = (await card.boundingBox())!.height;
+      open();
+      await expect(card.locator(".vote-fact .vote")).toHaveText(c.vote);
+      if (c.legend) await expect(card.locator(".share-list li")).toHaveText(c.legend);
+      if (c.message) await expect(card.locator(".share-message")).toHaveText(c.message);
+      if (c.note) await expect(card.locator(".share-note")).toContainText(c.note);
+      else await expect(card.locator(".share-note")).toHaveCount(0);
+      await page.waitForTimeout(300);
+      expect((await card.boundingBox())!.height, "the card's height once its facts came").toBeCloseTo(shown, 0);
+      const seen = await cardSeen(page);
+      expect(seen.grew, "a visible card changed height").toBe(0);
+      if (mobile) {
+        await expect(card).toBeInViewport({ ratio: 1 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+      }
+      await context.close();
+    });
+  }
+}
 
 test("a list the pointer only passes, without coming into it, preloads nothing", async ({ page }) => {
   const reads = await serve(page);

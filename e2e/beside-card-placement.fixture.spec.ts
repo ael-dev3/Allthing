@@ -47,7 +47,9 @@ test("at 880 px, a card from the lowest name of a list above its count stays lev
   await list.getByRole("link", { name: /Person 9/ }).hover();
   const profile = page.locator(".popover-panel.profile-card");
   await expect(profile.locator(".profile-card-bio")).toHaveText("Wallets and words.");
-  await expect(profile.locator(".profile-card-wallets p:not(.profile-card-label)")).toHaveCount(2);
+  // One message; the Solana note folded into a word on the label's line.
+  await expect(profile.locator(".profile-card-wallets .share-message")).toHaveText("No activity on the EVM chains counted.");
+  await expect(profile.locator(".share-note")).toHaveAttribute("title", "Solana couldn't be read just now, so its wallets aren't counted.");
   const [listBox, cardBox, postBox] = [await list.boundingBox(), await profile.boundingBox(), await post.boundingBox()];
   // Level with the list's bottom, as the list opened above its count: not
   // hanging below the list, nor past the post the list belongs to.
@@ -56,10 +58,14 @@ test("at 880 px, a card from the lowest name of a list above its count stays lev
   expect(cardBox!.y).toBeGreaterThanOrEqual(0);
   // Beside it, not over it.
   expect(cardBox!.x >= listBox!.x + listBox!.width || cardBox!.x + cardBox!.width <= listBox!.x).toBe(true);
-  // The wallet notes have room between them.
-  const gap = await profile.locator(".profile-card-wallets p:not(.profile-card-label)").evaluateAll((notes) => {
-    const [a, b] = notes.map((n) => n.getBoundingClientRect());
-    return b.top - a.bottom;
+  // The note's word sits on the label's line, clear of its words.
+  const label = await profile.locator(".profile-card-label").evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const { x, y, width, height } = range.getBoundingClientRect();
+    return { x, y, width, height };
   });
-  expect(gap).toBeGreaterThanOrEqual(7);
+  const note = (await profile.locator(".share-note").boundingBox())!;
+  expect(Math.abs(note.y + note.height / 2 - (label.y + label.height / 2))).toBeLessThan(2);
+  expect(note.x).toBeGreaterThanOrEqual(label.x + label.width + 8);
 });

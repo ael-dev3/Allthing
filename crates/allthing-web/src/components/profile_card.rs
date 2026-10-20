@@ -9,8 +9,10 @@
 //! profile itself. Its vote and its wallet activity come from the same
 //! sources as the profile's, preloaded for the authors of feed cards in view
 //! and the people of an opened likes, recasts or replies preview; a card
-//! whose facts are still on their way waits for them, briefly, out of sight,
-//! so it never shows them loading or grows when they come.
+//! whose facts are still on their way waits for them, briefly, out of sight.
+//! One that shows before they come keeps its size when they do: its vote
+//! row is always there ("Unknown" if it can't be read), and its wallet
+//! section is one height whatever it says (`WalletShares`'s `compact`).
 
 use std::time::Duration;
 
@@ -134,11 +136,11 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
             }}
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
-                <VoteFact fid data=vote/>
+                <VoteFact fid data=vote always=true/>
             </dl>
             <div class="profile-card-wallets">
                 <p class="profile-card-label">"Wallet activity"</p>
-                <WalletShares fid data=wallets/>
+                <WalletShares fid data=wallets compact=true/>
             </div>
             <a class="popover-foot" href=href>"View profile →"</a>
         </div>
