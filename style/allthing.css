@@ -4418,9 +4418,64 @@ p.jumbo .emoji img {
 }
 
 .emoji-results {
+  /* Its groups' headings are placed from its top. */
+  position: relative;
   max-height: min(236px, 32vh);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/* The pack's groups, as on Discord: a button each, its first emoji for a
+   face, sharing the width; the group in view is marked. */
+.emoji-groups {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+}
+
+.emoji-groups[hidden] {
+  display: none;
+}
+
+/* With the bar, the grid is shorter by as much, so the picker grows no
+   taller and the draft above it stays in view. */
+.emoji-groups:not([hidden]) + .emoji-results {
+  max-height: min(196px, calc(32vh - 40px));
+}
+
+.emoji-group {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.emoji-group img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 22px;
+  object-fit: contain;
+  opacity: 0.5;
+  filter: grayscale(0.7);
+  transition: opacity 0.15s var(--ease), filter 0.15s var(--ease);
+}
+
+.emoji-group:hover img,
+.emoji-group:focus-visible img,
+.emoji-group[aria-current="true"] img {
+  opacity: 1;
+  filter: none;
+}
+
+.emoji-group[aria-current="true"] {
+  background: var(--accent-soft);
 }
 
 .emoji-section {

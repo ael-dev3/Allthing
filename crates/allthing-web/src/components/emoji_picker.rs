@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The composer's emoji and sticker picker: Allthing's Pepe pack
 //! (`allthing_core::emoji`), with a search box, and the reader's recently
-//! used emoji first. Each shows still and moves while pointed at or focused,
-//! unless the reader asks for less motion.
+//! used emoji first. The pack shows group by group, under headings, with a
+//! bar of the groups that brings one to the top and marks the one in view.
+//! Each emoji shows still and moves while pointed at or focused, unless the
+//! reader asks for less motion.
 //!
 //! An emoji puts its shortcode in the draft, which Allthing shows as the
 //! emoji and other Farcaster apps as the shortcode. A sticker goes with the
@@ -11,7 +13,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use allthing_core::emoji::{self, Emoji, STICKER_HEIGHT, Sticker};
+use allthing_core::emoji::{self, Emoji, Group, STICKER_HEIGHT, Sticker};
 use leptos::ev;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
@@ -185,6 +187,44 @@ pub fn EmojiPicker(
     let touch = StoredValue::new(false);
     let input = NodeRef::<leptos::html::Input>::new();
     let section = NodeRef::<leptos::html::Section>::new();
+    let results = NodeRef::<leptos::html::Div>::new();
+    // The group in view, marked in the bar; and that the grid has just been
+    // moved to a group, whose scroll mustn't mark another.
+    let current = RwSignal::new(0usize);
+    let jumped = StoredValue::new(false);
+    let headings = move || {
+        let found = results.get_untracked().and_then(|r| r.query_selector_all(".emoji-group-heading").ok());
+        found.map_or_else(Vec::new, |list| {
+            (0..list.length()).filter_map(|i| list.item(i)?.dyn_into::<web_sys::HtmlElement>().ok()).collect()
+        })
+    };
+    // The last group whose heading is at or above the grid's top.
+    let mark = move || {
+        if jumped.get_value() {
+            jumped.set_value(false);
+            return;
+        }
+        let Some(top) = results.get_untracked().map(|r| r.scroll_top() + 8) else { return };
+        let at = headings().iter().rposition(|h| h.offset_top() <= top).unwrap_or(0);
+        if current.get_untracked() != at {
+            current.set(at);
+        }
+    };
+    let jump = move |i: usize| {
+        if let (Some(results), Some(heading)) = (results.get_untracked(), headings().get(i)) {
+            jumped.set_value(results.scroll_top() != heading.offset_top());
+            results.set_scroll_top(heading.offset_top());
+            current.set(i);
+        }
+    };
+    // A search shows no groups; cleared, they come back from the first.
+    Effect::new(move |was: Option<bool>| {
+        let now = searching.get();
+        if was == Some(true) && !now {
+            current.set(0);
+        }
+        now
+    });
     Effect::new(move |_| {
         // All of it in view, where the dialog scrolls.
         if let Some(section) = section.get() {
@@ -293,12 +333,40 @@ pub fn EmojiPicker(
                 }
                 on:keydown=on_keydown
             />
+            // The groups, each with its first emoji for a face.
+            <div
+                class="emoji-groups"
+                role="group"
+                aria-label="Groups"
+                hidden=move || tab.get() != Tab::Emoji || searching.get()
+            >
+                {Group::ALL
+                    .iter()
+                    .enumerate()
+                    .map(|(i, group)| {
+                        let face = group.emoji().next().map(|e| href(&e.still())).unwrap_or_default();
+                        view! {
+                            <button
+                                type="button"
+                                class="emoji-group"
+                                aria-label=group.label()
+                                aria-current=move || (current.get() == i).then_some("true")
+                                on:click=move |_| jump(i)
+                            >
+                                <img src=face alt=""/>
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+            </div>
             // The tiles' listeners, once for all of them.
             <div
                 class="emoji-results"
                 id="emoji-panel"
                 role=stickers_too.then_some("tabpanel")
                 aria-labelledby=move || stickers_too.then(|| tab.get().id())
+                node_ref=results
+                on:scroll=move |_| mark()
                 on:pointerleave=move |_| shown.set(None)
                 on:pointerover=move |ev: ev::PointerEvent| {
                     if let Some((tile, item)) = tile_of(ev.target()) {
@@ -347,9 +415,29 @@ pub fn EmojiPicker(
                                 </div>
                             }
                         }))}
-                        <h3 class="emoji-section" aria-live="polite">{heading}</h3>
-                        // Drawn anew for each search: lighter than a keyed list.
-                        <ul class="emoji-grid">{move || found.get().into_iter().map(tile).collect_view()}</ul>
+                        // What a search found, read out; out of sight between searches,
+                        // when the groups have headings of their own.
+                        <h3 class="emoji-section" class:visually-hidden=move || !searching.get() aria-live="polite">
+                            {heading}
+                        </h3>
+                        {move || {
+                            if searching.get() {
+                                // Drawn anew for each search: lighter than a keyed list.
+                                view! { <ul class="emoji-grid">{move || found.get().into_iter().map(tile).collect_view()}</ul> }
+                                    .into_any()
+                            } else {
+                                Group::ALL
+                                    .iter()
+                                    .map(|group| {
+                                        view! {
+                                            <h4 class="emoji-section emoji-group-heading">{group.label()}</h4>
+                                            <ul class="emoji-grid">{group.emoji().map(tile).collect_view()}</ul>
+                                        }
+                                    })
+                                    .collect_view()
+                                    .into_any()
+                            }
+                        }}
                     }
                     .into_any(),
                     Tab::Stickers => view! {
