@@ -78,7 +78,12 @@ for (const width of [1280, 390]) {
     const wallets = page.locator("section.wallets");
     await expect(wallets.locator(".share-list li")).toHaveText([/^Base\s*99%/, /^Ethereum\s*1%/]);
     await expect(wallets.locator(".share-bar")).toHaveAttribute("aria-label", "Base 99%, Ethereum 1%");
-    await expect(wallets).toContainText("Solana couldn't be read just now, so its wallets aren't counted.");
+    // Its note is behind its word, which a tap, or pointing at it, shows.
+    const word = wallets.getByRole("button", { name: "partial: why" });
+    if (phone) await word.tap();
+    else await word.hover();
+    await expect(page.locator(".popover-panel .share-notes")).toContainText("Solana couldn't be read just now, so its wallets aren't counted.");
+    await page.keyboard.press("Escape");
     const author = page.locator(".cast-card").first().getByRole("link", { name: "Alice" }).first();
     if (phone) await author.tap();
     else await author.hover();
@@ -94,8 +99,9 @@ for (const width of [1280, 390]) {
   });
 }
 
-// Six chains: the profile lists them all, and its card names the two largest
-// and the other four together, so the numbers each shows add up to 100.
+// Six chains: the profile names the four largest (two on a phone), and its
+// card the two largest, with the others together, so the numbers each shows
+// add up to 100.
 const six = [
   evm("base", "Base", 4600, 46),
   evm("ethereum", "Ethereum", 1900, 19),
@@ -104,7 +110,7 @@ const six = [
   evm("polygon", "Polygon", 500, 5),
   evm("zora", "Zora", 200, 2),
 ];
-const shown = async (list: Locator) => (await list.locator(".pct").allTextContents()).reduce((sum, pct) => sum + parseInt(pct, 10), 0);
+const shown = async (list: Locator) => (await list.locator("li:visible .pct").allTextContents()).reduce((sum, pct) => sum + parseInt(pct, 10), 0);
 /** Every animation that ends has ended: the screenshot shows the page at rest. */
 const settled = (page: Page) =>
   page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished)));
@@ -120,8 +126,18 @@ for (const width of [1280, 390]) {
     } }));
     await page.goto("/u/alice");
     const wallets = page.locator("section.wallets");
-    await expect(wallets.locator(".share-list li")).toHaveCount(6);
+    const named = phone
+      ? [/^Base\s*46%$/, /^Ethereum\s*19%$/, /^\+4 35%$/]
+      : [/^Base\s*46%$/, /^Ethereum\s*19%$/, /^Arbitrum\s*18%$/, /^Optimism\s*10%$/, /^\+2 7%$/];
+    await expect(wallets.locator(".share-list li:visible")).toHaveText(named);
     expect(await shown(wallets.locator(".share-list"))).toBe(100);
+    await expect(wallets.locator(".share-more:visible")).toHaveAttribute("aria-description", phone ? "Arbitrum 18%, Optimism 10%, Polygon 5%, Zora 2%" : "Polygon 5%, Zora 2%");
+    await expect(wallets.locator(".share-bar")).toHaveAttribute("aria-label", "Base 46%, Ethereum 19%, Arbitrum 18%, Optimism 10%, Polygon 5%, Zora 2%");
+    // The legend is one line that clips nothing it names, with room to spare.
+    const line = (await wallets.locator(".share-list").boundingBox())!;
+    const last = (await wallets.locator(".share-more:visible").boundingBox())!;
+    expect(last.x + last.width).toBeLessThanOrEqual(line.x + line.width - 8);
+    expect(line.height).toBeLessThanOrEqual(22);
     await expect(wallets.locator(".wallets-what")).toHaveText("Share of the verified wallets' transactions, by chain.");
     const help = "How is wallet activity counted? (docs/WALLETS.md)";
     await expect(wallets.getByRole("link", { name: help })).toHaveAttribute("href", /\/docs\/WALLETS\.md$/);

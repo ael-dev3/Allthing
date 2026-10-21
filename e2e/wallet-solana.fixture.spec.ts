@@ -32,6 +32,14 @@ async function serve(page: Page, chains: object[]) {
   } }));
 }
 
+/** The notes behind the wallets' word ("partial", "earlier counts"), which pointing at it shows. */
+async function openNotes(page: Page, word: string) {
+  await page.locator("section.wallets").getByRole("button", { name: `${word}: why` }).hover();
+  const notes = page.locator(".popover-panel .share-notes");
+  await expect(notes).toBeVisible();
+  return notes;
+}
+
 for (const width of [1280, 390]) {
   test(`wallet activity says when Solana isn't counted at width ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -39,9 +47,10 @@ for (const width of [1280, 390]) {
     await page.goto("/u/alice");
     const wallets = page.locator("section.wallets");
     await expect(wallets.locator(".share-list")).toHaveText(/Base\s*100%/);
-    await expect(wallets.getByText(note)).toBeVisible();
+    const notes = await openNotes(page, "partial");
+    await expect(notes.getByText(note)).toBeVisible();
     // Unread Solana is said once, not as an unread EVM chain.
-    await expect(wallets).not.toContainText("Some chains weren't read");
+    await expect(notes).not.toContainText("Some chains weren't read");
   });
 
   test(`an account whose only activity is uncounted Solana says so, not "no activity", at width ${width}`, async ({ page }) => {
@@ -60,6 +69,6 @@ for (const width of [1280, 390]) {
     await page.goto("/u/alice");
     const wallets = page.locator("section.wallets");
     await expect(wallets.getByText("No activity on the EVM chains counted.")).toBeVisible();
-    await expect(wallets.getByText(note)).toBeVisible();
+    await expect((await openNotes(page, "partial")).getByText(note)).toBeVisible();
   });
 }

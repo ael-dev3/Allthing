@@ -31,6 +31,9 @@ test("a chain's count carried from an earlier read keeps its share, and the char
   const wallets = page.locator(".profile-wallets");
   await expect(wallets.locator(".share-list")).toContainText("Base");
   await expect(wallets.locator(".share-list")).toContainText("99%");
-  await expect(wallets).toContainText("Some counts are from an earlier read");
-  await expect(wallets).not.toContainText("Some chains weren't read just now");
+  // The chart says so with a word, which shows why when pointed at.
+  await wallets.getByRole("button", { name: "earlier counts: why" }).hover();
+  const notes = page.locator(".popover-panel .share-notes");
+  await expect(notes).toContainText("Some counts are from an earlier read");
+  await expect(notes).not.toContainText("Some chains weren't read just now");
 });
