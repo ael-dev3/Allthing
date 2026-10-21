@@ -22,6 +22,14 @@ const activity = {
   meta,
 };
 
+/**
+ * The pages' code, which the app fetches ahead of use (`split::preload_pages`:
+ * a post's a few seconds in, the others' as a link to them is pointed at),
+ * and the code parts share, which comes alongside: left out of the lists the
+ * tests below compare.
+ */
+const ahead = (name: string) => name.startsWith("chunk_") || /^split_(post|user|channel|search|channels)\.wasm$/.test(name);
+
 /** The fixtures, and the WebAssembly the page fetches, by file name. */
 async function serve(page: Page) {
   const modules: string[] = [];
@@ -43,20 +51,19 @@ for (const width of [1280, 390]) {
     await page.goto("/");
     await expect(page.getByRole("combobox", { name: "Search casts, people and channels", exact: true })).toBeVisible();
     await page.waitForLoadState("networkidle");
-    expect(modules).toEqual(["app"]);
+    const own = () => modules.filter((name) => !ahead(name));
+    expect(own()).toEqual(["app"]);
 
     await page.goto("/dau");
     await expect(page.locator(".dau-meter")).toContainText("6,174");
-    // Code the parts share (chunk_*) comes alongside, in parallel.
-    const own = () => modules.filter((name) => !name.startsWith("chunk_"));
     expect(own()).toEqual(["app", "app", "split_dau.wasm"]);
-    const fetched = modules.length;
+    const fetched = own().length;
     // Away and back in the app: the code is already in.
     await page.getByRole("link", { name: "Allthing, home" }).click();
     await expect(page).toHaveURL(/\/$/);
     await page.goBack();
     await expect(page.locator(".dau-meter")).toContainText("6,174");
-    expect(modules).toHaveLength(fetched);
+    expect(own()).toHaveLength(fetched);
     expect(errors).toEqual([]);
   });
 }
@@ -97,7 +104,7 @@ async function serveFeed(page: Page) {
   const modules = await serve(page);
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [post], notes: {}, meta } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: post, children: [] }, notes: {}, meta } }));
-  return () => modules.filter((name) => name !== "app");
+  return () => modules.filter((name) => name !== "app" && !ahead(name));
 }
 
 for (const width of [1280, 390]) {
@@ -284,4 +291,51 @@ test("when writing's code can't be fetched, a signed-in reader's like goes to th
   await like.click();
   await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toBeVisible();
   expect(sent).toEqual([]);
+});
+
+// Pages of their own: a post, a profile, a channel, search and the
+// channels. A post's code comes a few seconds after the app starts, and as
+// a card is pointed at; the others' as a link to them is pointed at,
+// touched or focused, and search's as the search box is; and a page's with
+// the app when a visit starts on it.
+
+test("a post's code comes a few seconds after the app starts, the other pages' only as they're about to be used", async ({ page }) => {
+  const modules = await serve(page);
+  await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [post], notes: {}, meta } }));
+  await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: post, children: [] }, notes: {}, meta } }));
+  await page.goto("/");
+  await expect(page.locator(".cast-card").first()).toBeVisible();
+  await expect.poll(() => modules, { timeout: 15_000 }).toContain("split_post.wasm");
+  await page.waitForTimeout(500);
+  for (const part of ["split_user.wasm", "split_channel.wasm", "split_search.wasm", "split_channels.wasm"]) expect(modules).not.toContain(part);
+  // Pointing at a profile's link, focusing the search box.
+  await page.locator('.cast-card a[href="/u/alice"]').first().hover();
+  await expect.poll(() => modules).toContain("split_user.wasm");
+  await page.getByRole("combobox", { name: "Search casts, people and channels", exact: true }).focus();
+  await expect.poll(() => modules).toContain("split_search.wasm");
+  // A post opened now fetches nothing more.
+  await page.waitForLoadState("networkidle");
+  const fetched = modules.length;
+  await page.locator(".cast-card").first().getByText(post.text).click();
+  await expect(page).toHaveURL(new RegExp(`/p/${post.hash}$`));
+  await expect(page.locator(".post")).toContainText(post.text);
+  expect(modules).toHaveLength(fetched);
+});
+
+test("a visit that starts on a post fetches the post's code with the app, and uses what it fetched", async ({ page }) => {
+  const notices: string[] = [];
+  page.on("console", (message) => {
+    if (/preload/i.test(message.text())) notices.push(message.text());
+  });
+  const modules = await serve(page);
+  await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: post, children: [] }, notes: {}, meta } }));
+  await page.goto(`/p/${post.hash}`);
+  await expect(page.locator(".post")).toContainText(post.text);
+  // index.html asked for it before the app did.
+  await expect(page.locator('head link[rel="preload"][href$="/split_post.wasm"]')).toHaveCount(1);
+  expect(modules).toContain("split_post.wasm");
+  // The browser says so when a preload goes unused, or isn't what the
+  // loader asked for, after a few seconds.
+  await page.waitForTimeout(3_500);
+  expect(notices).toEqual([]);
 });

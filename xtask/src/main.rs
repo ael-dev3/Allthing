@@ -259,11 +259,13 @@ fn site(site: &Site) -> Result<()> {
         write(&dist.join(file), read(&root.join("web").join(file))?)?;
     }
 
+    let page_parts = page_parts(&String::from_utf8_lossy(&loader), &format!("{base}/assets/{build}"));
     let html = String::from_utf8(read(&root.join("web/index.html"))?).map_err(|e| e.to_string())?;
     let html = html
         .replace("{{CSS}}", &format!("{base}/assets/{css_name}"))
         .replace("{{JS}}", &format!("{base}/assets/{js_name}"))
         .replace("{{SPLIT_JS}}", &format!("{base}/assets/{loader_name}"))
+        .replace("{{PAGE_PARTS}}", &page_parts.replace('"', "&quot;"))
         .replace("{{WASM}}", &wasm_url)
         .replace("{{BOOT}}", &format!("{base}/assets/{boot_name}"))
         .replace("{{BASE}}", base);
@@ -291,6 +293,46 @@ fn site(site: &Site) -> Result<()> {
 /// The loader the split parts are fetched with, as the module's JavaScript
 /// imports it.
 const SPLIT_LOADER: &str = "allthing-split.js";
+
+/// The parts that are pages of their own, which `index.html` starts
+/// fetching with the app when a visit starts on one (its `early-parts`
+/// script, which names them by the same words).
+const PAGE_PARTS: [&str; 5] = ["post", "user", "channel", "search", "channels"];
+
+/// Each page part's files, under `folder`, as JSON: its own module and the
+/// code it shares with other parts, which the loader fetches alongside it.
+/// The loader names the parts that share a chunk in a comment above it
+/// (`/* post, user */`).
+fn page_parts(loader: &str, folder: &str) -> String {
+    let mut chunks: Vec<(Vec<&str>, &str)> = Vec::new();
+    let mut sharing: Option<Vec<&str>> = None;
+    for line in loader.lines().map(str::trim) {
+        if let Some(names) = line.strip_prefix("/*").and_then(|l| l.strip_suffix("*/")) {
+            sharing = Some(names.split(',').map(str::trim).collect());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("const __chunk_")
+            && let (Some(parts), Some(number)) = (sharing.take(), rest.split_whitespace().next())
+        {
+            chunks.push((parts, number));
+        }
+        sharing = None;
+    }
+    let entries: Vec<String> = PAGE_PARTS
+        .iter()
+        .map(|part| {
+            let mut files = vec![format!("\"{folder}/split_{part}.wasm\"")];
+            files.extend(
+                chunks
+                    .iter()
+                    .filter(|(parts, _)| parts.contains(part))
+                    .map(|(_, number)| format!("\"{folder}/chunk_{number}.wasm\"")),
+            );
+            format!("\"{part}\":[{}]", files.join(","))
+        })
+        .collect();
+    format!("{{{}}}", entries.join(","))
+}
 
 /// Cut the parts of the app marked `#[wasm_split]` (allthing-web's
 /// `split` module) out of the module `raw` into modules of their own, in
@@ -329,6 +371,14 @@ mod tests {
     fn minifies_css() {
         assert_eq!(minify_css("/* c */ a  >  b {\n  color: red ;\n}\n"), "a>b{color: red;}");
         assert_eq!(minify_css("a, b { x: 1 }"), "a,b{x: 1}");
+    }
+
+    #[test]
+    fn lists_each_page_part_with_the_chunks_it_shares() {
+        let loader = "/* post, user */\nconst __chunk_3 = makeLoad(() => {\n/* composer, react */\nconst __chunk_4 = makeLoad(() => {\n";
+        let parts = page_parts(loader, "/assets/b");
+        assert!(parts.starts_with(r#"{"post":["/assets/b/split_post.wasm","/assets/b/chunk_3.wasm"],"user":["/assets/b/split_user.wasm","/assets/b/chunk_3.wasm"],"channel":["/assets/b/split_channel.wasm"]"#));
+        assert!(!parts.contains("chunk_4"));
     }
 
     #[test]

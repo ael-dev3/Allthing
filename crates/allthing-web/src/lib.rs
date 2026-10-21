@@ -27,14 +27,14 @@ use wasm_bindgen::prelude::*;
 use crate::components::layout::{NotFound, SiteFooter, SiteHeader};
 use crate::components::media::{Lightbox, Viewer};
 use crate::components::who::{WhoDialog, WhoList};
-use crate::pages::channel::ChannelPage;
-use crate::pages::channels::ChannelsPage;
+use crate::pages::channel::channel_page;
+use crate::pages::channels::channels_page;
 use crate::pages::dau::DauPage;
 use crate::pages::home::Home;
-use crate::pages::post::PostPage;
+use crate::pages::post::post_page;
 use crate::pages::scheduled::ScheduledPage;
-use crate::pages::search::SearchPage;
-use crate::pages::user::UserPage;
+use crate::pages::search::search_page;
+use crate::pages::user::user_page;
 
 /// This build's version (the workspace version) and short commit.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,6 +51,7 @@ pub fn start() {
     console_error_panic_hook::set_once();
     let Some(root) = util::element_by_id::<web_sys::HtmlElement>("app") else { return };
     leptos::mount::mount_to(root, App).forget();
+    split::preload_pages();
     if let Some(boot) = util::document().get_element_by_id("boot") {
         boot.remove();
     }
@@ -77,16 +78,17 @@ fn App() -> impl IntoView {
             <main id="main" class="page">
                 <Routes fallback=|| view! { <NotFound/> }>
                     <Route path=path!("/") view=Home/>
-                    <Route path=path!("/c/:key") view=ChannelPage/>
-                    <Route path=path!("/c") view=ChannelPage/>
-                    <Route path=path!("/p/:hash") view=PostPage/>
-                    <Route path=path!("/p") view=PostPage/>
-                    <Route path=path!("/u/:name") view=UserPage/>
-                    <Route path=path!("/u") view=UserPage/>
-                    <Route path=path!("/channels") view=ChannelsPage/>
+                    // Pages whose code is fetched on first use (`split`).
+                    <Route path=path!("/c/:key") view=|| split::page(channel_page())/>
+                    <Route path=path!("/c") view=|| split::page(channel_page())/>
+                    <Route path=path!("/p/:hash") view=|| split::page(post_page())/>
+                    <Route path=path!("/p") view=|| split::page(post_page())/>
+                    <Route path=path!("/u/:name") view=|| split::page(user_page())/>
+                    <Route path=path!("/u") view=|| split::page(user_page())/>
+                    <Route path=path!("/channels") view=|| split::page(channels_page())/>
                     <Route path=path!("/dau") view=DauPage/>
                     <Route path=path!("/scheduled") view=ScheduledPage/>
-                    <Route path=path!("/search") view=SearchPage/>
+                    <Route path=path!("/search") view=|| split::page(search_page())/>
                 </Routes>
             </main>
             <SiteFooter/>
