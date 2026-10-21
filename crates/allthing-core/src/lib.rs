@@ -14,6 +14,7 @@ pub mod app_key;
 pub mod channels;
 pub mod clients;
 pub mod compose;
+pub mod dc;
 pub mod embeds;
 pub mod emoji;
 pub mod format;

@@ -1,0 +1,28 @@
+{
+  "_fixture": "Shaped like GET /fc/group-list in the Direct Cast API Reference (Notion, beta, last edited 2025-04-04). Not a captured response.",
+  "result": {
+    "groups": [
+      {
+        "groupId": "9f8201eebb1c888c",
+        "name": "Group Name",
+        "description": "A new group.",
+        "imageUrl": "https://example.com/group-image.png",
+        "inviteLinkUrl": "https://warpcast.com/~/group/123ABC",
+        "adminFids": [1, 4321],
+        "memberCount": 3,
+        "settings": { "messageTTLDays": 7, "membersCanInvite": false },
+        "creationTimestamp": 1709753166,
+        "lastModifiedTimestamp": 1709753166,
+        "lastMessage": {
+          "messageId": "0dd6e7060465817903a40148fb3aa7aa",
+          "senderFid": 4321,
+          "message": "Hello, World",
+          "creationTimestamp": 1709753166,
+          "isDeleted": false,
+          "isProgrammatic": true
+        }
+      }
+    ]
+  },
+  "next": { "cursor": "" }
+}
