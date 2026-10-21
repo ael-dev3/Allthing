@@ -274,12 +274,13 @@ fn site(site: &Site) -> Result<()> {
             write(&assets.join("fonts").join(name), read(&font)?)?;
         }
     }
-    // pfp.png is only for Allthing's Farcaster account, whose picture is
-    // allthing.social's copy; nothing in the static copy uses it.
+    // pfp.png and the pictures under promo/ are only for Allthing's
+    // Farcaster account, whose picture and casts use allthing.social's
+    // copies; nothing in the static copy uses them.
     let files: &[&str] = if site.static_host {
         &["favicon.svg", "robots.txt", "ns-icon.png"]
     } else {
-        &["favicon.svg", "robots.txt", "ns-icon.png", "pfp.png", "_headers"]
+        &["favicon.svg", "robots.txt", "ns-icon.png", "pfp.png", "promo/launch-v6.png", "_headers"]
     };
     for file in files {
         write(&dist.join(file), read(&root.join("web").join(file))?)?;

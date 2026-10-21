@@ -17,3 +17,8 @@
 # so a new logo gets a new file name rather than replacing this one.
 /pfp.png
   Cache-Control: public, max-age=31536000, immutable
+
+# Pictures for the account's casts, such as the launch cast's. Each name
+# carries its version, so a new picture gets a new name and these keep a year.
+/promo/*
+  Cache-Control: public, max-age=31536000, immutable
