@@ -5,6 +5,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use allthing_core::message::NODE;
 use allthing_data::indexer::Index;
 use allthing_data::{FetchError, Host, HttpMethod, HttpRequest, HttpResponse};
 use futures::StreamExt;
@@ -23,11 +24,19 @@ pub struct WorkerHost {
     lifetime: Lifetime,
     index: Option<Rc<D1Index>>,
     solana_rpc: Option<String>,
+    /// A stand-in for Hypersnap's node on this machine, for the end-to-end
+    /// tests: what would go to the node goes there (`crate::node_stand_in`).
+    node: Option<String>,
 }
 
 impl WorkerHost {
-    pub fn new(lifetime: Lifetime, index: Option<Rc<D1Index>>, solana_rpc: Option<String>) -> WorkerHost {
-        WorkerHost { lifetime, index, solana_rpc }
+    pub fn new(
+        lifetime: Lifetime,
+        index: Option<Rc<D1Index>>,
+        solana_rpc: Option<String>,
+        node: Option<String>,
+    ) -> WorkerHost {
+        WorkerHost { lifetime, index, solana_rpc, node }
     }
 }
 
@@ -100,7 +109,12 @@ impl Host for WorkerHost {
         Date::now().as_millis() as f64
     }
 
-    fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+    fn fetch(&self, mut request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+        if let Some(node) = &self.node
+            && let Some(rest) = request.url.strip_prefix(NODE)
+        {
+            request.url = format!("{node}{rest}");
+        }
         exchange(request).boxed_local()
     }
 

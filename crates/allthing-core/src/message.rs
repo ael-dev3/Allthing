@@ -19,6 +19,16 @@ use crate::provenance::{hex_encode, normalize_key};
 /// The node Allthing reads from (Hypersnap, a Snapchain mainnet node),
 /// which relays the messages it is given to Snapchain's validators.
 pub const NODE: &str = "https://haatz.quilibrium.com";
+
+/// Whether `origin` may stand in for [`NODE`] in the Worker (its
+/// `HYPERSNAP_ORIGIN` variable, which the end-to-end tests set): a port on
+/// this machine, `http://127.0.0.1:<port>` or `http://localhost:<port>`, and
+/// nothing else, so the variable can't send the Worker's requests anywhere
+/// else.
+pub fn is_local_stand_in(origin: &str) -> bool {
+    let port = origin.strip_prefix("http://127.0.0.1:").or_else(|| origin.strip_prefix("http://localhost:"));
+    port.is_some_and(|port| port.parse::<u16>().is_ok_and(|n| n > 0) && port.bytes().all(|b| b.is_ascii_digit()))
+}
 /// Farcaster timestamps count seconds from 2021-01-01T00:00:00Z.
 pub const EPOCH: i64 = 1_609_459_200;
 /// `FARCASTER_NETWORK_MAINNET`.
@@ -668,6 +678,28 @@ mod tests {
 
     const CAST: &str = "0x0102030405060708090a0b0c0d0e0f1011121314";
 
+    #[test]
+    fn only_a_port_on_this_machine_stands_in_for_the_node() {
+        for local in ["http://127.0.0.1:8797", "http://localhost:9000", "http://127.0.0.1:1"] {
+            assert!(is_local_stand_in(local), "{local}");
+        }
+        for elsewhere in [
+            "",
+            NODE,
+            "http://127.0.0.1",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:0",
+            "http://127.0.0.1:65536",
+            "http://127.0.0.1:+80",
+            "http://127.0.0.1:8797/",
+            "http://127.0.0.1:8797@example.com",
+            "https://127.0.0.1:8797",
+            "http://127.0.0.2:8797",
+            "http://localhost.example.com:8797",
+        ] {
+            assert!(!is_local_stand_in(elsewhere), "{elsewhere}");
+        }
+    }
     #[test]
     fn a_cast_id_comes_from_its_author_and_hash() {
         let id = CastId::new(3, CAST).unwrap();
