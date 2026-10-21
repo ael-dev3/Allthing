@@ -15,6 +15,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 
 use allthing_core::app_key::{
     self, Endorse, KeyState, Writes, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
@@ -29,6 +31,7 @@ use allthing_core::siwf::{self, QrCode, QrRequest};
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -78,6 +81,7 @@ const NODE_DOWN: &str = "Couldn't reach Farcaster's network. Check your connecti
 const UNSUPPORTED: &str = "This browser can't keep a signing key safely. Update it, or use another browser, to like and recast from Allthing.";
 const KEY_GONE: &str =
     "Allthing's key isn't on your Farcaster account anymore. Like or recast again to approve a new one.";
+const UNLOADED: &str = "This part of Allthing couldn't load. Check the connection, or reload the page.";
 
 /// Whether the reader can like and recast here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,7 +392,7 @@ impl Writer {
         });
         spawn_local(async move {
             let body = if on { Body::ReactionAdd(kind, target) } else { Body::ReactionRemove(kind, target) };
-            let outcome = send(&stored, body, Some(&format!("{kind:?} {}", key.0))).await;
+            let outcome = sent(&stored, body, Some(format!("{kind:?} {}", key.0))).await;
             self.mine.update(|m| {
                 m.busy.remove(&key);
                 if outcome.is_err() {
@@ -469,7 +473,7 @@ impl Writer {
     /// another goes out at least a second after it (`send`).
     async fn cast_in(self, cast: NewCast, slot: Option<String>) -> Result<String, String> {
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return Err(KEY_GONE.into()) };
-        match send(&stored, Body::CastAdd(cast), slot.as_ref()).await {
+        match sent(&stored, Body::CastAdd(cast), slot).await {
             Ok(hash) => Ok(hex_encode(&hash)),
             Err(Unsent::KeyGone) => {
                 self.forget_key(stored.fid);
@@ -641,7 +645,7 @@ impl Writer {
         });
         spawn_local(async move {
             let body = if on { Body::Follow(fid) } else { Body::Unfollow(fid) };
-            let outcome = send(&stored, body, Some(&format!("follow {fid}"))).await;
+            let outcome = sent(&stored, body, Some(format!("follow {fid}"))).await;
             self.mine.update(|m| {
                 m.follow_busy.remove(&fid);
                 if outcome.is_err() {
@@ -687,7 +691,7 @@ impl Writer {
             return;
         }
         spawn_local(async move {
-            let outcome = send(&stored, Body::CastRemove(target.hash), None).await;
+            let outcome = sent(&stored, Body::CastRemove(target.hash), None).await;
             self.mine.update(|m| {
                 m.deleting.remove(&hash);
             });
@@ -859,7 +863,11 @@ impl Writer {
                 if !current(&about) {
                     break;
                 }
-                if let Some(Landed::Yes(hash)) = self.landed(reader, &expect, since).await
+                let found = match landing(self, reader, expect.clone(), since).await {
+                    Ok(landing) => landing.await,
+                    Err(_) => None,
+                };
+                if let Some(Landed::Yes(hash)) = found
                     && current(&about)
                 {
                     UNDO.with(|u| u.borrow_mut().remove(&about));
@@ -1059,11 +1067,21 @@ impl Writer {
             c.get()
         });
         self.can.set(Can::Checking);
+        // Writing's own code, in before the reader's first write: it signs,
+        // and it looks on the node for what they hand to the Farcaster app.
+        spawn_local(async {
+            let _ = preload_writer().await;
+        });
         spawn_local(async move {
             let can = match api::get::<Writes>(&writes_path()).await {
                 Ok(writes) => {
                     self.app.set(Some(writes.data.app_fid));
-                    kept_key(fid).await
+                    // Without writing's own code, writes go to the
+                    // Farcaster app.
+                    match keeping(fid).await {
+                        Ok(keeping) => keeping.await,
+                        Err(_) => Can::No,
+                    }
                 }
                 Err(_) => Can::No,
             };
@@ -1204,7 +1222,11 @@ impl Writer {
         });
         self.step.set(Step::Starting);
         spawn_local(async move {
-            match approve(run, self.step, fid).await {
+            let outcome = match approving(run, self.step, fid).await {
+                Ok(approving) => approving.await,
+                Err(_) => Err(UNLOADED.to_owned()),
+            };
+            match outcome {
                 Ok(stored) => self.approved(stored, run),
                 Err(message) if current(run) && !message.is_empty() => self.step.set(Step::Failed(message)),
                 Err(_) => {}
@@ -1452,6 +1474,47 @@ pub async fn fids_of(names: &[String]) -> HashMap<String, u64> {
         }
     }
     out
+}
+
+/// Sign `body` with the reader's key and hand it to the node, as `send`
+/// does, with writing's own code.
+async fn sent(stored: &Stored, body: Body, slot: Option<String>) -> Result<[u8; 20], Unsent> {
+    match sending(stored.clone(), body, slot).await {
+        Ok(sending) => sending.await,
+        Err(_) => Err(Unsent::Failed(UNLOADED.into())),
+    }
+}
+
+/// Work done in writing's own code, to await.
+type Later<T> = Pin<Box<dyn Future<Output = T>>>;
+
+// Writing's own code (`crate::split`): signing and sending, approving a key
+// and reading the one kept, and looking for a hand-off on the node. A
+// signed-in reader's browser fetches it as soon as the page knows who they
+// are (`Writer::check`); a signed-out reader's never does.
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_writer))]
+fn sending(
+    stored: Stored,
+    body: Body,
+    slot: Option<String>,
+) -> Result<Later<Result<[u8; 20], Unsent>>, SplitLoaderError> {
+    Ok(Box::pin(async move { send(&stored, body, slot.as_ref()).await }))
+}
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn approving(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Later<Result<Stored, String>>, SplitLoaderError> {
+    Ok(Box::pin(approve(run, step, fid)))
+}
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn keeping(fid: u64) -> Result<Later<Can>, SplitLoaderError> {
+    Ok(Box::pin(kept_key(fid)))
+}
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn landing(writer: Writer, reader: u64, expect: Expect, since: i64) -> Result<Later<Option<Landed>>, SplitLoaderError> {
+    Ok(Box::pin(async move { writer.landed(reader, &expect, since).await }))
 }
 
 /// Sign `body` with the reader's key and hand it to the node: the

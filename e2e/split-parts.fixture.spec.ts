@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { approvedKey, signIn } from "./helpers/farcaster";
 
 /*
  * Parts of the app fetched the first time they're used (allthing-web's
- * `split`): the DAU dashboard's code comes with /dau, not before.
+ * `split`): the DAU dashboard's code comes with /dau, not before; the
+ * composer's, React's and signing in's as they're about to be used; and
+ * writing's only for a reader signed in.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -207,4 +210,78 @@ test("/scheduled fetches its list's code with the page", async ({ page }) => {
   await expect(page.getByText("Sign in to see your scheduled casts.")).toBeVisible();
   expect(parts()).toContain("split_scheduled.wasm");
   expect(parts()).not.toContain("split_signin.wasm");
+});
+
+// Writing: signing and sending, approving a key and reading the one kept,
+// and looking on the node for what was handed to the Farcaster app. A
+// signed-out reader's page never fetches its code; a signed-in reader's
+// fetches it as soon as it knows who they are.
+
+const reader = { fid: 1234, username: "reader", display_name: "Reader" };
+const NODE = "https://haatz.quilibrium.com/v1";
+const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type" };
+
+/** Writes set up on the Worker, and a node that takes every message. */
+async function serveWrites(page: Page) {
+  const sent: number[] = [];
+  await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 3356318 } }));
+  await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
+  await page.route(`${NODE}/submitMessage`, (route) => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    sent.push(route.request().postDataBuffer()!.length);
+    return route.fulfill({ headers: cors, json: {} });
+  });
+  return sent;
+}
+
+test("a signed-out reader's page fetches no writing code, and a like goes to the Farcaster app", async ({ page }) => {
+  const parts = await serveFeed(page);
+  await page.goto("/");
+  const like = page.locator(".cast-card").first().getByRole("button", { name: "Like", exact: true });
+  await expect(like).toBeVisible();
+  await like.click();
+  await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(parts()).not.toContain("split_writer.wasm");
+});
+
+test("a signed-in reader's page fetches writing's code as soon as it knows them, and a like goes out with it", async ({ page }) => {
+  const parts = await serveFeed(page);
+  const sent = await serveWrites(page);
+  await signIn(page, reader);
+  await page.goto("/");
+  await approvedKey(page, reader.fid, 600_000);
+  await page.reload();
+  await expect.poll(parts).toContain("split_writer.wasm");
+  const like = page.locator(".cast-card").first().getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("aria-pressed", "false");
+  await like.click();
+  await expect(like).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => sent.length).toBe(1);
+  await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toHaveCount(0);
+});
+
+test("with writes off, a signed-in reader's page fetches writing's code before any write, to look for hand-offs", async ({ page }) => {
+  // No /api/v1/signer here: every write goes to the Farcaster app, and
+  // writing's code looks on the node for it from the first hand-off on.
+  const parts = await serveFeed(page);
+  await signIn(page, reader);
+  await page.goto("/");
+  await expect(page.locator(".cast-card").first()).toBeVisible();
+  await expect.poll(parts).toContain("split_writer.wasm");
+});
+
+test("when writing's code can't be fetched, a signed-in reader's like goes to the Farcaster app", async ({ page }) => {
+  await serveFeed(page);
+  const sent = await serveWrites(page);
+  await page.route("**/split_writer.wasm", (route) => route.fulfill({ status: 404, contentType: "text/html", body: "<!doctype html>" }));
+  await signIn(page, reader);
+  await page.goto("/");
+  await approvedKey(page, reader.fid, 600_000);
+  await page.reload();
+  const like = page.locator(".cast-card").first().getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("aria-haspopup", "dialog");
+  await like.click();
+  await expect(page.getByRole("dialog", { name: "Like in Farcaster" })).toBeVisible();
+  expect(sent).toEqual([]);
 });
