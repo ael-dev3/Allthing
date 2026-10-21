@@ -94,21 +94,20 @@ pub async fn casts_bulk(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCa
 /// (Hypersnap does not page further), as Hypersnap lists them: each shard's
 /// reactions oldest first, one shard after another ([`normalize::reactors`]
 /// puts them in time order). One kind per call: asked for `likes,recasts`,
-/// Hypersnap answers with the likes alone.
+/// Hypersnap answers with the likes alone. With them, the bytes they came
+/// as: a batch of previews weighs what it parses.
 pub async fn reactions(
     inv: &Invocation,
     hash: &str,
     kind: &str,
     limit: u32,
-) -> Result<Vec<RawReaction>, UpstreamError> {
-    let found: Option<RawReactionList> = get_json(
-        inv,
-        Upstream::Hypersnap,
-        &v2("reactions/cast", &[("hash", hash), ("types", kind), ("limit", &limit.to_string())]),
-        true,
-    )
-    .await?;
-    Ok(found.map(|r| r.reactions).unwrap_or_default())
+) -> Result<(Vec<RawReaction>, usize), UpstreamError> {
+    let url = v2("reactions/cast", &[("hash", hash), ("types", kind), ("limit", &limit.to_string())]);
+    let Some(body) = upstream::send(inv, Upstream::Hypersnap, HttpMethod::Get, &url, None, true).await? else {
+        return Ok((Vec::new(), 0));
+    };
+    let found: RawReactionList = upstream::parse(&body)?;
+    Ok((found.reactions, body.len()))
 }
 
 pub async fn trending_channels(inv: &Invocation, limit: u32) -> Result<Vec<RawChannel>, UpstreamError> {
@@ -369,20 +368,30 @@ struct ConversationResponse {
     conversation: Option<Conversation>,
 }
 
-/// A cast with up to five levels of replies.
 /// A cast with its replies `depth` levels deep.
 pub async fn conversation(inv: &Invocation, hash: &str, depth: u32) -> Result<Option<RawCast>, UpstreamError> {
-    let found: Option<ConversationResponse> = get_json(
-        inv,
-        Upstream::Hypersnap,
-        &v2(
-            "cast/conversation",
-            &[("identifier", hash), ("type", "hash"), ("reply_depth", &depth.to_string()), ("limit", "50")],
-        ),
-        true,
-    )
-    .await?;
-    Ok(found.and_then(|r| r.conversation).and_then(|c| c.cast))
+    match conversation_body(inv, hash, depth).await? {
+        Some(body) => parse_conversation(&body),
+        None => Ok(None),
+    }
+}
+
+/// [`conversation`] as Hypersnap sends it, unparsed (`None`: no such cast),
+/// so a build can weigh it before parsing it. Hypersnap ignores the
+/// `limit`: it sends every direct reply, so a cast with 479 of them came as
+/// 650 KB (20 October 2026).
+pub async fn conversation_body(inv: &Invocation, hash: &str, depth: u32) -> Result<Option<Vec<u8>>, UpstreamError> {
+    let url = v2(
+        "cast/conversation",
+        &[("identifier", hash), ("type", "hash"), ("reply_depth", &depth.to_string()), ("limit", "50")],
+    );
+    upstream::send(inv, Upstream::Hypersnap, HttpMethod::Get, &url, None, true).await
+}
+
+/// The cast a [`conversation_body`] holds, with its replies.
+pub fn parse_conversation(body: &[u8]) -> Result<Option<RawCast>, UpstreamError> {
+    let found: ConversationResponse = upstream::parse(body)?;
+    Ok(found.conversation.and_then(|c| c.cast))
 }
 
 // --- Hub (v1) endpoints, for signers ---------------------------------------

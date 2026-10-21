@@ -126,7 +126,7 @@ jobs:
       - name: Test the static copy
         run: |
           bash scripts/build-pages.sh
-          E2E_PAGES=1 npx playwright test e2e/static-body-limit.fixture.spec.ts e2e/static-metadata.fixture.spec.ts e2e/static-navigation.fixture.spec.ts
+          E2E_PAGES=1 npx playwright test e2e/static-body-limit.fixture.spec.ts e2e/static-metadata.fixture.spec.ts e2e/static-navigation.fixture.spec.ts e2e/preloaded-replies.fixture.spec.ts
       - name: Upload browser failure reports
         if: failure()
         uses: actions/upload-artifact@v6

@@ -306,6 +306,7 @@ function castCard(cast, notes, i, favorite) {
       "data-points": points(cast),
       "data-likes": cast.likes || 0,
       "data-recasts": cast.recasts || 0,
+      "data-replies": cast.replies || 0,
     },
     el("p", { class: "deleted-note" }, "You deleted this cast."),
     meta(cast, notes, link, favorite),

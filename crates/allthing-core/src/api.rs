@@ -289,64 +289,90 @@ pub const REACTIONS_PREVIEW: u32 = 10;
 /// CPU time even when every list is full (docs/BUDGET.md).
 pub const ENGAGEMENT_CHUNK: usize = 6;
 
-/// Lists one batch reads at most: a run of cards, each with likes and
-/// recasts. Each list is one upstream read.
+/// Like and recast lists one batch reads at most: a run of cards, each with
+/// likes and recasts. Each list is one upstream read.
 pub const ENGAGEMENT_MAX_LISTS: usize = 2 * ENGAGEMENT_CHUNK;
 
-/// What `/api/v1/engagement` answers a malformed request.
-pub const ENGAGEMENT_USAGE: &str =
-    "Expected ?likes=<cast hashes>&recasts=<cast hashes>, comma-separated, 12 lists in all at most";
+/// Replies previews one batch reads at most: one for each card of its run.
+/// Each is one upstream read, the cast's conversation.
+pub const ENGAGEMENT_MAX_REPLIES: usize = ENGAGEMENT_CHUNK;
 
-/// Which casts' likes and recasts a batch previews (`/api/v1/engagement`).
-/// The hashes are normalized, sorted and distinct, so the same lists make
-/// the same path and cache key whatever order and spelling they were asked
-/// for in.
+/// The most replies a card may have for its batch to ask for its replies
+/// preview. Hypersnap sends a conversation with every direct reply, about
+/// 1 KB for each reply a card counts (650 KB for a cast with 948), and a
+/// batch parses only what its lists leave of its share of CPU, so one much
+/// longer would be read for nothing: its popover reads it when it opens.
+pub const ENGAGEMENT_MAX_REPLY_COUNT: u64 = 100;
+
+/// What `/api/v1/engagement` answers a malformed request.
+pub const ENGAGEMENT_USAGE: &str = "Expected ?likes=<cast hashes>&recasts=<cast hashes>&replies=<cast hashes>, \
+     comma-separated: 12 like and recast lists and 6 replies previews at most";
+
+/// Which casts' likes, recasts and replies a batch previews
+/// (`/api/v1/engagement`). The hashes are normalized, sorted and distinct,
+/// so the same lists make the same path and cache key whatever order and
+/// spelling they were asked for in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngagementRequest {
     likes: Vec<String>,
     recasts: Vec<String>,
+    replies: Vec<String>,
 }
 
 impl EngagementRequest {
-    /// For feed cards given as (hash, likes, recasts), in list order. A kind
-    /// is asked for only when someone reacted: a zero count opens no
-    /// preview. Malformed hashes are skipped, and cards that would take the
-    /// batch past [`ENGAGEMENT_MAX_LISTS`] lists are left out.
-    pub fn for_casts<'a>(casts: impl IntoIterator<Item = (&'a str, u64, u64)>) -> EngagementRequest {
+    /// For feed cards given as (hash, likes, recasts, replies), in list
+    /// order. A kind is asked for only when its count is above zero: a zero
+    /// count opens no preview. Replies are asked for up to
+    /// [`ENGAGEMENT_MAX_REPLY_COUNT`]. Malformed hashes are skipped, and
+    /// cards that would take the batch past [`ENGAGEMENT_MAX_LISTS`] like and
+    /// recast lists or [`ENGAGEMENT_MAX_REPLIES`] replies previews are left
+    /// out.
+    pub fn for_casts<'a>(casts: impl IntoIterator<Item = (&'a str, u64, u64, u64)>) -> EngagementRequest {
         let mut request = EngagementRequest::default();
-        for (hash, likes, recasts) in casts {
+        for (hash, likes, recasts, replies) in casts {
             let Some(hash) = hash_from_param(hash) else { continue };
-            if request.len() + usize::from(likes > 0) + usize::from(recasts > 0) > ENGAGEMENT_MAX_LISTS {
+            let replies = replies > 0 && replies <= ENGAGEMENT_MAX_REPLY_COUNT;
+            let lists = request.list_count() + usize::from(likes > 0) + usize::from(recasts > 0);
+            if lists > ENGAGEMENT_MAX_LISTS || request.replies.len() + usize::from(replies) > ENGAGEMENT_MAX_REPLIES {
                 break;
             }
             if likes > 0 {
                 request.likes.push(hash.clone());
             }
             if recasts > 0 {
-                request.recasts.push(hash);
+                request.recasts.push(hash.clone());
+            }
+            if replies {
+                request.replies.push(hash);
             }
         }
         request.canonical()
     }
 
-    /// From a query's comma-separated `likes` and `recasts` cast hashes.
-    /// `None` when any item is not a cast hash, or when no list or more than
-    /// [`ENGAGEMENT_MAX_LISTS`] lists are asked for.
-    pub fn parse(likes: Option<&str>, recasts: Option<&str>) -> Option<EngagementRequest> {
-        let list = |value: Option<&str>| -> Option<Vec<String>> {
+    /// From a query's comma-separated `likes`, `recasts` and `replies` cast
+    /// hashes. `None` when any item is not a cast hash, when nothing is
+    /// asked for, or when more than [`ENGAGEMENT_MAX_LISTS`] like and recast
+    /// lists or [`ENGAGEMENT_MAX_REPLIES`] replies previews are.
+    pub fn parse(likes: Option<&str>, recasts: Option<&str>, replies: Option<&str>) -> Option<EngagementRequest> {
+        let list = |value: Option<&str>, most: usize| -> Option<Vec<String>> {
             match value.map(str::trim).filter(|v| !v.is_empty()) {
                 None => Some(Vec::new()),
                 // Refused before parsing a long list item by item.
-                Some(v) if v.split(',').nth(ENGAGEMENT_MAX_LISTS).is_some() => None,
+                Some(v) if v.split(',').nth(most).is_some() => None,
                 Some(v) => v.split(',').map(hash_from_param).collect(),
             }
         };
-        let request = EngagementRequest { likes: list(likes)?, recasts: list(recasts)? }.canonical();
-        (!request.is_empty() && request.len() <= ENGAGEMENT_MAX_LISTS).then_some(request)
+        let request = EngagementRequest {
+            likes: list(likes, ENGAGEMENT_MAX_LISTS)?,
+            recasts: list(recasts, ENGAGEMENT_MAX_LISTS)?,
+            replies: list(replies, ENGAGEMENT_MAX_REPLIES)?,
+        }
+        .canonical();
+        (!request.is_empty() && request.list_count() <= ENGAGEMENT_MAX_LISTS).then_some(request)
     }
 
     fn canonical(mut self) -> EngagementRequest {
-        for list in [&mut self.likes, &mut self.recasts] {
+        for list in [&mut self.likes, &mut self.recasts, &mut self.replies] {
             list.sort_unstable();
             list.dedup();
         }
@@ -363,59 +389,80 @@ impl EngagementRequest {
         &self.recasts
     }
 
-    /// Lists asked for; each is one upstream read.
-    pub fn len(&self) -> usize {
+    /// Casts whose replies preview is asked for, sorted.
+    pub fn replies(&self) -> &[String] {
+        &self.replies
+    }
+
+    fn list_count(&self) -> usize {
         self.likes.len() + self.recasts.len()
+    }
+
+    /// Upstream reads asked for: one for each like or recast list, and one
+    /// for each replies preview.
+    pub fn len(&self) -> usize {
+        self.list_count() + self.replies.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Every list asked for, likes first.
+    /// Every like and recast list asked for, likes first.
     pub fn lists(&self) -> impl Iterator<Item = (&str, ReactionKind)> {
         let likes = self.likes.iter().map(|hash| (hash.as_str(), ReactionKind::Likes));
         likes.chain(self.recasts.iter().map(|hash| (hash.as_str(), ReactionKind::Recasts)))
     }
 
-    /// The path that asks for each list alone, as a popover does: where a
-    /// client files the batch's previews.
+    /// The path that asks for each preview alone, as a popover does: where
+    /// a client files the batch's previews. The like and recast lists'
+    /// first, then the replies'.
     pub fn preview_paths(&self) -> impl Iterator<Item = String> + '_ {
-        self.lists().map(|(hash, kind)| reactions_path(hash, kind, REACTIONS_PREVIEW))
+        let lists = self.lists().map(|(hash, kind)| reactions_path(hash, kind, REACTIONS_PREVIEW));
+        lists.chain(self.replies.iter().map(|hash| replies_path(hash)))
     }
 
-    /// `/api/v1/engagement?likes=0x…,0x…&recasts=0x…`, leaving out a kind
-    /// with no casts.
+    /// `/api/v1/engagement?likes=0x…,0x…&recasts=0x…&replies=0x…`, leaving
+    /// out a kind with no casts.
     pub fn path(&self) -> String {
-        let mut query = Vec::new();
-        if !self.likes.is_empty() {
-            query.push(format!("likes={}", self.likes.join(",")));
-        }
-        if !self.recasts.is_empty() {
-            query.push(format!("recasts={}", self.recasts.join(",")));
-        }
+        let query: Vec<String> = [("likes", &self.likes), ("recasts", &self.recasts), ("replies", &self.replies)]
+            .into_iter()
+            .filter(|(_, hashes)| !hashes.is_empty())
+            .map(|(key, hashes)| format!("{key}={}", hashes.join(",")))
+            .collect();
         format!("{API_PREFIX}/engagement?{}", query.join("&"))
     }
 }
 
-/// Who liked and recasted a batch of feed cards (`/api/v1/engagement`),
-/// loaded before anyone hovers a count. Each preview is exactly what
-/// `/api/v1/reactions?hash=…&type=…&limit=10` answers for that cast and
-/// kind. A list that couldn't be read this time is left out; its popover
-/// loads it when it opens, as without the batch.
+/// Who liked and recasted a batch of feed cards, and their replies
+/// (`/api/v1/engagement`), loaded before anyone hovers a count. Each preview
+/// is exactly what `/api/v1/reactions?hash=…&type=…&limit=10` answers for
+/// that cast and kind, and each replies preview what `/api/v1/replies?hash=…`
+/// answers for that cast. One that couldn't be read this time is left out,
+/// as are replies too long for the batch to parse in its share of CPU; its
+/// popover loads it when it opens, as without the batch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngagementPayload {
     /// In the request's order: likes first, then recasts, each by hash.
     #[serde(default)]
     pub previews: Vec<ReactionsPayload>,
+    /// The replies previews, by hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replies: Vec<RepliesPayload>,
     pub meta: Meta,
 }
 
 impl EngagementPayload {
-    /// Each preview with the path that asks for it alone
+    /// Each like and recast preview with the path that asks for it alone
     /// ([`reactions_path`] with [`REACTIONS_PREVIEW`]).
     pub fn by_path(&self) -> impl Iterator<Item = (String, &ReactionsPayload)> {
         self.previews.iter().map(|preview| (reactions_path(&preview.hash, preview.kind, REACTIONS_PREVIEW), preview))
+    }
+
+    /// Each replies preview with the path that asks for it alone
+    /// ([`replies_path`]).
+    pub fn replies_by_path(&self) -> impl Iterator<Item = (String, &RepliesPayload)> {
+        self.replies.iter().map(|preview| (replies_path(&preview.hash), preview))
     }
 }
 
@@ -620,8 +667,11 @@ pub const WALLET_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 600
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 pub const REACTIONS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 86_400, browser: 300 };
-/// A batch of like and recast previews: as fresh as one preview, since
-/// that is what each of them becomes in the browser.
+/// A batch of like, recast and replies previews: as fresh as a like or
+/// recast preview, since that is what most of them become in the browser.
+/// Its replies previews may be a few minutes older than `/replies`' own,
+/// which a preview of the most engaged replies can afford: rebuilding each
+/// batch as often would read its lists again too.
 pub const ENGAGEMENT_CACHE: CachePolicy = REACTIONS_CACHE;
 /// A batch missing some of its lists (a read failed, or the build left
 /// Hypersnap's bucket to page builds) is rebuilt soon, and browsers don't
@@ -849,38 +899,49 @@ mod tests {
         // Upper case, without 0x, repeated, padded and in any order: one
         // request, one path, one cache key.
         let messy = format!("{}, {} ,{b}", b.to_uppercase().replace("0X", "0x"), a.trim_start_matches("0x"));
-        let request = EngagementRequest::parse(Some(&messy), Some(&a.to_uppercase())).unwrap();
+        let request = EngagementRequest::parse(Some(&messy), Some(&a.to_uppercase()), Some(&messy)).unwrap();
         assert_eq!(request.likes(), [a.clone(), b.clone()]);
         assert_eq!(request.recasts(), std::slice::from_ref(&a));
-        assert_eq!(request.len(), 3);
-        assert_eq!(request.path(), format!("/api/v1/engagement?likes={a},{b}&recasts={a}"));
-        let reordered = EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&format!(" {a} "))).unwrap();
+        assert_eq!(request.replies(), [a.clone(), b.clone()]);
+        assert_eq!(request.len(), 5);
+        assert_eq!(request.path(), format!("/api/v1/engagement?likes={a},{b}&recasts={a}&replies={a},{b}"));
+        let reordered =
+            EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&format!(" {a} ")), Some(&format!("{b},{a}")))
+                .unwrap();
         assert_eq!(reordered, request);
         assert_eq!(
             request.lists().collect::<Vec<_>>(),
             [(a.as_str(), ReactionKind::Likes), (b.as_str(), ReactionKind::Likes), (a.as_str(), ReactionKind::Recasts)]
         );
+        // Where a client files each preview: the lists', then the replies'.
         assert_eq!(
             request.preview_paths().collect::<Vec<_>>(),
             [
                 reactions_path(&a, ReactionKind::Likes, 10),
                 reactions_path(&b, ReactionKind::Likes, 10),
                 reactions_path(&a, ReactionKind::Recasts, 10),
+                replies_path(&a),
+                replies_path(&b),
             ]
         );
 
         // A kind with no casts is left out of the path.
-        let recasts = EngagementRequest::parse(None, Some(&b)).unwrap();
+        let recasts = EngagementRequest::parse(None, Some(&b), None).unwrap();
         assert_eq!(recasts.path(), format!("/api/v1/engagement?recasts={b}"));
-        assert_eq!(EngagementRequest::parse(Some(" "), Some(&b)), Some(recasts));
+        assert_eq!(EngagementRequest::parse(Some(" "), Some(&b), Some("")), Some(recasts));
+        let replies = EngagementRequest::parse(None, None, Some(&b)).unwrap();
+        assert_eq!(replies.path(), format!("/api/v1/engagement?replies={b}"));
+        assert_eq!((replies.len(), replies.lists().count()), (1, 0));
+        assert_eq!(replies.preview_paths().collect::<Vec<_>>(), [replies_path(&b)]);
 
         // Nothing at all, a malformed hash or an empty item is refused.
-        assert_eq!(EngagementRequest::parse(None, None), None);
-        assert_eq!(EngagementRequest::parse(Some(""), Some(" ")), None);
-        assert_eq!(EngagementRequest::parse(Some("0x123"), None), None);
-        assert_eq!(EngagementRequest::parse(Some(&format!("{a},,{b}")), None), None);
-        assert_eq!(EngagementRequest::parse(Some(&format!("{a},nope")), None), None);
-        assert_eq!(EngagementRequest::parse(Some(&format!("{a},{}", "zz".repeat(20))), None), None);
+        assert_eq!(EngagementRequest::parse(None, None, None), None);
+        assert_eq!(EngagementRequest::parse(Some(""), Some(" "), Some("")), None);
+        assert_eq!(EngagementRequest::parse(Some("0x123"), None, None), None);
+        assert_eq!(EngagementRequest::parse(Some(&format!("{a},,{b}")), None, None), None);
+        assert_eq!(EngagementRequest::parse(Some(&format!("{a},nope")), None, None), None);
+        assert_eq!(EngagementRequest::parse(Some(&format!("{a},{}", "zz".repeat(20))), None, None), None);
+        assert_eq!(EngagementRequest::parse(Some(&a), None, Some(&format!("{b},nope"))), None);
     }
 
     #[test]
@@ -888,39 +949,78 @@ mod tests {
         let chunk = ENGAGEMENT_CHUNK as u32;
         let likes: Vec<String> = (0..chunk).map(hash).collect();
         let recasts: Vec<String> = (100..100 + chunk).map(hash).collect();
-        let full = EngagementRequest::parse(Some(&likes.join(",")), Some(&recasts.join(","))).unwrap();
-        assert_eq!(full.len(), ENGAGEMENT_MAX_LISTS);
+        let replies: Vec<String> = (200..200 + chunk).map(hash).collect();
+        let full = EngagementRequest::parse(Some(&likes.join(",")), Some(&recasts.join(",")), Some(&replies.join(",")))
+            .unwrap();
+        assert_eq!(full.len(), ENGAGEMENT_MAX_LISTS + ENGAGEMENT_MAX_REPLIES);
+        assert_eq!((full.lists().count(), full.replies().len()), (12, 6));
         // One more list, in either kind, is too many.
-        let over = format!("{},{}", recasts.join(","), hash(200));
-        assert_eq!(EngagementRequest::parse(Some(&likes.join(",")), Some(&over)), None);
+        let over = format!("{},{}", recasts.join(","), hash(300));
+        assert_eq!(EngagementRequest::parse(Some(&likes.join(",")), Some(&over), None), None);
         let many: Vec<String> = (0..40).map(hash).collect();
-        assert_eq!(EngagementRequest::parse(Some(&many.join(",")), None), None);
+        assert_eq!(EngagementRequest::parse(Some(&many.join(",")), None, None), None);
+        // And one more replies preview: a batch reads one per card.
+        let over = format!("{},{}", replies.join(","), hash(300));
+        assert_eq!(EngagementRequest::parse(Some(&likes.join(",")), None, Some(&over)), None);
+        assert_eq!(EngagementRequest::parse(None, None, Some(&many.join(","))), None);
         // Repeats count against the cap before they are merged.
         let repeated = vec![hash(1); ENGAGEMENT_MAX_LISTS + 1].join(",");
-        assert_eq!(EngagementRequest::parse(Some(&repeated), None), None);
+        assert_eq!(EngagementRequest::parse(Some(&repeated), None, None), None);
         let most = vec![hash(1); ENGAGEMENT_MAX_LISTS].join(",");
-        assert_eq!(EngagementRequest::parse(Some(&most), None).map(|r| r.len()), Some(1));
-        // The error message names the cap.
-        assert!(ENGAGEMENT_USAGE.contains(&format!(" {ENGAGEMENT_MAX_LISTS} lists ")));
+        assert_eq!(EngagementRequest::parse(Some(&most), None, None).map(|r| r.len()), Some(1));
+        let repeated = vec![hash(1); ENGAGEMENT_MAX_REPLIES + 1].join(",");
+        assert_eq!(EngagementRequest::parse(None, None, Some(&repeated)), None);
+        let most = vec![hash(1); ENGAGEMENT_MAX_REPLIES].join(",");
+        assert_eq!(EngagementRequest::parse(None, None, Some(&most)).map(|r| r.len()), Some(1));
+        // The error message names the caps.
+        assert!(ENGAGEMENT_USAGE.contains(&format!(" {ENGAGEMENT_MAX_LISTS} like and recast lists ")));
+        assert!(ENGAGEMENT_USAGE.contains(&format!(" {ENGAGEMENT_MAX_REPLIES} replies previews ")));
     }
 
     #[test]
     fn engagement_requests_for_cards_ask_only_for_counts_above_zero() {
         let hashes: Vec<String> = (0..10).map(hash).collect();
-        let cards = [(hashes[3].as_str(), 5, 0), (hashes[1].as_str(), 0, 2), (hashes[2].as_str(), 0, 0), ("bad", 9, 9)];
+        let cards = [
+            (hashes[3].as_str(), 5, 0, 0),
+            (hashes[1].as_str(), 0, 2, 0),
+            (hashes[2].as_str(), 0, 0, 0),
+            (hashes[4].as_str(), 0, 0, 7),
+            ("bad", 9, 9, 9),
+        ];
         let request = EngagementRequest::for_casts(cards);
         assert_eq!(request.likes(), [hashes[3].clone()]);
         assert_eq!(request.recasts(), [hashes[1].clone()]);
-        assert!(EngagementRequest::for_casts([(hashes[2].as_str(), 0, 0)]).is_empty());
+        assert_eq!(request.replies(), [hashes[4].clone()]);
+        assert!(EngagementRequest::for_casts([(hashes[2].as_str(), 0, 0, 0)]).is_empty());
+        // Replies too many to parse in a batch are left to their popover.
+        let most = ENGAGEMENT_MAX_REPLY_COUNT;
+        let request =
+            EngagementRequest::for_casts([(hashes[5].as_str(), 3, 0, most), (hashes[6].as_str(), 3, 0, most + 1)]);
+        assert_eq!(request.replies(), [hashes[5].clone()]);
+        assert_eq!(request.likes().len(), 2);
 
-        // A run of cards with both counts fills a batch; later cards are left out.
-        let busy: Vec<(&str, u64, u64)> = hashes.iter().map(|h| (h.as_str(), 1, 1)).collect();
+        // A run of cards with every count fills a batch; later cards are left out.
+        let busy: Vec<(&str, u64, u64, u64)> = hashes.iter().map(|h| (h.as_str(), 1, 1, 1)).collect();
         let request = EngagementRequest::for_casts(busy[..ENGAGEMENT_CHUNK].iter().copied());
-        assert_eq!(request.len(), ENGAGEMENT_MAX_LISTS);
+        assert_eq!(request.len(), ENGAGEMENT_MAX_LISTS + ENGAGEMENT_MAX_REPLIES);
+        assert_eq!(request.replies(), &hashes[..ENGAGEMENT_CHUNK]);
         assert_eq!(EngagementRequest::for_casts(busy.iter().copied()), request);
+        // So are cards past the sixth replies preview, though their lists would fit.
+        let talked: Vec<(&str, u64, u64, u64)> = hashes.iter().map(|h| (h.as_str(), 1, 0, 3)).collect();
+        let request = EngagementRequest::for_casts(talked.iter().copied());
+        assert_eq!((request.likes().len(), request.replies().len()), (ENGAGEMENT_CHUNK, ENGAGEMENT_MAX_REPLIES));
         // Its path parses back to the same request.
         let path = request.path();
-        assert_eq!(EngagementRequest::parse(param(&path, "likes"), param(&path, "recasts")), Some(request));
+        let parsed = EngagementRequest::parse(param(&path, "likes"), param(&path, "recasts"), param(&path, "replies"));
+        assert_eq!(parsed, Some(request));
+    }
+
+    fn reply(hash: &str, fid: u64, text: &str) -> Cast {
+        serde_json::from_value(serde_json::json!({
+            "hash": hash, "author": { "fid": fid, "username": format!("user{fid}") }, "text": text,
+            "ts": 1_792_235_681, "likes": 2,
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -940,6 +1040,7 @@ mod tests {
                 preview(&b, ReactionKind::Likes, vec![], false),
                 preview(&a, ReactionKind::Recasts, vec![person(5)], false),
             ],
+            replies: vec![],
             meta: meta(),
         };
         let paths: Vec<String> = batch.by_path().map(|(path, _)| path).collect();
@@ -961,6 +1062,8 @@ mod tests {
             "meta": { "backend": "hypersnap", "fetched_at": 1_792_235_681_000_i64 },
         });
         assert_eq!(json["previews"][0], single);
+        // A batch with no replies previews says nothing of them, as before.
+        assert!(json.get("replies").is_none(), "{json}");
         for (path, preview) in batch.by_path() {
             let filed = serde_json::to_string(preview).unwrap();
             let read: ReactionsPayload = serde_json::from_str(&filed).unwrap();
@@ -972,7 +1075,50 @@ mod tests {
         // A batch with nothing in it still parses.
         let empty: EngagementPayload =
             serde_json::from_str(r#"{"meta":{"backend":"hypersnap","fetched_at":0}}"#).unwrap();
-        assert!(empty.previews.is_empty());
+        assert!(empty.previews.is_empty() && empty.replies.is_empty());
+    }
+
+    #[test]
+    fn engagement_replies_previews_are_single_replies_previews() {
+        let (a, b) = (hash(0xa), hash(0xb));
+        let users =
+            BTreeMap::from([(7, UserCard { bio: "Replies a lot.".into(), followers: 5, ..Default::default() })]);
+        let replies = |hash: &str, replies: Vec<Cast>, notes: Annotations| RepliesPayload {
+            hash: hash.to_owned(),
+            replies,
+            notes,
+            meta: meta(),
+        };
+        let batch = EngagementPayload {
+            previews: vec![],
+            replies: vec![
+                replies(
+                    &a,
+                    vec![reply("0xr1", 7, "first"), reply("0xr2", 8, "second")],
+                    Annotations { users: users.clone(), ..Default::default() },
+                ),
+                replies(&b, vec![], Annotations::default()),
+            ],
+            meta: meta(),
+        };
+        let paths: Vec<String> = batch.replies_by_path().map(|(path, _)| path).collect();
+        assert_eq!(paths, [replies_path(&a), replies_path(&b)]);
+        assert_eq!(batch.by_path().count(), 0);
+
+        // On the wire, each is what /api/v1/replies?hash=… answers, with its
+        // authors' profile cards: filed under its own path, it reads back as
+        // that payload.
+        let json = serde_json::to_value(&batch).unwrap();
+        assert_eq!(json["replies"][0]["hash"], a);
+        assert_eq!(json["replies"][0]["replies"][1]["text"], "second");
+        assert_eq!(json["replies"][0]["notes"]["users"]["7"]["bio"], "Replies a lot.");
+        for (path, preview) in batch.replies_by_path() {
+            let filed = serde_json::to_string(preview).unwrap();
+            let read: RepliesPayload = serde_json::from_str(&filed).unwrap();
+            assert_eq!(&read, preview, "{path}");
+        }
+        let back: EngagementPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back, batch);
     }
 
     #[test]

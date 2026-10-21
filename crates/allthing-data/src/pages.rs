@@ -11,6 +11,7 @@ use allthing_core::api::{
     UserPayload,
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
+use allthing_core::embeds::link_key;
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
@@ -43,12 +44,25 @@ const ORIGIN_AUTHORS: usize = 12;
 /// the build: app names and the cache write.
 const QUOTES_RESERVE: u32 = 2;
 /// Preloaded previews never take Hypersnap's per-isolate bucket (40 tokens)
-/// below this, so page builds in the same isolate keep their share: two
-/// full batches (12 reads each) fit above it.
+/// below this, so page builds in the same isolate keep their share: a full
+/// batch (18 reads) fits above it.
 pub const PREVIEW_RESERVE: u32 = 16;
 /// A Worker keeps at most six connections open at once, so a batch's lists
 /// are read six at a time: a queued fetch would spend its timeout waiting.
 const PARALLEL: usize = 6;
+/// Upstream JSON a batch of previews parses at most, in bytes: about what
+/// its twelve lists come as when every list is full (1.4 MB on 21 October
+/// 2026), which takes about 3 ms of CPU natively (docs/BUDGET.md). Its
+/// replies take what its lists leave, the smallest conversations first,
+/// each byte counting [`CONVERSATION_WEIGHT`]; a card whose replies don't
+/// fit is left out, and its popover reads them when it opens. So a batch
+/// with replies costs no more CPU than one of full lists did.
+pub const BATCH_PARSE_BYTES: usize = 1536 * 1024;
+/// What a byte of conversation costs to parse, in bytes of reaction list:
+/// its replies are whole casts, normalized and checked for spam and mini
+/// apps, where a list keeps names and cards (about 5.3 µs a KB natively,
+/// against 2.1).
+pub const CONVERSATION_WEIGHT: usize = 3;
 
 fn meta(inv: &Invocation) -> Meta {
     Meta { backend: Backend::Hypersnap, fetched_at: inv.now() as i64, stale: false }
@@ -772,23 +786,24 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
 }
 
 /// Who reacted to a cast, newest first: at most `limit` people out of the
-/// 100 that Hypersnap lists, as `/api/v1/reactions` answers.
+/// 100 that Hypersnap lists, as `/api/v1/reactions` answers; and the bytes
+/// the list came as.
 async fn reactors(
     inv: &Invocation,
     hash: &str,
     kind: ReactionKind,
     limit: u32,
-) -> Result<ReactionsPayload, UpstreamError> {
-    let raw = hypersnap::reactions(inv, hash, kind.as_str(), 100).await?;
+) -> Result<(ReactionsPayload, usize), UpstreamError> {
+    let (raw, bytes) = hypersnap::reactions(inv, hash, kind.as_str(), 100).await?;
     let (users, more) = normalize::reactors(&raw, limit as usize);
     let cards = normalize::reactor_cards(&raw, &users);
-    Ok(ReactionsPayload { hash: hash.to_owned(), kind, users, more, cards, meta: meta(inv) })
+    Ok((ReactionsPayload { hash: hash.to_owned(), kind, users, more, cards, meta: meta(inv) }, bytes))
 }
 
 /// Who liked or recasted a cast: a preview (`limit` 10) or the full list
 /// (100, which is as many as Hypersnap returns).
 pub async fn reactions(inv: Rc<Invocation>, hash: String, kind: ReactionKind, limit: u32) -> Result<Built, Failure> {
-    let payload = reactors(&inv, &hash, kind, limit).await.map_err(Failure::upstream)?;
+    let (payload, _) = reactors(&inv, &hash, kind, limit).await.map_err(Failure::upstream)?;
     Built::json(&payload, api::REACTIONS_CACHE)
 }
 
@@ -800,61 +815,156 @@ fn preview_may_read(inv: &Invocation) -> bool {
     inv.remaining_subrequests() > 1 && upstream::spare(inv, Upstream::Hypersnap, PREVIEW_RESERVE) > 0
 }
 
-/// Who liked and recasted a batch of feed cards: each list exactly as its
-/// own preview answers it ([`reactions`] with a limit of 10), one
-/// `reactions/cast` read each, six at a time. Previews name people, not
-/// casts, so there are no mini apps or spam to leave out. A list that can't
-/// be read is left out without failing the others, and the batch is then
-/// kept only briefly. Reads never take Hypersnap's bucket below
-/// [`PREVIEW_RESERVE`]: with less room, a batch reads what fits (likes
-/// first) and leaves the rest to the popovers, which load a list they lack
-/// when they open.
+/// What one of a batch's reads asks for.
+enum Ask<'a> {
+    List(&'a str, ReactionKind),
+    Replies(&'a str),
+}
+
+/// What one of a batch's reads brought.
+enum Read {
+    /// A like or recast list, and the bytes it came as.
+    List(ReactionsPayload, usize),
+    /// A cast's conversation, unparsed; `None` when there is no such cast.
+    Replies(String, Option<Vec<u8>>),
+}
+
+/// Who liked and recasted a batch of feed cards, and their replies: each
+/// list exactly as its own preview answers it ([`reactions`] with a limit
+/// of 10), one `reactions/cast` read each, and each replies preview as
+/// [`replies`] answers it, one `cast/conversation` read each, six reads at a
+/// time. A list or replies preview that can't be read is left out without
+/// failing the others, and the batch is then kept only briefly. Reads never
+/// take Hypersnap's bucket below [`PREVIEW_RESERVE`]: with less room, a
+/// batch reads what fits (likes first, then recasts, then replies) and
+/// leaves the rest to the popovers, which load what they lack when they
+/// open. So do replies that don't fit in the batch's [`BATCH_PARSE_BYTES`].
+/// Replies are filtered as [`replies`] filters them: spam and mini apps,
+/// by their address or their page, are left out.
 pub async fn engagement(inv: Rc<Invocation>, request: EngagementRequest) -> Result<Built, Failure> {
-    let lists: Vec<(&str, ReactionKind)> = request.lists().collect();
-    let read: Vec<Result<ReactionsPayload, UpstreamError>> = stream::iter(lists.iter().map(|&(hash, kind)| {
+    let asks = request.lists().map(|(hash, kind)| Ask::List(hash, kind));
+    let asks = asks.chain(request.replies().iter().map(|hash| Ask::Replies(hash)));
+    let read: Vec<Result<Read, UpstreamError>> = stream::iter(asks.map(|ask| {
         let inv = &inv;
         async move {
             if !preview_may_read(inv) {
                 return Err(UpstreamError::Busy(1000.0));
             }
-            reactors(inv, hash, kind, api::REACTIONS_PREVIEW).await
+            match ask {
+                Ask::List(hash, kind) => {
+                    let (preview, bytes) = reactors(inv, hash, kind, api::REACTIONS_PREVIEW).await?;
+                    Ok(Read::List(preview, bytes))
+                }
+                Ask::Replies(hash) => {
+                    let body = hypersnap::conversation_body(inv, hash, 1).await?;
+                    Ok(Read::Replies(hash.to_owned(), body))
+                }
+            }
         }
     }))
     .buffered(PARALLEL)
     .collect()
     .await;
     let mut previews = Vec::with_capacity(read.len());
+    let mut parsed = 0;
+    let mut conversations = Vec::new();
     let mut failure = None;
     for result in read {
         match result {
-            Ok(preview) => previews.push(preview),
+            Ok(Read::List(preview, bytes)) => {
+                previews.push(preview);
+                parsed += bytes;
+            }
+            Ok(Read::Replies(hash, Some(body))) => conversations.push((hash, body)),
+            // No such cast: its popover says so if it opens.
+            Ok(Read::Replies(_, None)) => {}
             Err(error) => failure = failure.or(Some(error)),
         }
     }
-    let Some(error) = failure else {
-        return Built::json(&EngagementPayload { previews, meta: meta(&inv) }, api::ENGAGEMENT_CACHE);
-    };
-    if previews.is_empty() {
+    let room = BATCH_PARSE_BYTES.saturating_sub(parsed) / CONVERSATION_WEIGHT;
+    let (replies, unreadable) = batch_replies(&inv, conversations, room).await;
+    let payload = EngagementPayload { previews, replies, meta: meta(&inv) };
+    match failure.or(unreadable) {
+        None => Built::json(&payload, api::ENGAGEMENT_CACHE),
         // Nothing read: every read failed, or the bucket was at its reserve.
-        return Err(Failure::upstream(error));
+        Some(error) if payload.previews.is_empty() && payload.replies.is_empty() => Err(Failure::upstream(error)),
+        Some(_) => Built::json(&payload, api::ENGAGEMENT_PARTIAL_CACHE),
     }
-    Built::json(&EngagementPayload { previews, meta: meta(&inv) }, api::ENGAGEMENT_PARTIAL_CACHE)
+}
+
+/// The replies previews of a batch's conversations (by hash, unparsed), in
+/// hash order: the smallest parsed first, while they fit in `room` bytes.
+/// One that doesn't fit is left out, as it would be again next time; one
+/// that doesn't parse is left out too, and reported.
+async fn batch_replies(
+    inv: &Invocation,
+    mut conversations: Vec<(String, Vec<u8>)>,
+    mut room: usize,
+) -> (Vec<RepliesPayload>, Option<UpstreamError>) {
+    // Stable: the same sizes keep their hash order.
+    conversations.sort_by_key(|(_, body)| body.len());
+    let mut roots = Vec::new();
+    let mut unreadable = None;
+    for (hash, body) in conversations {
+        let Some(left) = room.checked_sub(body.len()) else { break };
+        room = left;
+        match hypersnap::parse_conversation(&body) {
+            Ok(Some(root)) => roots.push((hash, root)),
+            Ok(None) => {}
+            Err(error) => unreadable = unreadable.or(Some(error)),
+        }
+    }
+    let mut previews = replies_previews(inv, roots).await;
+    previews.sort_by(|a, b| a.hash.cmp(&b.hash));
+    (previews, unreadable)
+}
+
+/// Replies previews, each as `/api/v1/replies` answers it, of the casts
+/// whose conversations were read (`roots`, by hash): the ten most engaged
+/// direct replies, without mini apps or spam, with the verdicts on their
+/// links and their authors' profile cards. The replies' links are checked
+/// together, in one batch of the invocation's link checks.
+async fn replies_previews(inv: &Invocation, roots: Vec<(String, RawCast)>) -> Vec<RepliesPayload> {
+    let replies: Vec<Vec<Cast>> =
+        roots.iter().map(|(_, root)| root.direct_replies.iter().flatten().map(normalize::cast).collect()).collect();
+    let verdicts = miniapps::check(inv, replies.iter().flatten(), &BTreeMap::new()).await;
+    roots
+        .into_iter()
+        .zip(replies)
+        .map(|((hash, root), mut replies)| {
+            // The verdicts on this cast's replies' links, as a check of its
+            // own would answer.
+            let links: BTreeMap<String, bool> = replies
+                .iter()
+                .filter(|reply| !reply.hidden())
+                .flat_map(Cast::link_urls)
+                .filter_map(|url| Some((link_key(url).to_owned(), *verdicts.get(link_key(url))?)))
+                .collect();
+            mark_mini_apps(&mut replies, &links);
+            let replies = reply_preview(replies);
+            // The authors' profile cards, from the user objects that come
+            // with the replies: no request.
+            let authors: HashSet<u64> = replies.iter().map(|reply| reply.author.fid).collect();
+            let shown = root
+                .direct_replies
+                .iter()
+                .flatten()
+                .filter(|raw| raw.author.as_ref().is_some_and(|a| authors.contains(&a.fid)));
+            let mut notes = api::Annotations { links, ..Default::default() };
+            notes.keep_users(normalize::author_cards(shown), authors);
+            RepliesPayload { hash, replies, notes, meta: meta(inv) }
+        })
+        .collect()
 }
 
 /// Replies to show when hovering a cast's reply count: the ten most engaged
-/// direct replies, without mini apps or spam.
+/// direct replies, without mini apps or spam ([`replies_previews`]).
 pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure> {
     let Some(root) = hypersnap::conversation(&inv, &hash, 1).await.map_err(Failure::upstream)? else {
         return Ok(Built::not_found("No such cast"));
     };
-    let mut notes = api::Annotations::default();
-    let replies = root.direct_replies.iter().flatten().map(normalize::cast).collect();
-    let replies = reply_preview(drop_hidden(&inv, replies, &mut notes, &BTreeMap::new()).await);
-    // The authors' profile cards, from the user objects that come with the
-    // replies: no request.
-    let authors: Vec<u64> = replies.iter().map(|c: &Cast| c.author.fid).collect();
-    notes.keep_users(normalize::author_cards(root.direct_replies.iter().flatten()), authors);
-    Built::json(&RepliesPayload { hash, replies, notes, meta: meta(&inv) }, api::REPLIES_CACHE)
+    let preview = replies_previews(&inv, vec![(hash, root)]).await.pop();
+    preview.map_or_else(|| Err(Failure::internal("No replies preview")), |p| Built::json(&p, api::REPLIES_CACHE))
 }
 
 /// How an FID voted on staying with farcaster.xyz: Base first, the app for
@@ -1893,32 +2003,82 @@ mod indexed_home_tests {
 #[cfg(test)]
 mod engagement_tests {
     use std::cell::RefCell;
+    use std::collections::HashMap;
 
     use futures::future::{FutureExt, LocalBoxFuture};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::{Endpoint, FetchError, Host, HttpRequest, HttpResponse};
 
-    /// Hypersnap's `reactions/cast` for any cast: twelve people a minute
-    /// apart, listed as Hypersnap lists them, shard by shard and each shard
-    /// oldest first (the odd minutes, then the even ones). HTTP 500 for the
-    /// lists in `failing`. The clock stands still, so buckets don't refill.
-    struct Reactions {
+    /// Hypersnap, and the pages casts link to. Its `reactions/cast` for any
+    /// cast: twelve people a second apart (or as many as `people` says),
+    /// listed as Hypersnap lists them, shard by shard and each shard oldest
+    /// first (the odd minutes, then the even ones). Its `cast/conversation`:
+    /// the bodies in `conversations`, by hash, and no such cast for any
+    /// other. HTTP 500 for the reads in `failing` (a hash and `likes`,
+    /// `recasts` or `replies`). Link pages: the first of `pages` whose
+    /// address starts the link's, or a 404. The clock stands still, so
+    /// buckets don't refill.
+    struct Node {
         failing: Vec<(String, &'static str)>,
+        conversations: HashMap<String, String>,
+        pages: Vec<(String, &'static str)>,
+        /// People a reactions list names, and how long each one's bio is.
+        people: (u32, usize),
         requests: RefCell<Vec<String>>,
     }
 
-    impl Reactions {
-        fn new(failing: Vec<(String, &'static str)>) -> Rc<Reactions> {
-            Rc::new(Reactions { failing, requests: RefCell::new(Vec::new()) })
+    /// A `reactions/cast` answer naming `people`, each with a bio `bio` long.
+    fn list_body(kind: &str, (people, bio): (u32, usize)) -> String {
+        let bio = "b".repeat(bio);
+        let people: Vec<String> = (1..=people)
+            .filter(|i| i % 2 == 1)
+            .chain((1..=people).filter(|i| i % 2 == 0))
+            .map(|i| {
+                format!(
+                    r#"{{"reaction_timestamp":"2026-10-17T10:{:02}:{:02}.000Z","user":{{"fid":{i},"username":"{kind}-{i}","profile":{{"bio":{{"text":"skipped{bio}"}}}}}}}}"#,
+                    i / 60,
+                    i % 60
+                )
+            })
+            .collect();
+        format!(r#"{{"reactions":[{}],"next":{{}}}}"#, people.join(","))
+    }
+
+    impl Node {
+        fn new(failing: Vec<(String, &'static str)>) -> Rc<Node> {
+            Node::with(failing, HashMap::new(), vec![])
+        }
+
+        fn with(
+            failing: Vec<(String, &'static str)>,
+            conversations: HashMap<String, String>,
+            pages: Vec<(String, &'static str)>,
+        ) -> Rc<Node> {
+            Node::listing(failing, conversations, pages, (12, 0))
+        }
+
+        fn listing(
+            failing: Vec<(String, &'static str)>,
+            conversations: HashMap<String, String>,
+            pages: Vec<(String, &'static str)>,
+            people: (u32, usize),
+        ) -> Rc<Node> {
+            Rc::new(Node { failing, conversations, pages, people, requests: RefCell::new(Vec::new()) })
         }
 
         fn sent(&self) -> usize {
             self.requests.borrow().len()
         }
+
+        /// Requests whose path or address starts with `prefix`.
+        fn sent_to(&self, prefix: &str) -> usize {
+            self.requests.borrow().iter().filter(|r| r.starts_with(prefix)).count()
+        }
     }
 
-    impl Host for Reactions {
+    impl Host for Node {
         fn now(&self) -> f64 {
             1_800_000_000_000.0
         }
@@ -1929,24 +2089,27 @@ mod engagement_tests {
             let param = |key: &str| {
                 path.split(['?', '&']).find_map(|pair| pair.strip_prefix(key)?.strip_prefix('=')).unwrap_or_default()
             };
-            let (hash, kind) = (param("hash"), param("types"));
             let status = |status: u16| HttpResponse { status, retry_after: None, body: None };
-            let response = if !path.starts_with("/v2/farcaster/reactions/cast?") || param("limit") != "100" {
+            let ok = |body: String| HttpResponse { status: 200, retry_after: None, body: Some(body.into_bytes()) };
+            let failing = |hash: &str, kind: &str| self.failing.iter().any(|(h, k)| h == hash && *k == kind);
+            let response = if request.accept == "text/html" {
+                match self.pages.iter().find(|(url, _)| request.url.starts_with(url.as_str())) {
+                    Some((_, html)) => ok((*html).to_owned()),
+                    None => status(404),
+                }
+            } else if path.starts_with("/v2/farcaster/cast/conversation?") {
+                let hash = param("identifier");
+                match self.conversations.get(hash) {
+                    _ if failing(hash, "replies") => status(500),
+                    Some(body) if param("reply_depth") == "1" => ok(body.clone()),
+                    _ => status(404),
+                }
+            } else if !path.starts_with("/v2/farcaster/reactions/cast?") || param("limit") != "100" {
                 status(404)
-            } else if self.failing.iter().any(|(h, k)| h == hash && *k == kind) {
+            } else if failing(param("hash"), param("types")) {
                 status(500)
             } else {
-                let people: Vec<String> = (1..=12)
-                    .filter(|i| i % 2 == 1)
-                    .chain((1..=12).filter(|i| i % 2 == 0))
-                    .map(|i| {
-                        format!(
-                            r#"{{"reaction_timestamp":"2026-10-17T10:{i:02}:00.000Z","user":{{"fid":{i},"username":"{kind}-{i}","profile":{{"bio":{{"text":"skipped"}}}}}}}}"#
-                        )
-                    })
-                    .collect();
-                let body = format!(r#"{{"reactions":[{}],"next":{{}}}}"#, people.join(","));
-                HttpResponse { status: 200, retry_after: None, body: Some(body.into_bytes()) }
+                ok(list_body(param("types"), self.people))
             };
             async move { Ok(response) }.boxed_local()
         }
@@ -1960,7 +2123,51 @@ mod engagement_tests {
 
     /// A batch for `hashes`, each with likes and recasts.
     fn both(hashes: &[String]) -> EngagementRequest {
-        EngagementRequest::for_casts(hashes.iter().map(|h| (h.as_str(), 3, 1)))
+        EngagementRequest::for_casts(hashes.iter().map(|h| (h.as_str(), 3, 1, 0)))
+    }
+
+    /// A batch for `hashes`, each with likes, recasts and replies.
+    fn all(hashes: &[String]) -> EngagementRequest {
+        EngagementRequest::for_casts(hashes.iter().map(|h| (h.as_str(), 3, 1, 2)))
+    }
+
+    /// A direct reply to `parent` as Hypersnap sends it: by `fid`, with
+    /// `likes`, its `text` and links to `embeds`.
+    fn reply(n: u32, parent: &str, fid: u64, likes: u64, text: &str, embeds: &[&str]) -> Value {
+        json!({
+            "hash": format!("0x{n:040x}"), "parent_hash": parent, "text": text,
+            "timestamp": "2026-10-17T10:00:00.000Z",
+            "author": {
+                "fid": fid, "username": format!("replier{fid}"), "display_name": format!("Replier {fid}"),
+                "profile": { "bio": { "text": format!("Bio of {fid}.") } }, "follower_count": fid * 10,
+                "verified_addresses": { "eth_addresses": ["0x0000000000000000000000000000000000000001"] },
+            },
+            "embeds": embeds.iter().map(|url| json!({ "url": url })).collect::<Vec<_>>(),
+            "reactions": { "likes_count": likes, "recasts_count": 0 }, "replies": { "count": 0 },
+        })
+    }
+
+    /// `cast/conversation` for `hash` with its direct replies.
+    fn conversation(hash: &str, replies: Vec<Value>) -> String {
+        json!({ "conversation": { "cast": {
+            "hash": hash, "text": "The cast", "author": { "fid": 1, "username": "author" },
+            "replies": { "count": replies.len() }, "direct_replies": replies,
+        } } })
+        .to_string()
+    }
+
+    /// Each of `hashes` with `n` ordinary replies, the first the most liked.
+    fn talked(hashes: &[String], n: u32) -> HashMap<String, String> {
+        hashes
+            .iter()
+            .enumerate()
+            .map(|(i, hash)| {
+                let replies = (0..n)
+                    .map(|r| reply(1000 * (i as u32 + 1) + r, hash, 200 + u64::from(r), u64::from(n - r), "gm", &[]))
+                    .collect();
+                (hash.clone(), conversation(hash, replies))
+            })
+            .collect()
     }
 
     /// Build a batch the way the Worker and the static copy route it.
@@ -1978,9 +2185,21 @@ mod engagement_tests {
         batch.previews.iter().find(|p| p.hash == hash && p.kind == kind)
     }
 
+    fn replies_of<'a>(batch: &'a EngagementPayload, hash: &str) -> Option<&'a RepliesPayload> {
+        batch.replies.iter().find(|p| p.hash == hash)
+    }
+
+    /// What `/api/v1/replies?hash=…` answers for `hash`, built alone.
+    fn single_replies(host: &Rc<Node>, hash: &str) -> RepliesPayload {
+        let endpoint = Endpoint::from_path(&api::replies_path(hash)).unwrap();
+        let built = endpoint.build(Rc::new(Invocation::new(host.clone(), 45)), None).now_or_never().unwrap().unwrap();
+        assert_eq!(built.policy, api::REPLIES_CACHE);
+        serde_json::from_slice(&built.body).unwrap()
+    }
+
     #[test]
     fn a_full_batch_reads_each_list_once_well_within_the_subrequest_budget() {
-        let host = Reactions::new(vec![]);
+        let host = Node::new(vec![]);
         let inv = Rc::new(Invocation::new(host.clone(), 45));
         let hashes = cards(api::ENGAGEMENT_CHUNK as u32);
         let request = both(&hashes);
@@ -2002,6 +2221,7 @@ mod engagement_tests {
 
         let batch = payload(&built);
         assert_eq!(batch.previews.len(), 12);
+        assert!(batch.replies.is_empty());
         // In the request's order, each preview as the single endpoint
         // answers it: the ten newest across shards, and that there are more.
         let order: Vec<(&str, ReactionKind)> = batch.previews.iter().map(|p| (p.hash.as_str(), p.kind)).collect();
@@ -2020,9 +2240,183 @@ mod engagement_tests {
     }
 
     #[test]
+    fn a_full_batch_with_replies_reads_each_conversation_once_within_the_budget() {
+        let hashes = cards(api::ENGAGEMENT_CHUNK as u32);
+        let mut conversations = talked(&hashes, 12);
+        // One cast's replies link to two pages no one has checked yet.
+        let linked = vec![
+            reply(1, &hashes[2], 301, 50, "a blog post", &["https://blog.full-batch.example/post"]),
+            reply(2, &hashes[2], 302, 40, "a game", &["https://game.full-batch.example/play"]),
+        ];
+        conversations.insert(hashes[2].clone(), conversation(&hashes[2], linked));
+        let pages = vec![
+            ("https://blog.full-batch.example".to_owned(), "<html><head><title>A post</title></head></html>"),
+            (
+                "https://game.full-batch.example".to_owned(),
+                r#"<html><head><meta name="fc:miniapp" content="{}"></head>"#,
+            ),
+        ];
+        let host = Node::with(vec![], conversations, pages);
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let request = all(&hashes);
+        assert_eq!(request.len(), api::ENGAGEMENT_MAX_LISTS + api::ENGAGEMENT_MAX_REPLIES);
+        assert!(inv.take_subrequests(1));
+        let built = build(&inv, &request).unwrap();
+        assert!(inv.take_subrequests(1));
+        // A read per list and per conversation, and the two pages: with the
+        // cache read and write, 22 of the 45 subrequests; at most 26 with
+        // the six pages a build may check.
+        assert_eq!(host.sent_to("/v2/farcaster/reactions/cast?"), 12);
+        assert_eq!(host.sent_to("/v2/farcaster/cast/conversation?"), 6);
+        assert_eq!(host.sent_to("https://"), 2);
+        assert_eq!(45 - inv.remaining_subrequests(), 22);
+        assert_eq!((built.status, built.policy), (200, api::ENGAGEMENT_CACHE));
+
+        let batch = payload(&built);
+        assert_eq!((batch.previews.len(), batch.replies.len()), (12, 6));
+        // In hash order, each with the ten most engaged replies, and each
+        // exactly what /api/v1/replies answers for its cast.
+        let order: Vec<&str> = batch.replies.iter().map(|p| p.hash.as_str()).collect();
+        assert_eq!(order, hashes.iter().map(String::as_str).collect::<Vec<_>>());
+        let first = replies_of(&batch, &hashes[0]).unwrap();
+        assert_eq!(first.replies.len(), 10);
+        assert_eq!(first.replies[0].likes, 12);
+        assert_eq!(first.notes.users[&200].bio, "Bio of 200.");
+        assert_eq!(first.notes.users.len(), 10);
+        // The game's page declares a mini app: its reply is left out.
+        let linked = replies_of(&batch, &hashes[2]).unwrap();
+        assert_eq!(linked.replies.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["a blog post"]);
+        assert_eq!(
+            linked.notes.links,
+            BTreeMap::from([
+                ("https://blog.full-batch.example/post".to_owned(), false),
+                ("https://game.full-batch.example/play".to_owned(), true),
+            ])
+        );
+        for hash in &hashes {
+            assert_eq!(replies_of(&batch, hash), Some(&single_replies(&host, hash)), "{hash}");
+        }
+    }
+
+    #[test]
+    fn hidden_replies_are_left_out_of_a_batch_as_replies_leaves_them_out() {
+        let hashes = cards(2);
+        let cast = &hashes[0];
+        // The most liked replies are spam, mini apps by their address or by
+        // their page, and a reply that links to a spam site; then the
+        // replies to show.
+        let replies = vec![
+            reply(1, cast, 401, 90, "Just unlocked my DEGEN rewards, claim yours", &[]),
+            reply(2, cast, 402, 80, "play", &["https://farcaster.xyz/miniapps/abc/hidden-game"]),
+            reply(3, cast, 403, 70, "a frame", &["https://frame.hidden-replies.example/"]),
+            reply(4, cast, 404, 60, "free", &["https://claim.vercel.app/"]),
+            reply(5, cast, 405, 2, "A thoughtful reply", &[]),
+            reply(6, cast, 406, 9, "The most liked reply shown", &["https://news.hidden-replies.example/story"]),
+            reply(7, cast, 407, 1, "Thanks @gig-bot", &[]),
+        ];
+        let conversations = HashMap::from([(cast.clone(), conversation(cast, replies))]);
+        let pages = vec![
+            ("https://frame.hidden-replies.example".to_owned(), r#"<head><meta property="fc:frame" content="vNext">"#),
+            ("https://news.hidden-replies.example".to_owned(), "<head><title>News</title></head>"),
+        ];
+        let host = Node::with(vec![], conversations, pages);
+        let built = build(&Rc::new(Invocation::new(host.clone(), 45)), &all(&hashes)).unwrap();
+        let batch = payload(&built);
+        let shown = replies_of(&batch, cast).unwrap();
+        let texts: Vec<&str> = shown.replies.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(texts, ["The most liked reply shown", "A thoughtful reply"]);
+        assert!(shown.replies.iter().all(|r| !r.hidden()));
+        // Only the authors shown have their profile cards.
+        assert_eq!(shown.notes.users.keys().copied().collect::<Vec<_>>(), [405, 406]);
+        // Exactly what /api/v1/replies answers.
+        assert_eq!(shown, &single_replies(&host, cast));
+        // The other card's cast is gone: no preview, and the batch is kept.
+        assert!(replies_of(&batch, &hashes[1]).is_none());
+        assert_eq!(built.policy, api::ENGAGEMENT_CACHE);
+    }
+
+    #[test]
+    fn replies_that_dont_fit_a_batchs_parsing_are_left_out_the_smallest_kept() {
+        let hashes = cards(4);
+        // What the lists leave, in conversation bytes: the batch parses the
+        // smallest conversations while they fit in it.
+        let lists = 4 * (list_body("likes", (12, 0)).len() + list_body("recasts", (12, 0)).len());
+        let room = (BATCH_PARSE_BYTES - lists) / CONVERSATION_WEIGHT;
+        let sizes = [35, 110, 30, 40].map(|percent| room * percent / 100);
+        let conversations: HashMap<String, String> = hashes
+            .iter()
+            .zip(sizes)
+            .map(|(hash, size)| {
+                let body = conversation(hash, vec![reply(1, hash, 500, 1, &"x".repeat(size), &[])]);
+                assert!(body.len() - size < 1024);
+                (hash.clone(), body)
+            })
+            .collect();
+        let host = Node::with(vec![], conversations, vec![]);
+        let built = build(&Rc::new(Invocation::new(host.clone(), 45)), &all(&hashes)).unwrap();
+        let batch = payload(&built);
+        let kept: Vec<&str> = batch.replies.iter().map(|p| p.hash.as_str()).collect();
+        assert_eq!(kept, [hashes[0].as_str(), hashes[2].as_str()]);
+        // Every conversation was read, and all their lists are in. Leaving
+        // the rest to their popovers isn't a failure: the batch is kept as
+        // long as one without them, as it would be the same next time.
+        assert_eq!(host.sent_to("/v2/farcaster/cast/conversation?"), 4);
+        assert_eq!(batch.previews.len(), 8);
+        assert_eq!(built.policy, api::ENGAGEMENT_CACHE);
+        // A preview left out still loads on its own, as before the batches.
+        assert_eq!(single_replies(&host, &hashes[1]).replies.len(), 1);
+    }
+
+    #[test]
+    fn full_lists_leave_their_cards_replies_to_the_popovers() {
+        // Twelve lists of 100 people with long bios, about 1.6 MB: as much
+        // as a batch parses, so even short replies are left out.
+        let hashes = cards(api::ENGAGEMENT_CHUNK as u32);
+        let full = (100, 1200);
+        assert!(6 * (list_body("likes", full).len() + list_body("recasts", full).len()) >= BATCH_PARSE_BYTES);
+        let host = Node::listing(vec![], talked(&hashes, 2), vec![], full);
+        let built = build(&Rc::new(Invocation::new(host.clone(), 45)), &all(&hashes)).unwrap();
+        let batch = payload(&built);
+        assert_eq!((batch.previews.len(), batch.replies.len()), (12, 0));
+        assert!(batch.previews.iter().all(|p| p.users.len() == 10 && p.more));
+        assert_eq!(built.policy, api::ENGAGEMENT_CACHE);
+    }
+
+    #[test]
+    fn lists_that_leave_room_let_the_replies_in() {
+        // Twelve lists of 100 people with shorter bios, about 0.9 MB: the
+        // short replies of every card fit beside them.
+        let hashes = cards(api::ENGAGEMENT_CHUNK as u32);
+        let host = Node::listing(vec![], talked(&hashes, 2), vec![], (100, 600));
+        let batch = payload(&build(&Rc::new(Invocation::new(host, 45)), &all(&hashes)).unwrap());
+        assert_eq!((batch.previews.len(), batch.replies.len()), (12, 6));
+    }
+
+    #[test]
+    fn a_conversation_that_fails_leaves_the_rest_and_the_batch_is_kept_briefly() {
+        let hashes = cards(3);
+        let host = Node::with(vec![(hashes[1].clone(), "replies")], talked(&hashes, 3), vec![]);
+        let built = build(&Rc::new(Invocation::new(host.clone(), 45)), &all(&hashes)).unwrap();
+        assert_eq!((built.status, built.policy), (200, api::ENGAGEMENT_PARTIAL_CACHE));
+        let batch = payload(&built);
+        assert_eq!(batch.previews.len(), 6);
+        assert!(replies_of(&batch, &hashes[1]).is_none());
+        assert_eq!(replies_of(&batch, &hashes[0]).unwrap().replies.len(), 3);
+        assert_eq!(replies_of(&batch, &hashes[2]).unwrap().replies.len(), 3);
+
+        // So does one that isn't JSON.
+        let mut conversations = talked(&hashes, 3);
+        conversations.insert(hashes[2].clone(), "<html>Bad gateway</html>".to_owned());
+        let host = Node::with(vec![], conversations, vec![]);
+        let built = build(&Rc::new(Invocation::new(host, 45)), &all(&hashes)).unwrap();
+        assert_eq!(built.policy, api::ENGAGEMENT_PARTIAL_CACHE);
+        assert_eq!(payload(&built).replies.len(), 2);
+    }
+
+    #[test]
     fn the_static_copy_builds_a_full_batch_within_its_budget() {
         // In the browser there is no edge cache, and 30 upstream calls a page.
-        let host = Reactions::new(vec![]);
+        let host = Node::new(vec![]);
         let inv = Rc::new(Invocation::new(host.clone(), 30));
         let built = build(&inv, &both(&cards(api::ENGAGEMENT_CHUNK as u32))).unwrap();
         assert_eq!((built.policy, payload(&built).previews.len()), (api::ENGAGEMENT_CACHE, 12));
@@ -2030,9 +2424,27 @@ mod engagement_tests {
     }
 
     #[test]
+    fn the_static_copy_builds_a_full_batch_with_replies_within_its_budget() {
+        // 18 reads, and the replies' link checks leave the last ten.
+        let hashes = cards(api::ENGAGEMENT_CHUNK as u32);
+        let mut conversations = talked(&hashes, 2);
+        let links: Vec<String> = (0..4).map(|i| format!("https://page{i}.static-copy.example/")).collect();
+        let linking =
+            links.iter().enumerate().map(|(i, url)| reply(i as u32, &hashes[0], 600, 1, "see", &[url])).collect();
+        conversations.insert(hashes[0].clone(), conversation(&hashes[0], linking));
+        let host = Node::with(vec![], conversations, vec![]);
+        let inv = Rc::new(Invocation::new(host.clone(), 30));
+        let built = build(&inv, &all(&hashes)).unwrap();
+        let batch = payload(&built);
+        assert_eq!((built.policy, batch.previews.len(), batch.replies.len()), (api::ENGAGEMENT_CACHE, 12, 6));
+        assert_eq!(host.sent_to("https://"), 2);
+        assert_eq!(inv.remaining_subrequests(), 10);
+    }
+
+    #[test]
     fn a_list_that_fails_leaves_the_others_and_the_batch_is_kept_briefly() {
         let hashes = cards(3);
-        let host = Reactions::new(vec![(hashes[1].clone(), "likes")]);
+        let host = Node::new(vec![(hashes[1].clone(), "likes")]);
         let inv = Rc::new(Invocation::new(host.clone(), 45));
         let built = build(&inv, &both(&hashes)).unwrap();
         assert_eq!(host.sent(), 6);
@@ -2047,9 +2459,9 @@ mod engagement_tests {
 
         // Nothing read at all is an error: the last good copy is served, or
         // the popovers load their lists when they open.
-        let host = Reactions::new(vec![(hashes[0].clone(), "likes")]);
+        let host = Node::new(vec![(hashes[0].clone(), "likes")]);
         let inv = Rc::new(Invocation::new(host, 45));
-        let only = EngagementRequest::for_casts([(hashes[0].as_str(), 1, 0)]);
+        let only = EngagementRequest::for_casts([(hashes[0].as_str(), 1, 0, 0)]);
         assert_eq!(build(&inv, &only).err().map(|f| f.status), Some(502));
     }
 
@@ -2057,7 +2469,7 @@ mod engagement_tests {
     fn previews_leave_hypersnaps_reserve_to_page_builds() {
         // The isolate's bucket holds 40 Hypersnap requests, and the clock
         // stands still: 12 for a full batch, then 4 for two cards.
-        let host = Reactions::new(vec![]);
+        let host = Node::new(vec![]);
         let hashes = cards(20);
         let batch =
             |range: std::ops::Range<usize>| build(&Rc::new(Invocation::new(host.clone(), 45)), &both(&hashes[range]));
@@ -2076,6 +2488,25 @@ mod engagement_tests {
         assert_eq!(refused.err().map(|f| (f.status, f.retry_after)), Some((503, Some(1))));
         assert_eq!(host.sent(), 24);
         // Page builds still have the reserve.
+        assert_eq!(upstream::spare(&Invocation::new(host.clone(), 45), Upstream::Hypersnap, 0), PREVIEW_RESERVE);
+    }
+
+    #[test]
+    fn replies_come_after_the_lists_when_the_reserve_is_near() {
+        // A full batch with replies takes 18 of the 40, leaving 6 above the
+        // reserve: the next batch reads its likes, and leaves its recasts
+        // and replies to their popovers.
+        let hashes = cards(12);
+        let host = Node::with(vec![], talked(&hashes, 2), vec![]);
+        let batch =
+            |range: std::ops::Range<usize>| build(&Rc::new(Invocation::new(host.clone(), 45)), &all(&hashes[range]));
+        let full = batch(0..6).unwrap();
+        assert_eq!((host.sent(), full.policy, payload(&full).replies.len()), (18, api::ENGAGEMENT_CACHE, 6));
+        let partial = batch(6..12).unwrap();
+        assert_eq!((host.sent(), partial.policy), (24, api::ENGAGEMENT_PARTIAL_CACHE));
+        let partial = payload(&partial);
+        assert!(partial.previews.iter().all(|p| p.kind == ReactionKind::Likes) && partial.previews.len() == 6);
+        assert!(partial.replies.is_empty());
         assert_eq!(upstream::spare(&Invocation::new(host.clone(), 45), Upstream::Hypersnap, 0), PREVIEW_RESERVE);
     }
 }
