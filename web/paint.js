@@ -36,6 +36,8 @@ const PEN = "M10.5 3.2l2.3 2.3M3 13l.6-2.9 7.5-7.5a1.2 1.2 0 0 1 1.7 0l.6.6a1.2 
 const RANGES = [["all", "All time"], ["year", "Past year"], ["month", "Past month"], ["week", "Past week"], ["day", "Today"], ["hour", "Past hour"]];
 const PERIODS = { hour: "the past hour's", day: "today's", week: "the past week's" };
 const VIDEO_HOSTS = /^(?:www\.)?(?:m\.)?(?:youtube\.com|music\.youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com|loom\.com|streamable\.com)$/;
+/** GIF services' media hosts (embeds.rs, `is_gif_host`): Tenor's, KLIPY's and GIPHY's. */
+const GIF_HOSTS = /^(?:(?:media\d*|c)\.tenor\.com|static\d*\.klipy\.com|(?:media\d*|i)\.giphy\.com)$/;
 
 const early = window.__allthingEarly;
 const boot = document.getElementById("boot");
@@ -598,6 +600,14 @@ function resized(url, variant) {
   return parts.length === 3 && parts.every(plain) ? `${prefix}${parts[0]}/${parts[1]}/${variant}` : url;
 }
 
+/** Whether an image is a GIF (embeds.rs, `is_gif`): from a GIF service, or its path ends in .gif. */
+function isGif(url) {
+  const host = hostOf(url);
+  if (!host) return false;
+  const path = url.slice(url.indexOf("://") + 3).replace(/^[^/?#]*/, "").split(/[?#]/)[0];
+  return GIF_HOSTS.test(host) || path.toLowerCase().endsWith(".gif");
+}
+
 /** Image sizes for the app (media.rs, `known_size`). */
 const sizes = (window.__allthingSizes = window.__allthingSizes || {});
 /** The variant a feed shows an image at (embeds.rs, `ImageSize::Inline`). */
@@ -628,7 +638,7 @@ function mediaGrid(cast, images, link) {
     const [width, height] = sizes[src] || [];
     const img = image({ width, height, alt, loading: "lazy", decoding: "async", referrerpolicy: "no-referrer" }, src, width ? [width, height] : undefined);
     const box = width ? { style: `--w: ${width}; --h: ${height}`, "data-sized": true, "data-portrait": height > width } : {};
-    const tile = el("a", { class: "tile tile-image", href: link, ...box }, img);
+    const tile = el("a", { class: isGif(embed.url) ? "tile tile-image gif" : "tile tile-image", href: link, ...box }, img);
     img.addEventListener("load", () => {
       const [w, h] = [img.naturalWidth, img.naturalHeight];
       if (!w || !h || img.currentSrc.startsWith("data:")) return;

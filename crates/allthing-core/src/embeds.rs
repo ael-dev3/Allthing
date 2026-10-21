@@ -68,6 +68,57 @@ pub fn is_hls(url: &str) -> bool {
     has_extension(url, &["m3u8"]) || host_of(url).is_some_and(|h| VIDEO_HOSTS.contains(&h.as_str()))
 }
 
+/// Whether an image or video embed is a GIF, which Allthing shows at about
+/// the size chat apps give one rather than as wide as a photo. It is one
+/// when:
+/// - its host serves nothing but GIFs ([`is_gif_host`]), whatever the
+///   format (Tenor and GIPHY also send a GIF as WebP or MP4);
+/// - its path ends in `.gif`, in any case (not a `.gif` in its query, or
+///   in a folder's name);
+/// - or its provider says it is `image/gif`. Hypersnap sends no embed
+///   metadata, so a GIF uploaded to Cloudflare Images (an `imagedelivery.net`
+///   address with no extension) can't be told from a photo, and stays one.
+pub fn is_gif(url: &str, content_type: Option<&str>) -> bool {
+    let says_gif =
+        content_type.and_then(|ct| ct.split(';').next()).is_some_and(|ct| ct.trim().eq_ignore_ascii_case("image/gif"));
+    let Some(host) = host_of(url) else { return says_gif };
+    says_gif || is_gif_host(&host) || url_path(url).to_ascii_lowercase().ends_with(".gif")
+}
+
+/// The media hosts of GIF services, which serve only GIFs:
+/// - Tenor: `media.tenor.com`, and the `media1.tenor.com` and `c.tenor.com`
+///   of older links;
+/// - KLIPY, whose GIFs the composer embeds: `static.klipy.com`, and
+///   numbered ones such as `static1.klipy.com`;
+/// - GIPHY: `media.giphy.com`, `media0.giphy.com` to `media4.giphy.com`, and
+///   `i.giphy.com`.
+///
+/// Only exact media hosts: the services' own sites and APIs (`tenor.com`,
+/// `giphy.com`, `api.klipy.com`) serve pages and JSON, and photo hosts
+/// (Cloudflare Images, Imgur) serve GIFs among photos, which only a `.gif`
+/// path tells apart.
+fn is_gif_host(host: &str) -> bool {
+    // "media", or "media" and a number ("media1").
+    let named = |sub: &str, name: &str| sub.strip_prefix(name).is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()));
+    if let Some(sub) = host.strip_suffix(".tenor.com") {
+        named(sub, "media") || sub == "c"
+    } else if let Some(sub) = host.strip_suffix(".klipy.com") {
+        named(sub, "static")
+    } else if let Some(sub) = host.strip_suffix(".giphy.com") {
+        named(sub, "media") || sub == "i"
+    } else {
+        false
+    }
+}
+
+/// The path of a URL, without its query or fragment: "/a/b.gif" for
+/// "https://example.com/a/b.gif?w=1#top".
+fn url_path(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let rest = &rest[rest.find(['/', '?', '#']).unwrap_or(rest.len())..];
+    rest.split(['?', '#']).next().unwrap_or_default()
+}
+
 /// Whether a URL opens a Farcaster mini app or frame, which Allthing does not
 /// run: `farcaster.xyz/miniapps/…`, `farcaster.xyz/~/mini-apps…`,
 /// `warpcast.com/~/frames…` and similar, and `*.neynar.app` mini app hosts.
@@ -483,6 +534,73 @@ mod tests {
         assert_eq!(classify_url("https://example.com/v", Some("application/x-mpegURL")), MediaKind::Video);
         assert_eq!(classify_url("https://example.com/a.mp4/b", None), MediaKind::Link);
         assert_eq!(classify_url("https://example.com/png", None), MediaKind::Link);
+    }
+
+    #[test]
+    fn gifs_are_those_of_gif_services_and_images_whose_path_is_a_gif() {
+        // Tenor's, KLIPY's and GIPHY's media, in whatever format they send.
+        for url in [
+            "https://media.tenor.com/7sV5mXX7KxUAAAAC/cat-dance.gif",
+            "https://media.tenor.com/7sV5mXX7KxUAAAPo/cat-dance.mp4",
+            "https://media.tenor.com/7sV5mXX7KxUAAAAe/cat-dance.webp",
+            "https://MEDIA.TENOR.COM/7sV5mXX7KxUAAAAC/cat-dance",
+            "https://media1.tenor.com/m/7sV5mXX7KxUAAAAC/cat-dance.gif",
+            "https://c.tenor.com/7sV5mXX7KxUAAAAC/tenor.gif",
+            // As KLIPY's results and the composer's casts have them.
+            "https://static.klipy.com/ii/d6b0ce929193df3c242ac34b5654d2ce/bf/e4/Plhldnjk.gif",
+            "https://static.klipy.com/ii/abc/14/af/cat.webp",
+            "https://static1.klipy.com/ii/b/sm.mp4",
+            "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.mp4",
+            "https://media3.giphy.com/media/v1.Y2lkPTc5/l0MYt5jPR6QX5pnqM/giphy.webp?cid=79&rid=giphy.webp",
+            "https://i.giphy.com/l0MYt5jPR6QX5pnqM.webp",
+        ] {
+            assert!(is_gif(url, None), "{url}");
+        }
+        // Any other image whose path ends in .gif, in any case.
+        assert!(is_gif("https://i.postimg.cc/rFKpQ1TJ/htt3.gif", None));
+        assert!(is_gif("https://media.firefly.land/farcaster/6076A171-B6BC-4647.GIF?w=720#top", None));
+        assert!(is_gif("http://example.com:8080/a.Gif", None));
+        // Or one its provider says is a GIF.
+        assert!(is_gif("https://imagedelivery.net/acct/id/original", Some("image/gif")));
+        assert!(is_gif("https://imagedelivery.net/acct/id/original", Some(" Image/GIF; charset=binary")));
+        assert!(!is_gif("https://imagedelivery.net/acct/id/original", Some("image/png")));
+    }
+
+    #[test]
+    fn photos_videos_and_pages_about_gifs_are_not_gifs() {
+        for url in [
+            // Photos and videos, on hosts that serve GIFs among them too.
+            "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/1a9f0888-bf59-4e20-9660-07a0f7098c00/original",
+            "https://i.imgur.com/sEIUnjY.jpeg",
+            "https://media.firefly.land/farcaster/a620c6e7-69dc-435c-ad58-495f33c46f84.jpg",
+            "https://stream.farcaster.xyz/v1/video/abc.m3u8",
+            "https://example.com/clip.mp4",
+            "https://media.firefly.land/post_m3u8/1c3fe8fc/1c3fe8fc.m3u8",
+            // ".gif" elsewhere than at the end of the path.
+            "https://i.imgur.com/abc.gifv",
+            "https://example.com/render?format=gif&name=a.gif",
+            "https://example.com/image#a.gif",
+            "https://example.com/a.gif/still.png",
+            "https://cdn.gif/photo.png",
+            // The services' pages and APIs, and hosts that only look like theirs.
+            "https://tenor.com/view/cat-dance-gif-25462910",
+            "https://giphy.com/gifs/cat-l0MYt5jPR6QX5pnqM",
+            "https://api.klipy.com/api/v1/key/gifs/trending",
+            "https://klipy.com/gifs/cat",
+            "https://mediax.tenor.com/a.png",
+            "https://media.tenor.com.example.com/a.png",
+            "https://static.klipy.co/a.png",
+            "https://evilklipy.com/static/a.png",
+            "https://static-1.klipy.com/a.png",
+            // Not a web address.
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/a.gif",
+            "not a url.gif",
+        ] {
+            assert!(!is_gif(url, None), "{url}");
+        }
+        assert!(!is_gif("https://example.com/photo.jpg", Some("image/jpeg")));
+        assert!(!is_gif("https://example.com/clip", Some("video/mp4")));
+        assert!(!is_gif("https://example.com/image", Some("image/gifs")));
     }
 
     #[test]
