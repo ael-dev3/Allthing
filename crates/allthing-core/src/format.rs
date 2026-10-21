@@ -47,9 +47,48 @@ pub fn short_address(address: &str) -> String {
     format!("{start}…{end}")
 }
 
+/// A chart's value axis for counts up to `max`: a round step (1, 2 or 5
+/// times a power of ten) and the first multiple of it at or above `max`, in
+/// four steps at most. 7,200 → (2,000, 8,000).
+pub fn axis(max: u64) -> (u64, u64) {
+    let mut unit: u64 = 1;
+    loop {
+        for step in [unit, unit.saturating_mul(2), unit.saturating_mul(5)] {
+            let steps = max.div_ceil(step).max(1);
+            if steps <= 4 {
+                return (step, steps.saturating_mul(step));
+            }
+        }
+        unit = unit.saturating_mul(10);
+    }
+}
+
+/// An axis label: 0, 500, 1.5k, 8k, 2m.
+pub fn tick(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => trim_zero(format!("{:.1}", n as f64 / 1_000.0)) + "k",
+        _ => trim_zero(format!("{:.1}", n as f64 / 1_000_000.0)) + "m",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn axes_take_round_steps() {
+        assert_eq!(axis(7_200), (2_000, 8_000));
+        assert_eq!(axis(6_174), (2_000, 8_000));
+        assert_eq!(axis(1_350), (500, 1_500));
+        assert_eq!(axis(3_047), (1_000, 4_000));
+        assert_eq!(axis(41), (20, 60));
+        assert_eq!(axis(4), (1, 4));
+        assert_eq!(axis(0), (1, 1));
+        assert_eq!(axis(u64::MAX).1, u64::MAX);
+        let labels: Vec<String> = [0, 500, 1_500, 8_000, 12_000, 2_000_000].into_iter().map(tick).collect();
+        assert_eq!(labels, ["0", "500", "1.5k", "8k", "12k", "2m"]);
+    }
 
     #[test]
     fn compact_and_full_numbers() {

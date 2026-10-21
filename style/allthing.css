@@ -2673,6 +2673,28 @@ p.jumbo .emoji img {
   margin-top: 4px;
 }
 
+/* How the count is made, in a line, under its window; /dau says more. */
+.client-card-body .client-card-method {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.popover-panel .client-card-method a {
+  display: inline;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.popover-panel .client-card-method a:hover,
+.popover-panel .client-card-method a:focus-visible {
+  text-decoration: underline;
+}
+
 .client-card-body .client-card-links {
   display: grid;
   justify-items: start;
@@ -5688,10 +5710,14 @@ p.jumbo .emoji img {
   z-index: 60;
 }
 
-/* Daily active accounts (/dau): SnapMeter's meter, tiles, the month's days,
-   what accounts did and which apps they used, and how they were counted. */
+/* Daily active accounts (/dau), after SnapMeter's dashboard: its meter, the
+   history by hour or day, what accounts did and which apps they used, and
+   its definitions. Figures are in the UI sans, as SnapMeter's are. The
+   charts take one hue (dataviz): the accent, and a lighter step of it
+   (#a9a2ea, 2.3:1 on the card) for part of a day or the earlier hours,
+   which the readouts, the legend and the tables also say. */
 .dau {
-  max-width: 770px;
+  max-width: 800px;
   margin: 0 auto;
   display: grid;
   gap: 14px;
@@ -5735,172 +5761,374 @@ p.jumbo .emoji img {
   margin: 0;
 }
 
+.dau-card .dau-sub {
+  margin-top: -4px;
+  color: var(--ink-3);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+/* The meter: the past 24 hours, today so far beside them, readouts, and
+   today against a typical day. */
 .dau-meter {
-  padding: 22px 20px 20px;
+  padding: 20px 22px 18px;
   background:
     radial-gradient(120% 140% at 0% 0%, var(--accent-soft), transparent 60%),
     var(--card);
 }
 
-.dau-big {
+.dau-meter-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
 }
 
-.dau-big strong {
-  font: 400 64px/1 var(--font-display);
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+.dau-meter-head h2 {
+  margin-bottom: 4px;
 }
 
-.dau-what {
+.dau-card .dau-window {
   color: var(--ink-2);
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* How far the counts go: the dot is a status, and its words say which. */
+.dau-card .dau-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dau-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0ca30c;
+  box-shadow: 0 0 0 3px rgba(12, 163, 12, 0.16);
+}
+
+.dau-status.behind .dau-dot {
+  background: #fab219;
+  box-shadow: 0 0 0 3px rgba(250, 178, 25, 0.22);
+}
+
+.dau-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px 24px;
+  margin-top: 14px;
+}
+
+.dau-card .dau-big {
+  font: 650 72px/0.95 var(--font-ui);
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+.dau-card .dau-big.pending {
+  color: var(--ink-3);
+}
+
+.dau-card .dau-what {
+  margin-top: 10px;
+  max-width: 34em;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .dau-card .dau-change {
   margin-top: 10px;
+  color: var(--ink-2);
   font-size: 14px;
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
 }
 
-.dau-change.up {
+.dau-change strong {
+  font-weight: 650;
+}
+
+.dau-change.up > *,
+.dau-trend.up {
   color: #1d7a4f;
 }
 
-.dau-change.down {
+.dau-change.down > *,
+.dau-trend.down {
   color: #b4433b;
 }
 
-.dau-tiles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+.dau-card .dau-tile-label {
+  margin: 0 0 4px;
+  font: 500 12.5px/1.3 var(--font-ui);
+  color: var(--ink-3);
 }
 
-.dau-tile-count {
-  font: 400 34px/1.05 var(--font-display);
+.dau-card .dau-tile-count {
+  font: 650 24px/1.1 var(--font-ui);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.dau-card .dau-tile-note {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Today so far, beside the 24 hours: SnapMeter's "Today UTC DAU". */
+.dau-today {
+  padding-left: 22px;
+  border-left: 1px solid var(--line-2);
+  text-align: right;
+}
+
+.dau-card .dau-today .dau-tile-count {
+  font-size: 36px;
+  color: var(--accent);
+}
+
+.dau-readouts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.dau-readouts .dau-tile {
+  min-width: 0;
+  padding: 12px 14px 0;
+  border-left: 1px solid var(--line);
+}
+
+.dau-readouts .dau-tile:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* Today so far against the month's median day. */
+.dau-baseline {
+  display: grid;
+  grid-template-columns: auto minmax(60px, 1fr) auto;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 16px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.dau-baseline-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.dau-baseline-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.dau-baseline-pct {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 
-.dau-card .dau-tile-note {
-  margin-top: 6px;
-  color: var(--ink-3);
-  font-size: 12.5px;
-  line-height: 1.4;
+/* The history: its range above it, as SnapMeter's; each range's chart is
+   drawn once, and the range shows one. */
+.dau-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 4px;
 }
 
+.dau-chart-head h2 {
+  margin: 0;
+}
+
+.dau-card .dau-history > .dau-sub {
+  margin: 0 0 18px;
+}
+
+.dau-range {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.dau-range button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: 500 13px/1.2 var(--font-ui);
+  cursor: pointer;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+.dau-range button:hover {
+  color: var(--ink);
+}
+
+.dau-range button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.08), 0 0 0 1px var(--line);
+}
+
+.dau-range button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The plot: a value axis of round steps on the left, solid hairlines, and
+   thin bars with rounded ends, a slot each. */
 .dau-plot {
+  padding-left: 30px;
+}
+
+.dau-area {
   position: relative;
-  padding-top: 4px;
+  height: 180px;
 }
 
-.dau-chart svg {
-  display: block;
-  width: 100%;
-  height: 170px;
+.dau-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.dau-max {
+.dau-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--line);
+}
+
+.dau-gridline.base {
+  border-top-color: var(--line-2);
+}
+
+.dau-gridline span {
   position: absolute;
   top: 0;
-  left: 0;
-  font-size: 11px;
+  right: 100%;
+  margin-right: 8px;
+  transform: translateY(-50%);
   color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.dau-ticks {
-  position: relative;
-  height: 18px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
-.dau-ticks span {
+.dau-cols {
   position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-}
-
-.dau-ticks span:last-child {
-  font-weight: 600;
-  color: var(--ink-2);
-}
-
-.dau-bar {
-  fill: var(--accent);
-  opacity: 0.85;
-}
-
-.dau-bar.partial {
-  fill: var(--accent);
-  opacity: 0.32;
-}
-
-.dau-bar.today {
-  fill: var(--cyan);
-  opacity: 0.85;
-}
-
-/* The day pointed at, focused or tapped. */
-.dau-bar.on {
-  opacity: 1;
-}
-
-/* A day's whole column, over its bar: what the pointer and a tap hit. */
-.dau-hit {
-  fill: transparent;
-  pointer-events: all;
-}
-
-.dau-chart svg:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  inset: 0;
   border-radius: 4px;
 }
 
-/* Focused by a click or a tap: no ring (Chrome's own style for SVG draws
-   one whenever it has focus). */
-.dau-chart svg:focus:not(:focus-visible) {
+/* A bar's whole column: what the pointer and a tap hit. */
+.dau-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.dau-bar {
+  width: min(50%, 18px);
+  min-width: 2px;
+  border-radius: 4px 4px 0 0;
+  background: var(--accent);
+  transition: opacity 0.15s var(--ease);
+}
+
+.dau-bar.partial,
+.dau-bar.today,
+.dau-bar.before {
+  background: #a9a2ea;
+}
+
+/* The bar pointed at, focused or tapped; the others step back. */
+.dau-cols:has(.dau-bar.on) .dau-bar:not(.on) {
+  opacity: 0.4;
+}
+
+.dau-cols:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* Focused by a click or a tap: no ring. */
+.dau-cols:focus:not(:focus-visible) {
   outline: none;
 }
 
-/* A day's count and date, above its bar; by the chart's edges it hangs
-   inward. Solid, so the chart doesn't show through. */
+/* A bar's count and when: above a short bar, and by the chart's edges
+   hanging inward; beside a tall bar's top, so it never leaves the plot for
+   the controls above it. Solid, so the chart doesn't show through. */
+.dau-tip-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .dau-tip {
   position: absolute;
   z-index: 2;
-  transform: translate(-50%, calc(-100% - 6px));
+  transform: translateX(-50%);
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card);
   box-shadow: 0 1px 2px rgba(27, 34, 51, 0.08), 0 10px 24px -12px rgba(27, 34, 51, 0.45);
+  color: var(--ink-2);
   font-size: 12.5px;
   line-height: 1.35;
-  color: var(--ink-2);
   white-space: nowrap;
   pointer-events: none;
 }
 
 .dau-tip.start {
-  transform: translate(-10px, calc(-100% - 6px));
+  transform: translateX(-10px);
 }
 
 .dau-tip.end {
-  transform: translate(calc(-100% + 10px), calc(-100% - 6px));
+  transform: translateX(calc(-100% + 10px));
 }
 
-.dau-tip[hidden] {
-  display: none;
+.dau-tip.right {
+  transform: translateY(100%);
+}
+
+.dau-tip.left {
+  transform: translate(-100%, 100%);
 }
 
 .dau-tip strong {
@@ -5910,13 +6138,28 @@ p.jumbo .emoji img {
 
 .dau-tip-day {
   display: block;
-  font-size: 11.5px;
   color: var(--ink-3);
+  font-size: 11.5px;
 }
 
-.dau-grid {
-  stroke: var(--line-2);
-  stroke-dasharray: 3 4;
+.dau-ticks {
+  position: relative;
+  height: 16px;
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dau-ticks span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.dau-ticks span.strong {
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
 .dau-card .dau-legend {
@@ -5924,9 +6167,9 @@ p.jumbo .emoji img {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 14px;
-  margin-top: 10px;
-  font-size: 12.5px;
+  margin-top: 12px;
   color: var(--ink-3);
+  font-size: 12.5px;
 }
 
 .dau-legend > span {
@@ -5941,15 +6184,17 @@ p.jumbo .emoji img {
   height: 10px;
   border-radius: 3px;
   background: var(--accent);
-  opacity: 0.85;
 }
 
-.dau-key.partial {
-  opacity: 0.32;
+.dau-key.light {
+  background: #a9a2ea;
 }
 
-.dau-key.today {
-  background: var(--cyan);
+.dau-card .dau-summary {
+  margin-top: 8px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.45;
 }
 
 .dau-table {
@@ -5987,62 +6232,54 @@ p.jumbo .emoji img {
   font-size: 12.5px;
 }
 
-.dau-mix-bar {
-  display: flex;
-  gap: 2px;
-  height: 10px;
-  margin: 12px 0;
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.dau-mix-seg {
-  min-width: 3px;
-}
-
-.mix-0 {
-  background: var(--accent);
-}
-
-.mix-1 {
-  background: #2f6fde;
-}
-
-.mix-2 {
-  background: var(--cyan);
-}
-
-.mix-3 {
-  background: var(--gold);
-}
-
-.mix-4 {
-  background: #c25e8a;
-}
-
-.mix-5 {
-  background: #a3a8b8;
-}
-
-.dau-mix-list {
+/* What accounts did, and which apps they used: a bar a row, its length
+   against the largest, its count and share beside it. */
+.dau-rows {
   list-style: none;
-  margin: 0;
+  margin: 14px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 6px 18px;
+  gap: 8px;
+}
+
+.dau-rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 64px 48px;
+  align-items: center;
+  gap: 12px;
   font-size: 14px;
 }
 
-.dau-mix-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.dau-row-bar {
+  height: 8px;
+}
+
+.dau-row-bar span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.dau-row-count {
+  text-align: right;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dau-row-share {
+  text-align: right;
+  color: var(--ink-3);
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 
 .dau-mix-name {
-  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* While the cron catches up after a deploy or an outage: how far it has
@@ -6064,23 +6301,6 @@ p.jumbo .emoji img {
   background: rgba(185, 130, 42, 0.1);
   color: var(--ink-2);
   font-size: 13px;
-}
-
-.dau-app-list {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.dau-app-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 190px) minmax(0, 1fr) auto 52px;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
 }
 
 .dau-app-name {
@@ -6120,38 +6340,33 @@ p.jumbo .emoji img {
   background: var(--line);
 }
 
-.dau-app-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--line);
-  overflow: hidden;
-}
-
-.dau-app-bar span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-
-.dau-app-share {
-  text-align: right;
-  font-size: 12.5px;
-}
-
 .dau-card .dau-apps-foot {
   margin-top: 12px;
-  font-size: 13px;
 }
 
-.dau-method ul {
+/* The definitions: SnapMeter's, a term and what it means. */
+.dau-terms {
   margin: 0;
-  padding-left: 18px;
   display: grid;
-  gap: 8px;
-  color: var(--ink-2);
+  gap: 10px;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.dau-terms > div {
+  display: grid;
+  grid-template-columns: 8.5em minmax(0, 1fr);
+  gap: 2px 16px;
+}
+
+.dau-terms dt {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.dau-terms dd {
+  margin: 0;
+  color: var(--ink-2);
 }
 
 .dau-method code {
@@ -6160,7 +6375,7 @@ p.jumbo .emoji img {
 }
 
 .dau-card .dau-links {
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 13.5px;
 }
 
@@ -6172,42 +6387,62 @@ p.jumbo .emoji img {
 }
 
 @media (max-width: 640px) {
-  .dau-big strong {
-    font-size: 48px;
+  .dau-meter {
+    padding: 18px 16px 16px;
   }
 
-  .dau-tiles {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
+  .dau-card .dau-big {
+    font-size: 54px;
   }
 
-  .dau-tile {
-    display: grid;
+  .dau-primary {
+    gap: 12px 14px;
+  }
+
+  .dau-today {
+    padding-left: 14px;
+  }
+
+  .dau-card .dau-today .dau-tile-count {
+    font-size: 26px;
+  }
+
+  .dau-readouts .dau-tile {
+    padding: 10px 10px 0;
+  }
+
+  .dau-card .dau-tile-count {
+    font-size: 19px;
+  }
+
+  .dau-baseline {
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: baseline;
-    gap: 0 12px;
   }
 
-  .dau-tile .dau-tile-label {
-    margin: 0;
+  .dau-baseline-label {
+    grid-column: 1 / -1;
   }
 
-  .dau-tile-count {
-    font-size: 28px;
-    grid-row: span 2;
+  .dau-area {
+    height: 150px;
   }
 
-  .dau-chart svg {
-    height: 130px;
+  .dau-ticks span.minor {
+    display: none;
   }
 
-  .dau-app-list li {
-    grid-template-columns: minmax(0, 1fr) auto 48px;
+  .dau-rows li {
+    grid-template-columns: minmax(0, 1fr) auto 46px;
+    gap: 4px 10px;
   }
 
-  .dau-app-bar {
+  .dau-row-bar {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .dau-terms > div {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -29,6 +29,8 @@ const apps = {
 // The window ends as the hour in progress began.
 const to = Math.floor(Date.now() / 3_600_000) * 3_600;
 const hour = `${String(new Date(to * 1000).getUTCHours()).padStart(2, "0")}:00 UTC`;
+// How an app's active accounts are counted, as the card says it.
+const METHOD = "Any message (a cast, reaction, follow…) signed with a key this app requested counts its account once, from Hypersnap's events. How it's counted";
 
 function counted(unknown = 0) {
   return {
@@ -88,6 +90,10 @@ test("pointing at an app opens its card: its active accounts in the past 24 hour
   await expect(card).toBeVisible();
   await expect(card).toContainText("4,812 active accounts");
   await expect(card).toContainText(`in the 24 hours to ${hour}`);
+  // How the cron counts them, in a line: which messages, which accounts,
+  // which app, from where; the page says more.
+  await expect(card.locator(".client-card-method")).toHaveText(METHOD);
+  await expect(card.getByRole("link", { name: "How it's counted" })).toHaveAttribute("href", "/dau");
   await expect(card).toContainText("60% of today's trending casts");
   await expect(card).not.toContainText("so far");
   await expect(card.getByRole("link", { name: "Show only casts from Farcaster" })).toHaveAttribute("href", /client=9152/);
@@ -189,13 +195,32 @@ test("at 390, a tap opens an app's card, whose link filters", async ({ browser }
   await expect(card).toBeVisible();
   await expect(page).not.toHaveURL(/client=/);
   await expect(card).toContainText("1,203 active accounts");
+  await expect(card.locator(".client-card-method")).toHaveText(METHOD);
   const box = (await card.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
+  // All of it on the screen: the method's line, and its link, a tap away.
+  const method = (await card.locator(".client-card-method").boundingBox())!;
+  expect(method.x + method.width).toBeLessThanOrEqual(box.x + box.width);
+  expect(method.y + method.height).toBeLessThanOrEqual(844);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await card.screenshot({ path: testInfo.outputPath("client-card-390.png") });
   await card.getByRole("link", { name: "Show only casts from Base App" }).tap();
   await expect(page).toHaveURL(/client=309857/);
   await expect(page.locator(".cast-card:not(.skeleton)")).toHaveCount(5);
+  await expect(card).toBeHidden();
+  await context.close();
+});
+
+test("at 390, how it's counted opens the page of every app's active accounts", async ({ browser }, testInfo) => {
+  const { context, page } = await phone(browser, testInfo);
+  await serve(page, counted());
+  await page.goto("/");
+  await page.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).tap();
+  const card = page.getByRole("dialog", { name: "Farcaster: active accounts" });
+  await card.getByRole("link", { name: "How it's counted" }).tap();
+  await expect(page).toHaveURL(/\/dau$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Daily active accounts" })).toBeVisible();
   await expect(card).toBeHidden();
   await context.close();
 });
