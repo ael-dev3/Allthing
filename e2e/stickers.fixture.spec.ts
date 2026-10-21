@@ -89,6 +89,7 @@ test.describe("in the composer", () => {
     // Pointed at, the foot says what it is; it keeps moving after.
     await tiles.nth(1).hover();
     await expect(foot).toContainText("Pepe dances");
+    await expect(foot.locator(".emoji-maker")).toHaveText("by zjawa");
     await page.mouse.move(5, 5);
     await expect(tiles.nth(1).locator("img")).toHaveAttribute("src", /pepe_pls\.tile\.webp$/);
     // A search, read out; Enter picks the first and closes the picker.
