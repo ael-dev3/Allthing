@@ -11,3 +11,9 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The logo as a PNG, for the picture of Allthing's Farcaster account,
+# @allthingapp (apps show an SVG picture as blank). It is cached for a year,
+# so a new logo gets a new file name rather than replacing this one.
+/pfp.png
+  Cache-Control: public, max-age=31536000, immutable
