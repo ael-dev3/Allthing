@@ -1055,7 +1055,9 @@ p.jumbo .emoji img {
    tap in a band 44 px tall, as wide as it is and centred on it, leaving
    the layout as it is. Only taller, not wider: a count's band would cover
    the heart beside it, as the later of the two. The sign-in button, on its
-   own, is 44 px wide as well, as the picture is above. */
+   own, is 44 px wide as well, as the picture is above. A reply's toggle,
+   the "?" beside a fact and the front page's apps under their bar take
+   one too, with room made so that no two bands meet (below). */
 @media (pointer: coarse) {
   .main-nav a,
   .sign-in-button,
@@ -1069,6 +1071,10 @@ p.jumbo .emoji img {
   .favorite-button,
   .show-less-button,
   .cast-pill,
+  .comment-head .toggle,
+  .fact-help,
+  .client-legend a,
+  .client-other,
   .site-footer a {
     position: relative;
   }
@@ -1085,6 +1091,10 @@ p.jumbo .emoji img {
   .favorite-button::after,
   .show-less-button::after,
   .cast-pill::after,
+  .comment-head .toggle::after,
+  .fact-help::after,
+  .client-legend a::after,
+  .client-other::after,
   .site-footer a::after {
     content: "";
     position: absolute;
@@ -1099,6 +1109,16 @@ p.jumbo .emoji img {
     left: 50%;
     width: max(100%, 44px);
     transform: translate(-50%, -50%);
+  }
+
+  /* The "?" is 14 px across: its band is 36, as far as it can reach
+     without meeting the other "?" of a profile card, a line below, and
+     over the wallet bar under a card's, which would take its lower edge. */
+  .fact-help::after {
+    left: 50%;
+    width: 36px;
+    transform: translate(-50%, -50%);
+    z-index: 1;
   }
 }
 
@@ -1963,6 +1983,15 @@ p.jumbo .emoji img {
   padding: 10px 0 2px;
 }
 
+/* On a touch screen, room above a reply's toggle for its tap band, clear of
+   the actions of the reply before it or of the one it answers: 8 px more
+   over each reply. */
+@media (pointer: coarse) {
+  .comment {
+    padding-top: 18px;
+  }
+}
+
 .children > .comment {
   margin-left: 10px;
   padding-left: 16px;
@@ -2497,6 +2526,16 @@ p.jumbo .emoji img {
   padding: 0;
   font-size: 12.5px;
   color: var(--ink-2);
+}
+
+/* On a touch screen, the apps' 44 px tap bands don't meet: their rows are
+   25 px apart, and the first is clear of the bar's segments, which take a
+   tap 17 px tall of their own. */
+@media (pointer: coarse) {
+  .client-legend {
+    margin-top: 19px;
+    row-gap: 25px;
+  }
 }
 
 /* A legend app is a link that filters the feed. */
