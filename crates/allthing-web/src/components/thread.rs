@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Collapsible reply trees.
+//! Collapsible reply trees, with the reader's own replies from here at the
+//! top of what they answer: as posting while they're on their way, then as
+//! posted, until the page lists them itself.
+
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use allthing_core::emoji::reactions;
 use allthing_core::format::plural;
@@ -14,17 +19,87 @@ use crate::components::reactions::ReactionChips;
 use crate::components::text::CastText;
 use crate::util::cast_href;
 
+/// The casts a post's page lists itself, by hash: the reader's replies from
+/// here show at the top of what they answer until it lists them.
+pub type Listed = Arc<HashSet<String>>;
+
+/// A post's replies (`nodes`, sorted), with the reader's own from here at
+/// the top; or, with none, "No replies yet." `rest`, the replies after
+/// `nodes`, are drawn once `drawn` is true (at once without it).
 #[component]
-pub fn CommentTree(nodes: Vec<ThreadNode>, notes: Notes, op_fid: u64) -> AnyView {
-    nodes.into_iter().map(|node| view! { <Comment node notes=notes.clone() op_fid/> }).collect_view().into_any()
+pub fn Replies(
+    parent: String,
+    mut nodes: Vec<ThreadNode>,
+    notes: Notes,
+    op_fid: u64,
+    listed: Listed,
+    #[prop(optional)] mut rest: Vec<ThreadNode>,
+    #[prop(optional)] drawn: Option<RwSignal<bool>>,
+) -> AnyView {
+    if drawn.is_none() {
+        nodes.append(&mut rest);
+    }
+    if !nodes.is_empty() {
+        let later = drawn.map(|drawn| {
+            let (notes, listed) = (notes.clone(), listed.clone());
+            move || {
+                drawn.get().then(
+                    || view! { <CommentTree nodes=rest.clone() notes=notes.clone() op_fid listed=listed.clone()/> },
+                )
+            }
+        });
+        return view! {
+            <div class="comments">
+                {my_replies(&parent, listed.clone(), notes.clone(), op_fid)}
+                <CommentTree nodes notes op_fid listed/>
+                {later}
+            </div>
+        }
+        .into_any();
+    }
+    #[cfg(not(feature = "static-host"))]
+    if let Some(writer) = crate::components::writer::use_writer() {
+        let (to, seen) = (parent.to_ascii_lowercase(), listed.clone());
+        let any = Memo::new(move |_| !mine(writer, &to, &seen).is_empty());
+        return (move || {
+            if any.get() {
+                view! { <div class="comments">{my_replies(&parent, listed.clone(), notes.clone(), op_fid)}</div> }
+                    .into_any()
+            } else {
+                view! { <p class="empty">"No replies yet."</p> }.into_any()
+            }
+        })
+        .into_any();
+    }
+    let _ = (parent, notes, op_fid, listed);
+    view! { <p class="empty">"No replies yet."</p> }.into_any()
+}
+
+#[component]
+pub fn CommentTree(nodes: Vec<ThreadNode>, notes: Notes, op_fid: u64, listed: Listed) -> AnyView {
+    nodes
+        .into_iter()
+        .map(|node| view! { <Comment node notes=notes.clone() op_fid listed=listed.clone()/> })
+        .collect_view()
+        .into_any()
 }
 
 /// How long a reply's body animates when it collapses or expands (its CSS
 /// transition takes 340 ms).
 const TOGGLE_MS: u64 = 400;
 
+/// A reply, with its own replies. `mine`: one of the reader's from here
+/// (`my_replies`), which, while it's on its way, says so in its time's
+/// place (`posting`), and whose actions do nothing yet.
 #[component]
-fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
+fn Comment(
+    node: ThreadNode,
+    notes: Notes,
+    op_fid: u64,
+    listed: Listed,
+    #[prop(optional)] mine: bool,
+    #[prop(optional_no_strip)] posting: Option<&'static str>,
+) -> AnyView {
     let collapsed = RwSignal::new(false);
     // The reply is clipped while it collapses or expands; at rest it isn't,
     // so its popovers (likes, profile cards) can reach past its edges.
@@ -61,12 +136,29 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             )
         }
     };
+    #[cfg(not(feature = "static-host"))]
+    let children = view! {
+        <div class="children">
+            {my_replies(&cast.hash, listed.clone(), notes.clone(), op_fid)}
+            <CommentTree nodes=node.children.clone() notes=notes.clone() op_fid listed=listed.clone()/>
+        </div>
+    }
+    .into_any();
+    #[cfg(feature = "static-host")]
+    let children = (!node.children.is_empty())
+        .then(|| {
+            view! { <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid listed=listed.clone()/></div> }
+        })
+        .into_any();
     view! {
         <div
             class="comment"
+            class:mine=mine
+            class:pending=posting.is_some()
             class:collapsed=move || collapsed.get()
             class:animating=move || animating.get()
             class:deleted=gone
+            aria-busy=posting.map(|_| "true")
             id=format!("c-{}", &cast.hash[2..10])
         >
             <div class="comment-head">
@@ -84,7 +176,10 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     </button>
                     <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
                     {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" aria-description="Original poster">"OP"</span> })}
-                    <a class="when" href=href.clone()><span class="visually-hidden">"Open reply, "</span><TimeAgo ts=cast.ts/></a>
+                    {match posting {
+                        Some(state) => view! { <span class="when posting">{state}</span> }.into_any(),
+                        None => view! { <a class="when" href=href.clone()><span class="visually-hidden">"Open reply, "</span><TimeAgo ts=cast.ts/></a> }.into_any(),
+                    }}
                 </span>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
                 <Show when=move || collapsed.get()>
@@ -103,14 +198,14 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     <MediaGrid cast=cast.clone()/>
                     <VideoLinks cast=cast.clone()/>
                     <LinkCards cast=cast.clone()/>
-                    <div class="comment-foot">
+                    <div class="comment-foot" prop:inert=posting.is_some()>
                         <Engagement cast=cast.clone() tight=true/>
                         {reply_button(&cast, "reply")}
                     </div>
-                    <ReactionChips cast=cast.clone() reacted=reactions(node.children.iter().map(|n| &n.cast))/>
-                    {(!node.children.is_empty()).then(|| view! {
-                        <div class="children"><CommentTree nodes=node.children.clone() notes=notes.clone() op_fid/></div>
+                    {posting.is_none().then(|| view! {
+                        <ReactionChips cast=cast.clone() reacted=reactions(node.children.iter().map(|n| &n.cast))/>
                     })}
+                    {children}
                     {(more > 0).then(|| view! {
                         <a class="continue" href=href>{format!("continue this thread ({}) →", plural(more, "more reply", "more replies"))}</a>
                     })}
@@ -119,6 +214,100 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
         </div>
     }
     .into_any()
+}
+
+/// The reader's replies from here to `parent` that the page doesn't list
+/// itself (`listed`) and that aren't deleted.
+#[cfg(not(feature = "static-host"))]
+fn mine(
+    writer: crate::components::writer::Writer,
+    parent: &str,
+    listed: &HashSet<String>,
+) -> Vec<crate::components::writer::Outgoing> {
+    writer
+        .replies_to(parent)
+        .into_iter()
+        .filter(|reply| reply.hash.as_ref().is_none_or(|hash| !listed.contains(hash) && !writer.deleted(hash)))
+        .collect()
+}
+
+/// The reader's replies to `parent` from here, at the top of its replies,
+/// each drawn as the thread draws a reply, until the page lists it itself
+/// (`listed`): on its way, as posting, with its actions doing nothing yet;
+/// then, once the node shows it, as a reply like the others. A reply handed
+/// to the Farcaster app shows the same way, as posting there until it is.
+#[cfg(not(feature = "static-host"))]
+fn my_replies(parent: &str, listed: Listed, notes: Notes, op_fid: u64) -> AnyView {
+    let Some(writer) = crate::components::writer::use_writer() else { return ().into_any() };
+    let session = crate::components::signin::use_session();
+    let parent = parent.to_ascii_lowercase();
+    let shown = {
+        let (parent, listed) = (parent.clone(), listed.clone());
+        Memo::new(move |_| mine(writer, &parent, &listed))
+    };
+    // Drawn again, each, as one changes: there are one or two at most.
+    (move || {
+        let author = session.user.get()?;
+        let replies = shown.get();
+        (!replies.is_empty()).then(|| {
+            replies
+                .into_iter()
+                .map(|reply| {
+                    let posting = match (&reply.hash, reply.pending) {
+                        (_, true) => Some("Posting…"),
+                        (None, false) => Some("Posting in Farcaster"),
+                        (Some(_), false) => None,
+                    };
+                    let node = ThreadNode { cast: reply_cast(&reply, author.clone(), &parent), children: Vec::new() };
+                    view! { <Comment node notes=notes.clone() op_fid listed=listed.clone() mine=true posting/> }
+                })
+                .collect_view()
+        })
+    })
+    .into_any()
+}
+
+#[cfg(feature = "static-host")]
+fn my_replies(_: &str, _: Listed, _: Notes, _: u64) -> AnyView {
+    ().into_any()
+}
+
+/// One of the reader's replies from here as the thread draws a cast: theirs,
+/// from when it went, with its images, videos and GIF.
+#[cfg(not(feature = "static-host"))]
+fn reply_cast(
+    reply: &crate::components::writer::Outgoing,
+    author: allthing_core::model::UserSummary,
+    parent: &str,
+) -> allthing_core::model::Cast {
+    use allthing_core::embeds::{MediaKind, classify_url};
+    use allthing_core::model::Embed;
+    let embeds = reply
+        .media
+        .iter()
+        .map(|url| match classify_url(url, None) {
+            MediaKind::Image => Embed::Image { url: url.clone() },
+            MediaKind::Video => Embed::Video { url: url.clone() },
+            MediaKind::Link => Embed::Link { url: url.clone(), image_url: None, title: None },
+        })
+        .collect();
+    allthing_core::model::Cast {
+        // Until it's signed, a stand-in in a hash's shape, for its ids.
+        hash: reply.hash.clone().unwrap_or_else(|| format!("0x{:08x}{:032x}", reply.id as u32, reply.id)),
+        author,
+        text: reply.text.clone(),
+        mentions: Vec::new(),
+        ts: if reply.at > 0 { reply.at } else { crate::util::now() },
+        parent_hash: Some(parent.to_owned()),
+        parent_url: None,
+        channel: None,
+        embeds,
+        likes: 0,
+        recasts: 0,
+        replies: 0,
+        mini_app: false,
+        spam: false,
+    }
 }
 
 /// Reply, Quote and React, under a post or a reply, and Delete under the

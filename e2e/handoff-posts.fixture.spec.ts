@@ -69,8 +69,10 @@ async function serve(page: Page) {
 }
 
 const outgoing = (page: Page) => page.locator(".cast-card.outgoing");
+/** The reader's reply, in the thread under what it answers. */
+const myReply = (page: Page) => page.locator(".replies .comment.mine");
 
-test("a reply shows above the replies at once, then as posted, with the count", async ({ page }, info) => {
+test("a reply shows in the thread at once, then as posted, with the count", async ({ page }, info) => {
   await signIn(page, me);
   const { posted } = await serve(page);
   await page.goto(`/p/${theirs.hash}`);
@@ -81,10 +83,12 @@ test("a reply shows above the replies at once, then as posted, with the count", 
   await page.getByRole("dialog", { name: "Reply" }).getByRole("button", { name: "Post in Farcaster" }).click();
   const dialog = page.getByRole("dialog", { name: "Post in Farcaster" });
   await expect(dialog).toContainText("Your reply, ready to post.");
-  // At once, under the dialog: the reply above the replies, and one more.
-  await expect(outgoing(page)).toHaveCount(1);
-  await expect(outgoing(page)).toContainText("so true");
-  await expect(outgoing(page)).toContainText("Posting in Farcaster");
+  // At once, under the dialog: the reply at the top of the post's replies,
+  // and one more.
+  await expect(myReply(page)).toHaveCount(1);
+  await expect(page.locator(".replies .comments > .comment").first()).toHaveClass(/\bmine\b/);
+  await expect(myReply(page)).toContainText("so true");
+  await expect(myReply(page)).toContainText("Posting in Farcaster");
   await expect(post.locator(".stat-replies")).toContainText("2");
   await expect(page.locator(".replies-head h2")).toHaveText("Replies2");
   // Once the dialog has faded in over the composer.
@@ -93,13 +97,12 @@ test("a reply shows above the replies at once, then as posted, with the count", 
   // Scanned with the phone: Done hands the draft over.
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(page.getByRole("dialog", { name: "Reply" })).toHaveCount(0);
-  await expect(outgoing(page)).toContainText("Posting in Farcaster");
+  await expect(myReply(page)).toContainText("Posting in Farcaster");
   // The reader posts it in the app, a little changed.
   posted.push({ hash: hex(9), text: "so true!", parent: theirs.hash });
-  const done = outgoing(page).getByRole("link", { name: "Posted" });
-  await expect(done).toBeVisible({ timeout: 10_000 });
-  await expect(done).toHaveAttribute("href", /\/p\/0x0+9$/);
-  await expect(outgoing(page)).not.toContainText("Posting in Farcaster");
+  const done = myReply(page).getByRole("link", { name: "permalink" });
+  await expect(done).toHaveAttribute("href", /\/p\/0x0+9$/, { timeout: 10_000 });
+  await expect(myReply(page)).not.toContainText("Posting in Farcaster");
   await expect(page.getByRole("status").filter({ hasText: "Posted." })).toBeVisible();
   await expect(page.getByRole("status").getByRole("link", { name: "View" })).toHaveAttribute("href", /\/p\/0x0+9$/);
   await expect(post.locator(".stat-replies")).toContainText("2");
@@ -172,13 +175,13 @@ test("on a phone, a reply sent by its link shows at once, and as posted on comin
     context.waitForEvent("page"),
     page.getByRole("dialog", { name: "Reply" }).getByRole("link", { name: /Post in Farcaster/ }).tap(),
   ]);
-  await expect(outgoing(page)).toContainText("from my phone");
-  await expect(outgoing(page)).toContainText("Posting in Farcaster");
+  await expect(myReply(page)).toContainText("from my phone");
+  await expect(myReply(page)).toContainText("Posting in Farcaster");
   await page.screenshot({ path: info.outputPath("handoff-posts-390-waiting.png") });
   posted.push({ hash: hex(13), text: "from my phone", parent: theirs.hash });
   await app.close();
   await page.bringToFront();
-  await expect(outgoing(page).getByRole("link", { name: "Posted" })).toBeVisible({ timeout: 10_000 });
+  await expect(myReply(page).getByRole("link", { name: "permalink" })).toHaveAttribute("href", `/p/${hex(13)}`, { timeout: 10_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: info.outputPath("handoff-posts-390-posted.png") });
   await context.close();
@@ -193,11 +196,11 @@ test("not posted in time, it goes, and the draft is back in the composer", async
   await page.keyboard.type("never sent");
   await page.getByRole("dialog", { name: "Reply" }).getByRole("button", { name: "Post in Farcaster" }).click();
   await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("button", { name: "Done" }).click();
-  await expect(outgoing(page)).toHaveCount(1);
+  await expect(myReply(page)).toHaveCount(1);
   await expect.poll(() => asked.casts).toBeGreaterThan(0);
   // Ten minutes on.
   await page.clock.fastForward("10:30");
-  await expect(outgoing(page)).toHaveCount(0, { timeout: 10_000 });
+  await expect(myReply(page)).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".post .stat-replies")).toContainText("1");
   await page.locator(".post").getByRole("button", { name: "Reply to @alice" }).click();
   await expectDraft(page.getByRole("dialog", { name: "Reply" }).getByRole("textbox"), "never sent");
@@ -211,6 +214,6 @@ test("signed out, a draft handed off shows nothing and asks the node nothing", a
   await page.getByRole("dialog", { name: "Reply" }).getByRole("button", { name: "Post in Farcaster" }).click();
   await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("button", { name: "Done" }).click();
   await page.waitForTimeout(4_000);
-  await expect(outgoing(page)).toHaveCount(0);
+  await expect(myReply(page)).toHaveCount(0);
   expect(asked.casts).toBe(0);
 });

@@ -76,7 +76,7 @@ use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
 use crate::components::signin::{self, use_session};
 use crate::components::text::ExcerptText;
-use crate::components::writer::{Expect, Outgoing, Settle, Writer, fids_of, use_writer};
+use crate::components::writer::{Expect, Outgoing, Reopen, Settle, Writer, fids_of, use_writer};
 use crate::util::{
     BASE, can_hover, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab,
 };
@@ -100,6 +100,10 @@ const CLOCK: &str = "M8 4.6V8l2.4 1.6";
 /// A page of KLIPY's GIFs, and whether there are more.
 type Found = Rc<(Vec<Gif>, bool)>;
 
+/// A draft as Retry compares it with the one its message was signed from:
+/// its text, its GIF and its files.
+type Drafted = (String, Option<String>, Vec<u64>);
+
 thread_local! {
     /// KLIPY's pages this visit, by request, and when they came: reopening
     /// the picker, or going back to an earlier search, asks for nothing again.
@@ -120,6 +124,9 @@ thread_local! {
     static KEPT: RefCell<Option<Drafts>> = const { RefCell::new(None) };
     /// The app's composer, for `warm`, which runs outside its components.
     static THE_COMPOSER: Cell<Option<Composer>> = const { Cell::new(None) };
+    /// What Retry does, for a reply back here that didn't go out or didn't
+    /// show up in time: its message to the node again.
+    static RETRY: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
 /// How long typing pauses before the draft is kept in the browser.
@@ -350,6 +357,10 @@ pub struct Composer {
     /// Being posted with the reader's key, and why it didn't go out.
     posting: RwSignal<bool>,
     error: RwSignal<Option<String>>,
+    /// For a reply back here that didn't go out or didn't show up in time,
+    /// the draft its message was signed from: Retry shows while it's the
+    /// same (`RETRY`).
+    retry_for: RwSignal<Option<Drafted>>,
     /// When it goes out, as the date-and-time field holds it, while it is
     /// scheduled for later.
     when: RwSignal<Option<String>>,
@@ -392,6 +403,7 @@ impl Composer {
             tab: RwSignal::new(Tab::Emoji),
             posting: RwSignal::new(false),
             error: RwSignal::new(None),
+            retry_for: RwSignal::new(None),
             when: RwSignal::new(None),
             editing: RwSignal::new(None),
             channel_url: RwSignal::new(None),
@@ -433,6 +445,7 @@ impl Composer {
         self.discarding.set(false);
         self.picker.set(Picker::Closed);
         self.error.set(None);
+        self.forget_retry();
         // Opened in the press's own task, so the box has focus, and the
         // keyboard held for it, in the first frame (docs/PERFORMANCE.md).
         self.open.set(true);
@@ -592,6 +605,7 @@ impl Composer {
         self.text.set(String::new());
         self.gif.set(None);
         self.error.set(None);
+        self.forget_retry();
         self.when.set(None);
         self.editing.set(None);
         self.channel_url.set(None);
@@ -809,7 +823,8 @@ impl Composer {
     /// Post the draft with the reader's key, once they have one, or, with
     /// a time picked, sign it for then and hand it to the Worker: its
     /// mentions are looked up, and a cast that goes out (or is kept) closes
-    /// the composer and says so; one that doesn't stays, with why.
+    /// the composer and says so; one that doesn't stays, with why. A reply
+    /// posted now closes it at once (`reply_now`).
     fn post(self, writer: Writer) {
         if self.posting.get_untracked() {
             return;
@@ -827,6 +842,10 @@ impl Composer {
         let expect = self.expect();
         writer.when_ready(
             move || {
+                // A reply posted now shows in its thread at once.
+                if at.is_none() && matches!(self.target.get_untracked(), Target::Reply(_)) {
+                    return self.reply_now(writer);
+                }
                 self.posting.set(true);
                 self.error.set(None);
                 let draft = self.draft();
@@ -859,6 +878,94 @@ impl Composer {
             ask,
             Some(expect),
         );
+    }
+
+    /// A reply posted now with the reader's key: the composer closes at
+    /// once, and the reply shows in its thread, as posting, while its
+    /// mentions are looked up and it goes out (`Writer::send_reply`). One
+    /// that doesn't go out, or doesn't show up on the node in time, comes
+    /// back here, open, with why (`reopen`).
+    fn reply_now(self, writer: Writer) {
+        let draft = self.draft();
+        // Empty, or too long even with its mentions as text: said here.
+        if let Err(why) = draft.new_cast(|_| None).check() {
+            self.error.set(Some(why.into()));
+            return;
+        }
+        let (shown, reopen) = (self.outgoing(), self.reopen());
+        self.clear();
+        self.close();
+        let id = writer.reply_going(shown.clone());
+        spawn_local(async move {
+            let fids = fids_of(&mention_names(&draft.text)).await;
+            let cast = draft.new_cast(|name| fids.get(name).copied());
+            let checked = cast.check().map(|()| cast).map_err(str::to_owned);
+            writer.send_reply(id, checked, shown, reopen);
+        });
+    }
+
+    /// What brings a reply that didn't go out, or didn't show up on the node
+    /// in time, back here (`Writer::send_reply`): the composer opens again
+    /// with its draft, says why, and offers Retry, while the draft is as it
+    /// was, where the same message again may help. Not over another draft
+    /// (`false`): a notice says it instead.
+    fn reopen(self) -> Reopen {
+        let files: Vec<Attachment> =
+            self.files.with_untracked(|files| files.iter().map(Attachment::kept_copy).collect());
+        let held = (self.target.get_untracked(), self.text.get_untracked(), self.gif.get_untracked(), files);
+        Rc::new(move |why: String, retry: Option<Rc<dyn Fn()>>| {
+            let (target, text, gif, files) = &held;
+            let empty = self.text.with_untracked(|t| t.trim().is_empty())
+                && self.gif.with_untracked(Option::is_none)
+                && self.files.with_untracked(Vec::is_empty);
+            if self.open.get_untracked() || !empty {
+                return false;
+            }
+            RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
+            self.target.set(target.clone());
+            self.text.set(text.clone());
+            self.gif.set(gif.clone());
+            self.files.set(files.clone());
+            self.when.set(None);
+            self.editing.set(None);
+            self.pane.set(Pane::Compose);
+            self.discarding.set(false);
+            self.picker.set(Picker::Closed);
+            self.error.set(Some(why));
+            self.retry_for.set(retry.is_some().then(|| untrack(|| self.drafted())));
+            RETRY.with(|r| *r.borrow_mut() = retry);
+            self.open.set(true);
+            true
+        })
+    }
+
+    /// Retry, for a reply back here that didn't go out or didn't show up in
+    /// time: its message to the node again, as it was signed, and the
+    /// composer closes as it did.
+    fn retry(self) {
+        let Some(retry) = RETRY.with(|r| r.borrow_mut().take()) else { return };
+        self.clear();
+        self.close();
+        retry();
+    }
+
+    fn forget_retry(self) {
+        self.retry_for.set(None);
+        RETRY.with(|r| r.borrow_mut().take());
+    }
+
+    /// Whether Retry would send what the composer holds: the draft is the
+    /// one its message was signed from.
+    fn can_retry(self) -> bool {
+        self.retry_for.with(|held| held.as_ref().is_some_and(|held| *held == self.drafted()))
+    }
+
+    fn drafted(self) -> Drafted {
+        (
+            self.text.get(),
+            self.gif.with(|gif| gif.as_ref().map(|g| g.embed.url.clone())),
+            self.files.with(|files| files.iter().map(|f| f.id).collect()),
+        )
     }
 
     /// The dialog's title.
@@ -908,6 +1015,8 @@ impl Composer {
             replies_before: self.replies.get_untracked(),
             hash: None,
             pending: false,
+            media: draft.embeds.clone(),
+            at: now(),
         }
     }
 
@@ -2062,7 +2171,14 @@ fn composer_extras(
         })}
         // There before anything is said in it, for it to be heard.
         <p class="attach-note" role="status">{move || composer.note.get()}</p>
-        {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
+        {move || composer.error.get().map(|why| view! {
+            <p class="compose-error" role="alert">
+                {why}
+                {move || composer.can_retry().then(|| view! {
+                    " "<button type="button" class="compose-retry" on:click=move |_| composer.retry()>"Retry"</button>
+                })}
+            </p>
+        })}
     }
     .into_any())
 }

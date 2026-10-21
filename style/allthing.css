@@ -1014,6 +1014,17 @@ html:has(.modal-backdrop) .wordmark {
   color: var(--ink);
 }
 
+/* The reader's reply on its way, at the top of what it answers: a little
+   faded, its time's place saying so, until the node has it. */
+.comment.mine.pending {
+  opacity: 0.85;
+}
+
+.comment-head .when.posting {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
 .sep {
   color: var(--line-2);
 }
@@ -6287,6 +6298,29 @@ p.jumbo .emoji img {
   margin: 10px 0 0;
   color: #a3322a;
   font-size: 14px;
+}
+
+/* Retry, after a reply that didn't go out or didn't show up in time: a
+   link's look, with room for a finger. */
+.compose-retry {
+  display: inline-block;
+  min-height: 24px;
+  margin: -2px 0;
+  padding: 0 4px;
+  font: inherit;
+  font-weight: 600;
+  line-height: 24px;
+  color: inherit;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.compose-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* The GIF picker: KLIPY's results, in its order, in a grid of their own. */

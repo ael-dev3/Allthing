@@ -193,7 +193,7 @@ for (const atPhone of [false, true]) {
   });
 }
 
-test("a reply shows under its post and on the reader's Replies tab; its post's page is read again", async ({ page }) => {
+test("a reply shows in its post's thread and on the reader's Replies tab; its post's page is read again", async ({ page }) => {
   let fresh = false;
   const calls = await ready(page, `/p/${post.hash}`, () => fresh);
   await page.getByRole("button", { name: "Reply to @alice" }).click();
@@ -201,8 +201,10 @@ test("a reply shows under its post and on the reader's Replies tab; its post's p
   await dialog.getByRole("textbox").fill("Read Hyperion");
   await dialog.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(dialog).toBeHidden();
+  // At the top of the post's replies, as the reader's.
+  await expect(page.locator(".replies .comments > .comment.mine")).toContainText("Read Hyperion");
+  await expect.poll(() => calls.sent.length).toBe(1);
   const hash = calls.sent[0].hash;
-  await expect(page.locator(".replies").locator(".cast-card.outgoing")).toContainText("Read Hyperion");
   // The Worker refreshes the reader's profile and the post, with its
   // replies, and the browser reads them again.
   await expect.poll(() => calls.refreshed, { timeout: 10_000 }).toContainEqual({ username: me.username, reply_to: post.hash, page: post.hash });
@@ -218,7 +220,7 @@ test("a reply shows under its post and on the reader's Replies tab; its post's p
   fresh = true;
   await page.goto(`/p/${post.hash}`);
   await expect(page.locator(`.replies #c-${hash.slice(2, 10)}`)).toBeVisible();
-  await expect(page.locator(".replies .cast-card.outgoing")).toHaveCount(0);
+  await expect(page.locator(".replies .comment.mine")).toHaveCount(0);
   await expect(page.getByText("Read Hyperion")).toHaveCount(1);
 });
 

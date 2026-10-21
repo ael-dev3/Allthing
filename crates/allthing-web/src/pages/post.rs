@@ -29,7 +29,7 @@ use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::reactions::ReactionChips;
 use crate::components::text::{CastText, ExcerptText};
-use crate::components::thread::CommentTree;
+use crate::components::thread::Replies;
 use crate::util::{cast_href, set_title, user_href, with_query};
 
 /// The page, whose code is fetched the first time it's needed
@@ -175,11 +175,9 @@ fn PostPage() -> impl IntoView {
                                         .collect_view()}
                                 </nav>
                             </div>
-                            {crate::components::outgoing_replies(in_thread)}
-                            {if children.is_empty() {
-                                view! { <p class="empty">"No replies yet."</p> }.into_any()
-                            } else {
-                                let (notes, op_fid) = (notes.clone(), cast.author.fid);
+                            {
+                                let (parent, notes, op_fid) = (cast.hash.clone(), notes.clone(), cast.author.fid);
+                                let listed: crate::components::thread::Listed = Arc::new(in_thread);
                                 // The first replies, about a screen of them,
                                 // with the post, and the rest a paint after,
                                 // so the post shows sooner (drawn together,
@@ -194,22 +192,23 @@ fn PostPage() -> impl IntoView {
                                         let _ = drawn.try_set(true);
                                     });
                                 }
-                                view! {
-                                    <div class="comments">
-                                        {move || {
-                                            let mut replies = children.clone();
-                                            sort_thread(&mut replies, sort.get());
-                                            let rest = replies.split_off(leading_with(&replies, FIRST_REPLIES));
-                                            let more = notes.clone();
-                                            view! {
-                                                <CommentTree nodes=replies notes=notes.clone() op_fid/>
-                                                {move || drawn.get().then(|| view! { <CommentTree nodes=rest.clone() notes=more.clone() op_fid/> })}
-                                            }
-                                        }}
-                                    </div>
+                                move || {
+                                    let mut replies = children.clone();
+                                    sort_thread(&mut replies, sort.get());
+                                    let rest = replies.split_off(leading_with(&replies, FIRST_REPLIES));
+                                    view! {
+                                        <Replies
+                                            parent=parent.clone()
+                                            nodes=replies
+                                            rest
+                                            drawn
+                                            notes=notes.clone()
+                                            op_fid
+                                            listed=listed.clone()
+                                        />
+                                    }
                                 }
-                                .into_any()
-                            }}
+                            }
                         </section>
                     </Columns>
                 }
