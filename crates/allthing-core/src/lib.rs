@@ -29,6 +29,7 @@ pub mod metadata;
 pub mod model;
 pub mod normalize;
 pub mod params;
+pub mod people;
 pub mod profile;
 pub mod provenance;
 pub mod quotes;
