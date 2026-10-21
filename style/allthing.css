@@ -1362,9 +1362,11 @@ p.jumbo .emoji img {
 /* Size known (once loaded, or from an earlier load on Back to a feed): the
    tile takes its final box at once, so the page doesn't grow while the
    image arrives. Up to the card's width, the height cap, and 1.25 times the
-   image's own width. */
+   image's own width, and never under 48 px, so a tiny image (an icon, a
+   1 × 1 pixel) is still a box a press can land on. */
 .media-grid.n1 .tile-image[data-sized] {
   width: min(100%, calc(var(--max-h) * var(--w) / var(--h)), calc(var(--w) * 1.25px));
+  min-width: min(100%, 48px);
 }
 
 .media-grid.n1 .tile-image[data-sized] img {
