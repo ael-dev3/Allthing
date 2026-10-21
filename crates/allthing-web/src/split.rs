@@ -35,10 +35,11 @@ where
 /// - a post's a few seconds after the app starts, once the browser is idle
 ///   (opening a post is how most visits go on from a feed), and as a card
 ///   is pointed at or touched (`CastCard`);
-/// - a profile's, a channel's, search's and the channels' as a link to
-///   one is pointed at, touched, pressed or focused, anywhere on the page,
-///   and search's as the search box is; the data of a post or a channel a
-///   link opens comes then too (`prefetch_page_data`).
+/// - a profile's, a channel's, search's, the channels' and the reader's
+///   notifications' as a link to one is pointed at, touched, pressed or
+///   focused, anywhere on the page (the header's bell, say), and search's
+///   as the search box is; the data of a post or a channel a link opens
+///   comes then too (`prefetch_page_data`).
 ///
 /// A visit that starts on one of them has `index.html` fetch its code with
 /// the app. On a slow or metered connection only intent fetches anything.
@@ -127,6 +128,8 @@ fn page_part(path: &str) -> Option<usize> {
         path.starts_with("/c/") || path == "/c",
         path == "/search",
         path == "/channels",
+        // The static copy has no notifications.
+        cfg!(not(feature = "static-host")) && path == "/notifications",
     ]
     .iter()
     .position(|&is| is)
@@ -145,6 +148,8 @@ pub fn preload_page(path: &str) {
             1 => crate::pages::user::preload_user().await,
             2 => crate::pages::channel::preload_channel().await,
             3 => crate::pages::search::preload_search().await,
+            #[cfg(not(feature = "static-host"))]
+            5 => crate::pages::notifications::with_worker::preload_notifications().await,
             _ => crate::pages::channels::preload_channels().await,
         };
         // Couldn't come: the next intent asks again.

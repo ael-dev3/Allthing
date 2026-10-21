@@ -148,6 +148,12 @@ pub fn new_message_href() -> String {
     with_query(&messages_href(), &[("new", Some("1".to_owned()))])
 }
 
+/// The reader's notifications.
+#[cfg(not(feature = "static-host"))]
+pub fn notifications_href() -> String {
+    href("/notifications")
+}
+
 /// A moment in the reader's own time zone, as scheduled casts show it:
 /// "Wed, 21 Oct, 09:00".
 #[cfg(not(feature = "static-host"))]
