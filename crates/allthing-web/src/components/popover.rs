@@ -4,6 +4,14 @@
 //! screens, and for click popovers, the trigger toggles them. Escape and a
 //! click outside close them. Content renders only while open.
 //!
+//! A panel that a tap or a click opened, and that the pointer leaving
+//! doesn't close, is dismissed lightly: the first press outside it only
+//! closes it. On a phone, a tap beside a likes preview closes the preview
+//! and doesn't also open the post under the tap, follow a link or open
+//! another panel; the next tap does. A panel the pointer opened by resting
+//! on it closes as the pointer leaves, and a click elsewhere does what it
+//! does.
+//!
 //! The trigger is a button, or the caller's own links (`links`), such as a
 //! profile's picture and name: a mouse click or the keyboard follows them as
 //! usual, a tap on a touch screen opens the panel instead, and keyboard focus
@@ -33,6 +41,8 @@ const HEADER_PX: f64 = 72.0;
 const MAX_PANEL_PX: f64 = 360.0;
 /// Gap between the trigger and the panel, plus a margin from the edge.
 const GAP_PX: f64 = 16.0;
+/// A modal dialog over the page, and its backdrop.
+const MODAL: &str = ".modal-backdrop, [aria-modal='true']";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -127,6 +137,9 @@ pub fn Popover(
     // A mouse button went down in the panel, perhaps to select its text, and
     // is still down: the pointer may leave the panel without closing it.
     let pressing = StoredValue::new(false);
+    // The open panel was opened by a press on its trigger (a tap, a click or
+    // a key), not by the pointer resting there or by keyboard focus.
+    let pressed_open = StoredValue::new(false);
     let anchor = move || -> Option<web_sys::Element> {
         if links {
             root.get_untracked().map(|r| r.unchecked_into())
@@ -228,11 +241,14 @@ pub fn Popover(
         cancel();
         timer.set_value(set_timeout_with_handle(f, delay).ok());
     };
-    let open = move || {
+    // Opens the panel; `press` when a press on the trigger opened it.
+    let open_by = move |press: bool| {
         cancel();
         place();
+        pressed_open.set_value(press);
         state.set(State::Open);
     };
+    let open = move || open_by(false);
     let close = move || {
         cancel();
         pressing.set_value(false);
@@ -328,7 +344,7 @@ pub fn Popover(
                 if state.get_untracked() == State::Open {
                     close();
                 } else {
-                    open();
+                    open_by(true);
                 }
             }
         }
@@ -367,7 +383,7 @@ pub fn Popover(
             if state.get_untracked() == State::Open {
                 close();
             } else {
-                open();
+                open_by(true);
             }
         } else {
             close();
@@ -398,10 +414,21 @@ pub fn Popover(
     // focus is elsewhere (a panel the pointer opened). A selection that began
     // in the panel keeps it open: the click that ends the selection, outside
     // it, doesn't count, and the pointer leaves it only once the button is up.
+    //
+    // A panel a press opened, which the pointer leaving doesn't close (any
+    // on a touch screen, and click popovers), is dismissed lightly: the
+    // first press outside it is the panel's. Its listeners are the window's
+    // capture listeners, which hear a press before anything in the page: they
+    // keep the press and its click from what is under them (a card, which
+    // would open its post, a link, the router, another popover's trigger),
+    // and the click closes the panel. A press that turns into a scroll makes
+    // no click, and leaves it open. A modal dialog over the page (opened from
+    // the panel: "See everyone") keeps its presses.
     let outside_click = StoredValue::new(None::<WindowListenerHandle>);
     let escape_key = StoredValue::new(None::<WindowListenerHandle>);
     let pointer_up = StoredValue::new(None::<WindowListenerHandle>);
-    let any_scroll = StoredValue::new_local(None::<Closure<dyn Fn(web_sys::Event)>>);
+    // The window's capture listeners: light dismissal's, and a fixed panel's.
+    let captures = StoredValue::new_local(Vec::<Capture>::new());
     let remove_listeners = move || {
         for listener in [outside_click, escape_key, pointer_up] {
             listener.update_value(|current| {
@@ -410,27 +437,51 @@ pub fn Popover(
                 }
             });
         }
-        any_scroll.update_value(|current| {
-            if let Some(closure) = current.take() {
-                let _ = window().remove_event_listener_with_callback_and_bool(
-                    "scroll",
-                    closure.as_ref().unchecked_ref(),
-                    true,
-                );
-            }
+        captures.update_value(Vec::clear);
+    };
+    // A press on `target` dismisses the panel lightly: it is outside the
+    // popover, and not in a modal dialog over it (one the popover is in, a
+    // list of who liked a cast, is no exception).
+    let dismisses = move |target: &web_sys::Element| {
+        let over = target.closest(MODAL).ok().flatten().is_some_and(|layer| {
+            !root.try_get_untracked().flatten().is_some_and(|root| layer.contains(Some(root.unchecked_ref())))
         });
+        !inside_root(target) && !over
     };
     Effect::new(move |_| {
         remove_listeners();
         if state.get() != State::Open {
             return;
         }
-        outside_click.set_value(Some(window_event_listener(ev::click, move |ev| {
-            let target = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
-            if !target.is_some_and(|t| inside_root(&t)) && !selected_in_panel() {
-                close();
-            }
-        })));
+        if pressed_open.get_value() && !untrack(hovering) {
+            captures.update_value(|list| {
+                list.push(Capture::new("pointerdown", move |ev| {
+                    let primary = ev.dyn_ref::<web_sys::MouseEvent>().is_some_and(|ev| ev.button() == 0);
+                    if primary && target_element(&ev).is_some_and(|target| dismisses(&target)) {
+                        ev.prevent_default();
+                        ev.stop_propagation();
+                    }
+                }));
+                list.push(Capture::new("click", move |ev| {
+                    let Some(target) = target_element(&ev) else { return };
+                    if inside_root(&target) || selected_in_panel() {
+                        return;
+                    }
+                    if dismisses(&target) {
+                        ev.prevent_default();
+                        ev.stop_propagation();
+                    }
+                    close();
+                }));
+            });
+        } else {
+            outside_click.set_value(Some(window_event_listener(ev::click, move |ev| {
+                let target = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
+                if !target.is_some_and(|t| inside_root(&t)) && !selected_in_panel() {
+                    close();
+                }
+            })));
+        }
         escape_key.set_value(Some(window_event_listener(ev::keydown, move |ev| {
             if ev.key() == "Escape" {
                 close();
@@ -448,15 +499,14 @@ pub fn Popover(
         })));
         if fixed {
             // A fixed panel would stay put while its trigger scrolls away.
-            let closure = Closure::<dyn Fn(web_sys::Event)>::new(move |ev: web_sys::Event| {
-                let scrolled = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
-                if !scrolled.is_some_and(|node| inside_panel(&node)) {
-                    close();
-                }
+            captures.update_value(|list| {
+                list.push(Capture::new("scroll", move |ev| {
+                    let scrolled = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
+                    if !scrolled.is_some_and(|node| inside_panel(&node)) {
+                        close();
+                    }
+                }));
             });
-            let _ =
-                window().add_event_listener_with_callback_and_bool("scroll", closure.as_ref().unchecked_ref(), true);
-            any_scroll.set_value(Some(closure));
         }
     });
     // Measure the open panel and nudge it back inside the page if it hangs
@@ -603,6 +653,40 @@ pub fn Popover(
                 </div>
             </Show>
         </span>
+    }
+}
+
+/// A listener on the window for the capture phase, which hears an event
+/// before anything in the page; removed when dropped.
+struct Capture {
+    event: &'static str,
+    listener: Closure<dyn Fn(web_sys::Event)>,
+}
+
+impl Capture {
+    fn new(event: &'static str, listen: impl Fn(web_sys::Event) + 'static) -> Capture {
+        let listener = Closure::<dyn Fn(web_sys::Event)>::new(listen);
+        let _ = window().add_event_listener_with_callback_and_bool(event, listener.as_ref().unchecked_ref(), true);
+        Capture { event, listener }
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let _ = window().remove_event_listener_with_callback_and_bool(
+            self.event,
+            self.listener.as_ref().unchecked_ref(),
+            true,
+        );
+    }
+}
+
+/// The element an event is aimed at (a text node's parent).
+fn target_element(ev: &web_sys::Event) -> Option<web_sys::Element> {
+    let node = ev.target()?.dyn_into::<web_sys::Node>().ok()?;
+    match node.dyn_ref::<web_sys::Element>() {
+        Some(element) => Some(element.clone()),
+        None => node.parent_element(),
     }
 }
 
