@@ -31,7 +31,7 @@ Pushing to `main` then builds and deploys. The first deploy also:
 
 1. rustup and the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1 with the `wasm32-unknown-unknown` target);
 2. `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
-3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`;
+3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`, then `cargo xtask strip-worker`, which drops from its WebAssembly the relocations the workspace's `--emit-relocs` leaves for the app's wasm-split (`linking` and `reloc.*`, more than half its bytes);
 4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly and its brotli-11 copy, written with Node's zlib, JS glue, the parts loaded when used and their loader, CSS, fonts, `index.html`, `_headers`).
 
 A clean build on 2 CPUs takes about 5 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
@@ -131,4 +131,4 @@ npx wrangler dev                       # http://127.0.0.1:8787, with a local Cac
 
 ## Limits to keep in mind
 
-See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 2.1 MB (634 KB compressed, limit 3 MB; the cryptography of sign-in and of endorsing readers' keys, and the QR encoder, are about 240 KB of it, 87 KB compressed), and `dist/` holds about 450 files, 378 of them the emoji's and 64 the stickers' (limit 20,000, each up to 25 MiB).
+See [BUDGET.md](BUDGET.md) for request, CPU and subrequest budgets. The deployed sizes are well within the Free plan: the Worker is about 2.6 MB (794 KiB compressed, limit 3 MB, as `wrangler deploy --dry-run` counts it; 5.4 MB and 1.4 MB compressed with the relocations; the cryptography of sign-in and of endorsing readers' keys, and the QR encoder, are about 240 KB of it, 87 KB compressed), and `dist/` holds about 450 files, 378 of them the emoji's and 64 the stickers' (limit 20,000, each up to 25 MiB).

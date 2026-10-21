@@ -8,6 +8,9 @@
 //! - `pages [base]`: the same site for static hosting under `base` (default
 //!   `/Allthing`, for GitHub Pages) in `dist-pages/`, built with the
 //!   `static-host` feature so the browser builds payloads itself.
+//! - `strip-worker [path]`: drop the relocations the linker leaves in the
+//!   Worker's WebAssembly (`linking` and `reloc.*`), which only the browser
+//!   app's wasm-split reads, after worker-build has written it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +23,8 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("dist") => site(&Site::workers()),
         Some("pages") => site(&Site::pages(args.get(1).map_or("/Allthing", String::as_str))),
-        _ => Err("usage: cargo xtask dist | cargo xtask pages [base]".into()),
+        Some("strip-worker") => strip_worker(&args.get(1).map_or_else(|| root().join(WORKER_WASM), PathBuf::from)),
+        _ => Err("usage: cargo xtask dist | cargo xtask pages [base] | cargo xtask strip-worker [path]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -383,6 +387,76 @@ fn split(raw: &Path, out: &Path) -> Result<Vec<PathBuf>> {
     Ok(parts)
 }
 
+/// The Worker's WebAssembly, as worker-build writes it.
+const WORKER_WASM: &str = "crates/allthing-worker/build/index_bg.wasm";
+
+/// The custom sections only tools that relink or split a module read: what
+/// the linker's `--emit-relocs` leaves.
+fn linker_only(name: &str) -> bool {
+    name == "linking" || name.starts_with("reloc.")
+}
+
+/// Drop the linker's sections from the Worker's WebAssembly. The workspace
+/// links all its WebAssembly with `--emit-relocs` (.cargo/config.toml),
+/// which wasm-split needs to cut the browser app into parts, so the
+/// Worker's module carries them too: more than half its bytes, which
+/// nothing reads, and which no longer match its code once wasm-opt has
+/// rewritten it. Its function names (`name`) stay, so a trap's stack trace
+/// in Cloudflare's logs says which functions it went through.
+fn strip_worker(path: &Path) -> Result<()> {
+    let module = read(path)?;
+    let stripped = without_custom_sections(&module, linker_only)?;
+    write(path, &stripped)?;
+    eprintln!(
+        "xtask: {}: {} KB, {} KB without the linker's sections",
+        path.display(),
+        module.len().div_ceil(1024),
+        stripped.len().div_ceil(1024)
+    );
+    Ok(())
+}
+
+/// `module` without the custom sections whose names `drop` picks; every
+/// other section as it was, byte for byte, in its place.
+fn without_custom_sections(module: &[u8], drop: impl Fn(&str) -> bool) -> Result<Vec<u8>> {
+    let header = module.get(..8).filter(|header| header.starts_with(b"\0asm")).ok_or("not a WebAssembly module")?;
+    let mut out = header.to_vec();
+    let mut at = 8;
+    while at < module.len() {
+        let (size, body) = leb128(module, at + 1)?;
+        let end =
+            body.checked_add(size).filter(|&end| end <= module.len()).ok_or("a section runs past the module's end")?;
+        if module[at] != 0 || !drop(custom_name(&module[body..end])?) {
+            out.extend_from_slice(&module[at..end]);
+        }
+        at = end;
+    }
+    Ok(out)
+}
+
+/// A custom section's name, from the start of its body.
+fn custom_name(body: &[u8]) -> Result<&str> {
+    let (length, start) = leb128(body, 0)?;
+    let name =
+        start.checked_add(length).and_then(|end| body.get(start..end)).ok_or("a custom section's name runs past it")?;
+    std::str::from_utf8(name).map_err(|_| "a custom section's name isn't UTF-8".to_owned())
+}
+
+/// The unsigned LEB128 number at `at` (a 32-bit one, as section sizes and
+/// name lengths are), and where it ends.
+fn leb128(bytes: &[u8], mut at: usize) -> Result<(usize, usize)> {
+    let mut value: u64 = 0;
+    for shift in (0..35).step_by(7) {
+        let byte = *bytes.get(at).ok_or("the module ends inside a number")?;
+        at += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return usize::try_from(value).map(|value| (value, at)).map_err(|_| "a number too large".to_owned());
+        }
+    }
+    Err("a number longer than 5 bytes".into())
+}
+
 /// Optimize a module for size in place with wasm-opt.
 fn optimize(wasm_opt: &str, module: &Path) -> Result<()> {
     let optimized = module.with_extension("opt.wasm");
@@ -406,6 +480,76 @@ mod tests {
         let parts = page_parts(loader, "/assets/b");
         assert!(parts.starts_with(r#"{"post":["/assets/b/split_post.wasm","/assets/b/chunk_3.wasm"],"user":["/assets/b/split_user.wasm","/assets/b/chunk_3.wasm"],"channel":["/assets/b/split_channel.wasm"]"#));
         assert!(!parts.contains("chunk_4"));
+    }
+
+    /// A module of `sections`, each its id and body.
+    fn module(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let mut out = b"\0asm\x01\0\0\0".to_vec();
+        for (id, body) in sections {
+            out.push(*id);
+            leb(&mut out, body.len());
+            out.extend_from_slice(body);
+        }
+        out
+    }
+
+    fn leb(out: &mut Vec<u8>, mut n: usize) {
+        loop {
+            let byte = (n & 0x7f) as u8;
+            n >>= 7;
+            if n == 0 {
+                out.push(byte);
+                return;
+            }
+            out.push(byte | 0x80);
+        }
+    }
+
+    fn custom(name: &str, payload: &[u8]) -> (u8, Vec<u8>) {
+        let mut body = Vec::new();
+        leb(&mut body, name.len());
+        body.extend_from_slice(name.as_bytes());
+        body.extend_from_slice(payload);
+        (0, body)
+    }
+
+    #[test]
+    fn strips_the_linkers_sections_and_keeps_every_other_byte() {
+        let types = (1, vec![1, 0x60, 0, 0]);
+        let code = (10, vec![7; 300]);
+        let kept = [
+            types.clone(),
+            custom("name", b"allthing_worker::fetch"),
+            code.clone(),
+            custom("producers", b"rustc"),
+            custom("target_features", b"+bulk-memory"),
+        ];
+        let built = module(&[
+            types,
+            custom("name", b"allthing_worker::fetch"),
+            custom("linking", &[2; 400]),
+            code,
+            custom("reloc.CODE", &[3; 200]),
+            custom("reloc.DATA", &[4; 2]),
+            custom("producers", b"rustc"),
+            custom("target_features", b"+bulk-memory"),
+        ]);
+        let stripped = without_custom_sections(&built, linker_only).unwrap();
+        assert_eq!(stripped, module(&kept));
+        // A module without them is left as it is.
+        assert_eq!(without_custom_sections(&stripped, linker_only).unwrap(), stripped);
+    }
+
+    #[test]
+    fn refuses_what_isnt_a_whole_module() {
+        assert!(without_custom_sections(b"\0asm", linker_only).is_err());
+        assert!(without_custom_sections(b"not WebAssembly", linker_only).is_err());
+        let mut cut = module(&[(10, vec![7; 300])]);
+        cut.truncate(200);
+        assert!(without_custom_sections(&cut, linker_only).is_err());
+        let mut name_too_long = module(&[custom("linking", &[])]);
+        name_too_long[10] = 40;
+        assert!(without_custom_sections(&name_too_long, linker_only).is_err());
     }
 
     #[test]
