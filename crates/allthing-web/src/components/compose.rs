@@ -69,7 +69,7 @@ use crate::components::attach::{self, AttachButton, Attached};
 use crate::components::editor::{self, ComposeText};
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
-use crate::components::signin::use_session;
+use crate::components::signin::{self, use_session};
 use crate::components::text::ExcerptText;
 use crate::components::writer::{Expect, Outgoing, Settle, Writer, fids_of, use_writer};
 use crate::util::{
@@ -733,9 +733,13 @@ fn scheduled_at(value: &str, now: i64) -> Result<i64, &'static str> {
 
 /// Ask for the GIF key ahead of a click that opens the composer, so its
 /// GIF button is there when it opens, and fetch the composer's code
-/// (`composer_view`) if it hasn't come yet.
+/// (`composer_view`) if it hasn't come yet. Only a reader signed in gets a
+/// key (the Worker answers anyone else 401), so only they ask; the cookie
+/// says who is, as an event handler has no context to ask the session.
 fn warm() {
-    api::prefetch(&gif_key_path());
+    if signin::signed_in() {
+        api::prefetch(&gif_key_path());
+    }
     spawn_local(async {
         let _ = preload_composer().await;
     });
@@ -1187,14 +1191,19 @@ fn composer_bar(
     gif_key: RwSignal<Option<String>>,
     scheduling: Memo<bool>,
 ) -> Result<AnyView, SplitLoaderError> {
-    // Kept in the client cache for 5 minutes, and by the browser for an hour.
-    let key = LocalResource::new(|| async { api::get::<GifKey>(&gif_key_path()).await });
+    // The GIF key, for a reader signed in, the only one the Worker gives
+    // one to: kept in the client cache for 5 minutes, and by the browser for
+    // an hour.
+    let session = use_session();
+    let key = LocalResource::new(move || {
+        let signed_in = session.user.with(Option::is_some);
+        async move { if signed_in { api::get::<GifKey>(&gif_key_path()).await.ok() } else { None } }
+    });
     Effect::new(move |_| {
-        gif_key.set(key.get().and_then(Result::ok).map(|k| k.data.key.clone()).filter(|k| !k.is_empty()));
+        gif_key.set(key.get().flatten().map(|k| k.data.key.clone()).filter(|k| !k.is_empty()));
     });
     // Whether files can go with a cast: asked as the composer opens, for a
     // reader signed in (kept 5 minutes).
-    let session = use_session();
     let media = LocalResource::new(move || {
         let signed_in = session.user.with(Option::is_some);
         async move { if signed_in { Some(api::get::<MediaLimits>(MEDIA_PATH).await) } else { None } }
@@ -1268,7 +1277,6 @@ fn composer_bar(
                         type="button"
                         class="schedule-button"
                         aria-label="Schedule for later"
-                        title="Schedule for later"
                         aria-pressed=move || scheduling.get().to_string()
                         disabled=move || composer.editing.with(Option::is_some)
                         on:click=move |_| composer.toggle_when()

@@ -91,6 +91,9 @@ struct Raw {
     age: u32,
     stale: bool,
     retry_after: Option<u32>,
+    /// The Worker said to keep it nowhere (`cache-control: no-store`): an
+    /// error, or a preload batch it couldn't read.
+    no_store: bool,
 }
 
 thread_local! {
@@ -463,7 +466,15 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
     #[cfg(feature = "static-host")]
     if path.starts_with(allthing_core::api::API_PREFIX) {
         let (status, body, retry_after) = crate::host::build(path).await;
-        return Ok(Raw { at: js_sys::Date::now(), status, body: body.into(), age: 0, stale: false, retry_after });
+        return Ok(Raw {
+            at: js_sys::Date::now(),
+            status,
+            body: body.into(),
+            age: 0,
+            stale: false,
+            retry_after,
+            no_store: false,
+        });
     }
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
     let request = early_response(path).unwrap_or_else(|| window.fetch_with_str(path));
@@ -478,12 +489,13 @@ async fn read_raw(request: js_sys::Promise) -> Result<Raw, Failure> {
     let age = header("x-allthing-age").and_then(|a| a.parse().ok()).unwrap_or(0);
     let stale = header("x-allthing-stale").is_some();
     let retry_after = header("retry-after").and_then(|a| a.parse().ok());
+    let no_store = header("cache-control").is_some_and(|c| c.contains("no-store"));
     let text = JsFuture::from(response.text().map_err(|_| Failure::Failed("unreadable response".into()))?)
         .await
         .map_err(|_| Failure::Failed("unreadable response".into()))?
         .as_string()
         .unwrap_or_default();
-    Ok(Raw { at: js_sys::Date::now(), status: response.status(), body: text.into(), age, stale, retry_after })
+    Ok(Raw { at: js_sys::Date::now(), status: response.status(), body: text.into(), age, stale, retry_after, no_store })
 }
 
 /// Read `path` again from the Worker, past the browser's HTTP cache, and
@@ -525,6 +537,7 @@ pub async fn post<B: serde::Serialize, T: DeserializeOwned>(path: &str, body: &B
         age: 0,
         stale: false,
         retry_after,
+        no_store: false,
     };
     Arc::into_inner(decode::<T>(&raw)?.data).ok_or_else(|| Failure::Failed("unreadable response".into()))
 }
@@ -575,9 +588,12 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 }
 
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
-/// busy answers and unreadable bodies are asked for again next time.
+/// busy answers, unreadable bodies and what the Worker says to keep nowhere
+/// (a preload batch it couldn't read, answered as empty) are asked for
+/// again next time.
 fn remember(path: &str, raw: Raw, now: f64) {
     let worth = match raw.status {
+        _ if raw.no_store => false,
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
@@ -662,7 +678,7 @@ mod tests {
     use super::*;
 
     fn response(status: u16, body: &str) -> Raw {
-        Raw { at: 1000.0, status, body: body.into(), age: 10, stale: false, retry_after: Some(5) }
+        Raw { at: 1000.0, status, body: body.into(), age: 10, stale: false, retry_after: Some(5), no_store: false }
     }
 
     #[test]
@@ -684,6 +700,17 @@ mod tests {
             assert!(cached::<allthing_core::api::SearchPayload>("/test/wrong-shape", 2000.0).is_none());
             assert!(CACHE.with(|c| !c.borrow().contains_key("/test/wrong-shape")));
         }
+    }
+
+    #[test]
+    fn what_the_worker_says_to_keep_nowhere_is_asked_for_again() {
+        // A preview batch the Worker couldn't read: empty, and `no-store`.
+        let skipped =
+            Raw { no_store: true, ..response(200, r#"{"previews":[],"meta":{"backend":"hypersnap","fetched_at":1}}"#) };
+        remember("/test/skipped", skipped, 1000.0);
+        assert!(cached::<serde_json::Value>("/test/skipped", 2000.0).is_none());
+        remember("/test/kept", response(200, r#"{"previews":[]}"#), 1000.0);
+        assert!(cached::<serde_json::Value>("/test/kept", 2000.0).is_some());
     }
 
     #[test]
@@ -745,7 +772,7 @@ mod tests {
     }
 
     fn batch(at: f64, age: u32, body: &str) -> Raw {
-        Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None }
+        Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None, no_store: false }
     }
 
     /// A batch that read who liked `hash`: one person, and more.
@@ -806,7 +833,7 @@ mod tests {
             let body = format!(
                 r#"{{"hash":"{hash}","kind":"likes","users":[{{"fid":3,"username":"{name}"}}],"meta":{{"backend":"hypersnap","fetched_at":0}}}}"#
             );
-            Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None }
+            Raw { at, status: 200, body: body.into(), age, stale: false, retry_after: None, no_store: false }
         };
         let name = |now: f64| cached::<ReactionsPayload>(&path, now).unwrap().unwrap().data.users[0].username.clone();
         let asked = std::slice::from_ref(&path);

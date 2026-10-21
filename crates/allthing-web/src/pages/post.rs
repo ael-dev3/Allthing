@@ -172,9 +172,10 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
     if let (Some(writer), Some(target)) =
         (crate::components::writer::use_writer(), allthing_core::message::CastId::new(cast.author.fid, &cast.hash))
     {
+        let ts = cast.ts;
         Effect::new(move |_| {
             if writer.shows_mine() {
-                writer.look_up(target);
+                writer.look_up(target, ts);
             }
         });
     }

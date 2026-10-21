@@ -358,7 +358,8 @@ impl ChannelCount {
         crate::format::plural(self.value(), one, many)
     }
 
-    /// What the number means and where it comes from, for a tooltip.
+    /// What the number means and where it comes from, read out with it
+    /// (`aria-description`): no native tooltip.
     pub fn describe(self) -> &'static str {
         match self {
             ChannelCount::Followers(_) => "Accounts following the channel, from the Farcaster app.",

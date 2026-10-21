@@ -946,7 +946,6 @@ code {
 .origin {
   font-size: 12.5px;
   color: var(--ink-3);
-  cursor: help;
 }
 
 .origin a {
@@ -3996,7 +3995,8 @@ p.jumbo .emoji img {
 }
 
 /* Why a card's shares are partial, or from an earlier read: a word on the
-   label's line, explained on hover and read out. */
+   label's line, explained to screen readers (nothing shows on hover, so no
+   help cursor). */
 .share-note {
   position: absolute;
   top: 8px;
@@ -4007,7 +4007,6 @@ p.jumbo .emoji img {
   color: var(--ink-3);
   text-decoration: underline dotted;
   text-underline-offset: 2px;
-  cursor: help;
 }
 
 /* The wallet notes in a card, with room between them. */

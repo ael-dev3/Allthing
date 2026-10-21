@@ -67,7 +67,7 @@ pub fn cast_pill() -> AnyView {
 #[cfg(feature = "static-host")]
 fn account() -> AnyView {
     view! {
-        <span class="readonly-pill" title="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
+        <span class="readonly-pill" aria-description="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
             "read-only"
         </span>
     }
@@ -85,8 +85,7 @@ pub fn SiteFooter() -> impl IntoView {
                 "Source"
             </a>
             <span aria-hidden="true">" · "</span>
-            <span class="version" title=format!("Allthing {} built from commit {}", crate::VERSION, crate::COMMIT)>
-                {format!("v{} ({})", crate::VERSION, crate::COMMIT)}
+            <span class="version">{format!("v{} ({})", crate::VERSION, crate::COMMIT)}
             </span>
         </footer>
     }
@@ -133,7 +132,7 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
                 .map(|sort| {
                     let href = with_query(&path, &[("sort", (sort != default_sort).then(|| sort.as_str().to_owned()))]);
                     view! {
-                        <a href=href data-noscroll="" class:selected=sort == current aria-current=(sort == current).then_some("page") title=sort.describe()>
+                        <a href=href data-noscroll="" class:selected=sort == current aria-current=(sort == current).then_some("page") aria-description=sort.describe()>
                             {sort.as_str()}
                         </a>
                     }

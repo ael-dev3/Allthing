@@ -54,7 +54,7 @@ fn ChannelsPage() -> impl IntoView {
                                         {c.description.clone().map(|d| view! { <span class="muted">{allthing_core::text::truncate_title(&d, 90)}</span> })}
                                     </span>
                                     {c.counts().first().map(|count| view! {
-                                        <span class="channel-count" title=count.label()>{full_number(count.value())}<span class="visually-hidden">" "{count.noun()}</span></span>
+                                        <span class="channel-count">{full_number(count.value())}<span class="visually-hidden">" "{count.noun()}</span></span>
                                     })}
                                 </a>
                             </li>

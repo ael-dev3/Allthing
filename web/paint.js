@@ -196,10 +196,11 @@ const channelHref = (id) => (/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? href("/c/" +
 
 function listingHead(sort, range) {
   // The range kept unless it's today's (home.rs, `SortTabs`' path).
-  const tab = (name, title) => {
+  // What each does is read out, as the app's tabs say it: no native tooltip.
+  const tab = (name, description) => {
     const query = [range === "day" ? null : "t=" + range, name === "hot" ? null : "sort=" + name].filter(Boolean).join("&");
     const to = href(query ? "/?" + query : "/");
-    return el("a", { href: to, "data-noscroll": true, class: sort === name ? "selected" : null, "aria-current": sort === name ? "page" : null, title }, name);
+    return el("a", { href: to, "data-noscroll": true, class: sort === name ? "selected" : null, "aria-current": sort === name ? "page" : null, "aria-description": description }, name);
   };
   const select = el("select", {}, RANGES.map(([value, label]) => el("option", { value, selected: value === range }, label)));
   return el(

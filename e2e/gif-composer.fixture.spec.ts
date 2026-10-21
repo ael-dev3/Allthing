@@ -110,10 +110,12 @@ test("signed out, the composer is there, and its draft goes to the Farcaster app
   await page.getByRole("button", { name: "Write a cast" }).click();
   const dialog = page.getByRole("dialog", { name: "New cast" });
   await page.keyboard.type("gm, signed out");
-  // GIFs take a session (KLIPY's key is handed to one); emoji don't. The
-  // check waits for the composer's ask for the key, which is refused.
+  // GIFs take a session (KLIPY's key is handed to one); emoji don't.
+  // Signed out, the composer doesn't ask for the key, which the Worker
+  // would refuse (a 401 in the console).
   await expect(dialog.getByRole("button", { name: "Add an emoji" })).toBeVisible();
-  await expect.poll(() => calls.key).toBeGreaterThan(0);
+  await page.waitForTimeout(500);
+  expect(calls.key).toBe(0);
   await expect(dialog.getByRole("button", { name: "Add a GIF" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Schedule for later" })).toHaveCount(0);
   const url = await handOff(page);

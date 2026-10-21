@@ -307,6 +307,7 @@ fn cache_key(url: &Url, name: &str) -> String {
 
 async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Result<Response> {
     let wallets = matches!(endpoint.as_ref(), Endpoint::Wallets(_));
+    let engagement = matches!(endpoint.as_ref(), Endpoint::Engagement(_));
     let build: cache::Builder = Rc::new(move |inv, previous| {
         let endpoint = endpoint.clone();
         async move { endpoint.build(inv, previous).await }.boxed_local()
@@ -339,6 +340,16 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
                 entry.body.as_ref().clone()
             };
             Ok(Response::from_bytes(body)?.with_status(entry.status).with_headers(headers))
+        }
+        // A preload batch Hypersnap couldn't give, with no copy kept: empty,
+        // not an error (`pages::engagement_skipped`), and kept by no one, so
+        // it's asked for again.
+        Err(failure) if engagement && pages::skips_engagement(&failure) => {
+            let headers = Headers::new();
+            headers.set("content-type", "application/json; charset=utf-8")?;
+            headers.set("cache-control", "no-store")?;
+            headers.set("x-allthing-cache", "skipped")?;
+            Ok(Response::from_bytes(pages::engagement_skipped(inv.now() as i64))?.with_headers(headers))
         }
         Err(Failure { status, message, retry_after }) => error(status, &message, retry_after),
     }
