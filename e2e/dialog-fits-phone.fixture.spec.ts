@@ -63,6 +63,9 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 
 /** The dialog's box, and its ×'s, in the viewport; and whether the × is what a tap on it reaches. */
 async function placed(dialog: Locator) {
+  // Once it has come in: its entrance (`pop-in`) scales it up from 98%, so
+  // a box measured on the way is up to 9 px narrower than the dialog.
+  await dialog.evaluate((modal) => Promise.all(modal.getAnimations().map((a) => a.finished.catch(() => undefined))));
   return dialog.evaluate((modal) => {
     const box = modal.getBoundingClientRect();
     const close = modal.querySelector(".modal-close")!;
