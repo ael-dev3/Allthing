@@ -117,6 +117,37 @@ a:hover {
   border-radius: 6px;
 }
 
+/* Press feedback (press.rs): a control a finger, the mouse or a key presses
+   shrinks a little and dims in the frame after the press, and eases back
+   over 90 ms when it's let go. `scale` is a transform of its own, beside any
+   `transform` a control has (a hovered card's lift), so nothing around it
+   moves; a link in a line of text can't scale, and only dims. A tap on a
+   control is never taken for half of a double-tap zoom. */
+button,
+[role="button"],
+[role="tab"],
+select,
+summary,
+a[href] {
+  touch-action: manipulation;
+}
+
+[data-press="down"] {
+  scale: 0.96;
+  opacity: 0.78;
+}
+
+[data-press="up"] {
+  animation: press-release 90ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes press-release {
+  from {
+    scale: 0.96;
+    opacity: 0.78;
+  }
+}
+
 img {
   max-width: 100%;
 }
@@ -1073,8 +1104,11 @@ p.jumbo .emoji img {
   stroke-width: 2;
 }
 
-.engagement .act:active .icon {
+/* The heart or the recast icon shrinks further than its button, at once,
+   and eases back as the icon's own transition does. */
+.engagement .act[data-press="down"] .icon {
   transform: scale(0.88);
+  transition-duration: 0s;
 }
 
 .engagement .stat-count {
@@ -4284,11 +4318,6 @@ p.jumbo .emoji img {
   box-shadow: 0 0 0 4px var(--accent-soft), 0 12px 28px -12px rgba(79, 67, 212, 0.75);
 }
 
-.cast-pill:active,
-.cast-fab:active {
-  transform: scale(0.97);
-}
-
 .cast-pill:focus-visible,
 .cast-fab:focus-visible {
   outline: 2px solid var(--accent);
@@ -5951,6 +5980,20 @@ p.jumbo .emoji img {
 
   .wordmark {
     background-position: 100% 0;
+  }
+
+  /* A press only dims. */
+  [data-press="down"] {
+    scale: none;
+    opacity: 0.6;
+  }
+
+  [data-press="up"] {
+    animation: none;
+  }
+
+  .engagement .act[data-press="down"] .icon {
+    transform: none;
   }
 
   .stat.acting.pending .act,

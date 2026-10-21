@@ -26,7 +26,7 @@ How the app answers a reader's taps, clicks and scrolls: `e2e/smoothness.fixture
 - opens a cast from the feed, and a profile, from three places in the feed, and goes Back each time (on the phone a tap on a name opens the profile card, and its "View profile" the profile);
 - goes Back to a cast deep in the feed, in its second server page;
 - scrolls the feed 3,000 px;
-- presses nine controls (a sort tab, the time range, Cast, a like, a recast, a likes count, a replies count, the account's picture, an author's name) and lets go away from them.
+- presses 22 controls and lets go away from them: on the front page a sort tab, the time range, Cast, a like, a recast, a likes count, a replies count, the account's picture, an author's name and a link card; in the composer its emoji, sticker, schedule and close buttons; on a post Reply, Quote, React and a replies sort tab; on a profile a tab, Favorite, Show less and Follow.
 
 A finger stays down 80 ms, and the mouse rests on its target for 250 ms before it clicks, as readers' do. Each interaction runs three times, with the garbage of what came before collected first, and twice more when the median is within a fifth of a timed budget (INP, long tasks), so that five runs, not one noisy one, decide a close call. The budgets hold for the median:
 
@@ -42,6 +42,8 @@ A finger stays down 80 ms, and the mouse rests on its target for 250 ms before i
 It also reports, with no budget yet: when a navigation first shows the next page, the longest task and frame in the second after an interaction, frames that show placeholders, and the scroll's frame intervals. `SMOOTH_OUT=numbers.json` writes every run's numbers, and `SMOOTH_TRACE=trace.zip` records a Playwright trace of the phone's run.
 
 A budget the app doesn't meet yet runs as an expected failure (`NOT_YET` in the spec, with what it measured), so CI stays green and the change that meets it takes its line out. One it misses or only just meets, by less than a busy machine's noise, would pass now and then as an expected failure and fail CI, so it doesn't run until a change meets it with room to spare (`TOO_CLOSE`).
+
+**A busy machine.** The timed budgets (INP, long tasks) hold when the run has a CPU to itself, as on a CI runner. Before each interaction the spec times how much of a CPU a busy thread gets (a 300 ms spin's CPU time over its wall time), and reports the median with the load average. On a 4-core machine with other builds and browsers at load 9, a thread got 0.4 to 0.6 of a CPU, and the phone's sort tab, 40 to 56 ms in the calibration below, answered in 104 ms; at 0.8 the computer's took 88 ms. So away from CI, below 0.9 (a tenth more for every latency, enough to take the slowest interaction that meets its budget over it) the timed budgets are skipped, saying why, and their numbers are still reported; in CI, or with `SMOOTH_STRICT=1`, they're judged however busy the machine is.
 
 **Why the phone's CPU is slowed 2×.** Slowed, it stands for a phone slower than a CI runner, as most readers' are; but a budget only means something if CI can tell a slower app from a busy runner. Calibrated on 21 October 2026 on a 4-core machine shared with other builds and browsers (load average 2 to 11), each figure the median of three, from two to six runs:
 
@@ -86,6 +88,8 @@ At 2× what the app answers in time stays under the budget even on a busy machin
 - **Back draws the feed again all at once**, its 25 to 75 cards in one task: 110 to 260 ms on the phone, and the feed shows 245 to 455 ms after Back.
 - **Nothing moves after a navigation's first frame, and Back puts the reader's place back** within 2 px, even after the feed's second server page.
 - **Scrolling** keeps its frames: 16.7 to 16.8 ms at the 95th percentile, at most 7 of 166 frames dropped.
+
+**Press feedback** (`press.rs`, since 21 October 2026). All 22 controls answer in the first frame after the press, at both widths, and none moves: that frame came 18 to 69 ms after `pointerdown` on the phone (median 28 to 32 ms, the CPU slowed 2×) and 3 to 68 ms after it on the computer (median 9 to 11 ms), on a machine at load 8 to 12. The taps answer as they did, alternating this build and the one before it, 12 to 16 runs each on a quiet machine (medians, before in brackets): on the phone the sort tab in 60 ms (68), the likes popover in 76 (84), a like in 56 (64), the composer in 88 (72); on the computer, its button held down 80 ms as a reader's is, in 44 (44), 40 (44), 48 (48) and 56 ms (56). The spec's click, down and up at once, waits for the frame that shows the press: a like there took 64 ms against 36 (6 runs). The release starts once the frame that answers the press is painted: started with the click, it played on a sort tab the click was drawing anew, and that answer came later (median 76 against 44 ms, 12 to 14 runs on a busy machine).
 
 ## How the app meets it
 
