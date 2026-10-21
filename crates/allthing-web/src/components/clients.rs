@@ -158,12 +158,13 @@ pub fn ClientShareBar(
     };
     let card_label = |name: &str| format!("{name}: active accounts");
     let counted_rest = StoredValue::new(counted.clone());
+    // What the bar is, read out rather than a native tooltip, which would
+    // be drawn over the apps' cards, inside it (and the legend says it all).
     view! {
-        <section class="client-share" aria-label=format!("Apps posting {period} trending casts") title=note>
+        <section class="client-share" aria-label=format!("Apps posting {period} trending casts") aria-description=note>
             <div class="share-bar" class:counted=counted.is_some() role="img" aria-label=summary>
                 {shares.iter().enumerate().filter(|(_, s)| s.percent > 0).map(|(i, s)| {
                     let grow = format!("flex-grow: {}", s.percent);
-                    let title = format!("{}: {}%", s.name, s.percent);
                     match s.fid.and_then(|fid| Some((fid, card(i, fid, s.name.clone(), pct_of(s.percent))?))) {
                         // The legend's links are the ones to tab to and to read out.
                         Some((fid, content)) => {
@@ -188,7 +189,7 @@ pub fn ClientShareBar(
                             }
                             .into_any()
                         }
-                        None => view! { <span class=format!("seg client-{i}") style=grow title=title></span> }.into_any(),
+                        None => view! { <span class=format!("seg client-{i}") style=grow></span> }.into_any(),
                     }
                 }).collect_view()}
             </div>
