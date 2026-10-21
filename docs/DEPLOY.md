@@ -98,7 +98,7 @@ Once, in the Cloudflare dashboard for account `c647739b4535010b0b13e6fc296e2c4e`
 
 1. **Enable R2.** Go to **Storage & databases → R2 object storage → Overview**, and complete the checkout that adds R2 to the account. It asks for a payment method if there is none on file. The Workers plan doesn't change.
 2. **Create the bucket.** On the same page, **Create bucket**: name it `allthing-media`, leave its location on **Automatic** (the default) and its default storage class on **Standard** (not Infrequent Access, which the free tier doesn't cover and which charges for reads), and **Create bucket** ([creating buckets](https://developers.cloudflare.com/r2/get-started/s3/), [data location](https://developers.cloudflare.com/r2/reference/data-location/), [storage classes](https://developers.cloudflare.com/r2/buckets/storage-classes/)). From a laptop logged in to wrangler, `npx wrangler r2 bucket create allthing-media` does the same. Leave its public access off: no public bucket, `r2.dev` address, custom domain or API token is needed, since the Worker reads and writes the bucket through its binding and serves the files itself, at `https://allthing.social/m/…`.
-3. **Bind it.** Merge the pull request that uncomments these three lines in `wrangler.toml` (or uncomment them in one of your own):
+3. **Bind it.** `wrangler.toml` binds the bucket (since 21 October 2026, when R2 was enabled and the bucket made for allthing.social); a fork without the bucket comments these three lines out, or `wrangler deploy` fails:
 
    ```toml
    [[r2_buckets]]
@@ -122,7 +122,7 @@ bash scripts/build.sh                  # the pinned toolchain, the Worker and th
 npx wrangler dev                       # http://127.0.0.1:8787, with a local Cache API
 ```
 
-`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. It gives the `INDEX` binding a local D1 database (in `.wrangler/state`), which starts empty. It has no `MEDIA` binding, as `wrangler.toml` comments it out until the bucket exists: to try attachments locally, uncomment the R2 block without committing it, and `wrangler dev` keeps the files in a local R2 beside D1 (`e2e/media-upload.fixture.spec.ts` runs a Worker that way). To run the indexer by hand, call `curl 'http://127.0.0.1:8787/cdn-cgi/local/scheduled?cron=*+*+*+*+*'` once per run (`/__scheduled` would reach the static assets); `/api/v1/status` shows its progress. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
+`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. It gives the `INDEX` binding a local D1 database (in `.wrangler/state`), which starts empty. It gives the `MEDIA` binding a local R2 bucket beside D1, so attachments work locally too (`e2e/media-upload.fixture.spec.ts` runs a Worker that way, and one without the binding). To run the indexer by hand, call `curl 'http://127.0.0.1:8787/cdn-cgi/local/scheduled?cron=*+*+*+*+*'` once per run (`/__scheduled` would reach the static assets); `/api/v1/status` shows its progress. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
 
 ## Limits to keep in mind
 

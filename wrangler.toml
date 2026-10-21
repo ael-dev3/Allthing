@@ -45,16 +45,14 @@ migrations_dir = "migrations"
 
 # Readers' attachments: the images and videos they add to their casts, kept
 # in the R2 bucket allthing-media and served by the Worker at /m/ (see
-# docs/ARCHITECTURE.md#attachments). The binding stays commented out until
-# R2 is enabled on the account and the bucket exists
-# (docs/DEPLOY.md#attachments-r2): `wrangler deploy` fails when a bound
-# bucket doesn't exist, and Workers Builds deploys main. Without it, uploads
-# answer 404 and /api/v1/status says `media.ready: false`. Once the bucket
-# exists, uncomment the three lines below; e2e/media-upload.fixture.spec.ts
-# runs a Worker with exactly them.
-# [[r2_buckets]]
-# binding = "MEDIA"
-# bucket_name = "allthing-media"
+# docs/ARCHITECTURE.md#attachments; the bucket's setup is in
+# docs/DEPLOY.md#attachments-r2). `wrangler deploy` fails if the bucket is
+# missing. `wrangler dev` keeps the files in a local R2 beside D1. Without
+# this binding, uploads and /m/ answer 404 and /api/v1/status says
+# `media.ready: false`.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "allthing-media"
 
 # Every minute, each in an invocation of its own: the indexer (one page of
 # casts), and the stored copy of the newest casts that a data center with
