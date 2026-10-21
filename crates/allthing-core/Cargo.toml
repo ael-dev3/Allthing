@@ -17,8 +17,16 @@ authors.workspace = true
 blake3 = { version = "1.8", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+# End-to-end encrypted messages (`e2e.rs`): the message key from the X25519
+# secret the browser's WebCrypto agrees, and the message's AEAD.
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+hkdf = { version = "0.13", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 
 [dev-dependencies]
+# RFC 7748's X25519 test vectors and two parties' agreement in `e2e.rs`'s
+# tests; Allthing agrees keys with the browser's WebCrypto.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 # Checks the Ed25519 signatures of the protocol test vectors in
 # `tests/message_vectors.rs`; never built into Allthing, which signs with
 # the browser's WebCrypto.
