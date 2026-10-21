@@ -68,6 +68,7 @@ features = [
     "Selection",
     "History",
     "ScrollRestoration",
+    "RequestCache",
     "RequestInit",
     "ReadableStream",
     "ReadableStreamDefaultReader",

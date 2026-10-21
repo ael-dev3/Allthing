@@ -101,6 +101,8 @@ fn UserPage() -> impl IntoView {
                 let notes: Notes = Arc::new(notes);
                 let path = user_href(&user.username);
                 let pool = payload.pool.clone();
+                // The reader's own casts above, until the list has them.
+                let listed = Signal::stored(pool.iter().map(|cast| cast.hash.to_ascii_lowercase()).collect());
                 // Switching sort or tab reorders the list, not the page.
                 let casts = Signal::derive(move || {
                     if replies_tab.get() { replies_only(&pool) } else { sorted(&top_level(&pool), sort.get()) }
@@ -110,6 +112,7 @@ fn UserPage() -> impl IntoView {
                         <ProfileHeader user=user.clone() has_card=true joined=user.joined()/>
                         <ProfileTabs path replies_tab sort/>
                         <StaleNotice stale/>
+                        {crate::components::outgoing_profile(user.fid, replies_tab.into(), listed)}
                         {move || view! { <CastList casts notes=notes.clone() show_parent=replies_tab.get()/> }}
                     </Columns>
                 }

@@ -112,21 +112,43 @@ async fn store(inv: &Invocation, key: &str, built: Built) -> Rc<Entry> {
     // A stored copy is as old as when it was built, so it is refreshed soon.
     let fetched_at = built.fetched_at.unwrap_or_else(|| inv.now());
     let entry = Rc::new(Entry { body: Rc::new(built.body), status: built.status, fetched_at, policy: built.policy });
-    if inv.take_subrequests(1) {
-        let headers = Headers::new();
-        let _ = headers.set("content-type", "application/json; charset=utf-8");
-        // The edge keeps the entry for `keep`; freshness is decided here.
-        let _ = headers.set("cache-control", &format!("public, max-age={}", built.policy.keep.max(1)));
-        let _ = headers.set("x-allthing-fetched", &format!("{:.0}", entry.fetched_at));
-        let _ = headers.set("x-allthing-status", &entry.status.to_string());
-        let _ = headers.set("x-allthing-fresh", &built.policy.fresh.to_string());
-        let _ = headers.set("x-allthing-stale-after", &built.policy.stale.to_string());
-        let _ = headers.set("x-allthing-browser", &built.policy.browser.to_string());
-        if let Ok(response) = Response::from_bytes(entry.body.as_ref().clone()) {
-            let _ = Cache::default().put(key, response.with_headers(headers)).await;
-        }
-    }
+    put(inv, key, &entry, built.policy.keep).await;
     entry
+}
+
+/// Keep `entry` under `key` for `keep` seconds at the edge; whether it was.
+async fn put(inv: &Invocation, key: &str, entry: &Entry, keep: u32) -> bool {
+    if !inv.take_subrequests(1) {
+        return false;
+    }
+    let headers = Headers::new();
+    let _ = headers.set("content-type", "application/json; charset=utf-8");
+    // The edge keeps the entry for `keep`; freshness is decided here.
+    let _ = headers.set("cache-control", &format!("public, max-age={}", keep.max(1)));
+    let _ = headers.set("x-allthing-fetched", &format!("{:.0}", entry.fetched_at));
+    let _ = headers.set("x-allthing-status", &entry.status.to_string());
+    let _ = headers.set("x-allthing-fresh", &entry.policy.fresh.to_string());
+    let _ = headers.set("x-allthing-stale-after", &entry.policy.stale.to_string());
+    let _ = headers.set("x-allthing-browser", &entry.policy.browser.to_string());
+    let Ok(response) = Response::from_bytes(entry.body.as_ref().clone()) else { return false };
+    Cache::default().put(key, response.with_headers(headers)).await.is_ok()
+}
+
+/// How long an expired entry is kept for the rebuild that replaces it to
+/// carry forward: a day, as every payload that can be expired is kept.
+const EXPIRED_KEEP: u32 = 86_400;
+
+/// Make the entry for `key` due for a rebuild, if there is one and `ours`
+/// says it may be: it is kept as it is, but dated long ago, so the next
+/// request builds it anew, carrying it forward (and serving it still if
+/// that build fails), as for any expired entry. A cache read, and a write
+/// when there is one; whether it was expired.
+pub async fn expire(inv: &Invocation, key: &str, ours: impl Fn(&Entry) -> bool) -> bool {
+    let Some(entry) = lookup(inv, key).await else { return false };
+    if !ours(&entry) {
+        return false;
+    }
+    put(inv, key, &Entry { fetched_at: 0.0, ..entry }, EXPIRED_KEEP).await
 }
 
 /// Start the build of `key` in this request. It also runs under

@@ -300,7 +300,7 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                         <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
-                        {crate::components::outgoing_feed(None)}
+                        {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
                         <CastList casts notes on_end=load_more page_cursor=next_offset/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                     </Columns>

@@ -45,14 +45,16 @@ pub fn deleted(hash: &str) -> leptos::prelude::Signal<bool> {
     }
 }
 
-/// The reader's replies, handed to the Farcaster app, to the cast `hashes`
-/// (a post's, and its replies'), above its replies; none in the static
-/// copy, which has no sign-in.
+/// The reader's replies, handed to the Farcaster app or posted from here,
+/// to the cast `hashes` (a post's, and its replies'), above its replies,
+/// until the thread has them; none in the static copy, which has no
+/// sign-in.
 pub fn outgoing_replies(hashes: std::collections::HashSet<String>) -> leptos::prelude::AnyView {
     use leptos::prelude::*;
     #[cfg(not(feature = "static-host"))]
     {
-        view! { <outgoing::OutgoingCasts place=outgoing::Place::Replies(hashes)/> }.into_any()
+        let listed = Signal::stored(hashes.clone());
+        view! { <outgoing::OutgoingCasts place=outgoing::Place::Replies(hashes) listed/> }.into_any()
     }
     #[cfg(feature = "static-host")]
     {
@@ -61,17 +63,49 @@ pub fn outgoing_replies(hashes: std::collections::HashSet<String>) -> leptos::pr
     }
 }
 
-/// The reader's casts and quotes, handed to the Farcaster app, above a
-/// feed: a channel's (`channel`), its own; none in the static copy.
-pub fn outgoing_feed(channel: Option<String>) -> leptos::prelude::AnyView {
+/// The reader's casts and quotes, handed to the Farcaster app or posted
+/// from here, above a feed: a channel's (`channel`), its own; until the
+/// feed lists them (`listed`). None in the static copy.
+pub fn outgoing_feed(
+    channel: Option<String>,
+    listed: leptos::prelude::Signal<std::collections::HashSet<String>>,
+) -> leptos::prelude::AnyView {
     use leptos::prelude::*;
     #[cfg(not(feature = "static-host"))]
     {
-        view! { <outgoing::OutgoingCasts place=outgoing::Place::Feed(channel)/> }.into_any()
+        view! { <outgoing::OutgoingCasts place=outgoing::Place::Feed(channel) listed/> }.into_any()
     }
     #[cfg(feature = "static-host")]
     {
-        let _ = channel;
+        let _ = (channel, listed);
         ().into_any()
     }
+}
+
+/// On the reader's own profile (`fid`'s), their casts and quotes, or on
+/// its Replies tab (`replies`) their replies, above its list until it
+/// lists them (`listed`). None in the static copy.
+pub fn outgoing_profile(
+    fid: u64,
+    replies: leptos::prelude::Signal<bool>,
+    listed: leptos::prelude::Signal<std::collections::HashSet<String>>,
+) -> leptos::prelude::AnyView {
+    use leptos::prelude::*;
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <outgoing::OutgoingCasts place=outgoing::Place::Profile { fid, replies } listed/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = (fid, replies, listed);
+        ().into_any()
+    }
+}
+
+/// The hashes of the casts a list shows, for what's above it to leave out.
+pub fn listed_hashes(
+    casts: leptos::prelude::Signal<Vec<allthing_core::model::Cast>>,
+) -> leptos::prelude::Signal<std::collections::HashSet<String>> {
+    use leptos::prelude::*;
+    Signal::derive(move || casts.with(|casts| casts.iter().map(|cast| cast.hash.to_ascii_lowercase()).collect()))
 }

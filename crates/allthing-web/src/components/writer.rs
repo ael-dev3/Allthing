@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
+use allthing_core::api::{REFRESH_PATH, ReactionKind, ReactionsPayload, Wrote};
 use allthing_core::app_key::{
     self, Endorse, KeyState, Writes, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
@@ -25,6 +26,7 @@ use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Sent, Submitted};
+use allthing_core::params::hash_from_param;
 use allthing_core::provenance::{base64_encode, hex_encode};
 use allthing_core::scheduled::{SCHEDULED_PATH, Schedule, ScheduledCast};
 use allthing_core::siwf::{self, QrCode, QrRequest};
@@ -32,6 +34,7 @@ use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -74,6 +77,16 @@ const TABS: &str = "allthing-keys";
 /// The casts the reader deleted, kept for the tab: a page read from a cache
 /// may still have one for a while.
 const DELETED: &str = "allthing-deleted";
+/// The casts the reader posted from here, and the counts their likes and
+/// recasts made, kept for the tab's page loads in the next ten minutes: a
+/// page read from a cache may not have them yet.
+const POSTED: &str = "allthing-posted";
+const REACTED: &str = "allthing-reacted";
+const KEPT_FOR_MS: f64 = 600_000.0;
+/// After a write from here, when the pages it changes are refreshed, and
+/// refreshed again while one doesn't have it yet, as the node's indexes
+/// catch up.
+const REFRESH_MS: [i32; 3] = [1500, 4000, 10_000];
 
 const EXPIRED: &str = "This code has expired. Get a new one to approve Allthing.";
 const FARCASTER_DOWN: &str = "Couldn't reach the Farcaster app's API. Check your connection and try again.";
@@ -141,8 +154,13 @@ struct Mine {
     /// Writes handed to the Farcaster app that show here before the node
     /// has them, by what they are about (`Expect::about`).
     pending: HashSet<String>,
-    /// Casts handed to the Farcaster app this visit, oldest first.
+    /// Casts handed to the Farcaster app this visit, or posted from here in
+    /// this tab's last ten minutes, oldest first.
     outgoing: Vec<Outgoing>,
+    /// The reader's likes and recasts from here, with the count each made:
+    /// a page read before one, or from a cache, shows at least that many
+    /// (or, taken back, at most), while it stands.
+    counted: HashMap<(String, Reaction), (bool, u64)>,
 }
 
 impl Mine {
@@ -156,6 +174,21 @@ impl Mine {
             (Some(true), false) => 1,
             (Some(false), true) => -1,
             _ => 0,
+        }
+    }
+
+    /// The count of a cast's `key`, `read` as a page has it, with what the
+    /// reader did here.
+    fn shown(&self, key: &(String, Reaction), read: u64) -> u64 {
+        match self.counted.get(key) {
+            Some(&(on, made)) if self.reacted(key) == on => {
+                if on {
+                    read.max(made)
+                } else {
+                    read.min(made)
+                }
+            }
+            _ => (read as i64 + self.delta(key)).max(0) as u64,
         }
     }
 
@@ -209,10 +242,12 @@ impl Expect {
 }
 
 /// A cast handed to the Farcaster app to post, shown here as the reader's
-/// at once (`components::outgoing`), and as posted once the node has it.
-#[derive(Clone, Debug, PartialEq)]
+/// at once (`components::outgoing`), and as posted once the node has it;
+/// or one posted from here with the reader's key, shown where it will be
+/// listed until it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Outgoing {
-    /// Which hand-off it is.
+    /// Which hand-off it is, or for a cast posted from here, when.
     pub id: u64,
     pub sent: Sent,
     pub text: String,
@@ -323,7 +358,10 @@ impl Writer {
             let fid = session.user.with(|u| u.as_ref().map(|u| u.fid));
             if before.as_ref() != Some(&fid) {
                 match fid {
-                    Some(fid) => writer.check(fid),
+                    Some(fid) => {
+                        writer.check(fid);
+                        writer.restore(fid);
+                    }
                     None => writer.signed_out(before.flatten()),
                 }
             }
@@ -359,10 +397,11 @@ impl Writer {
         self.mine.with(|m| m.reacted(&(hash.to_owned(), kind)))
     }
 
-    /// How far the count of `kind` read with `hash` is off, after what the
-    /// reader did here.
-    pub fn delta(self, hash: &str, kind: Reaction) -> i64 {
-        self.mine.with(|m| m.delta(&(hash.to_owned(), kind)))
+    /// The count of `kind` to show for `hash`, `read` as the page has it:
+    /// with what the reader did here, which a page read before, or from a
+    /// cache, may not have yet.
+    pub fn shown_count(self, hash: &str, kind: Reaction, read: u64) -> u64 {
+        self.mine.with(|m| m.shown(&(hash.to_owned(), kind), read))
     }
 
     pub fn busy(self, hash: &str, kind: Reaction) -> bool {
@@ -371,8 +410,9 @@ impl Writer {
 
     /// Like or recast `target`, or take it back: at once with the reader's
     /// key, or once they have approved one; or in the Farcaster app, as
-    /// `ask` says (`when_ready`).
-    pub fn toggle(self, target: CastId, kind: Reaction, ask: Ask) {
+    /// `ask` says (`when_ready`). `shown` is its count as the reader sees
+    /// it, which theirs makes one more, or one less.
+    pub fn toggle(self, target: CastId, kind: Reaction, ask: Ask, shown: u64) {
         let key = (hex_encode(&target.hash), kind);
         if self.mine.with_untracked(|m| m.busy.contains(&key)) {
             return;
@@ -381,14 +421,17 @@ impl Writer {
         if self.can.get_untracked() != Can::Yes {
             let again = ask.clone();
             let expect = Expect::Reaction { target, kind, on };
-            self.when_ready(move || self.toggle(target, kind, again), ask, Some(expect));
+            self.when_ready(move || self.toggle(target, kind, again, shown), ask, Some(expect));
             return;
         }
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
-        let before = self.mine.with_untracked(|m| m.changed.get(&key).copied());
+        let (before, counted) =
+            self.mine.with_untracked(|m| (m.changed.get(&key).copied(), m.counted.get(&key).copied()));
+        let made = if on { shown + 1 } else { shown.saturating_sub(1) };
         self.mine.update(|m| {
             m.changed.insert(key.clone(), on);
             m.busy.insert(key.clone());
+            m.counted.insert(key.clone(), (on, made));
         });
         spawn_local(async move {
             let body = if on { Body::ReactionAdd(kind, target) } else { Body::ReactionRemove(kind, target) };
@@ -400,10 +443,18 @@ impl Writer {
                         Some(was) => m.changed.insert(key.clone(), was),
                         None => m.changed.remove(&key),
                     };
+                    match counted {
+                        Some(was) => m.counted.insert(key.clone(), was),
+                        None => m.counted.remove(&key),
+                    };
                 }
             });
             match outcome {
-                Ok(_) => {}
+                Ok(_) => {
+                    remember_reacted(stored.fid, &key, on, made);
+                    let wrote = Wrote { reacted_to: Some(key.0.clone()), page: page_cast(), ..Wrote::default() };
+                    self.refresh(wrote, Landing::Reaction { kind, on, fid: stored.fid });
+                }
                 Err(Unsent::KeyGone) => {
                     self.forget_key(stored.fid);
                     self.say(KEY_GONE.to_owned());
@@ -555,10 +606,15 @@ impl Writer {
                 }
             });
             match outcome {
-                Ok(reply) => self.notify(Notice {
-                    text: format!("Reacted with :{}:, as a reply.", emoji.code),
-                    link: Some((cast_href(&reply), "View")),
-                }),
+                Ok(reply) => {
+                    self.notify(Notice {
+                        text: format!("Reacted with :{}:, as a reply.", emoji.code),
+                        link: Some((cast_href(&reply), "View")),
+                    });
+                    let username = self.session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
+                    let wrote = Wrote { username, reply_to: Some(hash), page: page_cast(), ..Wrote::default() };
+                    self.refresh(wrote, Landing::Listed(reply));
+                }
                 Err(message) => self.say(message),
             }
         });
@@ -583,6 +639,77 @@ impl Writer {
     /// Say that a cast went out, with a link to it.
     pub fn posted(self, hash: &str) {
         self.notify(Notice { text: "Posted.".into(), link: Some((cast_href(hash), "View")) });
+    }
+
+    /// A cast the reader posted from here with their key, `hash`: it shows
+    /// at once where it will be listed (`components::outgoing`), and on
+    /// this tab's page loads for ten minutes, until the page lists it; and
+    /// the pages that list it are refreshed.
+    pub fn cast_posted(self, mut cast: Outgoing, hash: String) {
+        self.posted(&hash);
+        let Some(user) = self.session.user.get_untracked() else { return };
+        cast.id = js_sys::Date::now() as u64;
+        cast.hash = Some(hash.clone());
+        let reply_to = match &cast.sent {
+            Sent::Reply { parent, .. } => Some(parent.clone()),
+            _ => None,
+        };
+        let wrote = Wrote {
+            username: Some(user.username.clone()),
+            reply_to,
+            page: page_cast(),
+            channel: cast.channel.clone(),
+            ..Wrote::default()
+        };
+        remember_posted(user.fid, &cast);
+        self.mine.update(|m| m.outgoing.push(cast));
+        self.refresh(wrote, Landing::Listed(hash));
+    }
+
+    /// What the reader posted, liked and recasted from here in this tab's
+    /// last ten minutes, as `fid`: the pages read since may not have it.
+    fn restore(self, fid: u64) {
+        let (posted, counted) = (posted_before(fid), reacted_before(fid));
+        if posted.is_empty() && counted.is_empty() {
+            return;
+        }
+        self.mine.update(|m| {
+            for cast in posted {
+                if !m.outgoing.iter().any(|shown| shown.hash == cast.hash) {
+                    m.outgoing.push(cast);
+                }
+            }
+            m.counted.extend(counted);
+        });
+    }
+
+    /// Have the pages a write from here changes refreshed (`wrote`): the
+    /// Worker expires its copies (`REFRESH_PATH`), and they are read again
+    /// past the browser's cache, so this visit and the next page load have
+    /// it. A page that doesn't yet, as `landing` says, is asked for again,
+    /// twice at most.
+    fn refresh(self, wrote: Wrote, landing: Landing) {
+        let Some(reader) = self.fid() else { return };
+        spawn_local(async move {
+            let mut due = wrote.paths();
+            for wait in REFRESH_MS {
+                crate::video::sleep(wait).await;
+                if due.is_empty() || self.fid() != Some(reader) {
+                    return;
+                }
+                if api::post::<_, serde_json::Value>(REFRESH_PATH, &wrote.only(&due)).await.is_err() {
+                    return;
+                }
+                let mut missing = Vec::new();
+                for path in due {
+                    match api::reload(&path).await {
+                        Some(body) if landing.on(&path, &body) => {}
+                        _ => missing.push(path),
+                    }
+                }
+                due = missing;
+            }
+        });
     }
 
     /// Who is signed in, as the page follows it.
@@ -698,10 +825,12 @@ impl Writer {
             match outcome {
                 Ok(_) => {
                     self.mine.update(|m| {
-                        m.deleted.insert(hash);
+                        m.deleted.insert(hash.clone());
                         remember_deleted(&m.deleted);
                     });
                     self.say("Deleted. It leaves Farcaster as the network catches up.".into());
+                    let username = self.session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
+                    self.refresh(Wrote { username, page: page_cast(), ..Wrote::default() }, Landing::Gone(hash));
                 }
                 Err(Unsent::KeyGone) => {
                     self.forget_key(stored.fid);
@@ -1299,6 +1428,107 @@ fn remember_deleted(hashes: &HashSet<String>) {
     if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
         let _ = storage.set_item(DELETED, &hashes.iter().map(String::as_str).collect::<Vec<_>>().join(","));
     }
+}
+
+/// What a page refreshed after a write has, once it has the write.
+enum Landing {
+    /// A cast, a reply: its hash.
+    Listed(String),
+    /// A cast deleted: not its hash.
+    Gone(String),
+    /// A like or a recast by `fid`, or one taken back: they are in its
+    /// list of people, or not. Other pages show only counts.
+    Reaction { kind: Reaction, on: bool, fid: u64 },
+}
+
+impl Landing {
+    /// Whether `body`, read for `path`, has the write.
+    fn on(&self, path: &str, body: &str) -> bool {
+        match self {
+            Landing::Listed(hash) => body.contains(hash.as_str()),
+            Landing::Gone(hash) => !body.contains(hash.as_str()),
+            Landing::Reaction { kind, on, fid } => {
+                // Only a list of its kind's people says who; other pages
+                // show counts.
+                if !path.contains("/reactions?") {
+                    return true;
+                }
+                let list = match kind {
+                    Reaction::Like => ReactionKind::Likes,
+                    Reaction::Recast => ReactionKind::Recasts,
+                };
+                match serde_json::from_str::<ReactionsPayload>(body) {
+                    Ok(page) if page.kind != list => true,
+                    Ok(page) => page.users.iter().any(|user| user.fid == *fid) == *on,
+                    Err(_) => false,
+                }
+            }
+        }
+    }
+}
+
+/// The post whose page the reader is on, if they are on one: a write there
+/// may show on it too.
+fn page_cast() -> Option<String> {
+    let path = web_sys::window()?.location().pathname().ok()?;
+    hash_from_param(path.strip_prefix(crate::util::BASE)?.strip_prefix("/p/")?)
+}
+
+/// A cast or a count kept for the tab's page loads: whose, and when.
+#[derive(Serialize, Deserialize)]
+struct Kept<T> {
+    fid: u64,
+    at: f64,
+    what: T,
+}
+
+/// What `name` keeps for `fid` from the last ten minutes.
+fn kept<T: serde::de::DeserializeOwned>(name: &str, fid: u64) -> Vec<T> {
+    let stored = web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+        .and_then(|s| s.get_item(name).ok().flatten());
+    let now = js_sys::Date::now();
+    serde_json::from_str::<Vec<Kept<T>>>(&stored.unwrap_or_default())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|kept| kept.fid == fid && now - kept.at < KEPT_FOR_MS)
+        .map(|kept| kept.what)
+        .collect()
+}
+
+/// Keep `what` for `fid`'s page loads in the next ten minutes, in `name`,
+/// with what's kept there still, but `stale`.
+fn keep<T: Serialize + serde::de::DeserializeOwned>(name: &str, fid: u64, what: T, stale: impl Fn(&T) -> bool) {
+    let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) else { return };
+    let now = js_sys::Date::now();
+    let mut all = serde_json::from_str::<Vec<Kept<T>>>(&storage.get_item(name).ok().flatten().unwrap_or_default())
+        .unwrap_or_default();
+    all.retain(|kept| now - kept.at < KEPT_FOR_MS && !(kept.fid == fid && stale(&kept.what)));
+    all.push(Kept { fid, at: now, what });
+    if let Ok(json) = serde_json::to_string(&all) {
+        let _ = storage.set_item(name, &json);
+    }
+}
+
+fn posted_before(fid: u64) -> Vec<Outgoing> {
+    kept(POSTED, fid)
+}
+
+fn remember_posted(fid: u64, cast: &Outgoing) {
+    keep(POSTED, fid, cast.clone(), |kept: &Outgoing| kept.hash == cast.hash);
+}
+
+fn reacted_before(fid: u64) -> Vec<((String, Reaction), (bool, u64))> {
+    kept::<(String, Reaction, bool, u64)>(REACTED, fid)
+        .into_iter()
+        .map(|(hash, kind, on, made)| ((hash, kind), (on, made)))
+        .collect()
+}
+
+fn remember_reacted(fid: u64, key: &(String, Reaction), on: bool, made: u64) {
+    keep(REACTED, fid, (key.0.clone(), key.1, on, made), |kept: &(String, Reaction, bool, u64)| {
+        kept.0 == key.0 && kept.1 == key.1
+    });
 }
 
 fn current(run: u64) -> bool {
