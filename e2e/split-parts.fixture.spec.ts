@@ -189,3 +189,22 @@ test("React's Pepe picker comes as React is about to be used", async ({ page }) 
   const panel = page.getByRole("dialog", { name: "React with a Pepe" });
   await expect(panel.getByRole("searchbox")).toBeVisible();
 });
+
+test("the sign-in's code comes as Sign in is about to be used, not with the page", async ({ page }) => {
+  const parts = await serveFeed(page);
+  await page.goto("/");
+  await expect(page.locator(".cast-card").first()).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(parts()).toEqual([]);
+  await page.getByRole("button", { name: "Sign in with Farcaster" }).hover();
+  await expect.poll(parts).toContain("split_signin.wasm");
+});
+
+test("/scheduled fetches its list's code with the page", async ({ page }) => {
+  const parts = await serveFeed(page);
+  await page.goto("/scheduled");
+  // Signed out, the list asks to sign in first.
+  await expect(page.getByText("Sign in to see your scheduled casts.")).toBeVisible();
+  expect(parts()).toContain("split_scheduled.wasm");
+  expect(parts()).not.toContain("split_signin.wasm");
+});
