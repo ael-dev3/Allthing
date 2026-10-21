@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::time::{duration_since, format_date};
+use crate::website::Website;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
@@ -46,6 +47,11 @@ pub struct User {
     /// read only when `registered_at` is the ID registry's migration day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_username_at: Option<i64>,
+    /// The website the account's profile sets (its user data of type URL),
+    /// checked as a link can show it ([`crate::website`]). Only a profile's
+    /// own payload reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<Website>,
     #[serde(default)]
     pub custody_address: Option<String>,
     #[serde(default)]
@@ -436,6 +442,7 @@ mod tests {
             following_count: 0,
             registered_at,
             first_username_at,
+            website: None,
             custody_address: None,
             eth_addresses: Vec::new(),
             sol_addresses: Vec::new(),

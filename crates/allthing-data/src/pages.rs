@@ -680,27 +680,32 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
     let fid = user.fid;
 
     // The casts, the account's signers and its casts' signers in parallel:
-    // two requests attribute every cast on the page. Alongside, for an
-    // account registered before the ID registry's migration (which reports
-    // the migration's day), when it got its first username.
+    // two requests attribute every cast on the page. Alongside, the
+    // account's website, and for an account registered before the ID
+    // registry's migration (which reports the migration's day), when it got
+    // its first username.
     let before_migration = user.registered_before_migration();
-    let ((casts, signers, recent), first_username_at) = join(
+    let ((casts, signers, recent), (first_username_at, website)) = join(
         join3(
             hypersnap::user_casts(&inv, fid, POOL_SIZE),
             hypersnap::active_signers(&inv, fid),
             hypersnap::recent_cast_signers(&inv, fid, POOL_SIZE),
         ),
-        async { if before_migration { Some(hypersnap::first_username_at(&inv, fid).await) } else { None } },
+        join(
+            async { if before_migration { Some(hypersnap::first_username_at(&inv, fid).await) } else { None } },
+            hypersnap::website(&inv, fid),
+        ),
     )
     .await;
     // A failed read keeps what the previous copy knew, and this copy is
-    // refreshed soon instead of in five minutes.
-    let retry = matches!(first_username_at, Some(Err(_)));
+    // refreshed soon instead of in five minutes. Neither fails the profile.
+    let retry = matches!(first_username_at, Some(Err(_))) || website.is_err();
     user.first_username_at = match first_username_at {
         Some(Ok(ts)) => ts,
         Some(Err(_)) => previous.as_deref().and_then(|p| api::first_username_at_in(p, fid)),
         None => None,
     };
+    user.website = website.unwrap_or_else(|_| previous.as_deref().and_then(|p| api::website_in(p, fid)));
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
     let mut casts =
@@ -2642,6 +2647,106 @@ mod profile_tests {
         assert_eq!(payload.notes.quotes["0xb1"].text, "quoted 0xb1");
         // One bulk read brought both quotes.
         assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 1);
+    }
+
+    /// Bob's profile. His casts answer only once his user data has been
+    /// asked for (or, after 1000 polls, not at all): a build that read his
+    /// website after his casts would never finish. His user data answers
+    /// `user_data`, or 503 without it.
+    struct Bob {
+        user_data: Option<serde_json::Value>,
+        asked: Rc<Cell<bool>>,
+    }
+
+    impl Host for Bob {
+        fn now(&self) -> f64 {
+            1_800_000_000_000.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let ok = |body: serde_json::Value| HttpResponse {
+                status: 200,
+                retry_after: None,
+                body: Some(serde_json::to_vec(&body).unwrap()),
+            };
+            let bob = json!({ "fid": 43, "username": "bob" });
+            if request.url.contains("/v2/farcaster/feed/user/casts?") {
+                let asked = self.asked.clone();
+                let mut casts = Some(ok(
+                    json!({ "casts": [{ "hash": "0x01", "author": bob, "text": "gm", "timestamp": "2026-10-18T09:00:00Z" }] }),
+                ));
+                let mut polls = 0;
+                return poll_fn(move |_| {
+                    polls += 1;
+                    if asked.get() {
+                        Poll::Ready(Ok(casts.take().unwrap()))
+                    } else if polls > 1000 {
+                        Poll::Ready(Err(FetchError::Network("the website was never asked for".into())))
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .boxed_local();
+            }
+            let response = if request.url.contains("/v2/farcaster/user/by_username?") {
+                ok(json!({ "user": bob }))
+            } else if request.url.ends_with("/v1/userDataByFid?fid=43") {
+                self.asked.set(true);
+                match &self.user_data {
+                    Some(body) => ok(body.clone()),
+                    None => HttpResponse { status: 503, retry_after: None, body: None },
+                }
+            } else {
+                HttpResponse { status: 404, retry_after: None, body: None }
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    fn bob(user_data: Option<serde_json::Value>, previous: Option<&Built>) -> Built {
+        let host = Rc::new(Bob { user_data, asked: Rc::default() });
+        let inv = Rc::new(Invocation::new(host, 45));
+        let mut build = Box::pin(user(inv, "bob".into(), previous.map(|p| Rc::new(p.body.clone()))));
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        loop {
+            if let Poll::Ready(built) = build.as_mut().poll(&mut cx) {
+                break built.unwrap();
+            }
+        }
+    }
+
+    fn website_of(built: &Built) -> Option<String> {
+        serde_json::from_slice::<UserPayload>(&built.body).unwrap().user.website.map(|w| w.href)
+    }
+
+    #[test]
+    fn the_website_is_read_alongside_the_casts_and_a_failed_read_never_fails_the_profile() {
+        let url = |value: &str| {
+            json!({ "messages": [{ "data": { "type": "MESSAGE_TYPE_USER_DATA_ADD", "fid": 43,
+                "userDataBody": { "type": "USER_DATA_TYPE_URL", "value": value } } }], "nextPageToken": "" })
+        };
+        let read = bob(Some(url("bob.example")), None);
+        assert_eq!((website_of(&read).as_deref(), read.policy), (Some("https://bob.example"), api::USER_CACHE));
+        let payload: UserPayload = serde_json::from_slice(&read.body).unwrap();
+        assert_eq!(payload.user.website.unwrap().label, "bob.example");
+        assert_eq!(payload.pool.len(), 1);
+        // Cleared, or not a web address: none, as read.
+        for value in ["", "javascript:alert(1)"] {
+            let cleared = bob(Some(url(value)), Some(&read));
+            assert_eq!((website_of(&cleared), cleared.policy), (None, api::USER_CACHE), "{value:?}");
+        }
+        // A read that fails keeps the previous copy's, or has none, and the
+        // profile is refreshed soon.
+        let failed = bob(None, Some(&read));
+        assert_eq!(
+            (website_of(&failed).as_deref(), failed.policy),
+            (Some("https://bob.example"), api::USER_RETRY_CACHE)
+        );
+        let first = bob(None, None);
+        assert_eq!((website_of(&first), first.policy), (None, api::USER_RETRY_CACHE));
+        assert_eq!(serde_json::from_slice::<UserPayload>(&first.body).unwrap().pool.len(), 1);
     }
 }
 

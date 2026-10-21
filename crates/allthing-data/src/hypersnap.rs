@@ -14,10 +14,11 @@ use allthing_core::index::Source;
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
     self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawReaction, RawReactionList,
-    RawTransfers, RawUser, RawUserList, RawUserSearch,
+    RawTransfers, RawUser, RawUserData, RawUserList, RawUserSearch,
 };
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
+use allthing_core::website::Website;
 use serde::Deserialize;
 
 use crate::upstream::{self, Upstream, UpstreamError, get_json, url};
@@ -305,6 +306,18 @@ pub async fn first_username_at(inv: &Invocation, fid: u64) -> Result<Option<i64>
     Ok(found.and_then(|t| normalize::first_username_at(&t, fid)))
 }
 
+/// The website `fid`'s profile sets, if it is one a profile can link to.
+/// Hypersnap's user objects (`user/by_username`, `user/bulk`) don't carry
+/// it: their `profile` holds the bio alone. The hub's user data does, and
+/// the node ignores `user_data_type`, so this reads all of it, about 5 KB,
+/// and picks the URL ([`normalize::website`]). `Ok(None)` when the account
+/// has none, or one that isn't a web address.
+pub async fn website(inv: &Invocation, fid: u64) -> Result<Option<Website>, UpstreamError> {
+    let found: Option<RawUserData> =
+        get_json(inv, Upstream::Hypersnap, &v1("userDataByFid", &[("fid", &fid.to_string())]), true).await?;
+    Ok(found.as_ref().and_then(normalize::website))
+}
+
 /// Search runs a Tantivy query; keep user input to plain words.
 pub fn search_terms(query: &str) -> String {
     query
@@ -546,7 +559,8 @@ mod tests {
     use crate::{FetchError, Host, HttpRequest, HttpResponse};
 
     /// A hub that knows fid 3 by its fname `dwr` and its old ENS name
-    /// `dwr.eth`, and nobody else.
+    /// `dwr.eth`, and nobody else; and the user data of fid 3, whose
+    /// website is set, and fid 2, who cleared theirs.
     struct Hub {
         requests: RefCell<Vec<String>>,
     }
@@ -570,6 +584,12 @@ mod tests {
                 "/v2/farcaster/user/bulk?fids=3" => ok(&format!(r#"{{"users":[{dwr}]}}"#)),
                 // The hub answers 400 for a name nobody holds.
                 p if p.starts_with("/v1/userNameProofByName") => status(400),
+                "/v1/userDataByFid?fid=3" => {
+                    ok(&user_data(&[("USER_DATA_TYPE_BIO", "gm"), ("USER_DATA_TYPE_URL", "https://danromero.org")]))
+                }
+                "/v1/userDataByFid?fid=2" => {
+                    ok(&user_data(&[("USER_DATA_TYPE_URL", ""), ("USER_DATA_TYPE_LOCATION", "geo:34.05,-118.24")]))
+                }
                 _ => status(404),
             };
             async move { Ok(response) }.boxed_local()
@@ -578,11 +598,37 @@ mod tests {
         fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
     }
 
+    /// A `userDataByFid` answer with a message of each (type, value).
+    fn user_data(messages: &[(&str, &str)]) -> String {
+        let messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|(kind, value)| {
+                serde_json::json!({ "data": { "type": "MESSAGE_TYPE_USER_DATA_ADD", "fid": 3, "timestamp": 141496553,
+                    "userDataBody": { "type": kind, "value": value } } })
+            })
+            .collect();
+        serde_json::json!({ "messages": messages, "nextPageToken": "" }).to_string()
+    }
+
     fn lookup(name: &str) -> (Option<u64>, Vec<String>) {
         let hub = Rc::new(Hub { requests: RefCell::new(vec![]) });
         let inv = Invocation::new(hub.clone(), 45);
         let user = user_by_username(&inv, name).now_or_never().unwrap().unwrap();
         (user.map(|u| u.fid), hub.requests.take())
+    }
+
+    #[test]
+    fn a_website_is_one_read_of_the_accounts_user_data() {
+        let read = |fid: u64| {
+            let hub = Rc::new(Hub { requests: RefCell::new(vec![]) });
+            let inv = Invocation::new(hub.clone(), 45);
+            let website = website(&inv, fid).now_or_never().unwrap().unwrap();
+            (website.map(|w| w.href), hub.requests.take())
+        };
+        assert_eq!(read(3), (Some("https://danromero.org".into()), vec!["/v1/userDataByFid?fid=3".to_owned()]));
+        // Cleared, or no user data at all (the hub answers 404).
+        assert_eq!(read(2).0, None);
+        assert_eq!(read(99).0, None);
     }
 
     #[test]

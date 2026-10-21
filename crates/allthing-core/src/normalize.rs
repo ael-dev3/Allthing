@@ -20,6 +20,7 @@ use crate::params::{hash_from_param, normalize_hash};
 use crate::profile::{CARD_BIO_CHARS, UserCard, bio_excerpt};
 use crate::text::splice_mentions;
 use crate::time::parse_rfc3339;
+use crate::website::Website;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct RawBio {
@@ -325,6 +326,55 @@ pub fn first_username_at(raw: &RawTransfers, fid: u64) -> Option<i64> {
     raw.transfers.iter().filter(|t| t.to == fid && t.timestamp > 0).map(|t| t.timestamp).min()
 }
 
+/// The hub's `userDataByFid`: the user-data messages an account has signed
+/// (its picture, names, bio, website and the rest), the latest of each type.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawUserData {
+    #[serde(default)]
+    pub messages: Vec<RawUserDataMessage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawUserDataMessage {
+    pub data: Option<RawUserDataFields>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawUserDataFields {
+    #[serde(rename = "userDataBody")]
+    pub body: Option<RawUserDataBody>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawUserDataBody {
+    /// `"USER_DATA_TYPE_URL"` and the like, or the protobuf's number for it
+    /// from a node that writes enums as numbers.
+    #[serde(rename = "type")]
+    pub kind: Option<Value>,
+    pub value: Option<String>,
+}
+
+impl RawUserDataBody {
+    /// Whether this is the account's URL (`USER_DATA_TYPE_URL`, 5).
+    fn is_url(&self) -> bool {
+        match &self.kind {
+            Some(Value::String(kind)) => kind == "USER_DATA_TYPE_URL",
+            Some(Value::Number(kind)) => kind.as_u64() == Some(5),
+            _ => false,
+        }
+    }
+}
+
+/// The website an account's user data sets: the value of its URL message
+/// (the last, should a node list more than one), if it is an address a
+/// profile can link to ([`Website::parse`]). An empty value is a website
+/// the account cleared; no URL message, one never set.
+pub fn website(raw: &RawUserData) -> Option<Website> {
+    let bodies = raw.messages.iter().filter_map(|message| message.data.as_ref()?.body.as_ref());
+    let url = bodies.rev().find(|body| body.is_url())?;
+    Website::parse(url.value.as_deref()?)
+}
+
 /// `user/search`: Hypersnap answers `{ users }`, Neynar `{ result: { users } }`.
 #[derive(Debug, Default, Deserialize)]
 pub struct RawUserSearch {
@@ -434,6 +484,8 @@ pub fn user(raw: &RawUser) -> User {
         following_count: raw.following_count.unwrap_or(0),
         registered_at: raw.registered_at.as_deref().and_then(parse_rfc3339),
         first_username_at: None,
+        // Not in the provider's user object: a profile reads it apart.
+        website: None,
         custody_address: non_empty(raw.custody_address.as_deref()).map(|a| a.to_ascii_lowercase()),
         eth_addresses: verified
             .map(|v| v.eth_addresses.iter().map(|a| a.to_ascii_lowercase()).collect())
@@ -727,6 +779,31 @@ mod tests {
         assert_eq!(first_username_at(&raw, 300_000), Some(1_707_177_600));
         assert_eq!(first_username_at(&raw, 3), None);
         assert_eq!(first_username_at(&RawTransfers::default(), 3), None);
+    }
+
+    #[test]
+    fn the_website_is_the_user_datas_url() {
+        // dwr's user data, as Hypersnap's /v1/userDataByFid sends it.
+        let raw: RawUserData = serde_json::from_str(&fixture("hypersnap-user-data.json")).unwrap();
+        let dwr = Website { href: "https://danromero.org".into(), label: "danromero.org".into() };
+        assert_eq!(website(&raw), Some(dwr));
+        let one = |kind: &str, value: &str| {
+            serde_json::from_str::<RawUserData>(&format!(
+                r#"{{"messages":[{{"data":{{"type":"MESSAGE_TYPE_USER_DATA_ADD","fid":2,"timestamp":1,
+                    "userDataBody":{{"type":{kind},"value":"{value}"}}}}}}],"nextPageToken":""}}"#
+            ))
+            .unwrap()
+        };
+        // Cleared (as fid 2's is), never set (fid 99 has no URL message), or
+        // not a web address.
+        assert_eq!(website(&one(r#""USER_DATA_TYPE_URL""#, "")), None);
+        assert_eq!(website(&one(r#""USER_DATA_TYPE_LOCATION""#, "geo:34.05,-118.24")), None);
+        assert_eq!(website(&RawUserData::default()), None);
+        assert_eq!(website(&one(r#""USER_DATA_TYPE_URL""#, "javascript:alert(1)")), None);
+        // Another type's value is never taken for it.
+        assert_eq!(website(&one(r#""USER_DATA_TYPE_BIO""#, "https://example.com")), None);
+        // A node that writes the type as the protobuf's number.
+        assert_eq!(website(&one("5", "senpi.ai")).map(|w| w.href).as_deref(), Some("https://senpi.ai"));
     }
 
     fn fixture(name: &str) -> String {
