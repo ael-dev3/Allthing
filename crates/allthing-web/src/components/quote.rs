@@ -91,9 +91,10 @@ pub fn QuoteCard(
     view! {
         <blockquote class="quote" on:click=click>
             <div class="cast-meta">
-                <UserChip user=cast.author.clone() show_name=true card=author_card/>
-                <span class="sep" aria-hidden="true">"·"</span>
-                <a class="when" href=href><span class="visually-hidden">"Open quoted cast, "</span><TimeAgo ts=cast.ts/></a>
+                <span class="byline">
+                    <UserChip user=cast.author.clone() show_name=true card=author_card/>
+                    <a class="when" href=href><span class="visually-hidden">"Open quoted cast, "</span><TimeAgo ts=cast.ts/></a>
+                </span>
             </div>
             {body}
         </blockquote>

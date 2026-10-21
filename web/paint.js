@@ -359,16 +359,20 @@ function meta(cast, notes, link, favorite) {
   return el(
     "header",
     { class: "cast-meta" },
+    // Who and when, on one line (components/cast.rs); the dot is the time's.
     el(
       "span",
-      { class: "popover user-chip" },
-      el("a", { class: "user-link", href: to, tabindex: "-1", "aria-hidden": "true" }, avatar),
-      named ? el("a", { class: "display-name", href: to }, user.display_name) : null,
-      el("a", { class: "author", href: to }, "@" + user.username),
+      { class: "byline" },
+      el(
+        "span",
+        { class: "popover user-chip" },
+        el("a", { class: "user-link", href: to, tabindex: "-1", "aria-hidden": "true" }, avatar),
+        named ? el("a", { class: "display-name", href: to }, user.display_name) : null,
+        el("a", { class: "author", href: to }, "@" + user.username),
+      ),
+      favorite ? el("span", { class: "favorite-mark", role: "img", "aria-label": "One of your favorites" }, icon(STAR)) : null,
+      el("a", { class: "when", href: link }, el("span", { class: "visually-hidden" }, "Open post, "), el("time", { datetime: isoUtc(cast.ts), "aria-description": dateTime(cast.ts) }, timeAgo(cast.ts))),
     ),
-    favorite ? el("span", { class: "favorite-mark", role: "img", "aria-label": "One of your favorites" }, icon(STAR)) : null,
-    el("span", { class: "sep", "aria-hidden": "true" }, "·"),
-    el("a", { class: "when", href: link }, el("span", { class: "visually-hidden" }, "Open post, "), el("time", { datetime: isoUtc(cast.ts), "aria-description": dateTime(cast.ts) }, timeAgo(cast.ts))),
     channel,
     origin(cast.hash, notes),
   );

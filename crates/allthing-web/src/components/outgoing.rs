@@ -96,24 +96,25 @@ fn OutgoingCard(cast: Outgoing, user: allthing_core::model::UserSummary) -> impl
     view! {
         <article class="cast-card outgoing" class:posted=posted>
             <header class="cast-meta">
-                <UserChip user show_name=true card=None/>
-                <span class="sep" aria-hidden="true">"·"</span>
-                {match cast.hash {
-                    Some(hash) => view! {
-                        <a class="when outgoing-state" href=cast_href(&hash)>
-                            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=CHECK/></svg>
-                            "Posted"
-                        </a>
-                    }
-                    .into_any(),
-                    None => view! {
-                        <span class="outgoing-state">
-                            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
-                            "Posting in Farcaster"
-                        </span>
-                    }
-                    .into_any(),
-                }}
+                <span class="byline">
+                    <UserChip user show_name=true card=None/>
+                    {match cast.hash {
+                        Some(hash) => view! {
+                            <a class="when outgoing-state" href=cast_href(&hash)>
+                                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=CHECK/></svg>
+                                "Posted"
+                            </a>
+                        }
+                        .into_any(),
+                        None => view! {
+                            <span class="outgoing-state">
+                                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
+                                "Posting in Farcaster"
+                            </span>
+                        }
+                        .into_any(),
+                    }}
+                </span>
             </header>
             {cast.replying_to.map(|name| view! { <p class="replying-to">"replying to @"{name}</p> })}
             {(!cast.text.is_empty()).then(|| view! { <div class="cast-text"><CastText text=cast.text mentions=Vec::new()/></div> })}

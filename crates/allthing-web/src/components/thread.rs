@@ -70,19 +70,22 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
             id=format!("c-{}", &cast.hash[2..10])
         >
             <div class="comment-head">
-                <button
-                    class="toggle"
-                    type="button"
-                    aria-expanded=move || (!collapsed.get()).to_string()
-                    aria-label=toggle_label
-                    on:click=toggle
-                >
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
-                </button>
-                <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
-                {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" aria-description="Original poster">"OP"</span> })}
-                <span class="sep" aria-hidden="true">"·"</span>
-                <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
+                // The toggle, who and when, on one line, where a long name
+                // gives way to the time.
+                <span class="byline">
+                    <button
+                        class="toggle"
+                        type="button"
+                        aria-expanded=move || (!collapsed.get()).to_string()
+                        aria-label=toggle_label
+                        on:click=toggle
+                    >
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+                    </button>
+                    <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
+                    {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" aria-description="Original poster">"OP"</span> })}
+                    <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
+                </span>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
                 <Show when=move || collapsed.get()>
                     <span class="hidden-count">{format!("{} hidden", plural(hidden as u64 + 1, "reply", "replies"))}</span>
