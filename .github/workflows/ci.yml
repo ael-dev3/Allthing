@@ -8,6 +8,9 @@
 # 390 px on the live site, for before/after numbers.
 # Cloudflare Workers Builds deploys the site, so nothing here deploys; the
 # full live-data suite runs locally or against https://allthing.social.
+# Every job runs on ubuntu-24.04, not ubuntu-latest: ubuntu-latest is
+# moving to 26.04, where Playwright 1.56 can't install Chromium. Move the
+# runners on with a Playwright that supports the newer image.
 name: ci
 
 on:
@@ -28,7 +31,7 @@ permissions:
 jobs:
   check:
     name: fmt, clippy, tests, licenses
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +48,7 @@ jobs:
     # site after Workers Builds deploys the checked-out main commit.
     name: performance budget (allthing.social)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Up to 30 minutes waiting for the deploy (scripts/wait-for-deploy.mjs),
     # then the measurements.
     timeout-minutes: 45
@@ -76,7 +79,7 @@ jobs:
     # doesn't load.
     name: speed report (allthing.social)
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -93,7 +96,7 @@ jobs:
 
   browser:
     name: browser regressions (fixtures)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       WRANGLER_SEND_METRICS: "false"
