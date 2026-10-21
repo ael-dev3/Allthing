@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Who liked and recasted the feed cards in view, loaded before anyone
-//! hovers a count, so those popovers open with their people already there.
+//! Who liked and recasted the feed cards in view and just below it, loaded
+//! before anyone hovers a count, so those popovers open with their people
+//! already there.
 //!
 //! - **Cards in view**: the shared prefetch observer in `components/cast.rs`
 //!   reports cards entering and leaving the viewport. Once they have stayed
 //!   put for [`SETTLE_MS`], the topmost card in view whose batch this page
 //!   hasn't asked for brings it.
+//! - **Then the next run**, ahead of the reader: the run after the last card
+//!   in view brings its batch once its first card is less than a screen
+//!   below the viewport ([`AHEAD_SCREENS`]) and all its cards are on the
+//!   page (a run the next page is still to fill would be asked for twice).
 //! - **Batches follow the list**: a card brings the run of
 //!   [`ENGAGEMENT_CHUNK`] cards it belongs to, in list order (cards 1–6,
 //!   7–12, …), with a list only for counts above zero. Readers of the same
@@ -35,8 +40,12 @@ use crate::api::{self, Prefetch};
 const SETTLE_MS: u64 = 200;
 /// Batches start at least this far apart.
 const SPACING_MS: f64 = 2000.0;
-/// Batches one page view sends at most: the first 24 cards.
-const MAX_BATCHES: u32 = 4;
+/// Batches one page view sends at most: the first 48 cards, about the
+/// front page's first two pages.
+const MAX_BATCHES: u32 = 8;
+/// The next run's batch is sent once its first card is no more than this
+/// many screens below the viewport.
+const AHEAD_SCREENS: f64 = 1.0;
 /// When the prefetch slots are taken, look again after this long.
 const FULL_RETRY_MS: u64 = 500;
 
@@ -100,7 +109,8 @@ enum Step {
 }
 
 /// Send the batch of the topmost card in view whose run this page hasn't
-/// asked for, if the budget allows.
+/// asked for, or else of the next run once it is near, if the budget
+/// allows.
 fn next() {
     STATE.with(|state| state.borrow_mut().timer = None);
     if api::constrained_network() {
@@ -134,9 +144,11 @@ fn next() {
             .collect();
         // Top first: the reader reads down.
         cards.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let ahead = cards.last().and_then(|(_, card)| next_run(card, height * (1.0 + AHEAD_SCREENS)));
         cards
             .into_iter()
             .map(|(_, card)| run_of(card))
+            .chain(ahead)
             .find_map(|request| {
                 let path = request.path();
                 (!request.is_empty() && !state.asked.contains(&path)).then_some(Step::Send(request, path))
@@ -174,23 +186,43 @@ fn send(request: &EngagementRequest, path: String, now: f64) {
     }
 }
 
-/// The batch for the run of cards that `card` is in, in its list's order.
-/// Each card names its hash and counts in `data-hash`, `data-likes` and
-/// `data-recasts`.
-fn run_of(card: &Element) -> EngagementRequest {
-    let Some(list) = card.parent_element() else { return EngagementRequest::default() };
+/// The cards of `card`'s list, in order. Each names its hash and counts in
+/// `data-hash`, `data-likes` and `data-recasts`.
+fn cards_beside(card: &Element) -> Vec<Element> {
     let mut cards = Vec::new();
-    let mut sibling = list.first_element_child();
+    let mut sibling = card.parent_element().and_then(|list| list.first_element_child());
     while let Some(element) = sibling {
         sibling = element.next_element_sibling();
         if element.has_attribute("data-hash") {
             cards.push(element);
         }
     }
+    cards
+}
+
+/// The batch for the run of cards that `card` is in, in its list's order.
+fn run_of(card: &Element) -> EngagementRequest {
+    let cards = cards_beside(card);
     let Some(index) = cards.iter().position(|c| c == card) else { return EngagementRequest::default() };
     let start = index - index % ENGAGEMENT_CHUNK;
+    request_for(&cards[start..cards.len().min(start + ENGAGEMENT_CHUNK)])
+}
+
+/// The batch for the run after the one `card` is in, once that run's first
+/// card is less than `below` pixels from the viewport's top and all its
+/// cards are on the page.
+fn next_run(card: &Element, below: f64) -> Option<EngagementRequest> {
+    let cards = cards_beside(card);
+    let index = cards.iter().position(|c| c == card)?;
+    let start = index - index % ENGAGEMENT_CHUNK + ENGAGEMENT_CHUNK;
+    let run = cards.get(start..start + ENGAGEMENT_CHUNK)?;
+    (run[0].get_bounding_client_rect().top() < below).then(|| request_for(run))
+}
+
+/// Who liked and recasted the cards of `run` with counts above zero.
+fn request_for(run: &[Element]) -> EngagementRequest {
     let count = |card: &Element, name: &str| card.get_attribute(name).and_then(|n| n.parse().ok()).unwrap_or(0);
-    let run: Vec<(String, u64, u64)> = cards[start..cards.len().min(start + ENGAGEMENT_CHUNK)]
+    let run: Vec<(String, u64, u64)> = run
         .iter()
         .filter_map(|c| Some((c.get_attribute("data-hash")?, count(c, "data-likes"), count(c, "data-recasts"))))
         .collect();
