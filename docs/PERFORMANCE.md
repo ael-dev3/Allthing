@@ -161,6 +161,7 @@ Who liked and who recasted a feed card, and its replies, show the moment their p
   - **How long it holds**: after Back, the card is put back and held there for 6 s against late changes (images loading above it, lists growing back, a late scroll-to-top). The reader's own wheel, touch, key or mouse input ends the hold.
   - **Images keep their size**: a single image's natural size is remembered once it has loaded, and the image is drawn at that size when the list is rendered again. Back therefore doesn't make the page grow while images arrive, including after the hold ends. A single GIF, drawn at most 300 px each way (70% of the card's width on a phone), takes its smaller box at once the same way.
   - Sort tabs and reply toggles use `data-noscroll`, so they never jump to the top.
+- **Images have their boxes before they come.** An image a cast shows alone takes its own shape, so the page can't lay it out until it knows the image's size. The browser asks Cloudflare Images for it (the inline variant's description, about 110 bytes; `media::size_up`) as a list shows its cards and as a post opens, each image once a visit and six at a time, and an image hosted elsewhere that is about to show is read until its first bytes tell its size. A list draws its next screenful of cards once their images' sizes have come, or a second has passed (`CastList`, `media::sizing`), where the list ends in view: further down, cards come at once, and their images' sizes long before the reader does. The screenful comes together: drawn one card at a time, a short list let the footer into view and out again. A post's page, and a channel's with a pinned cast, keep their placeholders until the images at their top have their sizes. Before, a post loaded cold showed its replies, then pushed them most of a screen down as its image came, and after another time range the front page's cards jumped down 300 to 450 px at a time. A size still unknown when the wait is over holds a square, the shape least wrong on average, and an image that can't load shows its alt text. The sizes cost no Worker request; each answer is cached for two days.
 - **Sorting** reorders the existing list (a keyed `For` over a derived signal) instead of rebuilding the page.
 - **Drawing a screenful at a time.** A list rendered anew (a sort tab, another page) draws 6 cards, about a screenful, in the task that asked for it, and 6 more in a task after each paint until it has drawn what it shows (`CastList`, `DRAW_STEP`). A re-sort that changes the top of the list starts again from there. The tap's frame paints at once: building all 25 cards in the click took 13–39 ms of WebAssembly on a fast desktop CPU, which put the slowest interaction over 100 ms on CI runners. Back and forward draw the whole list at once while they restore the reader's place (`nav::restoring`).
 - **The tap first, the feed after.** A sort tab answers in the frame after the tap: the tab shows as chosen at once, and the feed follows in a task of its own once that frame is painted (`after_a_paint` in `pages/home.rs`), then draws a screenful at a time as above. Switching between hot and new swaps the whole feed, tearing down the old cards and building new ones. On a phone with the CPU slowed 4×, that work made the tap wait for its next frame. New also read its client filter inside its view. A tap that changed only the sort changes the query too, so new redrew its 25 cards just before they were torn down. The filter is now a memo of its own. Measured on 20 October 2026 as the speed report measures, with the two builds served locally on the same data, alternating, median of 9:
@@ -258,6 +259,18 @@ In 0.2.0 a post waited for its API call. In 0.3.0 the post renders from the feed
 The production LCP samples vary with the sandbox's proxy and with how warm each data center's edge cache is. The 1,872 ms outlier was a cold load through the proxy. The budget applies to the median.
 
 Interaction latency was 312–1,088 ms before sorting became reactive, because each sort change rebuilt the page.
+
+**Layout shift as images come, 21 October 2026.** CLS as Chrome counts it (a buffered `layout-shift` observer, shifts that answer input left out), from a cold load or from the action until 3 to 4 seconds after it. "Before" is allthing.social at 87beef5, read only; "after" is this change under `wrangler dev`, with live data through the local Worker, the same day. One run each; the footer's own move as a page's content takes its placeholder's place is the page's height while loading, not an image's, and is in brackets where it moved.
+
+| | 1280 px before | 1280 px after | 390 px before | 390 px after |
+|---|---|---|---|---|
+| A post loaded cold (`/p/0xd8a8…c5b85deb2a9`, one photo, 33 replies) | 0.251 (0.321) | 0 (0.069) | 0.301 (0.386) | 0 |
+| The front page, Past hour | 0.495 | 0.000 | 0.502 | 0.006 |
+| The front page, Past week | 0.313 | 0 | 0.327 | 0.000 |
+| The front page, new | 0.125 | 0 | 0 | 0 |
+| The front page, 14 scrolls down | 0.189 | 0.001 | 0.041 | 0 |
+
+`e2e/image-boxes.fixture.spec.ts` holds a post loaded cold, two time ranges and the new tab under 0.05 at both widths, with the images taking 1.5 s to come.
 
 ### Speed report
 

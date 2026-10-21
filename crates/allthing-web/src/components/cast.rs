@@ -8,12 +8,13 @@ use crate::Notes;
 use crate::api;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::favorite::FavoriteMark;
-use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::media::{self, LinkCards, MediaGrid, VideoLinks};
 use crate::components::quote::nested_quotes;
 use crate::components::text::CastText;
 use crate::nav::card_click;
 use crate::util::{cast_href, channel_href};
 use allthing_core::api::cast_path;
+use allthing_core::quotes::single_images;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{IntersectionObserver, IntersectionObserverEntry, IntersectionObserverInit};
@@ -154,27 +155,31 @@ pub fn CastList(
         SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
-    // The front page's first cards, drawn before the app came, give way to
-    // these once they're drawn (`crate::boot`).
-    Effect::new(move |_| {
-        if casts.with(|c| !c.is_empty()) {
-            crate::boot::hand_over();
-        }
-    });
+    let list = NodeRef::<leptos::html::Div>::new();
     Effect::new(move |_| {
         let notes = notes.get();
         casts.with(|c| api::remember_casts(c, &notes));
         api::remember_cards(&notes.users);
     });
-    // How many of the cards shown are drawn, and the top of the order they
-    // were drawn in. Back and forward draw them all at once, so the place
-    // being restored is there.
+    // How many of the cards shown may be drawn, and the top of the order
+    // they were drawn in. Back and forward draw them all at once, so the
+    // place being restored is there.
     let drawn = StoredValue::new((DRAW_STEP, Vec::<String>::new()));
     let drew_more = RwSignal::new(0_u32);
     let scheduled = StoredValue::new(false);
-    let visible = move || {
+    // The cards on the page, which stay there whatever they wait for.
+    let on_page = StoredValue::new(std::collections::HashSet::<String>::new());
+    // How many are drawn: a screenful at a time, once the images its cards
+    // show alone have their sizes (or have been waited for long enough), as
+    // web/paint.js draws the first ones. A card drawn before would grow as
+    // its image came, and push the cards below it down; drawn one by one, a
+    // short list would let what is below it come into view and go again.
+    // Only where the list ends in view, or nearly: further down, cards come
+    // at once, and their images' sizes long before the reader does.
+    let ready = Memo::new(move |_| {
         drew_more.track();
         let shown = shown.get();
+        let notes = notes.get();
         casts.with(|c| {
             let top: Vec<String> = c.iter().take(DRAW_STEP).map(|c| c.hash.clone()).collect();
             let restoring = crate::nav::restoring();
@@ -191,7 +196,22 @@ pub fn CastList(
             let target = shown.min(c.len());
             let count = target.min(count.max(DRAW_STEP));
             drawn.set_value((count, top));
-            if count < target && !scheduled.get_value() {
+            let near = !restoring && list.get_untracked().is_none_or(|list| ends_in_view(&list));
+            // Every card shown has its images' sizes asked for, the next
+            // ones', if they are elsewhere than Cloudflare Images, too.
+            for (i, cast) in c.iter().enumerate().take(target) {
+                for url in single_images(cast, &notes.quotes) {
+                    media::size_up(url, near && i < count);
+                }
+            }
+            let drawn_on = on_page.with_value(|on| c[..count].iter().rposition(|cast| on.contains(&cast.hash)));
+            let from = drawn_on.map_or(0, |i| i + 1);
+            // Each of them asked and waited for (`filter`, not `any`): their
+            // images all start loading meanwhile.
+            let waiting =
+                near && (from..count).filter(|&i| media::sizing(single_images(&c[i], &notes.quotes), true)).count() > 0;
+            let ready = if waiting { from } else { count };
+            if ready == count && count < target && !scheduled.get_value() {
                 // The rest a screenful at a time, each after the last is painted.
                 scheduled.set_value(true);
                 after_paint(move || {
@@ -202,9 +222,24 @@ pub fn CastList(
                     drew_more.update(|n| *n = n.wrapping_add(1));
                 });
             }
-            c.iter().take(count).cloned().enumerate().collect::<Vec<_>>()
+            ready
+        })
+    });
+    let visible = move || {
+        let ready = ready.get();
+        casts.with(|c| {
+            let cards = c.iter().take(ready).cloned().enumerate().collect::<Vec<_>>();
+            on_page.set_value(cards.iter().map(|(_, cast)| cast.hash.clone()).collect());
+            cards
         })
     };
+    // The front page's first cards, drawn before the app came, give way to
+    // these once they're drawn (`crate::boot`).
+    Effect::new(move |_| {
+        if ready.get() > 0 {
+            crate::boot::hand_over();
+        }
+    });
     let grow = move || {
         // Still drawing what is shown: its end isn't the list's end yet.
         if drawn.with_value(|(count, _)| *count) < shown.get_untracked().min(casts.with_untracked(Vec::len)) {
@@ -241,13 +276,16 @@ pub fn CastList(
     });
     view! {
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
-            <div class="cast-list">
+            <div class="cast-list" node_ref=list>
                 <For
                     each=visible
                     key=|(_, cast)| cast.hash.clone()
                     children=move |(index, cast)| view! { <CastCard cast notes=notes.get_untracked() index show_parent/> }
                 />
             </div>
+            // Its first card waiting for its image's size: the list is still
+            // on its way.
+            <Show when=move || ready.get() == 0><CastSkeletons/></Show>
         </Show>
         <div class="feed-sentinel" node_ref=sentinel aria-hidden="true"></div>
     }
@@ -330,6 +368,13 @@ fn prefetch_observer() -> Option<IntersectionObserver> {
     let observer = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options).ok();
     callback.forget();
     observer
+}
+
+/// Whether a list ends within half a screen below the viewport: a card
+/// added to it now could be in view before its images come.
+fn ends_in_view(list: &web_sys::Element) -> bool {
+    let height = window().inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+    list.get_bounding_client_rect().bottom() < height * 1.5
 }
 
 fn still_visible(element: &web_sys::Element) -> bool {

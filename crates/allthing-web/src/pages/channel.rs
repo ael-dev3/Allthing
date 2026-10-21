@@ -11,6 +11,7 @@ use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::{Cast, Channel, ExternalLink, UserSummary};
 use allthing_core::params::channel_key_from_decoded;
+use allthing_core::quotes::single_images;
 use allthing_core::ranking::{Sort, sorted_for};
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
@@ -21,6 +22,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastCard, CastList, CastSkeletons};
 use crate::components::chips::Avatar;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SideBox, SortTabs, StaleNotice};
+use crate::components::media;
 use crate::components::profile_card::ProfileHover;
 use crate::components::text::CastText;
 use crate::util::{channel_href, set_title, use_query_param, user_href};
@@ -58,6 +60,23 @@ fn ChannelPage() -> impl IntoView {
             }
         }
     });
+    // The page, once the images its pinned cast shows alone have their
+    // sizes: drawn before, the pinned cast would grow as they came, and push
+    // the feed down. A channel shows once; it doesn't wait again.
+    let shown_channel = StoredValue::new(None::<String>);
+    let ready = Memo::new(move |_| {
+        let loaded = data.get();
+        if let Some(Some(Ok(fetched))) = &loaded {
+            let payload = &fetched.data;
+            let new = shown_channel.with_value(|shown| shown.as_ref() != Some(&payload.channel.id));
+            let pinned = payload.channel.pinned.iter().flat_map(|cast| single_images(cast, &payload.notes.quotes));
+            if new && media::sizing(pinned, true) {
+                return None;
+            }
+            shown_channel.set_value(Some(payload.channel.id.clone()));
+        }
+        loaded
+    });
     Effect::new(move |_| {
         if let Some(Some(Ok(fetched))) = data.get() {
             let channel = &fetched.data.channel;
@@ -71,7 +90,7 @@ fn ChannelPage() -> impl IntoView {
             return view! { <NotFound/> }.into_any();
         };
         let path = channel_href(&key);
-        match data.get() {
+        match ready.get() {
             None | Some(None) => view! {
                 <Columns>
                     <header class="channel-hero" aria-busy="true">

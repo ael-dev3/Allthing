@@ -1339,6 +1339,23 @@ p.jumbo .emoji img {
   max-height: none;
 }
 
+/* Size not known yet: a square, the shape least wrong on average, until
+   the size or the image comes. A page waits for the sizes of what it shows
+   first (media.rs, `size_up`), so this is a slow line's, or an image's
+   further down. An image that can't load shows its alt text instead. */
+.media-grid.n1 .tile-image:not([data-sized], [data-broken]) {
+  width: min(100%, var(--max-h));
+  aspect-ratio: 1;
+  background: linear-gradient(135deg, #ecebe4, #f3f1ea);
+}
+
+.media-grid.n1 .tile-image:not([data-sized], [data-broken]) img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+}
+
 .link-card {
   display: flex;
   align-items: center;

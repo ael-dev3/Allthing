@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Classifying embedded URLs and picking image sizes.
 
-use crate::model::Embed;
+use crate::emoji::sticker_of;
+use crate::model::{Cast, Embed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
@@ -342,19 +343,42 @@ impl ImageSize {
     }
 }
 
+const CLOUDFLARE_IMAGES: &str = "https://imagedelivery.net/";
+
+/// The account and image of a Cloudflare Images URL (`…/<account>/<image>/<variant>`).
+fn cloudflare_image(url: &str) -> Option<(&str, &str)> {
+    let parts: Vec<&str> = url.strip_prefix(CLOUDFLARE_IMAGES)?.split('/').collect();
+    let plain = |s: &str| !s.is_empty() && !s.contains(['?', '#']);
+    (parts.len() == 3 && parts.iter().all(|p| plain(p))).then(|| (parts[0], parts[1]))
+}
+
 /// Cloudflare Images (used by most Farcaster clients) resizes on the fly, which
 /// turns a ~800 KB original into a few KB. Other hosts are returned unchanged.
 pub fn resized_image_url(url: &str, size: ImageSize) -> String {
-    const PREFIX: &str = "https://imagedelivery.net/";
-    let Some(path) = url.strip_prefix(PREFIX) else {
-        return url.to_owned();
-    };
-    let parts: Vec<&str> = path.split('/').collect();
-    let plain = |s: &str| !s.is_empty() && !s.contains(['?', '#']);
-    if parts.len() == 3 && parts.iter().all(|p| plain(p)) {
-        format!("{PREFIX}{}/{}/{}", parts[0], parts[1], size.variant())
-    } else {
-        url.to_owned()
+    match cloudflare_image(url) {
+        Some((account, image)) => format!("{CLOUDFLARE_IMAGES}{account}/{image}/{}", size.variant()),
+        None => url.to_owned(),
+    }
+}
+
+/// Where Cloudflare Images describes an image at the size a feed or a post
+/// shows it ([`ImageSize::Inline`]'s options, but the format): its width and
+/// height, as about 110 bytes of JSON sent with
+/// `access-control-allow-origin: *`. A page lays out the image's box from it
+/// before the image comes. `None` for an image hosted elsewhere.
+pub fn inline_size_url(url: &str) -> Option<String> {
+    let (account, image) = cloudflare_image(url)?;
+    Some(format!("{CLOUDFLARE_IMAGES}{account}/{image}/fit=scale-down,w=720,format=json"))
+}
+
+/// The image a cast shows alone, at its own shape: its only medium, when
+/// that is an image. Allthing's stickers don't count: they show apart, at
+/// a size of their own (`emoji::sticker_of`).
+pub fn single_image(cast: &Cast) -> Option<&str> {
+    let mut media = cast.media().filter(|embed| embed.url().is_none_or(|url| sticker_of(url).is_none()));
+    match (media.next(), media.next()) {
+        (Some(Embed::Image { url }), None) => Some(url),
+        _ => None,
     }
 }
 
@@ -627,6 +651,21 @@ mod tests {
             resized_image_url("https://imagedelivery.net/acct/abc/original?x=1", ImageSize::Thumb),
             "https://imagedelivery.net/acct/abc/original?x=1"
         );
+    }
+
+    #[test]
+    fn describes_cloudflare_images_at_the_inline_size_only() {
+        assert_eq!(
+            inline_size_url("https://imagedelivery.net/acct/abc-123/original").as_deref(),
+            Some("https://imagedelivery.net/acct/abc-123/fit=scale-down,w=720,format=json")
+        );
+        // The inline variant's options, without its format.
+        let inline = resized_image_url("https://imagedelivery.net/acct/abc-123/original", ImageSize::Inline);
+        assert_eq!(inline, "https://imagedelivery.net/acct/abc-123/fit=scale-down,f=auto,w=720");
+        assert_eq!(inline_size_url(&inline), inline_size_url("https://imagedelivery.net/acct/abc-123/original"));
+        assert_eq!(inline_size_url("https://i.imgur.com/x.png"), None);
+        assert_eq!(inline_size_url("https://imagedelivery.net/acct/abc/original?x=1"), None);
+        assert_eq!(inline_size_url("https://imagedelivery.net/acct/original"), None);
     }
 
     #[test]

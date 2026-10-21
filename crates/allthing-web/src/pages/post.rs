@@ -5,10 +5,12 @@ use std::sync::Arc;
 
 use allthing_core::api::{CastPayload, QuotedCast, cast_path};
 use allthing_core::clients::{client_name, client_profile};
+use allthing_core::embeds::single_image;
 use allthing_core::emoji::reactions;
 use allthing_core::format::{full_number, short_address};
 use allthing_core::model::Cast;
 use allthing_core::params::hash_from_param;
+use allthing_core::quotes::single_images;
 use allthing_core::ranking::{CommentSort, sort_thread};
 use allthing_core::text::truncate_title;
 use allthing_core::thread::count_nodes;
@@ -22,7 +24,7 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastSkeletons, ChannelLink};
 use crate::components::chips::{Avatar, Engagement, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
-use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
+use crate::components::media::{self, LinkCards, MediaGrid, VideoLinks};
 use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::reactions::ReactionChips;
@@ -54,6 +56,28 @@ fn PostPage() -> impl IntoView {
             }
         }
     });
+    // The page, once the images that show alone at its top have their
+    // sizes: drawn before, the post would grow as they came, and push its
+    // replies down. A post shows once; it doesn't wait again (for another
+    // sort of its replies, say).
+    let top = Memo::new(move |_| match data.get() {
+        Some(Some(Ok(fetched))) => top_images(&fetched.data, sort.get_untracked()),
+        _ => Vec::new(),
+    });
+    let shown_post = StoredValue::new(None::<String>);
+    let ready = Memo::new(move |_| {
+        let loaded = data.get();
+        let post = match &loaded {
+            Some(Some(Ok(fetched))) => Some(fetched.data.thread.cast.hash.clone()),
+            _ => None,
+        };
+        let new = post.is_some() && post != shown_post.get_value();
+        if new && top.with(|images| media::sizing(images.iter().map(String::as_str), true)) {
+            return None;
+        }
+        shown_post.set_value(post.or(shown_post.get_value()));
+        loaded
+    });
     Effect::new(move |_| {
         if let Some(Some(Ok(fetched))) = data.get() {
             let cast = &fetched.data.thread.cast;
@@ -70,7 +94,7 @@ fn PostPage() -> impl IntoView {
         let Some(hash) = hash.get() else {
             return view! { <NotFound/> }.into_any();
         };
-        let loaded = data.get();
+        let loaded = ready.get();
         if let (None | Some(None), Some(cast)) = (&loaded, api::seen_cast(&hash)) {
             // Seen in a feed: show the cast now, with the quoted casts the
             // feed carried; replies arrive with the thread.
@@ -246,6 +270,39 @@ fn PostedVia(cast: Cast, notes: Notes) -> impl IntoView {
         }
         .into_any(),
         None => ().into_any(),
+    }
+}
+
+/// Replies whose images the page waits for, with the cast's: about what the
+/// first screen shows below it.
+const TOP_REPLIES: usize = 4;
+
+/// The images that show alone at the top of a post's page: the cast's, its
+/// quotes' (and theirs'), and those of its first [`TOP_REPLIES`] replies in
+/// `sort`'s order.
+fn top_images(payload: &CastPayload, sort: CommentSort) -> Vec<String> {
+    let cast = &payload.thread.cast;
+    let mut images: Vec<&str> = if cast.hidden() { Vec::new() } else { single_image(cast).into_iter().collect() };
+    for quote in payload.quotes.iter().filter_map(|quote| quote.cast.as_ref()).filter(|q| !q.hidden()) {
+        images.extend(single_images(quote, &payload.notes.quotes));
+    }
+    let mut replies = payload.thread.children.clone();
+    sort_thread(&mut replies, sort);
+    let mut first = Vec::new();
+    first_nodes(&replies, &mut first);
+    images.extend(first.into_iter().filter(|c| !c.hidden()).filter_map(single_image));
+    images.into_iter().map(str::to_owned).collect()
+}
+
+/// The first [`TOP_REPLIES`] casts of `nodes`, as the page lists them: each
+/// reply, then its replies.
+fn first_nodes<'a>(nodes: &'a [allthing_core::model::ThreadNode], into: &mut Vec<&'a Cast>) {
+    for node in nodes {
+        if into.len() == TOP_REPLIES {
+            return;
+        }
+        into.push(&node.cast);
+        first_nodes(&node.children, into);
     }
 }
 

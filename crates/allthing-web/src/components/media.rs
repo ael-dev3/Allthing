@@ -2,10 +2,10 @@
 //! Images and videos attached to casts: an inline grid and an accessible
 //! lightbox (keyboard, alt text, swipe).
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use allthing_core::embeds::{ImageSize, embed_domain, is_gif, resized_image_url};
+use allthing_core::embeds::{ImageSize, embed_domain, inline_size_url, is_gif, resized_image_url};
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::model::{Cast, Embed};
 use allthing_core::text::truncate_title;
@@ -49,10 +49,43 @@ pub struct Viewer {
 
 thread_local! {
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
-    /// Natural sizes of the images loaded so far, so a list rendered again
-    /// (Back to a feed) lays each one out at its size before it loads,
-    /// instead of at zero height and then pushing the page down.
+    /// The sizes of the images seen so far (loaded, or described by
+    /// Cloudflare Images), so each tile is laid out at its size before its
+    /// image comes, instead of at none and then pushing the page down.
     static IMAGE_SIZES: RefCell<HashMap<String, (u32, u32)>> = RefCell::new(HashMap::new());
+    /// The images whose size was asked for: since when, until it came, or
+    /// it was learned that it won't.
+    static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
+    /// Size requests waiting for one of [`SIZE_REQUESTS`] places, in order.
+    static QUEUED: RefCell<VecDeque<(String, Probe)>> = const { RefCell::new(VecDeque::new()) };
+    static ON_THEIR_WAY: Cell<usize> = const { Cell::new(0) };
+    /// Images a card about to show has started loading, the latest ones
+    /// held until they have (see [`warm`]).
+    static WARMING: RefCell<(HashSet<String>, VecDeque<web_sys::HtmlImageElement>)> =
+        RefCell::new((HashSet::new(), VecDeque::new()));
+    /// Notified when a size comes, or when waiting for one is over.
+    static SIZES: ArcTrigger = ArcTrigger::new();
+}
+
+/// How long a list's next card, or the top of a post, stays out of sight
+/// waiting for the size of an image it shows alone: drawn without it, the
+/// image would grow its box as it came and push everything below it down.
+/// A card that waits longer shows with a square box for its image.
+const SIZE_WAIT_MS: f64 = 1000.0;
+/// Size requests on their way at once.
+const SIZE_REQUESTS: usize = 6;
+
+#[derive(Clone, Copy)]
+enum Asked {
+    Since(f64),
+    Over,
+}
+
+enum Probe {
+    /// Cloudflare Images' description of the image, at this URL.
+    Described(String),
+    /// The image itself, until its size is known.
+    Loaded,
 }
 
 /// The size `src` was seen at: here, or by the front page's first cards
@@ -69,42 +102,175 @@ fn painted_size(src: &str) -> Option<(u32, u32)> {
     (width > 0 && height > 0).then_some((width, height))
 }
 
-/// Give the image tiles under `root` that aren't sized yet the boxes their
-/// images were seen at: those drawn before the boot screen's images had
-/// loaded, which have since.
-pub fn size_tiles(root: &web_sys::Element) {
-    let Ok(tiles) = root.query_selector_all(".tile-image:not([data-sized]) > img") else { return };
-    for i in 0..tiles.length() {
-        let Some(img) = tiles.item(i).and_then(|n| n.dyn_into::<web_sys::HtmlImageElement>().ok()) else { continue };
-        let (Some((width, height)), Some(tile)) = (known_size(&img.src()), img.parent_element()) else { continue };
-        let _ = tile.set_attribute("style", &size_style(width, height));
-        let _ = tile.set_attribute("data-sized", "");
-        if height > width {
-            let _ = tile.set_attribute("data-portrait", "");
+/// Tiles take sizes learned elsewhere: by the boot screen's cards, whose
+/// images have come since the app drew its own (`crate::boot::hand_over`).
+pub fn sizes_changed() {
+    SIZES.with(ArcTrigger::notify);
+}
+
+fn keep_size(src: &str, size: (u32, u32)) {
+    IMAGE_SIZES.with(|sizes| {
+        let mut sizes = sizes.borrow_mut();
+        if sizes.len() > 4000 {
+            sizes.clear();
         }
-    }
+        sizes.insert(src.to_owned(), size);
+    });
+    sizes_changed();
 }
 
 fn remember_size(src: &str, event: &ev::Event) {
     let Some(img) = event.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) else { return };
-    let (width, height) = (img.natural_width(), img.natural_height());
-    if width > 0 && height > 0 {
-        IMAGE_SIZES.with(|sizes| {
-            let mut sizes = sizes.borrow_mut();
-            if sizes.len() > 4000 {
-                sizes.clear();
+    let size = (img.natural_width(), img.natural_height());
+    if size.0 > 0 && size.1 > 0 && known_size(src) != Some(size) {
+        // Its tile, and any later one of the same image, take this box.
+        keep_size(src, size);
+    }
+}
+
+/// Find out the size of the image at `url` (an embed's) as a tile shows it,
+/// unless it is known or on its way: from Cloudflare Images' description of
+/// it, about 110 bytes, or, `eager`ly, for an image hosted elsewhere, from
+/// the image itself, whose size is known from its first bytes (what's in
+/// view loads it anyway). Each image is asked for once a visit, and
+/// [`SIZE_REQUESTS`] at a time; none of this reaches Allthing's API.
+pub fn size_up(url: &str, eager: bool) {
+    let src = resized_image_url(url, ImageSize::Inline);
+    if ASKED.with(|asked| asked.borrow().contains_key(&src)) || known_size(&src).is_some() {
+        return;
+    }
+    let probe = match inline_size_url(url) {
+        Some(description) => Probe::Described(description),
+        None if eager => Probe::Loaded,
+        None => return,
+    };
+    ASKED.with(|asked| {
+        let mut asked = asked.borrow_mut();
+        if asked.len() > 4000 {
+            asked.retain(|_, a| matches!(a, Asked::Since(_)));
+        }
+        asked.insert(src.clone(), Asked::Since(js_sys::Date::now()));
+    });
+    QUEUED.with(|queued| queued.borrow_mut().push_back((src, probe)));
+    // Whatever comes of it, waiting for it ends then.
+    set_timeout(sizes_changed, std::time::Duration::from_millis(SIZE_WAIT_MS as u64 + 1));
+    next_size();
+}
+
+fn next_size() {
+    while ON_THEIR_WAY.with(Cell::get) < SIZE_REQUESTS {
+        let Some((src, probe)) = QUEUED.with(|queued| queued.borrow_mut().pop_front()) else { return };
+        ON_THEIR_WAY.with(|n| n.set(n.get() + 1));
+        wasm_bindgen_futures::spawn_local(async move {
+            let size = match probe {
+                Probe::Described(url) => described(&url).await,
+                Probe::Loaded => loaded(&src).await,
+            };
+            ON_THEIR_WAY.with(|n| n.set(n.get().saturating_sub(1)));
+            ASKED.with(|asked| asked.borrow_mut().insert(src.clone(), Asked::Over));
+            match size {
+                Some(size) if known_size(&src).is_none() => keep_size(&src, size),
+                _ => sizes_changed(),
             }
-            sizes.insert(src.to_owned(), (width, height));
+            next_size();
         });
-        // Give its tile the box a later visit gives it from the start.
-        if let Some(tile) = img.parent_element().filter(|t| t.get_attribute("data-sized").is_none()) {
-            let _ = tile.set_attribute("style", &size_style(width, height));
-            let _ = tile.set_attribute("data-sized", "");
-            if height > width {
-                let _ = tile.set_attribute("data-portrait", "");
+    }
+}
+
+/// The width and height Cloudflare Images gives in its description at `url`.
+async fn described(url: &str) -> Option<(u32, u32)> {
+    use wasm_bindgen_futures::JsFuture;
+    let response: web_sys::Response = JsFuture::from(window().fetch_with_str(url)).await.ok()?.dyn_into().ok()?;
+    if !response.ok() {
+        return None;
+    }
+    let found = JsFuture::from(response.json().ok()?).await.ok()?;
+    let dimension = |name: &str| {
+        js_sys::Reflect::get(&found, &wasm_bindgen::JsValue::from_str(name)).ok()?.as_f64().filter(|n| *n >= 1.0)
+    };
+    Some((dimension("width")? as u32, dimension("height")? as u32))
+}
+
+/// The size of the image at `src`, as soon as its first bytes tell it:
+/// looked at every 50 ms while it loads, for as long as a card waits.
+async fn loaded(src: &str) -> Option<(u32, u32)> {
+    let image = web_sys::HtmlImageElement::new().ok()?;
+    // Asked for as the tile asks for it, so the tile's is the same request.
+    image.set_referrer_policy("no-referrer");
+    image.set_src(src);
+    let started = js_sys::Date::now();
+    loop {
+        let size = (image.natural_width(), image.natural_height());
+        if size.0 > 0 && size.1 > 0 {
+            return Some(size);
+        }
+        if image.complete() || js_sys::Date::now() - started > SIZE_WAIT_MS {
+            return None;
+        }
+        let pause = js_sys::Promise::new(&mut |resolve, _| {
+            let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
+        });
+        let _ = wasm_bindgen_futures::JsFuture::from(pause).await;
+    }
+}
+
+/// Whether the size of an image at `url` is on its way, and worth waiting
+/// for still. Reactive: it changes as sizes come, and as waits end.
+fn awaited(url: &str) -> bool {
+    SIZES.with(|sizes| sizes.track());
+    let src = resized_image_url(url, ImageSize::Inline);
+    let since = ASKED.with(|asked| match asked.borrow().get(&src) {
+        Some(Asked::Since(since)) => Some(*since),
+        _ => None,
+    });
+    since.is_some_and(|since| js_sys::Date::now() - since < SIZE_WAIT_MS) && known_size(&src).is_none()
+}
+
+/// Start loading the image at `src`, which a card about to show waits to
+/// size: so it comes as soon as it would have without the wait, and the
+/// tile's own request is this one.
+fn warm(src: &str) {
+    let fresh = WARMING.with(|warming| {
+        let (seen, _) = &mut *warming.borrow_mut();
+        if seen.len() > 4000 {
+            seen.clear();
+        }
+        seen.insert(src.to_owned())
+    });
+    if !fresh {
+        return;
+    }
+    let Ok(image) = web_sys::HtmlImageElement::new() else { return };
+    // Asked for as the tile asks for it, so the tile's is the same request.
+    image.set_referrer_policy("no-referrer");
+    image.set_src(src);
+    WARMING.with(|warming| {
+        let (_, held) = &mut *warming.borrow_mut();
+        if held.len() >= 24 {
+            held.pop_front();
+        }
+        held.push_back(image);
+    });
+}
+
+/// Whether a card or a page showing the images at `urls` alone should
+/// wait for their sizes before it shows, having asked for them (see
+/// [`size_up`]) and started loading those that are on their way.
+/// Reactive: it turns false once each has come, or the wait for it is over.
+pub fn sizing<'a>(urls: impl IntoIterator<Item = &'a str>, eager: bool) -> bool {
+    let urls: Vec<&str> = urls.into_iter().collect();
+    let mut waiting = false;
+    for url in &urls {
+        size_up(url, eager);
+        if awaited(url) {
+            waiting = true;
+            // One hosted elsewhere is loading already (`Probe::Loaded`).
+            if inline_size_url(url).is_some() {
+                warm(&resized_image_url(url, ImageSize::Inline));
             }
         }
     }
+    waiting
 }
 
 /// The CSS variables a sized media box is laid out with.
@@ -252,18 +418,33 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                 }
                 MediaKind::Image => {
                     let src = resized_image_url(&item.url, ImageSize::Inline);
-                    let size = known_size(&src);
+                    // An image alone takes its own shape: its size is asked
+                    // for at once, and sizes the tile as soon as it comes.
+                    if count == 1 {
+                        size_up(&item.url, false);
+                    }
+                    let size = {
+                        let src = src.clone();
+                        Memo::new(move |_| {
+                            SIZES.with(|sizes| sizes.track());
+                            known_size(&src)
+                        })
+                    };
                     let key = src.clone();
-                    // A size seen before sizes the tile at once (see `remember_size`).
-                    let style = size.map(|(w, h)| size_style(w, h));
-                    let sized = size.map(|_| "");
-                    let portrait = size.and_then(|(w, h)| (h > w).then_some(""));
+                    let broken = RwSignal::new(false);
+                    let style = move || size.get().map(|(w, h)| size_style(w, h));
+                    let sized = move || size.get().map(|_| "");
+                    let portrait = move || size.get().and_then(|(w, h)| (h > w).then_some(""));
+                    // An image alone that can't load, and has no size: its
+                    // alt text shows at its own size, not in a square.
+                    let unseen = move || (count == 1 && broken.get() && size.get().is_none()).then_some("");
                     let img = view! {
                         <img
                             src=src
-                            width=size.map(|(w, _)| w)
-                            height=size.map(|(_, h)| h)
+                            width=move || size.get().map(|(w, _)| w)
+                            height=move || size.get().map(|(_, h)| h)
                             on:load=move |event| remember_size(&key, &event)
+                            on:error=move |_| broken.set(true)
                             alt=item.alt.clone()
                             loading="lazy"
                             decoding="async"
@@ -281,6 +462,7 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                                 style=style
                                 data-sized=sized
                                 data-portrait=portrait
+                                data-broken=unseen
                                 on:click=move |_| open()
                             >
                                 {img}
@@ -289,7 +471,7 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                         .into_any()
                     } else {
                         view! {
-                            <a class=class href=href.clone() style=style data-sized=sized data-portrait=portrait>
+                            <a class=class href=href.clone() style=style data-sized=sized data-portrait=portrait data-broken=unseen>
                                 {img}
                             </a>
                         }
