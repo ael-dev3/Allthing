@@ -18,6 +18,9 @@ use web_sys::{CryptoKey, IdbDatabase, IdbRequest, IdbTransactionMode};
 
 const DATABASE: &str = "allthing-keys";
 const STORE: &str = "keys";
+/// The account a key made to sign in with is kept for, until the account
+/// that approves it is known.
+pub const SIGNING_IN: u64 = 0;
 
 /// A key as this browser keeps it.
 #[derive(Clone)]
@@ -38,6 +41,12 @@ impl Stored {
     /// The same key, approved and added to the account just now.
     pub fn approved(self) -> Stored {
         Stored { request: None, approved_at: Some(js_sys::Date::now()), ..self }
+    }
+
+    /// The same key, kept for `fid`: the account that approved a key made
+    /// to sign in with.
+    pub fn for_account(self, fid: u64) -> Stored {
+        Stored { fid, ..self }
     }
 }
 
