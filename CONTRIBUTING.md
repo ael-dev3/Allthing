@@ -28,6 +28,7 @@ Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT
 - **Before every push**, run `bash scripts/check.sh`. It checks that `Cargo.toml` and `package.json` agree on the version, that `web/_headers` holds the CSP hash of every inline script in `web/index.html`, and that each release in the changelog links to its tag. Then it runs rustfmt, Clippy (native and wasm32, with and without `static-host`), the unit tests and the `cargo deny` license audit.
 - **For UI or API changes**, run the end-to-end suite and check the change at desktop (1280×900) and phone (390×844) widths. Run `npx playwright install chromium` once, then:
   - `npx playwright test '\.fixture\.spec\.ts$'`: the deterministic browser regressions that CI runs, with API and media responses from fixtures. Name new deterministic tests `*.fixture.spec.ts`.
+    One of them, `e2e/scheduled-cron.fixture.spec.ts`, starts a Worker of its own on ports 8796 to 8798 (`E2E_CRON_PORT` moves them), with a stand-in for the node, and takes a minute or two: it waits for a scheduled cast's minute.
   - `npx playwright test`: the whole suite, including `e2e/allthing.spec.ts` against live Farcaster data. Playwright starts `wrangler dev` on port 8787. Tests run at 1280×900; the phone-width tests and some fixture tests run at 390×844.
   - `npx playwright test e2e/perf.spec.ts`, for anything on the reading path.
   - `bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test`, if you touched the static copy.

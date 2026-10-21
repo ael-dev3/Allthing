@@ -86,7 +86,7 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         if let Some(limited) = rate_limited(&req, &env).await {
             return Ok(limited);
         }
-        let host = WorkerHost::new(Lifetime::Request(ctx), None, None);
+        let host = WorkerHost::new(Lifetime::Request(ctx), None, None, node_stand_in(&env));
         let inv = Rc::new(Invocation::new(Rc::new(host), SUBREQUEST_BUDGET));
         return auth::handle(name, req, &env, inv).await;
     }
@@ -113,7 +113,7 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
 
     let index = D1Index::new(&env).map(Rc::new);
-    let host = WorkerHost::new(Lifetime::Request(ctx), index, solana_rpc(&env));
+    let host = WorkerHost::new(Lifetime::Request(ctx), index, solana_rpc(&env), node_stand_in(&env));
     let inv = Rc::new(Invocation::new(Rc::new(host), SUBREQUEST_BUDGET));
     STARTED.with(|s| {
         if s.get() == 0.0 {
@@ -143,13 +143,23 @@ fn solana_rpc(env: &Env) -> Option<String> {
     env.secret("SOLANA_RPC_URL").ok().map(|s| s.to_string()).filter(|u| !u.is_empty())
 }
 
+/// The `HYPERSNAP_ORIGIN` variable, which only the end-to-end tests set: a
+/// stand-in for Hypersnap's node on this machine
+/// (`message::is_local_stand_in`), so a test sees what the Worker hands the
+/// node, a scheduled cast among it, and says what the node answers. Never
+/// set where Allthing is deployed; anything but a local port is ignored.
+fn node_stand_in(env: &Env) -> Option<String> {
+    let origin = env.var("HYPERSNAP_ORIGIN").ok()?.to_string();
+    allthing_core::message::is_local_stand_in(&origin).then_some(origin)
+}
+
 #[event(scheduled)]
 pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
     let Some(index) = D1Index::new(&env).map(Rc::new) else {
         console_error!("cron: no INDEX binding");
         return;
     };
-    let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()), solana_rpc(&env));
+    let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()), solana_rpc(&env), node_stand_in(&env));
     let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
     if event.cron() == LATEST_CRON {
         match pages::store_latest(Rc::new(inv)).await {
