@@ -99,7 +99,7 @@ Nothing allows or forbids a reader's using their own key in another client. A ke
 
 ## In Allthing
 
-`/messages` reads and sends a signed-in reader's Direct Casts with the key they paste, which only their browser keeps ([ARCHITECTURE.md](ARCHITECTURE.md#direct-casts)). It reads through the Direct Cast API where that answers the browser; nowhere does today, so it says why, links to the Farcaster app's inbox, and sends with `ext-send-direct-cast`. `allthing_core::dc` holds:
+`/messages` reads and sends a signed-in reader's Direct Casts with the key they paste, which only their browser keeps ([ARCHITECTURE.md](ARCHITECTURE.md#direct-casts)). It reads through the Direct Cast API where that answers the browser; nowhere does today, so it says why, links to the Farcaster app's inbox, and sends with `ext-send-direct-cast`. Where Allthing's owner turns on the Worker's relay (`DC_RELAY`, [DEPLOY.md](DEPLOY.md#secrets)), it reads and sends through that instead: the key passes through the Worker to the API with each call, and is kept nowhere. `allthing_core::dc` holds:
 
 - the API's shapes, read from fixtures shaped like the beta docs (`crates/allthing-core/tests/fixtures/dc-docs-*.json`), not captured responses;
 - the checks on a pasted key (`wc_secret_` and letters, digits, `_` or `-`), a message (1,024 UTF-16 units, as the app's JavaScript counts) and a recipient's fid;

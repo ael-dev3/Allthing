@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use allthing_core::guard::{Breaker, TokenBucket, parse_retry_after};
 use serde::de::DeserializeOwned;
 
-use crate::{FetchError, HttpMethod, HttpRequest, Invocation};
+use crate::{FetchError, HttpMethod, HttpRequest, HttpResponse, Invocation};
 
 /// Upstreams Allthing reads from, each with its own bucket and breaker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,6 +26,9 @@ pub enum Upstream {
     FarcasterApp,
     /// The fname server's public transfer log (when accounts got usernames).
     Fnames,
+    /// The Direct Cast API, for a reader's call through the Worker's relay
+    /// (`allthing_core::dc`), with their own key.
+    DirectCasts,
     /// Pages that casts link to, read for mini app meta tags. Many sites,
     /// so no breaker: one broken site says nothing about the others.
     LinkPage,
@@ -40,6 +43,7 @@ impl Upstream {
             Upstream::Chain(slug) => slug,
             Upstream::FarcasterApp => "farcaster-app",
             Upstream::Fnames => "fnames",
+            Upstream::DirectCasts => "direct-casts",
             Upstream::LinkPage => "link-pages",
         }
     }
@@ -54,6 +58,8 @@ impl Upstream {
             Upstream::Chain("solana-keyed") => (10, 5.0),
             Upstream::FarcasterApp => (6, 1.0),
             Upstream::Fnames => (6, 1.0),
+            // Each reader's calls are counted too (the relay's 30 a minute).
+            Upstream::DirectCasts => (20, 4.0),
             Upstream::LinkPage => (12, 2.0),
             Upstream::Chain(_) => (4, 0.5),
         }
@@ -61,7 +67,7 @@ impl Upstream {
 
     fn timeout_ms(self) -> u32 {
         match self {
-            Upstream::Hypersnap => 8000,
+            Upstream::Hypersnap | Upstream::DirectCasts => 8000,
             Upstream::LinkPage => 2500,
             _ => 5000,
         }
@@ -235,6 +241,7 @@ pub async fn send(
     let request = HttpRequest {
         method,
         url: url.to_owned(),
+        headers: Vec::new(),
         body: body.map(str::to_owned),
         octets: None,
         any_body: false,
@@ -270,6 +277,7 @@ pub async fn submit(inv: &Invocation, url: &str, message: Vec<u8>) -> Result<(u1
     let request = HttpRequest {
         method: HttpMethod::Post,
         url: url.to_owned(),
+        headers: Vec::new(),
         body: None,
         octets: Some(message),
         any_body: true,
@@ -291,6 +299,50 @@ pub async fn submit(inv: &Invocation, url: &str, message: Vec<u8>) -> Result<(u1
     };
     record(inv, upstream, &outcome.as_ref().map(|_| None).map_err(Clone::clone), retry_after);
     outcome
+}
+
+/// Pass a reader's call to the Direct Cast API, for the Worker's relay:
+/// `headers` carry their key, which goes nowhere else. Its answer comes
+/// back whatever its status, body and all, for the relay to hand the
+/// browser. A 5xx counts against the API's breaker, as no answer does; a
+/// 429 doesn't, since the API counts each key's calls, and one reader's
+/// says nothing about the others'.
+pub async fn relay(
+    inv: &Invocation,
+    method: HttpMethod,
+    url: &str,
+    headers: Vec<(&'static str, String)>,
+    body: Option<String>,
+) -> Result<HttpResponse, UpstreamError> {
+    let upstream = Upstream::DirectCasts;
+    admit(inv, upstream)?;
+    let request = HttpRequest {
+        method,
+        url: url.to_owned(),
+        headers,
+        body,
+        octets: None,
+        any_body: true,
+        timeout_ms: upstream.timeout_ms(),
+        accept: upstream.accept(),
+        max_bytes: None,
+        stop_at: None,
+    };
+    match inv.fetch(request).await {
+        Ok(response) => {
+            let outcome = if response.status >= 500 { Err(UpstreamError::Status(response.status)) } else { Ok(None) };
+            record(inv, upstream, &outcome, response.retry_after.as_deref().and_then(parse_retry_after));
+            Ok(response)
+        }
+        Err(error) => {
+            let error = match error {
+                FetchError::Timeout => UpstreamError::Timeout,
+                FetchError::Network(e) => UpstreamError::Network(e),
+            };
+            record(inv, upstream, &Err(error.clone()), None);
+            Err(error)
+        }
+    }
 }
 
 pub fn parse<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, UpstreamError> {

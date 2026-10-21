@@ -62,9 +62,10 @@ pub fn relay_path() -> String {
 /// The header the browser hands the reader's key to the relay in, which
 /// sends it on to the API as `Authorization: Bearer <key>`.
 pub const KEY_HEADER: &str = "x-dc-key";
-/// The header that marks the relay's answers that are the API's own
-/// (`upstream`), as against the relay's refusals (no session, too many
-/// requests), whose statuses would otherwise read as the API's.
+/// The header that marks the relay's answers that are the API's
+/// (`upstream`): its own, and those saying it gave none in time (502, 503,
+/// 504), as against the relay's refusals (turned off, no session, too many
+/// calls), whose statuses would otherwise read as the API's.
 pub const RELAY_HEADER: &str = "x-allthing-relay";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -690,6 +691,86 @@ pub fn merge(thread: &mut Vec<Message>, page: impl IntoIterator<Item = Message>)
         .sort_by(|a, b| a.creation_timestamp.cmp(&b.creation_timestamp).then_with(|| a.message_id.cmp(&b.message_id)));
 }
 
+// The Worker's relay (`allthing-worker`'s `dc_relay`), which its owner may
+// turn on: what it passes on, checked here.
+
+/// The largest body the relay takes. A message of [`MAX_CHARS`] is at most
+/// about 6 KB of JSON (six bytes a UTF-16 unit when escaped), with room for
+/// its ids.
+pub const MAX_BODY: usize = 8 * 1024;
+/// The longest id, cursor or idempotency key the relay passes on.
+pub const MAX_ID_LEN: usize = 256;
+
+/// Whether `value` can be an id or a cursor the relay passes on: not empty,
+/// not too long, and no control characters.
+fn is_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_ID_LEN && !value.chars().any(char::is_control)
+}
+
+/// A relayed read's query: of the pairs `asked` for, only the keys
+/// `endpoint` takes, in the order it takes them, the first value of each,
+/// and none empty or too long.
+pub fn relay_query(endpoint: Endpoint, asked: &[(String, String)]) -> Vec<(&'static str, String)> {
+    endpoint
+        .query_keys()
+        .iter()
+        .filter_map(|&key| {
+            let value = asked.iter().find(|(k, _)| k == key).map(|(_, v)| v)?;
+            is_id(value).then(|| (key, value.clone()))
+        })
+        .collect()
+}
+
+/// An `idempotency-key` the relay passes on: 1 to 64 letters, digits, `-`
+/// or `_` (the browser sends a UUID).
+pub fn check_idempotency(value: &str) -> bool {
+    (1..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Why the relay won't pass a message on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendProblem {
+    /// Not JSON in the shape `PUT /fc/message` takes.
+    Shape,
+    /// No conversation, group or account to send it to, or more than one.
+    Target,
+    /// An id that can't be one: empty, too long, or a fid out of range.
+    Id,
+    Text(TextProblem),
+}
+
+impl SendProblem {
+    pub fn message(self) -> String {
+        match self {
+            SendProblem::Shape => {
+                "Expected a message: {\"conversationId\" or \"groupId\" or \"recipientFid\", \"message\"}".into()
+            }
+            SendProblem::Target => "A message goes to one conversation, group or account.".into(),
+            SendProblem::Id => "That conversation, group, message or account id can't be one.".into(),
+            SendProblem::Text(problem) => problem.message(),
+        }
+    }
+}
+
+/// A message for `PUT /fc/message`, as the relay passes it on: read from
+/// `body`, checked, and written out again, so only [`Send`]'s fields go on,
+/// the message trimmed as the browser sends it.
+pub fn check_send(body: &str) -> Result<String, SendProblem> {
+    let send: Send = serde_json::from_str(body).map_err(|_| SendProblem::Shape)?;
+    let targets = [send.conversation_id.is_some(), send.group_id.is_some(), send.recipient_fid.is_some()];
+    if targets.into_iter().filter(|&named| named).count() != 1 {
+        return Err(SendProblem::Target);
+    }
+    let ids = [&send.conversation_id, &send.group_id, &send.in_reply_to_message_id];
+    if ids.into_iter().flatten().any(|id| !is_id(id))
+        || send.recipient_fid.is_some_and(|f| check_recipient(f).is_none())
+    {
+        return Err(SendProblem::Id);
+    }
+    let message = check_text(&send.message).map_err(SendProblem::Text)?.to_owned();
+    serde_json::to_string(&Send { message, ..send }).map_err(|_| SendProblem::Shape)
+}
+
 #[cfg(test)]
 mod tests {
     //! The fixtures (`tests/fixtures/dc-docs-*.json`) are shaped like the
@@ -923,5 +1004,74 @@ mod tests {
         assert_eq!(thread.len(), 4);
         assert!(thread[1].is_deleted);
         assert_eq!(thread[3].message_id, "d");
+    }
+
+    fn pairs(query: &[(&str, &str)]) -> Vec<(String, String)> {
+        query.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+    }
+
+    #[test]
+    fn the_relay_passes_on_only_the_query_an_endpoint_takes() {
+        let asked = pairs(&[("limit", "1"), ("evil", "1"), ("category", "default"), ("limit", "99"), ("cursor", "")]);
+        let query = relay_query(Endpoint::ConversationList, &asked);
+        assert_eq!(query, vec![("category", "default".to_owned()), ("limit", "1".to_owned())]);
+        let call = Call { endpoint: Endpoint::ConversationList, query, body: None };
+        assert_eq!(call.url("http://127.0.0.1:9"), "http://127.0.0.1:9/fc/conversation-list?category=default&limit=1");
+        // A conversation's id, and nothing a URL could be bent by.
+        let asked = pairs(&[("conversationId", "a b&c=d"), ("groupId", "g")]);
+        let call =
+            Call { endpoint: Endpoint::Conversation, query: relay_query(Endpoint::Conversation, &asked), body: None };
+        assert_eq!(call.url(API), "https://api.farcaster.xyz/fc/conversation?conversationId=a%20b%26c%3Dd");
+        let long = "c".repeat(MAX_ID_LEN + 1);
+        assert!(relay_query(Endpoint::MessageList, &pairs(&[("conversationId", &long)])).is_empty());
+        assert!(relay_query(Endpoint::MessageList, &pairs(&[("cursor", "a\nb")])).is_empty());
+        assert!(relay_query(Endpoint::Message, &pairs(&[("conversationId", "c")])).is_empty());
+    }
+
+    #[test]
+    fn the_relay_sends_a_message_as_it_checked_it() {
+        // Only the fields a send takes, the message trimmed.
+        let body = r#"{"conversationId":"636f","message":"  hi \n","extra":{"x":1},"recipientFids":[1,2]}"#;
+        assert_eq!(check_send(body).as_deref(), Ok(r#"{"conversationId":"636f","message":"hi"}"#));
+        let reply = r#"{"groupId":"9f82","message":"gm","inReplyToMessageId":"m1"}"#;
+        assert_eq!(check_send(reply).as_deref(), Ok(reply));
+        assert_eq!(
+            check_send(r#"{"recipientFid":6841,"message":"gm"}"#).as_deref(),
+            Ok(r#"{"recipientFid":6841,"message":"gm"}"#)
+        );
+        // One target, no more, no fewer.
+        assert_eq!(check_send(r#"{"message":"to no one"}"#), Err(SendProblem::Target));
+        assert_eq!(check_send(r#"{"conversationId":"c","groupId":"g","message":"gm"}"#), Err(SendProblem::Target));
+        // Ids that can't be.
+        assert_eq!(check_send(r#"{"recipientFid":0,"message":"gm"}"#), Err(SendProblem::Id));
+        assert_eq!(check_send(r#"{"conversationId":"","message":"gm"}"#), Err(SendProblem::Id));
+        let long = format!(r#"{{"groupId":"{}","message":"gm"}}"#, "g".repeat(MAX_ID_LEN + 1));
+        assert_eq!(check_send(&long), Err(SendProblem::Id));
+        // A message that fits.
+        assert_eq!(check_send(r#"{"conversationId":"c","message":"  "}"#), Err(SendProblem::Text(TextProblem::Empty)));
+        let over = format!(r#"{{"conversationId":"c","message":"{}"}}"#, "a".repeat(MAX_CHARS + 1));
+        assert_eq!(check_send(&over), Err(SendProblem::Text(TextProblem::TooLong { length: MAX_CHARS + 1 })));
+        // Not a send at all.
+        for bad in ["", "null", "[]", r#"{"conversationId":"c"}"#, r#"{"recipientFid":"42","message":"gm"}"#] {
+            assert_eq!(check_send(bad), Err(SendProblem::Shape), "{bad:?}");
+        }
+        assert_eq!(
+            check_send(r#"{"conversationId":"c","conversationId":"d","message":"gm"}"#),
+            Err(SendProblem::Shape)
+        );
+        // The longest message, escaped, fits in a body.
+        let longest =
+            serde_json::to_string(&Send::to_thread(&Thread::Group("g".repeat(MAX_ID_LEN)), &"\u{1}".repeat(MAX_CHARS)))
+                .unwrap();
+        assert!(longest.len() <= MAX_BODY, "{}", longest.len());
+    }
+
+    #[test]
+    fn idempotency_keys_are_plain() {
+        assert!(check_idempotency("8f1c2e9a-7c1d-4a59-9d4e-3b1e6f0a2c11"));
+        assert!(check_idempotency("a_B-9"));
+        for bad in ["", "not one, x", "a b", "a\r\nb", "é", &"a".repeat(65)] {
+            assert!(!check_idempotency(bad), "{bad:?}");
+        }
     }
 }
