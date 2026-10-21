@@ -55,6 +55,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
 Who liked and who recasted a feed card show the moment their popover opens: the feed preloads them (`crates/allthing-web/src/preload.rs`).
 
 - **Cards in view.** The shared observer above reports cards coming into view and leaving it. Once the cards in view have stayed put for 200 ms, the topmost one whose batch this page hasn't asked for brings it.
+- **Then the next run, ahead of the reader.** Once the runs in view have their batches, the run after the last card in view brings its own when its first card is less than a screen below the viewport, so a reader reading down finds its popovers already loaded. It waits until all six of its cards are on the page: a run the next page is still to fill would be asked for twice. A run the reader scrolls past before its turn isn't loaded; its popovers load when they open.
 - **Batches follow the list.** A card brings its run of six cards, in list order (cards 1–6, 7–12, …), as one `/api/v1/engagement` request, with a list only for counts above zero. Readers of the same feed ask for the same batches, so the edge cache answers most of them, and upstream reads don't grow with readers.
 - **Filed as single answers.** Each list goes into the client cache under its own `/api/v1/reactions?…&limit=10` path, with the batch's arrival time and age, so it expires, and reports its age, as if it had been asked for alone. An answer already kept that was read upstream later stays. A popover that opens while its batch is on its way waits for it instead of asking again, and a list the batch lacks (its read failed, or the Worker kept Hypersnap's bucket for page builds) loads on hover, as before.
 - **No "Loading…" flash.** A preview reads the client cache synchronously, so its people are there in the frame the popover opens. A resource would resolve a tick later, even from the cache.
@@ -62,15 +63,15 @@ Who liked and who recasted a feed card show the moment their popover opens: the 
 - **The people in a preview.** As a likes, recasts or replies preview's list opens, the vote and wallet activity of everyone it names load (`api::prefetch_row_facts`), so the card a name opens is complete. A list opens on a tap, or once the pointer has rested on its count for 280 ms, so a count the pointer only crosses loads nothing. They go ahead of feed authors' in the card queue, in the list's order, two in flight with the other prefetches. The name the reader points at or touches goes first (`api::prefetch_facts_first`), about 100 ms before its card opens, and outside the 5-minute count, as the card would read its facts then anyway; one opened before its turn reads its own at once. Anyone whose facts are kept or on their way is skipped, and at most 30 people (three lists) are queued per 5 minutes (60 requests, both endpoints edge-cached for an hour or more). The full Liked by and Recasted by lists, up to 100 people, aren't preloaded: their cards read their facts when they open.
 - **Limits**, per page view (a new URL, or a list rendered anew, as after Back):
   - one batch on its way at a time, and batches start at least 2 s apart;
-  - at most 4 batches, 24 cards; later cards load their previews on hover;
+  - at most 8 batches, 48 cards, about the front page's first two pages; later cards load their previews when they open;
   - batches share the prefetch cap (2 in flight);
   - nothing is preloaded with `Save-Data` or on `2g`/`slow-2g` connections;
   - nor in the static copy, whose cards aren't observed.
 - **Why these numbers.**
   - A batch is at most 12 Hypersnap reads (six cards, likes and recasts): 14 subrequests with the cache read and write, against a budget of 45, and about 2 ms of parsing when every list is full ([BUDGET.md](BUDGET.md#4-cpu-time)).
-  - An isolate's Hypersnap bucket holds 40 tokens and refills 10 a second. One reader's batches, at most 12 reads every 2 s, ask for 6 a second at most, so even if every batch missed the edge cache and reached the same isolate, a scrolling reader couldn't drain it. Four batches cap a page view at 48 reads.
+  - An isolate's Hypersnap bucket holds 40 tokens and refills 10 a second. One reader's batches, at most 12 reads every 2 s, ask for 6 a second at most, so even if every batch missed the edge cache and reached the same isolate, a scrolling reader couldn't drain it. Eight batches cap a page view at 96 reads.
   - The Worker adds its own floor: previews never take the bucket below 16 tokens, so page builds keep a share when many readers' batches meet in one isolate. A batch with less room reads what fits (likes first), is kept for 15 s, and is rebuilt.
-- **Cost**: one Worker request per batch, so a feed costs one to four more requests (usually one or two), with a mouse or on a touch screen, while hovering or tapping a preloaded count costs none. See [BUDGET.md](BUDGET.md).
+- **Cost**: one Worker request per batch, so a feed costs one to eight more requests (usually one to three), with a mouse or on a touch screen, while hovering or tapping a preloaded count costs none. See [BUDGET.md](BUDGET.md).
 
 ### 3. Client-side navigation
 
