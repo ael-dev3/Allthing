@@ -403,6 +403,15 @@ function trimUrl(raw) {
   }
 }
 
+/** The link `rest` starts with, if any, as `tokenize` reads one. */
+function urlAt(rest) {
+  const scheme = /^https:\/\//i.test(rest) ? 8 : /^http:\/\//i.test(rest) ? 7 : 0;
+  if (!scheme) return null;
+  const end = rest.search(/[\s<>"']/u);
+  const url = trimUrl(end < 0 ? rest : rest.slice(0, end));
+  return url.length > scheme ? url : null;
+}
+
 /** Plain text, links, mentions the cast carries, /channels and pack emoji. */
 function tokenize(text, mentions) {
   const known = mentions.map((m) => String(m.username || "").toLowerCase());
@@ -420,17 +429,13 @@ function tokenize(text, mentions) {
     const ch = String.fromCodePoint(text.codePointAt(i));
     const before = text.slice(0, i);
     const prev = before ? Array.from(before).pop() : undefined;
-    const scheme = /^https:\/\//i.test(rest) ? 8 : /^http:\/\//i.test(rest) ? 7 : 0;
-    if (scheme) {
-      const end = rest.search(/[\s<>"']/u);
-      const url = trimUrl(end < 0 ? rest : rest.slice(0, end));
-      if (url.length > scheme) {
-        pushText(text.slice(last, i));
-        tokens.push({ url });
-        i += url.length;
-        last = i;
-        continue;
-      }
+    const url = urlAt(rest);
+    if (url) {
+      pushText(text.slice(last, i));
+      tokens.push({ url });
+      i += url.length;
+      last = i;
+      continue;
     } else if (ch === "@") {
       const after = rest.slice(1);
       const stop = after.search(/[^A-Za-z0-9_.-]/);
@@ -526,16 +531,60 @@ function castText(text, mentions) {
   );
 }
 
-/** The first `max` characters of a cast, whitespace collapsed, cut at a word. */
+/** The characters a pack emoji counts as in an excerpt (`EMOJI_CHARS`). */
+const EMOJI_CHARS = 3;
+
+/** Where `text` has pack shortcodes, as [start, end]: those `tokenize` reads, so none in a link. */
+function emojiSpans(text) {
+  const spans = [];
+  let i = 0;
+  while (i < text.length) {
+    const rest = text.slice(i);
+    const url = urlAt(rest);
+    const found = url ? null : shortcodeAt(rest);
+    if (url) i += url.length;
+    else if (found) {
+      spans.push([i, i + found.length]);
+      i += found.length;
+    } else i += String.fromCodePoint(text.codePointAt(i)).length;
+  }
+  return spans;
+}
+
+/**
+ * The first `max` characters of a cast, whitespace collapsed, cut at a word
+ * (`truncate_title`). A pack shortcode counts as its image's room and is
+ * never cut.
+ */
 function truncateTitle(text, max) {
   const flat = text.split(/\s+/u).filter(Boolean).join(" ");
-  const chars = Array.from(flat);
-  if (chars.length <= max) return flat;
-  const cut = chars.slice(0, max).join("");
+  const spans = emojiSpans(flat);
+  // Each character or whole shortcode, as where it ends and its room.
+  const units = [];
+  for (let i = 0, s = 0; i < flat.length; ) {
+    if (spans[s]?.[0] === i) {
+      i = spans[s++][1];
+      units.push([i, EMOJI_CHARS]);
+    } else {
+      i += String.fromCodePoint(flat.codePointAt(i)).length;
+      units.push([i, 1]);
+    }
+  }
+  let room = 0;
+  let fit = 0;
+  while (fit < units.length && (room += units[fit][1]) <= max) fit++;
+  if (fit === units.length) return flat;
+  const end = fit ? units[fit - 1][0] : 0;
+  const cut = flat.slice(0, end);
+  // A cut before a space, or beside an emoji, already falls between words.
+  const between = flat.startsWith(" ", end) || spans.some(([start, stop]) => start === end || stop === end);
   const space = cut.lastIndexOf(" ");
-  let base = space >= 0 && Array.from(cut.slice(0, space)).length * 10 > max * 6 ? cut.slice(0, space) : cut;
-  base = base.replace(/[\s.,;:!?…-]+$/u, "");
-  return base + "…";
+  const before = units.filter(([e]) => e <= space).reduce((sum, [, width]) => sum + width, 0);
+  const base = space >= 0 && !between && before * 10 > max * 6 ? cut.slice(0, space) : cut;
+  const trimmed = base.replace(/[\s.,;:!?…-]+$/u, "");
+  // A shortcode at the end keeps its closing colon.
+  const shortcode = spans.map(([, stop]) => stop).filter((stop) => stop <= base.length).pop() ?? 0;
+  return base.slice(0, Math.max(trimmed.length, shortcode)) + "…";
 }
 
 // Media (components/media.rs).

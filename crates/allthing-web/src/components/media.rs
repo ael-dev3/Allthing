@@ -17,6 +17,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
 use crate::components::player::{HlsVideo, VideoFacade};
+use crate::components::text::ExcerptText;
 use crate::util::{cast_href, href};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,7 +464,7 @@ pub fn Lightbox() -> impl IntoView {
                 <figure class="lb-figure">
                     <div class="lb-stage" data-index=gallery.index>{stage}</div>
                     <figcaption class="lb-caption">
-                        <span class="lb-alt">{item.alt.clone()}</span>
+                        <span class="lb-alt"><ExcerptText text=item.alt.clone()/></span>
                         {counter.map(|c| view! { <span class="lb-counter" aria-live="polite">{c}</span> })}
                     </figcaption>
                 </figure>

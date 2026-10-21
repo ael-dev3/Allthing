@@ -35,7 +35,7 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
   - A single image's tile has its final box before the image comes. Cloudflare Images describes the variant a feed shows (`…/fit=scale-down,w=720,format=json`, about 110 bytes, sent with `access-control-allow-origin: *`), the tile takes that size, and so does the app's tile for the same image (`media::known_size`). A card with one is drawn once its description has come, a round trip after the data. Nothing on the first screen moves as its images come, there or after the app takes over; without this, a single image grew its card when it loaded, pushing the cards below it down.
   - Its images (avatars, emoji, link thumbnails and media) wait until the WebAssembly is in, and the app's own cards then find them on their way. Asked for at once, in a trial on the speed report's phone, they shared the slow line with it and the app's first card came 1.4 s later.
   - If the app can't load, `boot.js`'s panel replaces the cards. Leaving the front page, or its data failing in the app, hands over at once, and the app's cards replace them at most 4 s after the app has mounted, whatever else.
-  - It is 34 KB (10 KB at brotli), and adds no request to the Worker. The static copy doesn't load it.
+  - It is 38 KB (11 KB at brotli), and adds no request to the Worker. The static copy doesn't load it.
 
 ### 2. Prefetch, under a strict budget
 

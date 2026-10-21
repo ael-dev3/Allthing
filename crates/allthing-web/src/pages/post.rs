@@ -26,7 +26,7 @@ use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::reactions::ReactionChips;
-use crate::components::text::CastText;
+use crate::components::text::{CastText, ExcerptText};
 use crate::components::thread::CommentTree;
 use crate::util::{cast_href, set_title, user_href, with_query};
 
@@ -159,7 +159,7 @@ fn ParentContext(parent: Cast) -> impl IntoView {
         <a class="parent-context" href=cast_href(&parent.hash)>
             <span class="muted">"In reply to "</span>
             <strong>"@"{parent.author.username.clone()}</strong>
-            <span class="parent-excerpt">{truncate_title(&parent.text, 140)}</span>
+            <span class="parent-excerpt"><ExcerptText text=truncate_title(&parent.text, 140)/></span>
         </a>
     }
 }

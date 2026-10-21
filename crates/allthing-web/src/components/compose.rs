@@ -58,6 +58,7 @@ use crate::api;
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
 use crate::components::signin::use_session;
+use crate::components::text::ExcerptText;
 use crate::components::writer::{Expect, Outgoing, Settle, Writer, fids_of, use_writer};
 use crate::util::{
     BASE, can_hover, document, from_local_input, href, local_input, now, scheduled_href, time_zone, trap_tab,
@@ -716,7 +717,7 @@ pub fn ComposerDialog() -> impl IntoView {
                     Some(view! {
                         <p class="compose-context">
                             "Replying to "<strong>"@"{to.username}</strong>
-                            {(!to.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt">{to.excerpt}</span> })}
+                            {(!to.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt"><ExcerptText text=to.excerpt/></span> })}
                         </p>
                     }.into_any()),
                 ),
@@ -725,7 +726,7 @@ pub fn ComposerDialog() -> impl IntoView {
                     Some(view! {
                         <p class="compose-context">
                             "Quoting "<strong>"@"{of.username}</strong>
-                            {(!of.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt">{of.excerpt}</span> })}
+                            {(!of.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt"><ExcerptText text=of.excerpt/></span> })}
                         </p>
                     }.into_any()),
                 ),

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Cast text with links, mentions, channel references and emoji.
+//! Cast text with links, mentions, channel references and emoji, and
+//! excerpts of it with emoji alone.
 
 use allthing_core::emoji::Emoji;
 use allthing_core::model::Mention;
-use allthing_core::text::{Token, paragraphs, tokenize};
+use allthing_core::text::{Token, paragraphs, text_and_emoji, tokenize};
 use leptos::prelude::*;
 
 use crate::util::{channel_href, href, user_href};
@@ -34,7 +35,7 @@ fn line(text: &str, mentions: &[Mention]) -> Vec<AnyView> {
             .into_any(),
             Token::Mention(name) => view! { <a class="mention" href=user_href(&name)>"@"{name.clone()}</a> }.into_any(),
             Token::Channel(id) => view! { <a class="channel-ref" href=channel_href(&id)>"/"{id.clone()}</a> }.into_any(),
-            Token::Emoji(emoji) => emoji_view(emoji),
+            Token::Emoji(emoji) => emoji_view(emoji, true),
         })
         .collect()
 }
@@ -42,7 +43,8 @@ fn line(text: &str, mentions: &[Mention]) -> Vec<AnyView> {
 /// One of the pack's emoji, in the text: a still of it for readers who ask
 /// for less motion. Its alt text is its shortcode, so copied text keeps it,
 /// and what it shows is read out as its description (no native tooltip).
-fn emoji_view(emoji: &'static Emoji) -> AnyView {
+/// Loaded lazily, unless it shows as it opens.
+fn emoji_view(emoji: &'static Emoji, lazy: bool) -> AnyView {
     view! {
         <picture class="emoji">
             {emoji.animated.then(|| view! { <source media="(prefers-reduced-motion: reduce)" srcset=href(&emoji.still())/> })}
@@ -52,7 +54,7 @@ fn emoji_view(emoji: &'static Emoji) -> AnyView {
                 aria-description=emoji.label()
                 width=emoji.width
                 height=emoji.height
-                loading="lazy"
+                loading=lazy.then_some("lazy")
                 decoding="async"
             />
         </picture>
@@ -90,6 +92,21 @@ pub fn CastText(text: String, mentions: Vec<Mention>) -> impl IntoView {
                 })
                 .collect();
             view! { <p class:jumbo=jumbo>{lines}</p> }
+        })
+        .collect_view()
+}
+
+/// An excerpt of a cast, or a draft, with the pack's emoji and nothing
+/// linked, since it may sit inside a link or a button. Its emoji aren't left
+/// to lazy loading: an excerpt is in view as a preview or a list opens,
+/// where lazy loading left the Replies preview's thumbnails blank.
+#[component]
+pub fn ExcerptText(text: String) -> impl IntoView {
+    text_and_emoji(&text)
+        .into_iter()
+        .map(|token| match token {
+            Token::Emoji(emoji) => emoji_view(emoji, false),
+            Token::Text(text) | Token::Url(text) | Token::Mention(text) | Token::Channel(text) => text.into_any(),
         })
         .collect_view()
 }

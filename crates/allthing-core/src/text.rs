@@ -39,20 +39,105 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// How many characters one of the pack's emoji counts as in an excerpt:
+/// about the room its image takes in a line of text.
+const EMOJI_CHARS: usize = 3;
+
 /// The first `max` characters of a cast, whitespace-collapsed, cut at a word
-/// boundary.
+/// boundary. A shortcode of the pack's emoji counts as the room its image
+/// takes, and is never cut: the emoji comes whole or not at all.
 pub fn truncate_title(text: &str, max: usize) -> String {
     let flat = collapse_whitespace(text);
-    if flat.chars().count() <= max {
+    let spans = emoji_spans(&flat);
+    // Each character or whole shortcode, as where it ends and its room.
+    let mut units: Vec<(usize, usize)> = Vec::with_capacity(flat.len());
+    let mut next = spans.iter().peekable();
+    let mut i = 0;
+    while i < flat.len() {
+        match next.peek() {
+            Some(&&(start, end, _)) if start == i => {
+                next.next();
+                units.push((end, EMOJI_CHARS));
+                i = end;
+            }
+            _ => {
+                i += flat[i..].chars().next().map_or(1, char::len_utf8);
+                units.push((i, 1));
+            }
+        }
+    }
+    let mut room = 0;
+    let fit = units
+        .iter()
+        .take_while(|(_, width)| {
+            room += width;
+            room <= max
+        })
+        .count();
+    if fit == units.len() {
         return flat;
     }
-    let cut: String = flat.chars().take(max).collect();
+    let end = fit.checked_sub(1).map_or(0, |last| units[last].0);
+    let cut = &flat[..end];
+    // A cut before a space, or beside an emoji, already falls between words.
+    let between = flat[end..].starts_with(' ') || spans.iter().any(|&(start, stop, _)| stop == end || start == end);
     let base = match cut.rfind(' ') {
-        Some(space) if cut[..space].chars().count() * 10 > max * 6 => &cut[..space],
-        _ => cut.as_str(),
+        Some(space) if !between => {
+            let before: usize = units.iter().take_while(|(e, _)| *e <= space).map(|(_, width)| width).sum();
+            if before * 10 > max * 6 { &cut[..space] } else { cut }
+        }
+        _ => cut,
     };
-    let base = base.trim_end_matches(|c: char| c.is_whitespace() || ".,;:!?…-".contains(c));
-    format!("{base}…")
+    let trimmed = base.trim_end_matches(|c: char| c.is_whitespace() || ".,;:!?…-".contains(c));
+    // A shortcode at the end keeps its closing colon.
+    let shortcode = spans.iter().map(|&(_, stop, _)| stop).rfind(|&stop| stop <= base.len()).unwrap_or(0);
+    format!("{}…", &base[..trimmed.len().max(shortcode)])
+}
+
+/// The link `rest` starts with, if any, as `tokenize` reads one.
+fn url_at(rest: &str) -> Option<&str> {
+    let scheme_len = url_scheme_len(rest)?;
+    let end = rest.find(|c: char| c.is_whitespace() || "<>\"'".contains(c)).unwrap_or(rest.len());
+    let href = trim_url(&rest[..end]);
+    (href.len() > scheme_len).then_some(href)
+}
+
+/// Where `text` has shortcodes of the pack's emoji, in bytes: those
+/// `tokenize` reads as emoji, so none inside a link.
+fn emoji_spans(text: &str) -> Vec<(usize, usize, &'static crate::emoji::Emoji)> {
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        let rest = &text[i..];
+        if let Some(url) = url_at(rest) {
+            i += url.len();
+        } else if let Some((emoji, len)) = crate::emoji::shortcode_at(rest) {
+            spans.push((i, i + len, emoji));
+            i += len;
+        } else {
+            i += rest.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    spans
+}
+
+/// `text` as plain runs and the pack's emoji, with nothing linked, for an
+/// excerpt inside a link or a button: only `Token::Text` and
+/// `Token::Emoji`, with the text as written.
+pub fn text_and_emoji(text: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let mut last = 0;
+    for (start, end, emoji) in emoji_spans(text) {
+        if start > last {
+            tokens.push(Token::Text(text[last..start].to_owned()));
+        }
+        tokens.push(Token::Emoji(emoji));
+        last = end;
+    }
+    if last < text.len() {
+        tokens.push(Token::Text(text[last..].to_owned()));
+    }
+    tokens
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,16 +265,12 @@ pub fn tokenize(text: &str, mentions: &[Mention]) -> Vec<Token> {
         let ch = rest.chars().next().unwrap_or(' ');
         let prev = text[..i].chars().next_back();
 
-        if let Some(scheme_len) = url_scheme_len(rest) {
-            let end = rest.find(|c: char| c.is_whitespace() || "<>\"'".contains(c)).unwrap_or(rest.len());
-            let href = trim_url(&rest[..end]);
-            if href.len() > scheme_len {
-                push_text(&mut tokens, &text[last..i]);
-                tokens.push(Token::Url(href.to_owned()));
-                i += href.len();
-                last = i;
-                continue;
-            }
+        if let Some(href) = url_at(rest) {
+            push_text(&mut tokens, &text[last..i]);
+            tokens.push(Token::Url(href.to_owned()));
+            i += href.len();
+            last = i;
+            continue;
         } else if ch == '@' {
             let name_end = rest[1..].find(|c: char| !is_name_char(c)).map_or(rest.len(), |n| n + 1);
             let name = rest[1..name_end].trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
@@ -319,6 +400,44 @@ mod tests {
         assert!(excerpt.chars().count() <= 121);
         assert!(!excerpt.ends_with(" …"));
         assert_eq!(truncate_title(&"🎉".repeat(130), 120), format!("{}…", "🎉".repeat(120)));
+        // A cut already between words keeps the last one.
+        assert_eq!(truncate_title("aaa bbb ccc ddd", 11), "aaa bbb ccc…");
+    }
+
+    #[test]
+    fn excerpts_keep_shortcodes_whole() {
+        // Each emoji counts as three characters, not its shortcode's length.
+        assert_eq!(truncate_title("hello :pepe_heart_hug:", 9), "hello :pepe_heart_hug:");
+        assert_eq!(truncate_title("gm :pepe_gm: frens :PEPE_NO:", 16), "gm :pepe_gm: frens :PEPE_NO:");
+        // One that doesn't fit is left out whole, not cut.
+        assert_eq!(truncate_title("gm :pepe_gm: frens :PEPE_NO:", 15), "gm :pepe_gm: frens…");
+        // One at the end keeps its closing colon.
+        assert_eq!(truncate_title("one two :pepe_gm: three four", 11), "one two :pepe_gm:…");
+        assert_eq!(truncate_title(&":pepe_gm:".repeat(50), 30), format!("{}…", ":pepe_gm:".repeat(10)));
+        // Whatever the length, no shortcode is cut.
+        let text = "ab :pepe_heart_hug: cd :pepe_no:ef :pepe_sit_clap: gh";
+        for max in 0..30 {
+            let excerpt = truncate_title(text, max);
+            let partial = text_and_emoji(&excerpt).iter().any(|t| matches!(t, Token::Text(t) if t.contains(":pepe")));
+            assert!(!partial, "{max}: {excerpt}");
+        }
+    }
+
+    #[test]
+    fn text_and_emoji_links_nothing() {
+        let gm = crate::emoji::find("pepe_gm").unwrap();
+        // Mentions and channels stay as written, unlinked.
+        assert_eq!(
+            text_and_emoji("/Base @Bob :pepe_gm:x"),
+            vec![Token::Text("/Base @Bob ".into()), Token::Emoji(gm), Token::Text("x".into())]
+        );
+        assert_eq!(text_and_emoji(":PEPE_GM:"), vec![Token::Emoji(gm)]);
+        // A link keeps its colons, as in cast text; other words stay text.
+        assert_eq!(
+            text_and_emoji("see https://x.com/:pepe_gm: at 10:30 :smile:"),
+            vec![Token::Text("see https://x.com/:pepe_gm: at 10:30 :smile:".into())]
+        );
+        assert!(text_and_emoji("").is_empty());
     }
 
     #[test]
