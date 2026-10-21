@@ -72,8 +72,8 @@ impl UserCard {
 /// and its card, if a payload carried one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfilePreview {
-    /// The account as far as it is known: no addresses; the card's bio (its
-    /// start) and counts.
+    /// The account as far as it is known: no addresses or website; the
+    /// card's bio (its start) and counts.
     pub user: User,
     /// Whether the bio and counts are known. Without a card the profile
     /// shows placeholders for them, never an empty bio or zero followers.
@@ -97,6 +97,8 @@ impl ProfilePreview {
             following_count: card.map_or(0, |c| c.following),
             registered_at: card.and_then(|c| c.registered_at),
             first_username_at: card.and_then(|c| c.first_username_at),
+            // Only the profile's payload reads it: cast authors don't carry it.
+            website: None,
             custody_address: None,
             eth_addresses: Vec::new(),
             sol_addresses: Vec::new(),
@@ -255,6 +257,7 @@ mod tests {
         assert_eq!((preview.user.follower_count, preview.user.following_count), (500_000, 2_000));
         assert_eq!(preview.joined, Some(Joined::Registered(1_759_222_921)));
         assert!(preview.user.eth_addresses.is_empty() && preview.user.sol_addresses.is_empty());
+        assert_eq!(preview.user.website, None);
     }
 
     #[test]

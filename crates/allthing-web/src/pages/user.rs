@@ -173,9 +173,9 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             {if !has_card {
                 view! { <div class="bio"><span class="sk sk-title"></span></div> }.into_any()
             } else if user.bio.trim().is_empty() {
-                view! { <p class="bio muted">"No bio."</p> }.into_any()
+                view! { <p class="bio muted">"No bio."</p> {website(&user)} }.into_any()
             } else {
-                view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> }.into_any()
+                view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> {website(&user)} }.into_any()
             }}
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
@@ -184,6 +184,28 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             <WalletTile user=user.clone()/>
         </section>
     }
+}
+
+const LINK: &str = "M6.8 9.2l2.4-2.4M7.4 4.6l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.6 11.4l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1";
+
+/// The account's website, under its bio, as the profile's payload gives it:
+/// a link out, on one line. It comes with the bio, whose whole text the
+/// header waits for too. Checked again here (`Website::checked`), so that a
+/// payload can only link to a web address, and says where the link goes.
+fn website(user: &User) -> Option<AnyView> {
+    let website = user.website.as_ref()?.checked()?;
+    Some(
+        view! {
+            <p class="profile-website">
+                <a href=website.href target="_blank" rel="noopener noreferrer nofollow ugc">
+                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=LINK/></svg>
+                    <span class="visually-hidden">"Website: "</span>
+                    <span class="profile-website-label">{website.label}</span>
+                </a>
+            </p>
+        }
+        .into_any(),
+    )
 }
 
 /// Follow, for a signed-in reader who can (not in the static copy).

@@ -2479,6 +2479,63 @@ p.jumbo .emoji img {
   overflow-wrap: anywhere;
 }
 
+/* The account's website, under its bio: one line, its label cut short
+   with an ellipsis when longer. The link is a target 24 px tall, and on a
+   touch screen 44 px, the line's own height, so it covers nothing near;
+   fixed, so no font's metrics change it. */
+.profile-website {
+  display: flex;
+  max-width: 64ch;
+  margin: 8px 0 0;
+  font-size: 14.5px;
+  line-height: 20px;
+}
+
+.profile-website a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 24px;
+  font-weight: 500;
+}
+
+.profile-website .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.profile-website-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size 0.3s var(--ease);
+}
+
+.profile-website a:hover .profile-website-label {
+  background-size: 100% 1px;
+}
+
+@media (pointer: coarse) {
+  .profile-website {
+    margin: 0 0 -8px;
+  }
+
+  .profile-website a {
+    height: 44px;
+  }
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

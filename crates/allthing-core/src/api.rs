@@ -17,6 +17,7 @@ use crate::params::{hash_from_param, percent_encode};
 use crate::profile::UserCard;
 use crate::provenance::{Backend, Origin};
 use crate::ranking::TrendingWindow;
+use crate::website::Website;
 
 pub const API_PREFIX: &str = "/api/v1";
 
@@ -638,25 +639,42 @@ pub const ACTIVITY_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, kee
 pub const CHANNEL_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 900, keep: 86_400, browser: 60 };
 pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
-/// When the account in a cached profile payload got its first username, if
-/// the payload is `fid`'s and knew it: a build whose own read failed keeps it.
-pub fn first_username_at_in(payload: &[u8], fid: u64) -> Option<i64> {
+/// What a cached profile payload knew of its account that a build reads
+/// apart from it, for a build whose own read failed.
+#[derive(Deserialize)]
+struct PreviousUser {
+    fid: u64,
+    #[serde(default)]
+    first_username_at: Option<i64>,
+    #[serde(default)]
+    website: Option<Website>,
+}
+
+/// The account of a cached profile payload, if the payload is `fid`'s.
+fn previous_user(payload: &[u8], fid: u64) -> Option<PreviousUser> {
     #[derive(Deserialize)]
     struct Previous {
         user: PreviousUser,
     }
-    #[derive(Deserialize)]
-    struct PreviousUser {
-        fid: u64,
-        #[serde(default)]
-        first_username_at: Option<i64>,
-    }
     let user = serde_json::from_slice::<Previous>(payload).ok()?.user;
-    if user.fid == fid { user.first_username_at } else { None }
+    (user.fid == fid).then_some(user)
 }
 
-/// A profile built while a secondary read failed (when the account joined):
-/// refreshed soon, so the gap isn't kept for the usual five minutes.
+/// When the account in a cached profile payload got its first username, if
+/// the payload is `fid`'s and knew it: a build whose own read failed keeps it.
+pub fn first_username_at_in(payload: &[u8], fid: u64) -> Option<i64> {
+    previous_user(payload, fid)?.first_username_at
+}
+
+/// The website of the account in a cached profile payload, if the payload
+/// is `fid`'s and had one: a build whose own read failed keeps it.
+pub fn website_in(payload: &[u8], fid: u64) -> Option<Website> {
+    previous_user(payload, fid)?.website
+}
+
+/// A profile built while a secondary read failed (when the account joined,
+/// its website): refreshed soon, so the gap isn't kept for the usual five
+/// minutes.
 pub const USER_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 300, keep: 86_400, browser: 15 };
 pub const WALLET_CACHE: CachePolicy = CachePolicy { fresh: 21_600, stale: 86_400, keep: 172_800, browser: 3600 };
 /// Wallet activity with an EVM chain still unread: read again in minutes,
@@ -841,6 +859,16 @@ mod tests {
         assert_eq!(first_username_at_in(payload, 4), None);
         assert_eq!(first_username_at_in(br#"{"user":{"fid":3,"username":"dwr"},"pool":[]}"#, 3), None);
         assert_eq!(first_username_at_in(b"not json", 3), None);
+    }
+
+    #[test]
+    fn a_profile_keeps_the_website_its_previous_copy_had() {
+        let payload = br#"{"user":{"fid":3,"username":"dwr","website":{"href":"https://danromero.org","label":"danromero.org"}},"pool":[],"meta":{"backend":"hypersnap","fetched_at":0}}"#;
+        let dwr = Website { href: "https://danromero.org".into(), label: "danromero.org".into() };
+        assert_eq!(website_in(payload, 3), Some(dwr));
+        assert_eq!(website_in(payload, 4), None);
+        assert_eq!(website_in(br#"{"user":{"fid":3,"username":"dwr"},"pool":[]}"#, 3), None);
+        assert_eq!(website_in(b"not json", 3), None);
     }
 
     #[test]
