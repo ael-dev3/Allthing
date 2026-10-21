@@ -218,6 +218,12 @@ pub fn use_session() -> Session {
     expect_context::<Session>()
 }
 
+/// Whether the user cookie names a reader: signed in, as the session says,
+/// for what runs outside the app's context (an event handler's prefetch).
+pub fn signed_in() -> bool {
+    cookie_user().is_some()
+}
+
 /// Who the user cookie names, if the Worker signed someone in.
 fn cookie_user() -> Option<UserSummary> {
     let cookies = js_sys::Reflect::get(&document(), &JsValue::from_str("cookie")).ok()?.as_string()?;

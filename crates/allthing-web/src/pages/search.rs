@@ -117,7 +117,7 @@ fn SearchPage() -> impl IntoView {
                                                 <strong>"/"{c.id.clone()}</strong>
                                             </a>
                                             // Search results carry no count (see `pages::searched_channel`): the channel page has the real ones.
-                                            {c.counts().first().map(|count| view! { <span class="muted small" title=count.describe()>{count.label()}</span> })}
+                                            {c.counts().first().map(|count| view! { <span class="muted small" aria-description=count.describe()>{count.label()}</span> })}
                                         </li>
                                     }).collect_view()}
                                 </ul>

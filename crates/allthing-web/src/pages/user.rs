@@ -335,7 +335,7 @@ fn WalletRow(kind: &'static str, address: String) -> impl IntoView {
     view! {
         <li class:copy-failed=move || state.get() == CopyState::Failed>
             <span class="chain-tag">{kind}</span>
-            <code title=address.clone()>{short_address(&address)}</code>
+            <code>{short_address(&address)}</code>
             <button type="button" class="copy" on:click=copy aria-label=format!("Copy {address}")
                 aria-disabled=move || (state.get() == CopyState::Pending).to_string()>
                 {move || match state.get() {

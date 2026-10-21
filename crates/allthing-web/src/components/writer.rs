@@ -149,6 +149,9 @@ struct Mine {
     /// As the node says: their latest of each kind, and casts checked one
     /// by one.
     known: HashSet<(String, Reaction)>,
+    /// Since when (Unix seconds) their latest of each kind are all of them:
+    /// for a cast posted since, `known` says whether they reacted.
+    known_since: HashMap<Reaction, i64>,
     /// What they did here this visit: `true` added, `false` taken back.
     changed: HashMap<(String, Reaction), bool>,
     /// Being sent.
@@ -860,14 +863,29 @@ impl Writer {
         });
     }
 
-    /// Ask the node whether the reader liked and recasted `target` (a
-    /// post's own cast, which may be older than their latest).
-    pub fn look_up(self, target: CastId) {
+    /// Whether the reader liked and recasted `target`, posted at `ts` (Unix
+    /// seconds): a post's own cast, which may be older than their latest.
+    /// Their latest likes and recasts settle it when they reach back to the
+    /// cast's time, as a reaction comes after its cast; only an older cast
+    /// is asked about, as the node answers a reaction that isn't there with
+    /// an error (400) that shows in the reader's console. The latest are
+    /// waited for a moment, if they are on their way.
+    pub fn look_up(self, target: CastId, ts: i64) {
         let Some(fid) = self.fid() else { return };
         let hash = hex_encode(&target.hash);
         for kind in [Reaction::Like, Reaction::Recast] {
             let hash = hash.clone();
             spawn_local(async move {
+                let since = || self.mine.with_untracked(|m| m.known_since.get(&kind).copied());
+                for _ in 0..20 {
+                    if since().is_some() {
+                        break;
+                    }
+                    crate::video::sleep(50).await;
+                }
+                if since().is_some_and(|since| ts >= since) {
+                    return;
+                }
                 let Ok((status, body)) = fetch("GET", &message::reaction_url(fid, kind, &target), None).await else {
                     return;
                 };
@@ -1284,8 +1302,14 @@ impl Writer {
                     return;
                 };
                 let hashes = message::reacted(&body).unwrap_or_default();
+                let since = message::reacted_since(&body, RECENT);
                 if self.fid() == Some(fid) {
-                    self.mine.update(|m| m.known.extend(hashes.into_iter().map(|hash| (hash, kind))));
+                    self.mine.update(|m| {
+                        m.known.extend(hashes.into_iter().map(|hash| (hash, kind)));
+                        if let Some(since) = since {
+                            m.known_since.insert(kind, since);
+                        }
+                    });
                 }
             });
         }

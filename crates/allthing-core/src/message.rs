@@ -564,6 +564,23 @@ pub fn reacted(body: &str) -> Option<Vec<String>> {
     Some(page.get("messages")?.as_array()?.iter().filter_map(target_hash).map(str::to_ascii_lowercase).collect())
 }
 
+/// Since when (Unix seconds) a page of [`reactions_url`] asked for
+/// `page_size` holds every reaction of its kind: from the beginning (0)
+/// when it isn't full, or else from its oldest reaction, the page being
+/// newest first. `None` when it can't say: not an answer, or a full page
+/// without times. A reaction comes after its cast, so for a cast posted
+/// since then, the page alone says whether the account reacted.
+pub fn reacted_since(body: &str, page_size: u32) -> Option<i64> {
+    let page = serde_json::from_str::<Value>(body).ok()?;
+    let messages = page.get("messages")?.as_array()?;
+    if messages.len() < page_size as usize {
+        return Some(0);
+    }
+    let times: Option<Vec<i64>> =
+        messages.iter().map(|message| message.get("data")?.get("timestamp")?.as_i64()).collect();
+    Some(times?.into_iter().min()? + EPOCH)
+}
+
 fn target_hash(message: &Value) -> Option<&str> {
     message.get("data")?.get("reactionBody")?.get("targetCastId")?.get("hash")?.as_str()
 }
@@ -810,6 +827,14 @@ mod tests {
         assert_eq!(reacted(page), Some(vec!["0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045".to_owned()]));
         assert_eq!(reacted(r#"{"messages":[]}"#), Some(vec![]));
         assert_eq!(reacted("Invalid query parameters"), None);
+        // Fewer than asked for: every reaction of the kind is there.
+        assert_eq!(reacted_since(page, 100), Some(0));
+        assert_eq!(reacted_since(r#"{"messages":[]}"#, 100), Some(0));
+        // A full page holds them since its oldest; without times, it can't say.
+        let full = r#"{"messages":[{"data":{"timestamp":182871013}},{"data":{"timestamp":182870000}}]}"#;
+        assert_eq!(reacted_since(full, 2), Some(182_870_000 + EPOCH));
+        assert_eq!(reacted_since(page, 2), None);
+        assert_eq!(reacted_since("Invalid query parameters", 100), None);
 
         let one = r#"{"data":{"type":"MESSAGE_TYPE_REACTION_ADD","fid":3,"reactionBody":{"type":"REACTION_TYPE_LIKE","targetCastId":{"fid":218957,"hash":"0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045"}}},"hash":"0xbede"}"#;
         assert_eq!(reaction_found(200, one), Some(true));

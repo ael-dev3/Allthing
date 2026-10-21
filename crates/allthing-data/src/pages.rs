@@ -892,6 +892,23 @@ pub async fn engagement(inv: Rc<Invocation>, request: EngagementRequest) -> Resu
     }
 }
 
+/// Whether a failed `/engagement` build answers as [`engagement_skipped`]:
+/// Hypersnap busy or failing, or its reads left to page builds (502 to
+/// 504), not a fault of Allthing's own.
+pub fn skips_engagement(failure: &Failure) -> bool {
+    matches!(failure.status, 502..=504)
+}
+
+/// What `/engagement` answers when its batch couldn't be read and no copy
+/// is kept ([`skips_engagement`]): an empty batch, as a 200, read at
+/// `fetched_at` (Unix milliseconds). A batch is a background preload, and a
+/// popover it would have filled asks for itself as it opens, so nothing is
+/// lost; an error status would only be an error in the reader's console.
+pub fn engagement_skipped(fetched_at: i64) -> Vec<u8> {
+    let meta = Meta { backend: Backend::Hypersnap, fetched_at, stale: false };
+    serde_json::to_vec(&EngagementPayload { previews: Vec::new(), replies: Vec::new(), meta }).unwrap_or_default()
+}
+
 /// The replies previews of a batch's conversations (by hash, unparsed), in
 /// hash order: the smallest parsed first, while they fit in `room` bytes.
 /// One that doesn't fit is left out, as it would be again next time; one
@@ -2175,6 +2192,20 @@ mod engagement_tests {
         let endpoint = Endpoint::from_path(&request.path()).unwrap();
         assert_eq!(endpoint, Endpoint::Engagement(request.clone()));
         endpoint.build(inv.clone(), None).now_or_never().expect("the mock host answers at once")
+    }
+
+    #[test]
+    fn a_batch_hypersnap_can_not_read_is_empty_not_an_error() {
+        let busy =
+            [UpstreamError::Busy(1000.0), UpstreamError::Budget, UpstreamError::Timeout, UpstreamError::Status(500)];
+        for error in busy {
+            assert!(skips_engagement(&Failure::upstream(error)));
+        }
+        // A fault of Allthing's own still says so.
+        assert!(!skips_engagement(&Failure::internal("unexpected")));
+        let batch: EngagementPayload = serde_json::from_slice(&engagement_skipped(1_000)).unwrap();
+        assert!(batch.previews.is_empty() && batch.replies.is_empty());
+        assert_eq!(batch.meta.fetched_at, 1_000);
     }
 
     fn payload(built: &Built) -> EngagementPayload {

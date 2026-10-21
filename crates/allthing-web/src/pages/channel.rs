@@ -199,7 +199,7 @@ fn ChannelHeader(channel: Channel, notes: Notes) -> impl IntoView {
                         {counts
                             .into_iter()
                             .map(|count| view! {
-                                <span class="count" title=count.describe()>
+                                <span class="count" aria-description=count.describe()>
                                     <strong class="number">{full_number(count.value())}</strong>" "{count.noun()}
                                 </span>
                             })
@@ -220,7 +220,7 @@ fn ChannelLink(link: ExternalLink) -> impl IntoView {
     let text = if title.is_empty() { embed_domain(&url) } else { title };
     let href = url.clone();
     view! {
-        <a class="channel-link" href=href target="_blank" rel="noopener noreferrer nofollow ugc" title=url>
+        <a class="channel-link" href=href target="_blank" rel="noopener noreferrer nofollow ugc">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=LINK/></svg>
             <span>{text}</span>
         </a>
