@@ -31,7 +31,7 @@ const activity = {
  * code parts share, which comes alongside: left out of the lists the tests
  * below compare.
  */
-const ahead = (name: string) => name.startsWith("chunk_") || /^split_(post|user|channel|search|channels|poll)\.wasm$/.test(name);
+const ahead = (name: string) => name.startsWith("chunk_") || /^split_(post|user|channel|search|channels|poll|follows)\.wasm$/.test(name);
 
 /** The fixtures, and the WebAssembly the page fetches, by file name. */
 async function serve(page: Page) {
@@ -336,4 +336,38 @@ test("a visit that starts on a post fetches the post's code with the app, and us
   // loader asked for, after a few seconds.
   await page.waitForTimeout(3_500);
   expect(notices).toEqual([]);
+});
+
+test("a page left before its code came doesn't take the place of the page Back went to", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await serve(page);
+  await page.route("**/api/v1/user?*", (route) =>
+    route.fulfill({ json: { user: { ...alice, follower_count: 10, following_count: 3 }, pool: [post], notes: {}, meta } }));
+  await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: post, children: [] }, notes: {}, meta } }));
+  // The post page's code, held back until the reader has gone back.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/split_post.wasm", async (route) => {
+    await held;
+    return route.fallback();
+  });
+  await page.goto("/u/alice");
+  await expect(page.locator(".profile h1")).toHaveText("Alice");
+  await page.locator(".cast-card").first().getByText(post.text).click();
+  await expect(page).toHaveURL(new RegExp(`/p/${post.hash}$`));
+  await page.goBack();
+  await expect(page).toHaveURL(/\/u\/alice$/);
+  await expect(page.locator(".profile h1")).toHaveText("Alice");
+  // The post's code comes now: the profile stays the page.
+  const came = page.waitForResponse("**/split_post.wasm");
+  release();
+  await came;
+  await page.waitForTimeout(1000);
+  await expect(page.locator(".profile h1")).toHaveText("Alice");
+  await expect(page.locator(".post")).toHaveCount(0);
+  // And the post opens as ever, its code in.
+  await page.locator(".cast-card").first().getByText(post.text).click();
+  await expect(page.locator(".post")).toContainText(post.text);
+  expect(errors).toEqual([]);
 });

@@ -622,6 +622,41 @@ pub fn user(raw: &RawUser) -> User {
     }
 }
 
+/// One account in a followers or following list, from its `user/bulk`
+/// object, followed at `followed_at` (Unix seconds).
+pub fn person(raw: &RawUser, followed_at: i64) -> crate::api::Person {
+    crate::api::Person {
+        fid: raw.fid,
+        username: username_for(raw),
+        display_name: raw.display_name.as_deref().map(str::trim).unwrap_or_default().to_owned(),
+        pfp_url: non_empty(raw.pfp_url.as_deref()),
+        bio: raw
+            .profile
+            .as_ref()
+            .and_then(|p| p.bio.as_ref())
+            .and_then(|b| b.text.as_deref())
+            .map(|bio| bio_excerpt(bio, CARD_BIO_CHARS))
+            .unwrap_or_default(),
+        followers: raw.follower_count.unwrap_or(0),
+        following: raw.following_count.unwrap_or(0),
+        followed_at,
+        registered_at: raw.registered_at.as_deref().and_then(parse_rfc3339),
+    }
+}
+
+/// The account a followers or following list belongs to, as its header
+/// shows it.
+pub fn follows_owner(raw: &RawUser) -> crate::api::FollowsOwner {
+    crate::api::FollowsOwner {
+        fid: raw.fid,
+        username: username_for(raw),
+        display_name: raw.display_name.as_deref().map(str::trim).unwrap_or_default().to_owned(),
+        pfp_url: non_empty(raw.pfp_url.as_deref()),
+        followers: raw.follower_count.unwrap_or(0),
+        following: raw.following_count.unwrap_or(0),
+    }
+}
+
 /// A profile card's facts from a provider user object, such as the author
 /// object that comes with each cast. `None` when it carries none of them,
 /// rather than a card claiming no followers.

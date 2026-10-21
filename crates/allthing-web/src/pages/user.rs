@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{UserPayload, user_path, wallets_path};
+use allthing_core::api::{FollowsDir, UserPayload, follows_path, user_path, wallets_path};
 use allthing_core::format::short_address;
 use allthing_core::listing::{replies_only, top_level};
 use allthing_core::model::{Joined, User};
@@ -26,7 +26,7 @@ use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNo
 use crate::components::popover::Popover;
 use crate::components::show_less::ShowLessButton;
 use crate::components::text::CastText;
-use crate::util::{set_title, user_href, with_query};
+use crate::util::{followers_href, following_href, set_title, user_href, with_query};
 use wasm_bindgen::JsCast;
 
 /// The page, whose code is fetched the first time it's needed
@@ -168,9 +168,13 @@ fn ProfileHeader(
                     {if has_card {
                         view! {
                             <p class="counts">
-                                {followers(user.fid, user.follower_count)}
+                                <CountLink username=user.username.clone() dir=FollowsDir::Followers>
+                                    {followers(user.fid, user.follower_count)}
+                                </CountLink>
                                 <span class="sep" aria-hidden="true">"·"</span>
-                                <Count n=user.following_count label="following"/>
+                                <CountLink username=user.username.clone() dir=FollowsDir::Following>
+                                    <Count n=user.following_count label="following"/>
+                                </CountLink>
                             </p>
                         }
                         .into_any()
@@ -218,6 +222,26 @@ fn website(user: &User) -> Option<AnyView> {
         }
         .into_any(),
     )
+}
+
+/// A profile's count, as the link to its list: who follows the account, or
+/// whom it follows. Pointing at it or pressing it starts reading the
+/// list's first page.
+#[component]
+fn CountLink(username: String, dir: FollowsDir, children: Children) -> impl IntoView {
+    let href = match dir {
+        FollowsDir::Followers => followers_href(&username),
+        FollowsDir::Following => following_href(&username),
+    };
+    // As the list's page names the account: its address's name, lowercase.
+    let path = follows_path(&username.to_lowercase(), dir, None);
+    let warm = move || api::prefetch(&path);
+    let press = warm.clone();
+    view! {
+        <a class="count-link" href=href on:pointerenter=move |_| warm() on:pointerdown=move |_| press()>
+            {children()}
+        </a>
+    }
 }
 
 /// Follow, for a signed-in reader who can (not in the static copy).

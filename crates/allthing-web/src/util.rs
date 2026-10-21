@@ -205,6 +205,16 @@ pub fn user_href(username: &str) -> String {
     href(&format!("/u/{}", percent_encode(username)))
 }
 
+/// The accounts that follow `username`.
+pub fn followers_href(username: &str) -> String {
+    format!("{}/followers", user_href(username))
+}
+
+/// The accounts `username` follows.
+pub fn following_href(username: &str) -> String {
+    format!("{}/following", user_href(username))
+}
+
 /// Append `?key=value&…`, leaving out empty values.
 pub fn with_query(path: &str, pairs: &[(&str, Option<String>)]) -> String {
     let mut out = path.to_owned();

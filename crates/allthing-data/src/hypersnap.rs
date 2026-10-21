@@ -6,17 +6,19 @@
 
 use std::collections::HashMap;
 
+use allthing_core::api::FollowsDir;
 use allthing_core::channels::{
     canonical_parent_url, channel_id_for_url, channel_url_for_id, legacy_url, parent_url_variants,
     short_parent_url_label,
 };
+use allthing_core::follows;
 use allthing_core::index::Source;
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
     self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawHubReactions, RawNotifications,
     RawReaction, RawReactionList, RawTransfers, RawUser, RawUserData, RawUserList, RawUserSearch,
 };
-use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
+use allthing_core::provenance::{base64_decode, base64_encode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::website::Website;
 use serde::Deserialize;
@@ -480,6 +482,109 @@ struct HubMessage {
 struct HubMessages {
     #[serde(default)]
     messages: Vec<HubMessage>,
+}
+
+#[derive(Deserialize)]
+struct LinkBody {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(rename = "targetFid")]
+    target_fid: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct LinkData {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    fid: Option<u64>,
+    timestamp: Option<u32>,
+    #[serde(rename = "linkBody")]
+    link_body: Option<LinkBody>,
+}
+
+#[derive(Deserialize)]
+struct LinkMessage {
+    data: Option<LinkData>,
+}
+
+#[derive(Deserialize)]
+struct LinkPage {
+    #[serde(default)]
+    messages: Vec<LinkMessage>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
+}
+
+/// A page of an account's followers (`linksByTargetFid`) or of whom it
+/// follows (`linksByFid`), newest first, `page_size` links a shard, from
+/// where `ask` says each shard goes on (its first page without), and the
+/// bytes it came as.
+///
+/// The node's token for followers is base64 of a JSON array with each
+/// shard's key, `null` for a shard at its end. Sent back as it came, a
+/// `null` starts that shard over from its newest link (on 21 October 2026),
+/// so a list whose shards end on different pages never ends: a shard read
+/// to its end, or left out, is sent as `[]`, which reads nothing of it. The
+/// token for whom an account follows is base64 of its one shard's key.
+pub async fn follow_links(
+    inv: &Invocation,
+    dir: FollowsDir,
+    fid: u64,
+    page_size: usize,
+    ask: Option<&[Option<&[u8]>]>,
+) -> Result<(follows::Read, usize), UpstreamError> {
+    let (fid, size) = (fid.to_string(), page_size.to_string());
+    let token = ask.map(|ask| match dir {
+        FollowsDir::Followers => {
+            let shards: Vec<String> = ask
+                .iter()
+                .map(|key| {
+                    let bytes: Vec<String> = key.unwrap_or_default().iter().map(u8::to_string).collect();
+                    format!("[{}]", bytes.join(","))
+                })
+                .collect();
+            base64_encode(format!("[{}]", shards.join(",")).as_bytes())
+        }
+        FollowsDir::Following => base64_encode(ask.first().copied().flatten().unwrap_or_default()),
+    });
+    let (path, account) = match dir {
+        FollowsDir::Followers => ("linksByTargetFid", "target_fid"),
+        FollowsDir::Following => ("linksByFid", "fid"),
+    };
+    let mut query =
+        vec![(account, fid.as_str()), ("link_type", "follow"), ("pageSize", size.as_str()), ("reverse", "true")];
+    if let Some(token) = &token {
+        query.push(("pageToken", token.as_str()));
+    }
+    let Some(body) = upstream::send(inv, Upstream::Hypersnap, HttpMethod::Get, &v1(path, &query), None, true).await?
+    else {
+        return Ok((follows::Read::default(), 0));
+    };
+    let page: LinkPage = upstream::parse(&body)?;
+    let links = page
+        .messages
+        .into_iter()
+        .filter_map(|message| {
+            let data = message.data?;
+            let body = data.link_body?;
+            let follow =
+                data.kind.as_deref() == Some("MESSAGE_TYPE_LINK_ADD") && body.kind.as_deref() == Some("follow");
+            let other = match dir {
+                FollowsDir::Followers => data.fid?,
+                FollowsDir::Following => body.target_fid?,
+            };
+            follow.then_some(follows::Link { fid: other, ts: data.timestamp? })
+        })
+        .collect();
+    let token = page.next_page_token.filter(|t| !t.is_empty());
+    let next = match dir {
+        FollowsDir::Followers => token
+            .and_then(|t| base64_decode(&t))
+            .and_then(|json| serde_json::from_slice::<Vec<Option<Vec<u8>>>>(&json).ok())
+            .unwrap_or_default(),
+        FollowsDir::Following => vec![token.and_then(|t| base64_decode(&t)).filter(|key| !key.is_empty())],
+    };
+    Ok((follows::Read { links, next }, body.len()))
 }
 
 /// The signer of one cast.

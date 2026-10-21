@@ -4,6 +4,7 @@
 pub mod channel;
 pub mod channels;
 pub mod dau;
+pub mod follows;
 pub mod home;
 pub mod messages;
 pub mod notifications;
