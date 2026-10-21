@@ -2157,6 +2157,60 @@ p.jumbo .emoji img {
   color: var(--ink-3);
 }
 
+/* On a touch screen, the meta line's links take a tap 25 or 26 px tall,
+   centred on them, where they are 15 to 22 px: who wrote it (the picture,
+   the name and the handle), when, the channel and the app, on a card, a
+   quoted cast, a reply and a post. That is over the 24 px a fingertip
+   needs, and as tall as fits: 2 px past the line at most, clear of the
+   text under it, so a tap on the text's first line still opens the cast.
+   The extra height is padding, offset by a negative margin where the link
+   is laid out as a box, so a line's layout is as it was (a band, ::after,
+   would be clipped by the name and the handle, which clip what leaves
+   them for their ellipsis). A second line, when the meta wraps, is as tall
+   as the first, 6 px under it (4 px with a mouse), so their taps don't
+   meet; and a reply's words, or the post's buttons, start 2 px further
+   down, clear of the taps above them. After the lines' own rules, so
+   their gaps give way. */
+@media (pointer: coarse) {
+  .user-chip > a.user-link {
+    padding-block: 2px;
+    margin-block: -2px;
+  }
+
+  .user-chip > a:not(.user-link),
+  .byline > a.when {
+    padding-block: 3px;
+    margin-block: -3px;
+  }
+
+  .in-channel > a,
+  .post-meta a {
+    padding-block: 5px;
+  }
+
+  .origin > a {
+    padding-block: 5.5px;
+  }
+
+  .cast-meta,
+  .comment-head,
+  .post-meta {
+    row-gap: 6px;
+  }
+
+  .cast-meta > .in-channel,
+  .cast-meta > .origin,
+  .comment-head > .origin,
+  .post-meta > * {
+    line-height: 22px;
+  }
+
+  .comment-head,
+  .post-meta {
+    padding-bottom: 2px;
+  }
+}
+
 .toggle {
   width: 22px;
   height: 22px;
