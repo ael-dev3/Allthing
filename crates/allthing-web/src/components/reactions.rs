@@ -3,23 +3,15 @@
 //! recasts, so an emoji reaction is a reply that is one Pepe emoji and
 //! nothing else (`allthing_core::emoji::reaction`): every Farcaster app
 //! shows it as a reply, `:pepe_name:`, and Allthing gathers a cast's under
-//! it as chips, with who reacted.
+//! it as chips, with who reacted: on a post page from its replies, and on a
+//! listing's cards from the reactions the cron keeps
+//! (`emoji::reactions_kept`), which come with no names.
 
-use allthing_core::emoji::{Emoji, Reacted};
+use allthing_core::emoji::{Emoji, Reacted, who_reacted};
 use allthing_core::model::{Cast, UserSummary};
 use leptos::prelude::*;
 
 use crate::util::{href, prefers_reduced_motion};
-
-/// "alice, bob and 3 others".
-fn names(by: &[UserSummary]) -> String {
-    let shown: Vec<String> = by.iter().take(3).map(|u| format!("@{}", u.username)).collect();
-    match by.len().saturating_sub(shown.len()) {
-        0 => shown.join(", "),
-        1 => format!("{} and 1 other", shown.join(", ")),
-        n => format!("{} and {n} others", shown.join(", ")),
-    }
-}
 
 /// One chip: its emoji, how many reacted with it, whether the reader did,
 /// who (for its label), and the reader's replies that are it.
@@ -96,11 +88,7 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                     replies.push(reply.clone());
                 }
                 let count = by.len() as u64 + u64::from(added);
-                let who = match (added, by.is_empty()) {
-                    (true, true) => "you".to_owned(),
-                    (true, false) => format!("you, {}", names(&by)),
-                    (false, _) => names(&by),
-                };
+                let who = who_reacted(&by, reader, added);
                 (count > 0).then_some(Chip { emoji: r.emoji, count, own: by_reader || added, who, replies })
             })
             .collect();
@@ -179,6 +167,43 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
         }
         .into_any()
     }
+}
+
+/// A listing card's emoji reactions: those its listing carries
+/// (`emoji::reactions_kept`) and the reader's own this visit, as chips once
+/// it has any. Their code is a part of its own (`crate::split`), fetched
+/// the first time a card has some; an empty row holds their place until it
+/// comes, so the cards below don't move. If it can't come, the card goes
+/// without them.
+#[cfg(not(feature = "static-host"))]
+pub fn card_reactions(cast: &Cast, notes: &crate::Notes) -> impl IntoView + use<> {
+    let kept = notes.reactions.get(&cast.hash).cloned().unwrap_or_default();
+    let writer = crate::components::writer::use_writer();
+    let hash = cast.hash.clone();
+    let none_kept = kept.is_empty();
+    // A memo: the reader reacting to other casts doesn't draw this card's
+    // chips again.
+    let any = Memo::new(move |_| !none_kept || writer.is_some_and(|w| !w.reactions(&hash).is_empty()));
+    let cast = cast.clone();
+    move || {
+        any.get().then(|| {
+            crate::split::lazy_extra(
+                || view! { <div class="reaction-chips coming" aria-hidden="true"></div> },
+                card_chips(cast.clone(), kept.clone()),
+            )
+        })
+    }
+}
+
+/// A card's chips, whose code is fetched the first time a card has some.
+#[cfg(not(feature = "static-host"))]
+#[leptos::wasm_split::wasm_split(chips, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn card_chips(
+    cast: Cast,
+    kept: Vec<allthing_core::emoji::ReactionReply>,
+) -> Result<AnyView, leptos::wasm_split::SplitLoaderError> {
+    let reacted = allthing_core::emoji::reactions_kept(&kept);
+    Ok(view! { <ReactionChips cast reacted/> }.into_any())
 }
 
 /// Taking a Pepe reaction back in the Farcaster app: the reader's reply

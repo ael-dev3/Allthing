@@ -56,6 +56,12 @@ pub fn CastCard(
     };
     let warm_touch = warm.clone();
     let click = card_click(href.clone());
+    // Its emoji reactions, as its listing carries them, and the reader's
+    // own this visit. The static copy has neither.
+    #[cfg(not(feature = "static-host"))]
+    let reactions = crate::components::reactions::card_reactions(&cast, &notes);
+    #[cfg(feature = "static-host")]
+    let reactions = ();
     let gone = crate::components::deleted(&cast.hash);
     let node = NodeRef::<leptos::html::Article>::new();
     Effect::new(move |_| {
@@ -107,6 +113,7 @@ pub fn CastCard(
             <footer class="cast-foot">
                 <Engagement cast=cast.clone() reply_href=href.clone()/>
             </footer>
+            {reactions}
         </article>
     }
 }
