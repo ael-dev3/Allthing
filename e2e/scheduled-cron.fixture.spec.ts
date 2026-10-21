@@ -5,14 +5,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { approvedKey, cast as castOf, envelope } from "./helpers/farcaster";
 
 /*
  * A scheduled cast going out at its minute, end to end, on the real Worker:
  * the browser signs it with the reader's key and hands it to the Worker,
  * which keeps it in D1; at its minute the cron gives the node exactly what
- * the browser signed, and the reader's list says what the node answered.
+ * the browser signed, and the reader's list says what the node answered. A
+ * cancel from a list read before that minute finds the cast gone out, and
+ * the Worker's cancel says what it did: taken off, the same when asked
+ * again, too late, or not the reader's to cancel.
  * The node is a stand-in on this machine (the Worker's `HYPERSNAP_ORIGIN`),
  * which takes one cast and refuses the other's key, as the network does a
  * key that isn't on the account. This spec runs a Worker of its own, with
@@ -23,6 +26,8 @@ import { approvedKey, cast as castOf, envelope } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker");
 test.skip(Boolean(process.env.E2E_BASE_URL), "runs a Worker of its own");
 test.use({ timezoneId: "Europe/Berlin", locale: "en-GB" });
+// The second test reads what the first left in D1.
+test.describe.configure({ mode: "serial" });
 
 const PORT = Number(process.env.E2E_CRON_PORT ?? 8796);
 const NODE_PORT = PORT + 1;
@@ -175,6 +180,17 @@ test("a scheduled cast goes out at its minute: the cron gives the node what the 
   await expect.poll(now, { timeout: 150_000, intervals: [1_000] }).toBeGreaterThanOrEqual(at);
   await cron();
   expect([...given].sort()).toEqual([posted, refused].sort());
+  // The list on screen was read before the minute: cancelling the cast that
+  // has just gone out turns its row into a posted one, with its link, and
+  // no error.
+  const hash = envelope(Buffer.from(posted, "base64")).hash;
+  const stale = group(/^Waiting/).locator(".scheduled-item", { hasText: "Out at its minute" });
+  await stale.getByRole("button", { name: "Cancel" }).click();
+  await stale.getByRole("button", { name: "Yes, cancel it" }).click();
+  const went = group(/^Posted this week/).locator(".scheduled-item");
+  await expect(went).toContainText("It had already gone out, so it wasn't cancelled.");
+  await expect(went.getByRole("link", { name: "View cast" })).toHaveAttribute("href", `/p/${hash}`);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   // The list says what became of each: one out, with its link; one not,
   // and why, to edit and sign again.
   await page.reload();
@@ -182,7 +198,6 @@ test("a scheduled cast goes out at its minute: the cron gives the node what the 
   const out = group(/^Posted this week/).locator(".scheduled-item");
   await expect(out).toHaveCount(1);
   await expect(out.locator(".scheduled-text")).toHaveText("Out at its minute");
-  const hash = envelope(Buffer.from(posted, "base64")).hash;
   await expect(out.getByRole("link", { name: "View cast" })).toHaveAttribute("href", `/p/${hash}`);
   const lost = group(/^Didn't go out/).locator(".scheduled-item");
   await expect(lost).toHaveCount(1);
@@ -190,6 +205,55 @@ test("a scheduled cast goes out at its minute: the cron gives the node what the 
   await expect(lost).toContainText("The key it was signed with isn't on your Farcaster account anymore. Edit it to sign it again.");
   await expect(lost.getByRole("button", { name: "Edit to try again" })).toBeVisible();
   // Settled: the next run gives the node nothing more.
+  await cron();
+  expect(given).toHaveLength(2);
+});
+
+type Kept = { id: number; hash: string; state: string };
+
+/** The Worker's scheduled casts' endpoints, as `fid`'s session. */
+const as = (request: APIRequestContext, fid: number) => {
+  const headers = { cookie: `__Host-allthing-session=${session(fid)}`, origin: ORIGIN };
+  return {
+    list: async () => ((await (await request.get(`${ORIGIN}/api/v1/scheduled`, { headers })).json()) as { casts: Kept[] }).casts,
+    cancel: (id: number) => request.post(`${ORIGIN}/api/v1/scheduled/cancel`, { data: { id }, headers }),
+  };
+};
+
+test("the Worker's cancel says what it did: taken off, the same again, too late, or not yours", async ({ page, request }) => {
+  const mine = as(request, me.fid);
+  const casts = await mine.list();
+  const out = casts.find((c) => c.state === "posted")!;
+  const lost = casts.find((c) => c.state === "failed")!;
+  expect(out && lost).toBeTruthy();
+  // Gone out: too late, with its link; it stays on the list.
+  const late = await mine.cancel(out.id);
+  expect(late.status()).toBe(200);
+  expect(await late.json()).toEqual({ outcome: "posted", hash: out.hash });
+  // Someone else's: refused, and left as it is.
+  const theirs = await as(request, 99).cancel(lost.id);
+  expect(theirs.status()).toBe(403);
+  expect(await theirs.json()).toMatchObject({ error: "That scheduled cast isn't yours to cancel. Reload the page to see your own." });
+  expect((await mine.list()).map((c) => c.id).sort()).toEqual([out.id, lost.id].sort());
+  // The reader's own that didn't go out: taken off, and asked again, the same.
+  for (let i = 0; i < 2; i++) {
+    const done = await mine.cancel(lost.id);
+    expect(done.status()).toBe(200);
+    expect(await done.json()).toEqual({ outcome: "cancelled" });
+  }
+  expect((await mine.list()).map((c) => c.id)).toEqual([out.id]);
+
+  // One waiting, cancelled on the list: off it at once, and said.
+  await ready(page);
+  await schedule(page, "Cancel me", Math.ceil((now() + 3_600) / 60) * 60);
+  await page.goto(`${ORIGIN}/scheduled`);
+  const waiting = page.locator(".scheduled-item", { hasText: "Cancel me" });
+  await waiting.getByRole("button", { name: "Cancel" }).click();
+  await waiting.getByRole("button", { name: "Yes, cancel it" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Scheduled cast cancelled" })).toBeVisible();
+  await expect(waiting).toHaveCount(0);
+  expect((await mine.list()).map((c) => c.id)).toEqual([out.id]);
+  // The cron's run since gives the node nothing.
   await cron();
   expect(given).toHaveLength(2);
 });

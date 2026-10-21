@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `/api/v1/scheduled`: a signed-in reader's scheduled casts (see
 //! `allthing_core::scheduled`). GET lists them; POST schedules one, or puts
-//! one in the place of another (`replaces`); POST to `cancel` takes one off.
-//! Every call needs the reader's session, every POST must come from
-//! Allthing itself (its `Origin`), and no answer is cached.
+//! one in the place of another (`replaces`); POST to `cancel` takes one off,
+//! and says what it did (`Cancelled`): taken off (as it says again when
+//! asked twice), or too late, as the cast went out or is going; one that is
+//! someone else's it refuses. Every call needs the reader's session, every
+//! POST must come from Allthing itself (its `Origin`), and no answer is
+//! cached.
 //!
 //! The Worker keeps the message the reader's browser signed, after checking
 //! that it is a cast of theirs for a time ahead, and the cron gives it to
@@ -23,6 +26,7 @@ use crate::index::D1Index;
 /// The largest request body: a signed message and its draft, in JSON.
 const MAX_BODY: usize = 16 * 1024;
 const SIGN_IN: &str = "Sign in to schedule casts";
+const NOT_YOURS: &str = "That scheduled cast isn't yours to cancel. Reload the page to see your own.";
 const UNAVAILABLE: &str = "Scheduled casts can't be read or kept just now; try again shortly";
 
 /// `/api/v1/scheduled<rest>`, at `now` (Unix seconds).
@@ -53,8 +57,8 @@ pub async fn handle(rest: &str, mut req: Request, env: &Env, now: i64) -> Result
         ("", true) => schedule(&index, &mut req, fid, now).await,
         _ => match read_body::<Cancel>(&mut req).await {
             Some(Cancel { id }) => match index.cancel(fid, id).await {
-                Ok(true) => json(&serde_json::json!({}), &[]),
-                Ok(false) => error(404, "That cast has gone out, or isn't yours to cancel", None),
+                Ok(Some(done)) => json(&done, &[]),
+                Ok(None) => error(403, NOT_YOURS, None),
                 Err(failure) => unavailable(&failure.0),
             },
             None => error(400, "Expected {\"id\": a scheduled cast's id}", None),

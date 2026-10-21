@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Scheduled casts going out (see `allthing_core::scheduled`). Each minute,
-//! in the indexer's cron run, the casts whose time has come are given to
-//! the node as their readers' browsers signed them, and what the node says
-//! is kept for the readers' lists: out, or why not. A node that can't take
-//! one just now is offered it again the next minute, up to
-//! [`MAX_TRIES`](allthing_core::scheduled::MAX_TRIES) times.
+//! in the indexer's cron run, the casts whose time has come are taken
+//! (`sending`, out of reach of a cancel or a change), given to the node as
+//! their readers' browsers signed them, and what the node says is kept for
+//! the readers' lists: out, or why not. A node that can't take one just now
+//! is offered it again the next minute, up to
+//! [`MAX_TRIES`](allthing_core::scheduled::MAX_TRIES) times; one the run
+//! didn't try waits for the next run as it was.
 
 use allthing_core::message::{self, Submitted};
 use allthing_core::provenance::base64_decode;
@@ -23,11 +25,20 @@ const KEY_GONE: &str = "The key it was signed with isn't on your Farcaster accou
 const UNREADABLE: &str = "Its signed message couldn't be read.";
 const NO_ANSWER: &str = "Farcaster's network didn't take it for half an hour. Edit it to try again.";
 
+/// How long a run's hold on the casts it took lasts: a run that ended
+/// before it said what became of them (out of time, or its write failed)
+/// leaves them `sending`, and the run that comes this long after takes them
+/// again. A node given one twice says it has it already.
+pub const HELD: i64 = 300;
+
 /// Where scheduled casts are kept (D1, in the Worker).
 pub trait ScheduledStore {
-    /// Up to `limit` casts waiting whose time is `now` (Unix seconds) or
-    /// before, the earliest first.
-    fn due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>>;
+    /// Take up to `limit` casts waiting whose time is `now` (Unix seconds) or
+    /// before, the earliest first, and any taken before `now -` [`HELD`] and
+    /// never settled: each is `sending` from `now`, so a cancel or a change
+    /// that comes while the node is given it is told it's too late, until
+    /// [`settle`](ScheduledStore::settle) says what became of it.
+    fn claim_due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>>;
     /// Keep what became of them, at `now`; and drop casts that went out, or
     /// didn't, longer than the list keeps them.
     fn settle(&self, settled: Vec<Settled>, now: i64) -> LocalBoxFuture<'static, Result<(), IndexError>>;
@@ -53,6 +64,10 @@ pub enum Outcome {
     Failed(String),
     /// The node couldn't take it just now: again next minute.
     Again,
+    /// Not given to the node this run (its breaker was open, its bucket
+    /// empty, or the run's budget spent): waiting again, with no try
+    /// counted.
+    Unsent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +83,7 @@ pub struct Report {
     pub posted: usize,
     pub failed: usize,
     pub again: usize,
+    pub unsent: usize,
 }
 
 /// How long the list keeps a cast that went out, or didn't: a store drops
@@ -76,54 +92,56 @@ pub fn kept_since(now: i64) -> i64 {
     now - KEEP_DONE
 }
 
+/// Casts a run took before this, at `now`, and never settled, are taken
+/// again ([`HELD`]).
+pub fn held_since(now: i64) -> i64 {
+    now - HELD
+}
+
 fn d1(inv: &Invocation) -> Result<(), IndexError> {
     if inv.take_subrequests(1) { Ok(()) } else { Err(IndexError("no subrequests left for D1".into())) }
 }
 
-/// One run at `now` (Unix seconds): give the node the casts that are due.
-/// Nothing is written when none are.
+/// One run at `now` (Unix seconds): take the casts that are due, give them
+/// to the node, and say what became of each, the ones it didn't try too.
+/// Nothing is written when none are due.
 pub async fn run(inv: &Invocation, store: &dyn ScheduledStore, now: i64) -> Result<Report, IndexError> {
     d1(inv)?;
-    let due = store.due(now, PER_RUN).await?;
+    let due = store.claim_due(now, PER_RUN).await?;
     let mut report = Report { due: due.len(), ..Report::default() };
     if due.is_empty() {
         return Ok(report);
     }
     let mut settled = Vec::new();
     for cast in due {
-        let Some(bytes) = base64_decode(&cast.message) else {
-            report.failed += 1;
-            settled.push(Settled { id: cast.id, hash: cast.hash, outcome: Outcome::Failed(UNREADABLE.into()) });
-            continue;
-        };
-        // One subrequest stays for the write.
-        if inv.remaining_subrequests() < 2 {
-            break;
-        }
-        let outcome = match upstream::submit(inv, &message::submit_url(), bytes).await {
-            Ok((status, body)) => match message::submitted(status, &body) {
-                Submitted::Merged | Submitted::Duplicate => Outcome::Posted,
-                Submitted::UnknownKey => Outcome::Failed(KEY_GONE.into()),
-                Submitted::Refused(why) if !why.is_empty() => {
-                    Outcome::Failed(format!("Farcaster didn't take it: {why}"))
-                }
-                Submitted::Refused(_) | Submitted::Unavailable => again(cast.tries),
+        let outcome = match base64_decode(&cast.message) {
+            None => Outcome::Failed(UNREADABLE.into()),
+            // One subrequest stays for the write.
+            Some(_) if inv.remaining_subrequests() < 2 => Outcome::Unsent,
+            Some(bytes) => match upstream::submit(inv, &message::submit_url(), bytes).await {
+                Ok((status, body)) => match message::submitted(status, &body) {
+                    Submitted::Merged | Submitted::Duplicate => Outcome::Posted,
+                    Submitted::UnknownKey => Outcome::Failed(KEY_GONE.into()),
+                    Submitted::Refused(why) if !why.is_empty() => {
+                        Outcome::Failed(format!("Farcaster didn't take it: {why}"))
+                    }
+                    Submitted::Refused(_) | Submitted::Unavailable => again(cast.tries),
+                },
+                // Not tried: the node's breaker is open, or its bucket is empty.
+                Err(UpstreamError::Busy(_) | UpstreamError::Budget) => Outcome::Unsent,
+                Err(_) => again(cast.tries),
             },
-            // Not tried: the node's breaker is open, or its bucket is empty.
-            Err(UpstreamError::Busy(_) | UpstreamError::Budget) => continue,
-            Err(_) => again(cast.tries),
         };
         match outcome {
             Outcome::Posted => report.posted += 1,
             Outcome::Failed(_) => report.failed += 1,
             Outcome::Again => report.again += 1,
+            Outcome::Unsent => report.unsent += 1,
         }
         settled.push(Settled { id: cast.id, hash: cast.hash, outcome });
     }
-    if !settled.is_empty() {
-        d1(inv)?;
-        store.settle(settled, now).await?;
-    }
+    d1(inv)?;
+    store.settle(settled, now).await?;
     Ok(report)
 }
 
@@ -187,7 +205,7 @@ mod tests {
     }
 
     impl ScheduledStore for Rc<Store> {
-        fn due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
+        fn claim_due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
             self.asked.borrow_mut().push((now, limit));
             let due = self.due.iter().take(limit as usize).cloned().collect();
             async move { Ok(due) }.boxed_local()
@@ -226,7 +244,7 @@ mod tests {
             45,
         );
         let report = run(&inv, &store, NOW).now_or_never().unwrap().unwrap();
-        assert_eq!(report, Report { due: 4, posted: 2, failed: 2, again: 0 });
+        assert_eq!(report, Report { due: 4, posted: 2, failed: 2, ..Report::default() });
         assert_eq!(*store.asked.borrow(), [(NOW, PER_RUN)]);
         // The bytes the browser signed, as octets, to the node's submitMessage.
         let given = node.given.borrow();
@@ -262,7 +280,7 @@ mod tests {
             45,
         );
         let report = run(&inv, &store, NOW).now_or_never().unwrap().unwrap();
-        assert_eq!(report, Report { due: 3, posted: 0, failed: 1, again: 2 });
+        assert_eq!(report, Report { due: 3, failed: 1, again: 2, ..Report::default() });
         let settled = store.settled.borrow();
         let outcomes: Vec<_> = settled[0].0.iter().map(|s| s.outcome.clone()).collect();
         assert_eq!(outcomes, [Outcome::Again, Outcome::Failed(NO_ANSWER.into()), Outcome::Again]);
@@ -282,10 +300,37 @@ mod tests {
         let (node, store, inv) = setup(vec![due(1, "AQID", 0), due(2, "BAUG", 0), due(3, "BwgJ", 0)], vec![], 4);
         let report = run(&inv, &store, NOW).now_or_never().unwrap().unwrap();
         // A read, two submits, and the write.
-        assert_eq!(report.posted, 2);
+        assert_eq!(report, Report { due: 3, posted: 2, unsent: 1, ..Report::default() });
         assert_eq!(node.given.borrow().len(), 2);
-        assert_eq!(store.settled.borrow()[0].0.len(), 2);
         assert_eq!(inv.remaining_subrequests(), 0);
+        // The one it couldn't give the node waits for the next run, as it
+        // was: no longer held, with no try counted.
+        let settled = store.settled.borrow();
+        let outcomes: Vec<_> = settled[0].0.iter().map(|s| (s.id, s.outcome.clone())).collect();
+        assert_eq!(outcomes, [(1, Outcome::Posted), (2, Outcome::Posted), (3, Outcome::Unsent)]);
+    }
+
+    #[test]
+    fn once_the_nodes_breaker_opens_the_rest_wait_untried() {
+        // Three failures in a row open the breaker: the casts after them
+        // aren't given to the node, and wait as they were.
+        let down = || Err(FetchError::Timeout);
+        let (node, store, inv) = setup(
+            vec![due(1, "AQID", 0), due(2, "BAUG", 0), due(3, "BwgJ", 0), due(4, "CgsM", 2), due(5, "DQ4P", 0)],
+            vec![down(), down(), down()],
+            45,
+        );
+        let report = run(&inv, &store, NOW).now_or_never().unwrap().unwrap();
+        assert_eq!(report, Report { due: 5, again: 3, unsent: 2, ..Report::default() });
+        assert_eq!(node.given.borrow().len(), 3);
+        let settled = store.settled.borrow();
+        let outcomes: Vec<_> = settled[0].0.iter().map(|s| (s.id, s.outcome.clone())).collect();
+        assert_eq!(
+            outcomes,
+            [(1, Outcome::Again), (2, Outcome::Again), (3, Outcome::Again), (4, Outcome::Unsent), (5, Outcome::Unsent)]
+        );
+        // A read, three submits and the write.
+        assert_eq!(inv.remaining_subrequests(), 45 - 5);
     }
 
     #[test]
@@ -296,5 +341,6 @@ mod tests {
         assert!(node.given.borrow().is_empty());
         assert_eq!(store.settled.borrow()[0].0[0].outcome, Outcome::Failed(UNREADABLE.into()));
         assert_eq!(kept_since(NOW), NOW - KEEP_DONE);
+        assert_eq!(held_since(NOW), NOW - HELD);
     }
 }

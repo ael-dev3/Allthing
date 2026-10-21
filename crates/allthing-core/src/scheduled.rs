@@ -10,7 +10,9 @@
 //! its bytes. The network refuses a message timestamped more than ten
 //! minutes ahead, so nothing can post one early; at its time it is a cast
 //! like any other. Editing one signs it again, in its place; cancelling
-//! deletes the stored message.
+//! deletes the stored message. From the moment the cron takes a cast to give
+//! the node until it has said what became of it, the cast is `sending`: too
+//! late to change or cancel, and a cancel says so ([`cancelled`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +65,60 @@ pub struct Cancel {
     pub id: i64,
 }
 
+/// What a cancel did: the Worker's answer to one of the reader's. A cancel
+/// of someone else's cast is refused instead (403).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "lowercase")]
+pub enum Cancelled {
+    /// Off the list: a cast waiting won't go out, and one that didn't is
+    /// gone. A cancel asked again finds it gone, and says so too.
+    Cancelled,
+    /// Too late: it went out, as `hash`, before the cancel came.
+    Posted { hash: String },
+    /// Too late: the node was being given it, as `hash`, as the cancel came.
+    Sending { hash: String },
+}
+
+impl Cancelled {
+    /// The Worker's answer, as JSON, to a cancel of the cast the list had
+    /// as `hash`. One that says nothing of it (`{}`, as the Worker answered
+    /// before it said) took the cast off. Read by hand, as the browser reads
+    /// it: serde's way with a tagged enum would bring it several kilobytes
+    /// of code.
+    pub fn read(answer: &serde_json::Value, hash: &str) -> Cancelled {
+        let field = |name| answer.get(name).and_then(serde_json::Value::as_str);
+        let hash = field("hash").unwrap_or(hash).to_owned();
+        match field("outcome") {
+            Some("posted") => Cancelled::Posted { hash },
+            Some("sending") => Cancelled::Sending { hash },
+            _ => Cancelled::Cancelled,
+        }
+    }
+}
+
+/// How D1 keeps a cast from when the cron takes it to give the node until it
+/// has said what became of it: listed as waiting ([`State::listed`]), but too
+/// late to change or cancel.
+pub const SENDING: &str = "sending";
+
+/// What a cancel by `fid` does to the cast it names, as D1 kept it just
+/// before: `Some((owner, state, hash))`, or `None` once it's gone. `None` when
+/// it is someone else's; otherwise the answer. A cast waiting, or one that
+/// failed, is taken off, as `allthing-worker`'s `CANCEL` deletes everything
+/// but those that went out or are going.
+pub fn cancelled(fid: u64, kept: Option<(u64, &str, &str)>) -> Option<Cancelled> {
+    match kept {
+        // Taken off already (a cancel sent twice), or never kept.
+        None => Some(Cancelled::Cancelled),
+        Some((owner, ..)) if owner != fid => None,
+        Some((_, state, hash)) => Some(match state {
+            "posted" => Cancelled::Posted { hash: hash.to_owned() },
+            SENDING => Cancelled::Sending { hash: hash.to_owned() },
+            _ => Cancelled::Cancelled,
+        }),
+    }
+}
+
 /// Where a scheduled cast stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -90,6 +146,12 @@ impl State {
             _ => None,
         }
     }
+
+    /// Where a cast D1 keeps as `text` stands for its reader's list: one the
+    /// node is being given ([`SENDING`]) is still waiting, to them.
+    pub fn listed(text: &str) -> Option<State> {
+        if text == SENDING { Some(State::Waiting) } else { State::parse(text) }
+    }
 }
 
 /// One of the reader's scheduled casts.
@@ -112,6 +174,56 @@ pub struct ScheduledCast {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledList {
     pub casts: Vec<ScheduledCast>,
+}
+
+/// What a browser knows of its reader's casts waiting, for the account
+/// menu's count without asking the Worker: their ids and times, from their
+/// list when it was last read there, and from what was scheduled, changed or
+/// cancelled there since. A browser keeps it (`localStorage`); what another
+/// device did shows once the list is read again.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Known {
+    pub fid: u64,
+    /// `(id, at)`: each cast's id, and when it goes out (Unix seconds).
+    pub waiting: Vec<(i64, i64)>,
+}
+
+impl Known {
+    /// As kept; anything unreadable knows nothing.
+    pub fn parse(text: &str) -> Known {
+        serde_json::from_str(text).unwrap_or_default()
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// `fid`'s list as read: the casts waiting in it.
+    pub fn listed(fid: u64, casts: &[ScheduledCast]) -> Known {
+        let waiting = casts.iter().filter(|c| c.state == State::Waiting).map(|c| (c.id, c.at)).collect();
+        Known { fid, waiting }
+    }
+
+    /// How many of `fid`'s casts are still to go out at `now`.
+    pub fn count(&self, fid: u64, now: i64) -> usize {
+        if self.fid == fid { self.waiting.iter().filter(|(_, at)| *at > now).count() } else { 0 }
+    }
+
+    /// `fid` scheduled `cast`, or put it in the place of `replaces`.
+    pub fn kept(&mut self, fid: u64, cast: &ScheduledCast, replaces: Option<i64>) {
+        if self.fid != fid {
+            *self = Known { fid, waiting: Vec::new() };
+        }
+        self.waiting.retain(|(id, _)| *id != cast.id && Some(*id) != replaces);
+        self.waiting.push((cast.id, cast.at));
+    }
+
+    /// One of `fid`'s casts is off the list.
+    pub fn gone(&mut self, fid: u64, id: i64) {
+        if self.fid == fid {
+            self.waiting.retain(|(kept, _)| *kept != id);
+        }
+    }
 }
 
 /// What the composer had, kept with a scheduled cast as its `draft`: for
@@ -375,5 +487,84 @@ mod tests {
         let schedule: Schedule = serde_json::from_str(r#"{"message":"AA==","draft":"{}"}"#).unwrap();
         assert_eq!(schedule.replaces, None);
         assert_eq!(cancel_path(), "/api/v1/scheduled/cancel");
+        // One the node is being given is still waiting, to its reader.
+        assert_eq!(State::parse(SENDING), None);
+        assert_eq!(State::listed(SENDING), Some(State::Waiting));
+        for state in [State::Waiting, State::Posted, State::Failed] {
+            assert_eq!(State::listed(state.as_str()), Some(state));
+        }
+        assert_eq!(State::listed("sent"), None);
+    }
+
+    #[test]
+    fn a_cancel_takes_off_the_readers_own_and_says_when_its_too_late() {
+        let hash = "0x0102030405060708090a0b0c0d0e0f1011121314";
+        // Waiting, or failed: taken off.
+        assert_eq!(cancelled(3, Some((3, "waiting", hash))), Some(Cancelled::Cancelled));
+        assert_eq!(cancelled(3, Some((3, "failed", hash))), Some(Cancelled::Cancelled));
+        // Gone already: a cancel sent twice says the same as the first.
+        assert_eq!(cancelled(3, None), Some(Cancelled::Cancelled));
+        // The cron got there first: out, or on its way, with its link.
+        assert_eq!(cancelled(3, Some((3, "posted", hash))), Some(Cancelled::Posted { hash: hash.into() }));
+        assert_eq!(cancelled(3, Some((3, SENDING, hash))), Some(Cancelled::Sending { hash: hash.into() }));
+        // Someone else's, whatever it is.
+        for state in ["waiting", "failed", "posted", SENDING] {
+            assert_eq!(cancelled(4, Some((3, state, hash))), None);
+        }
+    }
+
+    #[test]
+    fn a_browser_counts_the_casts_it_knows_are_waiting() {
+        let cast = |id: i64, at: i64, state: State| ScheduledCast {
+            id,
+            at,
+            hash: format!("0x{id:02x}"),
+            state,
+            error: None,
+            draft: "{}".into(),
+        };
+        let read = [
+            cast(1, NOW + 60, State::Waiting),
+            cast(2, NOW - 600, State::Posted),
+            cast(3, NOW + 7_200, State::Waiting),
+        ];
+        let mut known = Known::listed(3, &read);
+        assert_eq!(known.waiting, [(1, NOW + 60), (3, NOW + 7_200)]);
+        assert_eq!(known.count(3, NOW), 2);
+        // Once a cast's time has come, it isn't waiting any more.
+        assert_eq!(known.count(3, NOW + 60), 1);
+        // Another account's browser knows nothing of these.
+        assert_eq!(known.count(4, NOW), 0);
+        // Scheduled here, changed (in its own place, or another's), cancelled.
+        known.kept(3, &cast(9, NOW + 900, State::Waiting), None);
+        assert_eq!(known.count(3, NOW), 3);
+        known.kept(3, &cast(9, NOW + 1_800, State::Waiting), Some(9));
+        assert_eq!(known.waiting, [(1, NOW + 60), (3, NOW + 7_200), (9, NOW + 1_800)]);
+        known.kept(3, &cast(1, NOW + 120, State::Waiting), Some(1));
+        assert_eq!(known.count(3, NOW), 3);
+        known.gone(3, 3);
+        known.gone(4, 9);
+        assert_eq!(known.waiting, [(9, NOW + 1_800), (1, NOW + 120)]);
+        // Kept as JSON; another account's scheduling starts afresh.
+        assert_eq!(Known::parse(&known.to_json()), known);
+        assert_eq!(Known::parse("not json"), Known::default());
+        known.kept(4, &cast(20, NOW + 60, State::Waiting), None);
+        assert_eq!(known, Known { fid: 4, waiting: vec![(20, NOW + 60)] });
+    }
+
+    #[test]
+    fn a_cancels_answer_says_what_it_did() {
+        let posted = Cancelled::Posted { hash: "0xab".into() };
+        assert_eq!(serde_json::to_string(&Cancelled::Cancelled).unwrap(), r#"{"outcome":"cancelled"}"#);
+        assert_eq!(serde_json::to_string(&posted).unwrap(), r#"{"outcome":"posted","hash":"0xab"}"#);
+        let sending = serde_json::json!({"outcome": "sending", "hash": "0xcd"});
+        assert_eq!(Cancelled::read(&sending, "0x01"), Cancelled::Sending { hash: "0xcd".into() });
+        assert_eq!(Cancelled::read(&serde_json::to_value(&posted).unwrap(), "0x01"), posted);
+        // The Worker's answer before it said: off the list.
+        assert_eq!(Cancelled::read(&serde_json::json!({}), "0x01"), Cancelled::Cancelled);
+        assert_eq!(Cancelled::read(&serde_json::json!({"outcome": "cancelled"}), "0x01"), Cancelled::Cancelled);
+        // Too late, with no hash said: the cast's, as the list had it.
+        let bare = serde_json::json!({"outcome": "posted"});
+        assert_eq!(Cancelled::read(&bare, "0x01"), Cancelled::Posted { hash: "0x01".into() });
     }
 }
