@@ -18,7 +18,7 @@ use web_sys::HtmlElement;
 
 use crate::components::player::{HlsVideo, VideoFacade};
 use crate::components::text::ExcerptText;
-use crate::util::{cast_href, href};
+use crate::util::href;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
@@ -384,14 +384,16 @@ fn sticker_view(sticker: &'static Sticker) -> impl IntoView {
     }
 }
 
-/// A cast's images and videos. In listings, images link to the post; on the
-/// post page (`open_on_click`), they open the lightbox. Allthing's stickers
-/// show apart, as stickers. A GIF's tile is marked `gif` (`embeds::is_gif`;
-/// payloads carry no content type), so a GIF alone shows at about the size
-/// chat apps give one, not a photo's (style/allthing.css). web/paint.js
-/// marks the front page's first cards' tiles the same way.
+/// A cast's images and videos. A click or a tap on an image opens it in the
+/// lightbox at full size, in a list, where media is smaller (at most 270 px
+/// tall, half the window on a phone: style/allthing.css, `--feed-media`), as
+/// on the post page, and a video has a button that opens it there. Allthing's
+/// stickers show apart, as stickers. A GIF's tile is marked `gif`
+/// (`embeds::is_gif`; payloads carry no content type), so a GIF alone shows
+/// at about the size chat apps give one, not a photo's. web/paint.js draws
+/// the front page's first cards' tiles the same way.
 #[component]
-pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl IntoView {
+pub fn MediaGrid(cast: Cast) -> impl IntoView {
     let viewer = use_viewer();
     let (stickers, items): (Vec<MediaItem>, Vec<MediaItem>) =
         media_items(&cast).into_iter().partition(|item| emoji::sticker_of(&item.url).is_some());
@@ -405,7 +407,6 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
         author: cast.author.username.clone(),
         caption: truncate_title(&cast.text, CAPTION_CHARS),
     };
-    let href = cast_href(&cast.hash);
     let count = items.len();
     let tiles = items
         .into_iter()
@@ -418,7 +419,7 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
             let gif = is_gif(&item.url, None);
             match item.kind {
                 MediaKind::Video => {
-                    let expand = open_on_click.then(|| Callback::new(move |()| open()));
+                    let expand = Some(Callback::new(move |()| open()));
                     // A GIF can come as a video, as Tenor's MP4s do.
                     let class = if gif { "tile tile-video gif" } else { "tile tile-video" };
                     view! {
@@ -464,31 +465,22 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                         />
                     };
                     let class = if gif { "tile tile-image gif" } else { "tile tile-image" };
-                    if open_on_click {
-                        let label = format!("Open {} in the media viewer", item.alt);
-                        view! {
-                            <button
-                                class=class
-                                type="button"
-                                aria-label=label
-                                style=style
-                                data-sized=sized
-                                data-portrait=portrait
-                                data-broken=unseen
-                                on:click=move |_| open()
-                            >
-                                {img}
-                            </button>
-                        }
-                        .into_any()
-                    } else {
-                        view! {
-                            <a class=class href=href.clone() style=style data-sized=sized data-portrait=portrait data-broken=unseen>
-                                {img}
-                            </a>
-                        }
-                        .into_any()
+                    let label = format!("Open {} in the media viewer", item.alt);
+                    view! {
+                        <button
+                            class=class
+                            type="button"
+                            aria-label=label
+                            style=style
+                            data-sized=sized
+                            data-portrait=portrait
+                            data-broken=unseen
+                            on:click=move |_| open()
+                        >
+                            {img}
+                        </button>
                     }
+                    .into_any()
                 }
             }
         })

@@ -919,10 +919,10 @@ code {
   margin: 8px 0 0;
 }
 
-/* A quoted cast's single image or video stays small in feeds. */
-.cast-card .quote .media-grid.n1 .tile-image,
-.cast-card .quote .video {
-  --max-h: 320px;
+/* A quoted cast's single image or video stays smaller still in a feed's
+   card on a phone. */
+.cast-card .quote {
+  --media-h: min(var(--feed-media), 320px);
 }
 
 .quote .quote-chip {
@@ -1339,17 +1339,18 @@ p.jumbo .emoji img {
 }
 
 /* One image: its own shape, as wide as the card allows and at most 70% of
-   the window tall (80% for a portrait image). The tile fits the image, so
-   there are no bars beside it. */
+   the window tall (80% for a portrait image) on a post's page, or as tall
+   as a list's media (--media-h, below). The tile fits the image, so there
+   are no bars beside it. */
 .media-grid.n1 .tile-image {
-  --max-h: 70vh;
+  --max-h: var(--media-h, 70vh);
   justify-self: start;
   max-width: 100%;
   background: none;
 }
 
 .media-grid.n1 .tile-image[data-portrait] {
-  --max-h: 80vh;
+  --max-h: var(--media-h, 80vh);
 }
 
 .media-grid.n1 .tile-image img {
@@ -1451,8 +1452,13 @@ p.jumbo .emoji img {
 }
 
 .video {
-  --max-h: 70vh;
+  --max-h: var(--media-h, 70vh);
   aspect-ratio: 16 / 10;
+}
+
+/* Its size not known yet: 16:10, no taller than its cap. */
+.media-grid.n1 .video:not([data-sized]) {
+  width: min(100%, calc(var(--max-h) * 16 / 10));
 }
 
 /* A video's own shape once its size is known, like a single image's. */
@@ -1462,7 +1468,7 @@ p.jumbo .emoji img {
 }
 
 .video[data-portrait] {
-  --max-h: 80vh;
+  --max-h: var(--media-h, 80vh);
 }
 
 .tile-video {
@@ -1479,13 +1485,13 @@ p.jumbo .emoji img {
    .gif: allthing_core::embeds::is_gif) shows at about the size Discord
    gives one, not a photo's: its own shape, at most 300 px wide and 300 px
    tall (the height cap is --max-h, which a sized tile's width follows),
-   from the card's left edge, with the tile's rounded corners. On a phone,
-   at most 70% of the card's width. One that comes as a video (Tenor's MP4)
-   is sized the same; among other media, a GIF is a tile like theirs. */
+   from the card's left edge, with the tile's rounded corners, and no
+   taller than a list's media. On a phone, at most 70% of the card's width.
+   One that comes as a video (Tenor's MP4) is sized the same; among other
+   media, a GIF is a tile like theirs. */
 .media-grid.n1 .tile-image.gif,
-.cast-card .quote .media-grid.n1 .tile-image.gif,
 .media-grid.n1 .tile-video.gif .video {
-  --max-h: 300px;
+  --max-h: min(300px, var(--media-h, 300px));
 }
 
 .media-grid.n1 .tile-image.gif,
@@ -1497,6 +1503,66 @@ p.jumbo .emoji img {
   .media-grid.n1 .tile-image.gif,
   .media-grid.n1 .tile-video.gif .video {
     max-width: min(70%, 300px);
+  }
+}
+
+/* A list of casts (a feed's cards, and the casts they quote) is denser, as
+   in the Farcaster app: its media is at most 270 px tall (and half a short
+   window), or half the window on a phone, each image and video in its own
+   shape, and a click or a tap opens it in the media viewer at full size
+   (media.rs, `MediaGrid`). A post's page keeps its larger media, for the
+   cast it opens and its replies. A cast's images are one row of squares on
+   a computer, and on a phone a grid as on a post's page, narrower where it
+   would be taller. */
+.cast-card {
+  --feed-media: min(270px, 50vh);
+  --media-h: var(--feed-media);
+}
+
+.cast-card .media-grid.n2 {
+  max-width: calc(2 * var(--feed-media) + 5px);
+}
+
+.cast-card .facade {
+  max-width: calc(var(--feed-media) * 16 / 9);
+}
+
+@media (min-width: 641px) {
+  .cast-card .media-grid:not(.n1) {
+    grid-template-columns: none;
+    grid-template-rows: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .cast-card .media-grid.n3 {
+    max-width: calc(3 * var(--feed-media) + 10px);
+  }
+
+  .cast-card .media-grid.n4 {
+    max-width: calc(4 * var(--feed-media) + 15px);
+  }
+
+  .cast-card .media-grid.n3 > :first-child {
+    grid-row: auto;
+  }
+
+  .cast-card .media-grid.n3 .tile-image:first-child {
+    aspect-ratio: 1 / 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .cast-card {
+    --feed-media: 50vh;
+  }
+
+  .cast-card .media-grid.n3 {
+    max-width: calc(1.3 * var(--feed-media));
+  }
+
+  .cast-card .media-grid.n4 {
+    max-width: var(--feed-media);
   }
 }
 

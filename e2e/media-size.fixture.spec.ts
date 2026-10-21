@@ -22,6 +22,10 @@ const svg = (w: number, h: number) =>
 async function serve(page: Page, delayImages = 0) {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home", (route) => route.fulfill({ json: { pool: casts, meta } }));
+  await page.route("**/api/v1/cast?*", (route) => {
+    const found = casts.find((c) => c.hash === new URL(route.request().url()).searchParams.get("hash")?.toLowerCase());
+    return found ? route.fulfill({ json: { thread: { cast: found, children: [] }, notes: {}, meta } }) : route.fulfill({ status: 404, json: { error: "Cast not found" } });
+  });
   await page.route("https://media.example/**", async (route: Route) => {
     const name = new URL(route.request().url()).pathname.slice(1);
     const headers = { "access-control-allow-origin": "*" };
@@ -41,47 +45,70 @@ async function serve(page: Page, delayImages = 0) {
 const box = async (locator: Locator) => (await locator.boundingBox())!;
 const card = (page: Page, n: number) => page.locator(`.cast-card[data-hash="${hash(n)}"]`);
 
-test("single images and videos take their own shape, the card's width and at most 70vh, or 80vh when portrait", async ({ page }) => {
+test("single images and videos take their own shape: in the feed at most 270 px tall, on the post's page 70vh, or 80vh when portrait", async ({ page }) => {
   await serve(page);
   await page.goto("/");
   const viewport = page.viewportSize()!;
+  // A list's media cap at this width (style/allthing.css, --feed-media).
+  const CAP = 270;
 
-  // A wide image fills the card's width, with no bars beside it.
+  // A wide image is as wide as the cap allows, with no bars beside it.
   const wide = card(page, 1).locator(".tile-image");
   await wide.scrollIntoViewIfNeeded();
   await expect(wide).toHaveAttribute("data-sized", "");
   const grid = await box(card(page, 1).locator(".media-grid"));
   const wideBox = await box(wide);
-  expect(Math.abs(wideBox.width - grid.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(wideBox.width - Math.min(grid.width, CAP * 2))).toBeLessThanOrEqual(1);
   expect(Math.abs(wideBox.height - wideBox.width / 2)).toBeLessThanOrEqual(2);
   const wideImg = await box(wide.locator("img"));
   expect(Math.abs(wideImg.width - wideBox.width)).toBeLessThanOrEqual(1);
 
-  // A tall image stops at 80vh, and its tile is exactly as wide as the image.
+  // A tall image stops at the cap, whole, and its tile is exactly as wide as the image.
   const tall = card(page, 2).locator(".tile-image");
   await tall.scrollIntoViewIfNeeded();
   await expect(tall).toHaveAttribute("data-portrait", "");
   const tallBox = await box(tall);
   const tallImg = await box(tall.locator("img"));
-  expect(tallBox.height).toBeLessThanOrEqual(viewport.height * 0.8 + 1);
+  expect(Math.abs(tallBox.height - CAP)).toBeLessThanOrEqual(1);
   expect(Math.abs(tallImg.width - tallBox.width)).toBeLessThanOrEqual(1);
   expect(Math.abs(tallImg.height - tallBox.height)).toBeLessThanOrEqual(1);
   expect(Math.abs(tallBox.width - tallBox.height / 2)).toBeLessThanOrEqual(2);
 
-  // Videos take their stream's shape: a wide one fills the card's width...
+  // Videos take their stream's shape under the same cap...
   const wideVideo = card(page, 3).locator(".video");
   await wideVideo.scrollIntoViewIfNeeded();
   await expect(wideVideo).toHaveAttribute("data-sized", "");
   const wideVideoBox = await box(wideVideo);
-  expect(Math.abs(wideVideoBox.width - grid.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(wideVideoBox.width - Math.min(grid.width, (CAP * 320) / 180))).toBeLessThanOrEqual(1);
   expect(Math.abs(wideVideoBox.height - (wideVideoBox.width * 180) / 320)).toBeLessThanOrEqual(2);
-  // ...and a portrait one stops at 80vh.
+  // ...a portrait one too.
   const tallVideo = card(page, 4).locator(".video");
   await tallVideo.scrollIntoViewIfNeeded();
   await expect(tallVideo).toHaveAttribute("data-portrait", "");
   const tallVideoBox = await box(tallVideo);
-  expect(tallVideoBox.height).toBeLessThanOrEqual(viewport.height * 0.8 + 1);
+  expect(Math.abs(tallVideoBox.height - CAP)).toBeLessThanOrEqual(1);
   expect(Math.abs(tallVideoBox.width - (tallVideoBox.height * 180) / 320)).toBeLessThanOrEqual(2);
+
+  // On its post's page, a wide image spans the post, and a tall one stops at 80vh.
+  await card(page, 1).locator("header.cast-meta a.when").click();
+  await expect(page).toHaveURL(new RegExp(`/p/${hash(1)}$`));
+  const post = page.locator(".post .tile-image");
+  await expect(post).toHaveAttribute("data-sized", "");
+  const postWidth = await page.locator(".post").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  });
+  const postBox = await box(post);
+  expect(Math.abs(postBox.width - postWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(postBox.height - postBox.width / 2)).toBeLessThanOrEqual(2);
+  await page.goBack();
+  await card(page, 2).locator("header.cast-meta a.when").click();
+  await expect(page).toHaveURL(new RegExp(`/p/${hash(2)}$`));
+  const postTall = page.locator(".post .tile-image");
+  await expect(postTall).toHaveAttribute("data-portrait", "");
+  const postTallBox = await box(postTall);
+  expect(Math.abs(postTallBox.height - viewport.height * 0.8)).toBeLessThanOrEqual(1);
+  expect(Math.abs(postTallBox.width - postTallBox.height / 2)).toBeLessThanOrEqual(2);
 });
 
 test("back to the feed, images take their final box at once", async ({ page }) => {

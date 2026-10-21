@@ -100,7 +100,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     } else {
                         view! { <div class="comment-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
                     }}
-                    <MediaGrid cast=cast.clone() open_on_click=true/>
+                    <MediaGrid cast=cast.clone()/>
                     <VideoLinks cast=cast.clone()/>
                     <LinkCards cast=cast.clone()/>
                     <div class="comment-foot">

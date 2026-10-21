@@ -310,7 +310,7 @@ function castCard(cast, notes, i, favorite) {
     el("p", { class: "deleted-note" }, "You deleted this cast."),
     meta(cast, notes, link, favorite),
     text.trim() ? el("div", { class: "cast-text" }, castText(text, cast.mentions || [])) : null,
-    images.length ? mediaGrid(cast, images, link) : null,
+    images.length ? mediaGrid(cast, images) : null,
     linkCards(cast, text),
     el("footer", { class: "cast-foot" }, engagement(cast)),
     // Its Pepe reactions' row, as the app draws it until their chips come
@@ -645,7 +645,7 @@ function sized(cast) {
     });
 }
 
-function mediaGrid(cast, images, link) {
+function mediaGrid(cast, images) {
   const excerpt = truncateTitle(cast.text || "", 90);
   const tiles = images.map((embed, i) => {
     const position = images.length > 1 ? ` ${i + 1} of ${images.length}` : "";
@@ -655,7 +655,9 @@ function mediaGrid(cast, images, link) {
     const [width, height] = sizes[src] || [];
     const img = image({ width, height, alt, loading: "lazy", decoding: "async", referrerpolicy: "no-referrer" }, src, width ? [width, height] : undefined);
     const box = width ? { style: `--w: ${width}; --h: ${height}`, "data-sized": true, "data-portrait": height > width } : {};
-    const tile = el("a", { class: isGif(embed.url) ? "tile tile-image gif" : "tile tile-image", href: link, ...box }, img);
+    // A button that opens the media viewer, in the app; here it only shows.
+    const label = `Open ${alt} in the media viewer`;
+    const tile = el("button", { class: isGif(embed.url) ? "tile tile-image gif" : "tile tile-image", type: "button", "aria-label": label, ...box }, img);
     img.addEventListener("load", () => {
       const [w, h] = [img.naturalWidth, img.naturalHeight];
       if (!w || !h || img.currentSrc.startsWith("data:")) return;
