@@ -213,7 +213,7 @@ test("the list: one waiting to change or cancel, one that didn't go out, one pos
   await waiting.getByRole("button", { name: "Edit" }).click();
   const dialog = page.getByRole("dialog", { name: "Scheduled cast" });
   await expect(dialog).toContainText("Replying to @alice");
-  const reply = dialog.getByRole("textbox", { name: "Write your reply" });
+  const reply = dialog.getByRole("textbox", { name: "Cast your reply" });
   await expectDraft(reply, "Later reply");
   await expect(dialog.getByRole("button", { name: "Schedule for later" })).toBeDisabled();
   const field = dialog.getByLabel("Goes out");

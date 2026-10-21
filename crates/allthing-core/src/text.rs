@@ -94,6 +94,27 @@ pub fn truncate_title(text: &str, max: usize) -> String {
     format!("{}…", &base[..trimmed.len().max(shortcode)])
 }
 
+/// The start of `text` for a box that shows its first few lines: as
+/// written, newlines kept, at most `max` characters, cut between words and
+/// ended with "…". A shortcode of the pack's emoji is never cut.
+pub fn text_start(text: &str, max: usize) -> String {
+    let text = text.trim();
+    let Some((end, _)) = text.char_indices().nth(max) else {
+        return text.to_owned();
+    };
+    let mut cut = &text[..end];
+    if let Some(&(start, _, _)) = emoji_spans(text).iter().find(|&&(start, stop, _)| start < end && end < stop) {
+        cut = &text[..start];
+    }
+    // Inside a word, back to the last one's end, unless that loses more
+    // than a fifth.
+    let inside = !text[cut.len()..].starts_with(char::is_whitespace);
+    if let Some(space) = cut.rfind(char::is_whitespace).filter(|&space| inside && space * 5 > cut.len() * 4) {
+        cut = &cut[..space];
+    }
+    format!("{}…", cut.trim_end())
+}
+
 /// The link `rest` starts with, if any, as `tokenize` reads one.
 fn url_at(rest: &str) -> Option<&str> {
     let scheme_len = url_scheme_len(rest)?;
@@ -429,6 +450,21 @@ mod tests {
         assert_eq!(splice_mentions("hi", &[mention("x", 1)], &[]), "hi");
         // An offset inside a multi-byte character snaps back to its start.
         assert_eq!(splice_mentions("é!", &[mention("x", 1)], &[(1, 1)]), "@xé!");
+    }
+
+    #[test]
+    fn a_text_start_keeps_its_lines_and_cuts_between_words() {
+        assert_eq!(text_start("  two\nlines \n", 600), "two\nlines");
+        let long = format!("first line\n{}tail", "word ".repeat(30));
+        let start = text_start(&long, 40);
+        assert_eq!(start, "first line\nword word word word word word…");
+        assert!(start.chars().count() <= 41);
+        // One long word is cut where it must.
+        assert_eq!(text_start(&"x".repeat(50), 10), format!("{}…", "x".repeat(10)));
+        // A shortcode the cut falls in goes whole: no ":pepe_" left over.
+        let cut = text_start(&format!("{} :pepe_gm: and more", "y".repeat(30)), 34);
+        assert_eq!(cut, format!("{}…", "y".repeat(30)));
+        assert_eq!(text_start(":pepe_gm: hi", 9), ":pepe_gm:…");
     }
 
     #[test]

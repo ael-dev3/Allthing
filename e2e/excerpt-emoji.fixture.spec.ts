@@ -5,7 +5,8 @@ import { approvedKey, signIn } from "./helpers/farcaster";
 
 /*
  * The pack's emoji in excerpts of a cast. The Replies preview, a post's
- * "In reply to", search suggestions, the composer's reply and quote, the
+ * "In reply to", search suggestions, what the composer shows of the cast a
+ * reply answers and the one a quote quotes, the
  * media viewer's caption and the scheduled list show ":pepe_name:" as the
  * emoji, as cast text does, with nothing in them linked; and an excerpt is
  * never cut inside a shortcode.
@@ -149,7 +150,7 @@ test("the composer's reply and quote show the cast's emoji", async ({ page }, te
   await ready(page, `/p/${post.hash}`);
   await page.getByRole("button", { name: "Reply to @alice" }).click();
   const replying = page.getByRole("dialog", { name: "Reply" });
-  expect(await shows(replying.locator(".compose-excerpt"))).toEqual({ emoji: one(":pepe_gm:"), text: "Who's up? ", links: 0 });
+  expect(await shows(replying.locator(".reply-parent-text"))).toEqual({ emoji: one(":pepe_gm:"), text: "Who's up? ", links: 0 });
   await page.screenshot({ path: testInfo.outputPath("composer-reply.png") });
   await page.keyboard.press("Escape");
   await expect(replying).toBeHidden();
@@ -206,7 +207,7 @@ test("at 390, the emoji fit the preview, the reply's context and the composer", 
   await page.reload();
   await page.getByRole("button", { name: "Reply to @bob" }).click();
   const replying = page.getByRole("dialog", { name: "Reply" });
-  expect(await shows(replying.locator(".compose-excerpt"))).toEqual({ emoji: one(":pepe_wave:"), text: "Up  ask /Base or @carol", links: 0 });
+  expect(await shows(replying.locator(".reply-parent-text"))).toEqual({ emoji: one(":pepe_wave:"), text: "Up  ask /Base or @carol", links: 0 });
   await page.screenshot({ path: testInfo.outputPath("composer-reply-390.png") });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await context.close();

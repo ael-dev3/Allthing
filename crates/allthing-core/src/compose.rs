@@ -17,9 +17,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::api::API_PREFIX;
+use crate::embeds::{ImageSize, resized_image_url};
 use crate::message::{CastId, Embed, NewCast, Parent};
+use crate::model::{Cast, Embed as CastEmbed};
 use crate::params::percent_encode;
-use crate::text::split_mentions;
+use crate::text::{split_mentions, text_start, truncate_title};
 
 /// Where the Farcaster app opens a draft, ready to post.
 pub const COMPOSE_URL: &str = "https://farcaster.xyz/~/compose";
@@ -76,6 +78,86 @@ impl Quoted {
     pub fn url(&self) -> String {
         cast_url(&self.username, &self.hash)
     }
+}
+
+/// How much of its text a reply's composer keeps of the cast it answers:
+/// more than the lines it shows hold.
+pub const PARENT_TEXT_CHARS: usize = 600;
+/// How many of that cast's images and videos it shows.
+pub const PARENT_MEDIA: usize = 4;
+/// How much of that cast a screen reader hears with the reply's text box.
+pub const REPLYING_CHARS: usize = 120;
+
+/// What a reply's composer shows of the cast it answers, as the Farcaster
+/// app does: who wrote it and when, the start of its text, and its first
+/// images and videos. It is drawn from the cast on the page, so nothing is
+/// asked for.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentPreview {
+    /// The author's display name, or username.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pfp_url: Option<String>,
+    /// Unix seconds.
+    pub ts: i64,
+    /// The start of its text ([`PARENT_TEXT_CHARS`]), as written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ParentMedia>,
+}
+
+/// One of the images and videos a reply's composer shows of the cast it
+/// answers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentMedia {
+    /// An image as the page shows it (so it's the picture the browser
+    /// already has), a video's manifest or file (whose poster the browser
+    /// finds), or one of Allthing's stickers.
+    pub url: String,
+    pub kind: ParentMediaKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParentMediaKind {
+    Image,
+    Video,
+    Sticker,
+}
+
+impl ParentPreview {
+    pub fn of(cast: &Cast) -> ParentPreview {
+        let media = cast
+            .media()
+            .filter_map(|embed| {
+                let url = embed.url()?;
+                Some(match embed {
+                    CastEmbed::Video { .. } => ParentMedia { url: url.to_owned(), kind: ParentMediaKind::Video },
+                    _ if crate::emoji::sticker_of(url).is_some() => {
+                        ParentMedia { url: url.to_owned(), kind: ParentMediaKind::Sticker }
+                    }
+                    _ => ParentMedia { url: resized_image_url(url, ImageSize::Inline), kind: ParentMediaKind::Image },
+                })
+            })
+            .take(PARENT_MEDIA)
+            .collect();
+        ParentPreview {
+            name: cast.author.name().to_owned(),
+            pfp_url: cast.author.pfp_url.clone(),
+            ts: cast.ts,
+            text: text_start(&cast.text, PARENT_TEXT_CHARS),
+            media,
+        }
+    }
+}
+
+/// What a screen reader hears of the cast a reply answers, with the reply's
+/// text box: "Replying to @alice: What should I read next?", the cast's
+/// start cut to [`REPLYING_CHARS`].
+pub fn replying_to(username: &str, text: &str) -> String {
+    let excerpt = truncate_title(text, REPLYING_CHARS);
+    if excerpt.is_empty() { format!("Replying to @{username}") } else { format!("Replying to @{username}: {excerpt}") }
 }
 
 /// Where the Farcaster app opens a cast: its author's name and its hash's
@@ -576,5 +658,84 @@ mod tests {
             assert!(!is_handoff_link(url), "{url}");
         }
         assert!(!is_handoff_link(&format!("https://farcaster.xyz/~/compose?text={}", "a".repeat(4100))));
+    }
+
+    fn parent(text: &str, embeds: Vec<CastEmbed>) -> Cast {
+        Cast {
+            hash: "0x01".into(),
+            author: crate::model::UserSummary {
+                fid: 42,
+                username: "alice".into(),
+                display_name: "Alice".into(),
+                pfp_url: Some("https://example.com/alice.png".into()),
+            },
+            text: text.into(),
+            mentions: vec![],
+            ts: 1_792_235_681,
+            parent_hash: None,
+            parent_url: None,
+            channel: None,
+            embeds,
+            likes: 0,
+            recasts: 0,
+            replies: 0,
+            mini_app: false,
+            spam: false,
+        }
+    }
+
+    #[test]
+    fn a_replys_composer_shows_who_and_when_the_start_and_the_first_four_pictures() {
+        let image = |id: &str| CastEmbed::Image { url: format!("https://imagedelivery.net/acct/{id}/original") };
+        let sticker = crate::emoji::STICKERS[0].embed();
+        let cast = parent(
+            &format!("  {}\nend  ", "word ".repeat(200)),
+            vec![
+                CastEmbed::Link {
+                    url: "https://example.com".into(),
+                    image_url: Some("https://example.com/og.png".into()),
+                    title: None,
+                },
+                image("a"),
+                CastEmbed::Cast { hash: "0x02".into(), fid: Some(7) },
+                CastEmbed::Video { url: "https://stream.example/v/manifest.m3u8".into() },
+                CastEmbed::Image { url: sticker.clone() },
+                image("b"),
+                image("c"),
+            ],
+        );
+        let preview = ParentPreview::of(&cast);
+        assert_eq!(preview.name, "Alice");
+        assert_eq!(preview.pfp_url.as_deref(), Some("https://example.com/alice.png"));
+        assert_eq!(preview.ts, 1_792_235_681);
+        assert!(preview.text.starts_with("word word") && preview.text.ends_with("word…"), "{}", preview.text);
+        assert!(preview.text.chars().count() <= PARENT_TEXT_CHARS + 1);
+        // Links and quoted casts aren't pictures; images are as the page
+        // shows them, and the fifth goes.
+        let kinds: Vec<(&str, ParentMediaKind)> = preview.media.iter().map(|m| (m.url.as_str(), m.kind)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("https://imagedelivery.net/acct/a/fit=scale-down,f=auto,w=720", ParentMediaKind::Image),
+                ("https://stream.example/v/manifest.m3u8", ParentMediaKind::Video),
+                (sticker.as_str(), ParentMediaKind::Sticker),
+                ("https://imagedelivery.net/acct/b/fit=scale-down,f=auto,w=720", ParentMediaKind::Image),
+            ]
+        );
+        // An author with no display name goes by their username; a short
+        // text is as written, lines and all.
+        let mut plain = parent("two\nlines", vec![]);
+        plain.author.display_name.clear();
+        let preview = ParentPreview::of(&plain);
+        assert_eq!((preview.name.as_str(), preview.text.as_str(), preview.media.len()), ("alice", "two\nlines", 0));
+    }
+
+    #[test]
+    fn a_screen_reader_hears_whom_a_reply_answers_and_the_start_of_what_they_said() {
+        assert_eq!(replying_to("alice", "What should I\nread next?"), "Replying to @alice: What should I read next?");
+        assert_eq!(replying_to("bob", "  "), "Replying to @bob");
+        let long = replying_to("carol", &"word ".repeat(60));
+        assert!(long.starts_with("Replying to @carol: word word") && long.ends_with('…'), "{long}");
+        assert!(long.chars().count() <= "Replying to @carol: ".len() + REPLYING_CHARS + 1);
     }
 }

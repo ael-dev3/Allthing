@@ -41,12 +41,14 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
 use allthing_core::compose::{
-    Draft, Gif, GifKey, GifPage, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path, gifs_url,
+    Draft, Gif, GifKey, GifPage, ParentMediaKind, ParentPreview, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path,
+    gifs_url, replying_to,
 };
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
@@ -67,6 +69,7 @@ use web_sys::HtmlElement;
 
 use crate::api;
 use crate::components::attach::{self, AttachButton, Attached};
+use crate::components::chips::{Avatar, TimeAgo};
 use crate::components::editor::{self, ComposeText};
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
@@ -208,13 +211,25 @@ pub fn let_go(file: &Attachment) {
 }
 
 /// The cast a reply answers or a quote quotes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Other {
     hash: String,
     /// Its author.
     fid: u64,
     username: String,
     excerpt: String,
+    /// What a reply's composer shows of it (`ReplyParent`), taken from the
+    /// cast on the page. A scheduled reply keeps less of it: changed, it
+    /// shows a line instead.
+    preview: Option<Arc<ParentPreview>>,
+}
+
+/// The same cast, however much of it is kept: a draft for it stays its
+/// draft.
+impl PartialEq for Other {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
 }
 
 impl Other {
@@ -224,7 +239,13 @@ impl Other {
             fid: cast.author.fid,
             username: cast.author.username.clone(),
             excerpt: truncate_title(cast.text.trim(), 90),
+            preview: None,
         }
+    }
+
+    /// The cast a reply answers, with what its composer shows of it.
+    fn answered(cast: &Cast) -> Other {
+        Other { preview: Some(Arc::new(ParentPreview::of(cast))), ..Other::of(cast) }
     }
 
     fn saved(&self) -> SavedCast {
@@ -242,6 +263,7 @@ impl Other {
             fid: saved.fid,
             username: saved.username.clone(),
             excerpt: saved.excerpt.clone(),
+            preview: None,
         }
     }
 }
@@ -338,12 +360,14 @@ impl Composer {
     }
 
     /// Open the composer for `target`. A draft for something else is set
-    /// aside; one for the same is taken up again.
+    /// aside; one for the same is taken up again, with what the page shows
+    /// of the cast now.
     fn start(self, target: Target) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
         // A scheduled cast left unsaved isn't taken up as a new one.
-        if self.target.get_untracked() != target || self.editing.get_untracked().is_some() {
-            self.target.set(target);
+        let same = self.target.with_untracked(|t| *t == target) && self.editing.get_untracked().is_none();
+        self.target.set(target);
+        if !same {
             self.clear();
         }
         self.picker.set(Picker::Closed);
@@ -906,9 +930,10 @@ pub fn CastFab() -> impl IntoView {
 #[component]
 pub fn ReplyButton(cast: Cast) -> impl IntoView {
     let composer = use_composer();
-    let to = Other::of(&cast);
     let replies = cast.replies;
-    let label = format!("Reply to @{}", to.username);
+    let label = format!("Reply to @{}", cast.author.username);
+    // What the composer shows of the cast is taken as it opens.
+    let cast = StoredValue::new(cast);
     view! {
         <button
             type="button"
@@ -918,7 +943,7 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
             on:focus=move |_| warm()
             on:click=move |_| {
                 composer.replies.set(replies);
-                composer.start(Target::Reply(to.clone()));
+                composer.start(Target::Reply(cast.with_value(Other::answered)));
             }
         >
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
@@ -1033,9 +1058,18 @@ pub fn ComposerDialog() -> impl IntoView {
             // emoji put in: a tap elsewhere can move an unfocused text box's
             // own selection to its start.
             let caret = StoredValue::new(None::<(usize, usize)>);
+            // A reply shows what it answers above its text box, from the
+            // cast on the page (`ReplyParent`); a scheduled one being
+            // changed, which keeps less of it, a line.
+            let answering = match composer.target.get_untracked() {
+                Target::Reply(to) => to.preview.clone().map(|preview| (to, preview)),
+                _ => None,
+            };
+            let reply = answering.is_some();
             let (placeholder, context) = match composer.target.get_untracked() {
+                Target::Reply(_) if reply => ("Cast your reply", None),
                 Target::Reply(to) => (
-                    "Write your reply",
+                    "Cast your reply",
                     Some(view! {
                         <p class="compose-context">
                             "Replying to "<strong>"@"{to.username}</strong>
@@ -1125,14 +1159,32 @@ pub fn ComposerDialog() -> impl IntoView {
                         {move || composer.dragging.get().then(|| view! {
                             <div class="compose-drop" aria-hidden="true"><p>"Drop images or videos to attach them"</p></div>
                         })}
-                        <header class="modal-head">
+                        // Not a <header>, nor the bar a <footer>: in a dialog they
+                        // would be a second banner and contentinfo on the page.
+                        <div class="modal-head">
                             <h2 id="compose-title">{composer.title()}</h2>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
-                        </header>
+                        </div>
                         // A picker open makes the text smaller, to fit both.
-                        <div class="modal-body compose-body" class:picking=move || composer.picker.get() != Picker::Closed>
+                        <div
+                            class="modal-body compose-body"
+                            class:compose-reply=reply
+                            class:picking=move || composer.picker.get() != Picker::Closed
+                        >
                             {context}
-                            <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted/>
+                            {match answering {
+                                Some((to, preview)) => view! {
+                                    <ReplyParent to preview/>
+                                    // The reader's picture beside the box, where
+                                    // the thread's line comes down to.
+                                    <div class="reply-row">
+                                        {move || reply_avatar(session.user.with(|u| u.as_ref().and_then(|u| u.pfp_url.clone())))}
+                                        <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted described_by=REPLYING_ID/>
+                                    </div>
+                                }
+                                .into_any(),
+                                None => view! { <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted/> }.into_any(),
+                            }}
                             {crate::split::lazy_view(|| (), extras)}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -1144,12 +1196,108 @@ pub fn ComposerDialog() -> impl IntoView {
     }
 }
 
+/// The line a screen reader hears of the cast a reply answers, with the
+/// reply's text box.
+const REPLYING_ID: &str = "compose-replying";
+/// The play sign on a video's picture.
+const PLAY: &str = "M8 5.5v13l11-6.5z";
+
+/// What a reply answers, above its text box, as the Farcaster app shows
+/// it: the author's picture, name, @username and how long ago; the start of
+/// the cast (a few lines of it, `style/allthing.css`); its first pictures,
+/// at a fixed size, so nothing moves as they load; and "Replying to
+/// @username". A line runs from the author's picture down to the reader's,
+/// beside the text box. All of it is drawn from the cast on the page, with
+/// no request. Screen readers hear one line instead, with the text box
+/// (`REPLYING_ID`). The reader's own cast, deleted since, says so.
+#[component]
+fn ReplyParent(to: Other, preview: Arc<ParentPreview>) -> impl IntoView {
+    let gone = crate::components::deleted(&to.hash);
+    let heard = replying_to(&to.username, &preview.text);
+    let heard_gone = format!("Replying to @{}: a cast that has been deleted", to.username);
+    let username = to.username;
+    let draw = move || {
+        if gone.get() {
+            return view! { <p class="reply-parent reply-parent-gone" aria-hidden="true">"This cast has been deleted"</p> }
+                .into_any();
+        }
+        let shown = &*preview;
+        let name = (shown.name != username).then(|| shown.name.clone());
+        let thumbs = shown.media.iter().map(|media| thumb(&media.url, media.kind)).collect_view();
+        view! {
+            <div class="reply-parent" aria-hidden="true">
+                {reply_avatar(shown.pfp_url.clone())}
+                <div class="reply-parent-body">
+                    <p class="reply-parent-meta">
+                        {name.map(|name| view! { <span class="reply-parent-name">{name}</span> })}
+                        <span class="reply-parent-handle">"@"{username.clone()}</span>
+                        <span class="reply-parent-dot">"·"</span>
+                        <TimeAgo ts=shown.ts/>
+                    </p>
+                    {(!shown.text.is_empty()).then(|| view! { <div class="reply-parent-text"><ExcerptText text=shown.text.clone()/></div> })}
+                    {(!shown.media.is_empty()).then(|| view! { <div class="reply-parent-media">{thumbs}</div> })}
+                    <p class="reply-parent-to">"Replying to "<strong>"@"{username.clone()}</strong></p>
+                </div>
+            </div>
+        }
+        .into_any()
+    };
+    view! {
+        <p id=REPLYING_ID class="visually-hidden">{move || if gone.get() { heard_gone.clone() } else { heard.clone() }}</p>
+        {draw}
+    }
+}
+
+/// A picture beside a reply: its author's, or the reader's. Sized by the
+/// composer (`--reply-avatar`, smaller on a phone), so one without a
+/// picture is an empty circle of the same size.
+fn reply_avatar(url: Option<String>) -> AnyView {
+    match url {
+        Some(url) => view! { <Avatar url=Some(url) size=36/> }.into_any(),
+        None => view! { <span class="avatar avatar-empty"></span> }.into_any(),
+    }
+}
+
+/// One of the pictures `ReplyParent` shows: a square of a fixed size, an
+/// image cropped to fill it, a video's poster (when the page has it) with a
+/// play sign, or a sticker whole.
+fn thumb(url: &str, kind: ParentMediaKind) -> AnyView {
+    match kind {
+        ParentMediaKind::Image => view! {
+            <span class="reply-thumb">
+                <img src=url.to_owned() alt="" width="96" height="96" loading="lazy" decoding="async" referrerpolicy="no-referrer"/>
+            </span>
+        }
+        .into_any(),
+        ParentMediaKind::Video => view! {
+            <span class="reply-thumb reply-thumb-video">
+                {crate::video::known_poster(url).map(|src| view! {
+                    <img src=src alt="" width="96" height="96" loading="lazy" decoding="async" referrerpolicy="no-referrer"/>
+                })}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d=PLAY/></svg>
+            </span>
+        }
+        .into_any(),
+        ParentMediaKind::Sticker => view! {
+            <span class="reply-thumb reply-thumb-sticker">
+                {emoji::sticker_of(url).map(|sticker| view! {
+                    <picture>
+                        <source media="(prefers-reduced-motion: reduce)" srcset=href(&sticker.still())/>
+                        <img src=href(&sticker.file()) alt="" width="96" height="96" loading="lazy" decoding="async"/>
+                    </picture>
+                })}
+            </span>
+        }
+        .into_any(),
+    }
+}
+
 /// The composer's bar while its code comes, the first time it opens.
 fn pending_bar() -> impl IntoView {
     view! {
-        <footer class="compose-foot" aria-busy="true">
+        <div class="compose-foot" aria-busy="true">
             <div class="compose-bar"><span class="button compose-post compose-loading">"Loading…"</span></div>
-        </footer>
+        </div>
     }
 }
 
@@ -1304,7 +1452,7 @@ fn composer_bar(
     // The text's length, in bytes, as a cast counts it.
     let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
     Ok(view! {
-        <footer class="compose-foot">
+        <div class="compose-foot">
             <div class="compose-bar">
                 <AttachButton composer/>
                 <button
@@ -1375,7 +1523,7 @@ fn composer_bar(
                     (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
                 }}
             </div>
-        </footer>
+        </div>
     }
     .into_any())
 }
