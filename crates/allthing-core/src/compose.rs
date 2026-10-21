@@ -286,9 +286,79 @@ impl GifPage {
     }
 }
 
+/// A draft and where its caret was (offsets in UTF-16 units).
+pub type Edited = (String, (usize, usize));
+
+/// The composer's undo and redo: the drafts before each change, newest
+/// last, and those undone. Typing within a second of other typing is
+/// undone with it, as in a text box.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Edits {
+    past: Vec<Edited>,
+    future: Vec<Edited>,
+    /// When typing last changed the draft (milliseconds), or 0.
+    typed_at: f64,
+}
+
+/// How many changes can be undone.
+const UNDOS: usize = 100;
+
+impl Edits {
+    /// The draft changed from `before`, by typing or not, at `now`.
+    pub fn changed(&mut self, before: Edited, typed: bool, now: f64) {
+        let joins = typed && self.typed_at > 0.0 && now - self.typed_at < 1000.0 && !self.past.is_empty();
+        if !joins {
+            self.past.push(before);
+            if self.past.len() > UNDOS {
+                self.past.remove(0);
+            }
+        }
+        self.typed_at = if typed { now } else { 0.0 };
+        self.future.clear();
+    }
+
+    /// The draft to go back to, from `now`.
+    pub fn undo(&mut self, now: Edited) -> Option<Edited> {
+        let back = self.past.pop()?;
+        self.future.push(now);
+        self.typed_at = 0.0;
+        Some(back)
+    }
+
+    /// The draft undone last, again, from `now`.
+    pub fn redo(&mut self, now: Edited) -> Option<Edited> {
+        let next = self.future.pop()?;
+        self.past.push(now);
+        self.typed_at = 0.0;
+        Some(next)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edits_undo_typing_together_and_redo() {
+        let at = |text: &str| (text.to_owned(), (text.len(), text.len()));
+        let mut edits = Edits::default();
+        assert_eq!(edits.undo(at("")), None);
+        // "gm", typed within a second: one undo.
+        edits.changed(at(""), true, 1000.0);
+        edits.changed(at("g"), true, 1500.0);
+        // A pause, then " fren": another.
+        edits.changed(at("gm"), true, 4000.0);
+        // A paste is a change of its own.
+        edits.changed(at("gm fren"), false, 4200.0);
+        assert_eq!(edits.undo(at("gm fren :pepe_gm:")), Some(at("gm fren")));
+        assert_eq!(edits.undo(at("gm fren")), Some(at("gm")));
+        assert_eq!(edits.undo(at("gm")), Some(at("")));
+        assert_eq!(edits.undo(at("")), None);
+        assert_eq!(edits.redo(at("")), Some(at("gm")));
+        // A change after undoing forgets what was undone.
+        edits.changed(at("gm"), false, 9000.0);
+        assert_eq!(edits.redo(at("gm!")), None);
+    }
 
     #[test]
     fn a_draft_opens_in_the_farcaster_app() {

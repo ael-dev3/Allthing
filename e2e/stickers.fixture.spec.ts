@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 
 /*
  * Allthing's stickers: larger Pepes, picked in the composer's Stickers tab
@@ -100,7 +101,7 @@ test.describe("in the composer", () => {
     await search.press("Enter");
     await expect(picker).toHaveCount(0);
     await expect(dialog.getByRole("textbox")).toBeFocused();
-    await expect(dialog.getByRole("textbox")).toHaveValue("gm");
+    await expectDraft(dialog.getByRole("textbox"), "gm");
     // Attached as the GIF would be, without its frame.
     const attached = dialog.locator(".compose-gif.compose-sticker img");
     await expect(attached).toHaveAttribute("alt", "Sticker: Pepe dances sadly");

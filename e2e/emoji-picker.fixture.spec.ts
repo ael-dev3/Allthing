@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expectDraft, selectIn, selectionIn } from "./helpers/composer";
 
 /*
  * The composer's emoji picker: Allthing's Pepe pack, searched, picked into
@@ -106,10 +107,10 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await expect(picker).toHaveCount(0);
   await expect(button).toHaveAttribute("aria-expanded", "false");
   // In the text, spaced, with the caret after it.
-  await expect(text).toHaveValue("gm :pepe_heart_hug: ");
+  await expectDraft(text, "gm :pepe_heart_hug: ");
   await expect(text).toBeFocused();
   await page.keyboard.type("frens");
-  await expect(text).toHaveValue("gm :pepe_heart_hug: frens");
+  await expectDraft(text, "gm :pepe_heart_hug: frens");
   // The recently used come first; Shift+click keeps the picker open.
   await button.click();
   await expect(picker.getByRole("heading", { name: "Recently used" })).toBeVisible();
@@ -118,7 +119,7 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await expect(recent.first()).toHaveAccessibleName("Pepe hugs a big heart");
   await picker.getByRole("button", { name: "Pepe dances on the spot", exact: true }).first().click({ modifiers: ["Shift"] });
   await expect(picker).toBeVisible();
-  await expect(text).toHaveValue("gm :pepe_heart_hug: frens :pepe_pls: ");
+  await expectDraft(text, "gm :pepe_heart_hug: frens :pepe_pls: ");
   // A search hides the recently used.
   await search.fill("no");
   await expect(picker.locator(".emoji-recent")).toBeHidden();
@@ -127,16 +128,16 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await tiles.first().click();
   await expect(picker).toHaveCount(0);
   await expect(text).toBeFocused();
-  await expect(text).toHaveValue("gm :pepe_heart_hug: frens :pepe_pls: :pepe_no: ");
+  await expectDraft(text, "gm :pepe_heart_hug: frens :pepe_pls: :pepe_no: ");
   // In place of a selection, in the middle of the text.
   await text.fill("say no to that");
-  await text.evaluate((area: HTMLTextAreaElement) => area.setSelectionRange(4, 6));
+  await selectIn(text, 4, 6);
   await button.click();
   await expect(picker.locator(".emoji-recent .emoji-tile")).toHaveCount(3);
   await expect(picker.locator(".emoji-recent .emoji-tile").first()).toHaveAccessibleName("Pepe holds up a NO sign");
   await picker.locator(".emoji-recent .emoji-tile").first().click();
-  await expect(text).toHaveValue("say :pepe_no: to that");
-  await expect.poll(() => text.evaluate((area: HTMLTextAreaElement) => [area.selectionStart, area.selectionEnd])).toEqual([13, 13]);
+  await expectDraft(text, "say :pepe_no: to that");
+  await expect.poll(() => selectionIn(text)).toEqual([13, 13]);
   // Kept between visits.
   expect(await page.evaluate(() => localStorage.getItem("allthing.emoji"))).toBe("pepe_no pepe_pls pepe_heart_hug");
 });
@@ -255,7 +256,7 @@ test("at 390, the picker fits, and a tap leaves it open for another", async ({ b
   await tiles.nth(0).tap();
   await expect(picker).toBeVisible();
   await tiles.nth(1).tap();
-  await expect(text).toHaveValue(":pepe_no: :pepe_smug: ");
+  await expectDraft(text, ":pepe_no: :pepe_smug: ");
   await expect(picker).toBeVisible();
   // Seven columns at least, inside the screen, and no sideways scroll.
   const box = await picker.boundingBox();

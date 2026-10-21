@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 import { approvedKey, signIn } from "./helpers/farcaster";
 
 /*
@@ -141,7 +142,7 @@ for (const width of [1280, 390]) {
     const fetched = parts().length;
     await page.keyboard.press("Escape");
     await (phone ? cast.tap() : cast.click());
-    await expect(composer.getByRole("textbox")).toHaveValue("gm");
+    await expectDraft(composer.getByRole("textbox"), "gm");
     await expect(post).toBeVisible();
     expect(parts()).toHaveLength(fetched);
     expect(errors).toEqual([]);
@@ -159,7 +160,7 @@ test("the first time, the composer's text box takes typing while the rest of it 
   const composer = page.getByRole("dialog", { name: "New cast" });
   await expect(composer.getByRole("textbox")).toBeFocused();
   await page.keyboard.type("hello there");
-  await expect(composer.getByRole("textbox")).toHaveValue("hello there");
+  await expectDraft(composer.getByRole("textbox"), "hello there");
   // The bar says it's coming, as tall as the bar it makes way for.
   const bar = composer.locator(".compose-foot");
   await expect(bar).toContainText("Loading…");
@@ -169,7 +170,7 @@ test("the first time, the composer's text box takes typing while the rest of it 
   await expect(composer.getByRole("button", { name: "Post in Farcaster" })).toBeVisible();
   await expect(bar).not.toContainText("Loading…");
   expect(Math.abs((await bar.boundingBox())!.height - pending)).toBeLessThanOrEqual(2);
-  await expect(composer.getByRole("textbox")).toHaveValue("hello there");
+  await expectDraft(composer.getByRole("textbox"), "hello there");
 });
 
 test("a composer whose code can't be fetched says so, keeping the draft, and doesn't reload by itself", async ({ page }) => {
@@ -182,7 +183,7 @@ test("a composer whose code can't be fetched says so, keeping the draft, and doe
   const composer = page.getByRole("dialog", { name: "New cast" });
   await page.keyboard.type("keep me");
   await expect(composer.getByRole("alert")).toHaveText("This part of Allthing couldn't load. Reload");
-  await expect(composer.getByRole("textbox")).toHaveValue("keep me");
+  await expectDraft(composer.getByRole("textbox"), "keep me");
   expect(loads).toBe(1);
 });
 

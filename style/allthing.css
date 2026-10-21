@@ -4220,9 +4220,14 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
+/* The composer's text box (components/editor.rs): editable text whose
+   newlines are line breaks, with the pack's emoji drawn as they're typed. */
 .compose-text {
+  box-sizing: border-box;
   width: 100%;
   min-height: 110px;
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
   resize: vertical;
   font: 16px/1.45 var(--font-ui);
   color: var(--ink);
@@ -4230,6 +4235,25 @@ p.jumbo .emoji img {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-sm);
   background: var(--paper-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+/* Its placeholder, while it holds nothing. */
+.compose-text:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+/* An emoji as it is in a cast's text, a little smaller, so a line of them
+   keeps the box's line height. */
+.compose-text img.emoji {
+  height: 1.4em;
+  width: auto;
+  margin: -0.1em 0.05em;
+  vertical-align: -0.3em;
 }
 
 /* Two lines while a picker is open below it. */

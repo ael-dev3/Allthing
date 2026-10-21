@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 import { signIn } from "./helpers/farcaster";
 
 /*
@@ -110,12 +111,12 @@ test("signed out, every write goes to the Farcaster app, with a code for the rea
   await expect(dialog.getByRole("img", { name: "QR code that opens it in the Farcaster app" })).toBeVisible();
   // Escape goes back to the draft; Done is done with it.
   await page.keyboard.press("Escape");
-  await expect(composer.getByRole("textbox")).toHaveValue("gm & hello");
+  await expectDraft(composer.getByRole("textbox"), "gm & hello");
   await composer.getByRole("button", { name: "Post in Farcaster" }).click();
   await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("button", { name: "Done" }).click();
   await expect(composer).toHaveCount(0);
   await page.getByRole("button", { name: "Write a cast" }).click();
-  await expect(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox")).toHaveValue("");
+  await expectDraft(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox"), "");
   await page.keyboard.press("Escape");
 
   // A reply and a quote, under the post.

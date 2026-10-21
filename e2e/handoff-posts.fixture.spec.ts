@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 import { signIn } from "./helpers/farcaster";
 
 /*
@@ -137,7 +138,7 @@ test("a cast and a quote show above the feed at once, then as posted; closed uns
   await expect(outgoing(page)).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(outgoing(page)).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox")).toHaveValue("gm everyone");
+  await expectDraft(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox"), "gm everyone");
   // Sent: it shows above the feed, then as posted.
   await page.getByRole("dialog", { name: "New cast" }).getByRole("button", { name: "Post in Farcaster" }).click();
   await page.getByRole("dialog", { name: "Post in Farcaster" }).getByRole("button", { name: "Done" }).click();
@@ -199,7 +200,7 @@ test("not posted in time, it goes, and the draft is back in the composer", async
   await expect(outgoing(page)).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".post .stat-replies")).toContainText("1");
   await page.locator(".post").getByRole("button", { name: "Reply to @alice" }).click();
-  await expect(page.getByRole("dialog", { name: "Reply" }).getByRole("textbox")).toHaveValue("never sent");
+  await expectDraft(page.getByRole("dialog", { name: "Reply" }).getByRole("textbox"), "never sent");
 });
 
 test("signed out, a draft handed off shows nothing and asks the node nothing", async ({ page }) => {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 
 /*
  * The composer and its GIF picker. KLIPY is a stand-in (no key is in the
@@ -177,7 +178,7 @@ test("a cast with a GIF: trending, a search, more, a pick, and the hand-off", as
   // The draft went with it.
   await expect(dialog).toHaveCount(0);
   await write.click();
-  await expect(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox")).toHaveValue("");
+  await expectDraft(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox"), "");
   // The key was read once, ahead of the first click.
   expect(calls.key).toBe(1);
 });
@@ -285,7 +286,7 @@ test("Escape closes the picker, then the composer, which keeps its draft", async
   await expect(dialog).toHaveCount(0);
   await expect(write).toBeFocused();
   await write.click();
-  await expect(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox")).toHaveValue("Draft");
+  await expectDraft(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox"), "Draft");
   // Trending again, from what this visit kept.
   await page.getByRole("button", { name: "Add a GIF" }).click();
   await expect(page.locator(".gif-tile:not(.placeholder)")).toHaveCount(24);
