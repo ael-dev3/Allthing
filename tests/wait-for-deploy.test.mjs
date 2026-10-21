@@ -73,7 +73,9 @@ for (const bodyStarted of [false, true]) {
       if (bodyStarted) { res.writeHead(200); res.write('{"commit":'); }
     });
     const started = performance.now();
-    await assert.rejects(waitForDeploy(url, expected, fast), /was not live within 0\.2s/);
+    // Room for several 40 ms requests even when a busy runner is slow to
+    // make the first: within 0.2s, it sometimes made only one.
+    await assert.rejects(waitForDeploy(url, expected, { ...fast, timeoutMs: 600 }), /was not live within 0\.6s/);
     assert.ok(reads >= 2, "a stalled request must leave room to retry");
     assert.ok(performance.now() - started < 1500);
   });
