@@ -118,6 +118,32 @@ pub fn scheduled_href() -> String {
     href("/scheduled")
 }
 
+/// The reader's Direct Casts: their conversations, and one open
+/// (`?c=<conversation id>`, or `?g=<group id>`), or a new message being
+/// written (`?new=1`).
+#[cfg(not(feature = "static-host"))]
+pub fn messages_href() -> String {
+    href("/messages")
+}
+
+/// One of the reader's conversations, open on the Messages page.
+#[cfg(not(feature = "static-host"))]
+pub fn conversation_href(conversation_id: &str) -> String {
+    with_query(&messages_href(), &[("c", Some(conversation_id.to_owned()))])
+}
+
+/// One of the reader's group chats, open on the Messages page.
+#[cfg(not(feature = "static-host"))]
+pub fn group_href(group_id: &str) -> String {
+    with_query(&messages_href(), &[("g", Some(group_id.to_owned()))])
+}
+
+/// The Messages page, writing a new message.
+#[cfg(not(feature = "static-host"))]
+pub fn new_message_href() -> String {
+    with_query(&messages_href(), &[("new", Some("1".to_owned()))])
+}
+
 /// A moment in the reader's own time zone, as scheduled casts show it:
 /// "Wed, 21 Oct, 09:00".
 #[cfg(not(feature = "static-host"))]

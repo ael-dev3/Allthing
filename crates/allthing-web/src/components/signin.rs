@@ -537,8 +537,10 @@ pub fn Account() -> impl IntoView {
                             <span class="muted">"@"{username.clone()}</span>
                         </p>
                         <a class="account-link" href=profile.clone()>"Your profile"</a>
+                        <crate::components::dc_key::MessagesMenuItem/>
                         <crate::components::writer::ScheduledMenuItem/>
                         <crate::components::writer::WriterMenuItem/>
+                        <crate::components::dc_key::DcKeyMenuItem/>
                         <a class="account-link account-source" href=SOURCE_URL target="_blank" rel="noopener">
                             <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d=GITHUB_MARK/></svg>
                             "Allthing on GitHub"

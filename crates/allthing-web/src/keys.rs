@@ -6,6 +6,11 @@
 //! that a script could read. It signs the reader's messages
 //! (`allthing_core::message`); its public half is what the reader approves
 //! in the Farcaster app. Not in the static copy, which has no sign-in.
+//!
+//! It also keeps the reader's Farcaster API key for Direct Casts
+//! (`allthing_core::dc`), in a database of its own, `allthing-dc`, one per
+//! signed-in account ([`dc_key`]). That key is a bearer token, a string the
+//! page must read to send it, so it is kept as one.
 
 use std::cell::RefCell;
 
@@ -16,8 +21,17 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, IdbDatabase, IdbRequest, IdbTransactionMode};
 
-const DATABASE: &str = "allthing-keys";
-const STORE: &str = "keys";
+/// A database kept here, with its one store, keyed by fid.
+#[derive(Clone, Copy)]
+struct Database {
+    name: &'static str,
+    store: &'static str,
+}
+
+/// The reader's app keys.
+const APP_KEYS: Database = Database { name: "allthing-keys", store: "keys" };
+/// The reader's Farcaster API keys, for Direct Casts.
+const DC_KEYS: Database = Database { name: "allthing-dc", store: "keys" };
 /// The account a key made to sign in with is kept for, until the account
 /// that approves it is known.
 pub const SIGNING_IN: u64 = 0;
@@ -66,7 +80,8 @@ pub enum KeyError {
 }
 
 thread_local! {
-    static OPENED: RefCell<Option<IdbDatabase>> = const { RefCell::new(None) };
+    /// The databases opened this visit, by name.
+    static OPENED: RefCell<Vec<(&'static str, IdbDatabase)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A new key for `fid`, kept by nothing yet.
@@ -95,7 +110,8 @@ pub async fn sign(stored: &Stored, bytes: &[u8]) -> Result<[u8; 64], KeyError> {
 
 /// The key this browser keeps for `fid`, if any.
 pub async fn load(fid: u64) -> Result<Option<Stored>, KeyError> {
-    let found = request(IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64))).await?;
+    let found =
+        request(APP_KEYS, IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64))).await?;
     if found.is_undefined() || found.is_null() {
         return Ok(None);
     }
@@ -127,12 +143,37 @@ pub async fn save(stored: &Stored) -> Result<(), KeyError> {
     if let Some(at) = stored.approved_at {
         set("approvedAt", &JsValue::from_f64(at));
     }
-    request(IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
+    request(APP_KEYS, IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
 }
 
 /// Forget the key kept for `fid`.
 pub async fn remove(fid: u64) -> Result<(), KeyError> {
-    request(IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64))).await.map(|_| ())
+    request(APP_KEYS, IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64)))
+        .await
+        .map(|_| ())
+}
+
+/// The Farcaster API key this browser keeps for `fid`'s Direct Casts, if
+/// any.
+pub async fn dc_key(fid: u64) -> Result<Option<String>, KeyError> {
+    let found =
+        request(DC_KEYS, IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64))).await?;
+    Ok(field(&found, "key").as_string().filter(|key| !key.is_empty()))
+}
+
+/// Keep `key` as `fid`'s Farcaster API key, in place of any kept before.
+pub async fn keep_dc_key(fid: u64, key: &str) -> Result<(), KeyError> {
+    let record = Object::new();
+    let _ = Reflect::set(&record, &JsValue::from_str("fid"), &JsValue::from_f64(fid as f64));
+    let _ = Reflect::set(&record, &JsValue::from_str("key"), &JsValue::from_str(key));
+    request(DC_KEYS, IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
+}
+
+/// Forget `fid`'s Farcaster API key.
+pub async fn forget_dc_key(fid: u64) -> Result<(), KeyError> {
+    request(DC_KEYS, IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64)))
+        .await
+        .map(|_| ())
 }
 
 fn subtle() -> Option<web_sys::SubtleCrypto> {
@@ -153,24 +194,26 @@ fn failed(error: JsValue) -> KeyError {
     KeyError::Failed(field(&error, "message").as_string().unwrap_or_else(|| "WebCrypto failed".into()))
 }
 
-/// One request on the key store, in a transaction of its own.
+/// One request on `kept`'s store, in a transaction of its own.
 async fn request(
+    kept: Database,
     mode: IdbTransactionMode,
     make: impl FnOnce(&web_sys::IdbObjectStore) -> Result<IdbRequest, JsValue>,
 ) -> Result<JsValue, KeyError> {
-    let database = database().await?;
-    let transaction = database.transaction_with_str_and_mode(STORE, mode).map_err(failed)?;
-    let store = transaction.object_store(STORE).map_err(failed)?;
+    let database = database(kept).await?;
+    let transaction = database.transaction_with_str_and_mode(kept.store, mode).map_err(failed)?;
+    let store = transaction.object_store(kept.store).map_err(failed)?;
     finished(&make(&store).map_err(failed)?).await
 }
 
-/// The key database, opened once per page (and made on the first visit).
-async fn database() -> Result<IdbDatabase, KeyError> {
-    if let Some(database) = OPENED.with(|o| o.borrow().clone()) {
+/// A database, opened once per page (and made on the first visit).
+async fn database(kept: Database) -> Result<IdbDatabase, KeyError> {
+    let opened = OPENED.with(|o| o.borrow().iter().find(|(name, _)| *name == kept.name).map(|(_, d)| d.clone()));
+    if let Some(database) = opened {
         return Ok(database);
     }
     let factory = web_sys::window().and_then(|w| w.indexed_db().ok().flatten()).ok_or(KeyError::Unsupported)?;
-    let opening = factory.open_with_u32(DATABASE, 1).map_err(|_| KeyError::Unsupported)?;
+    let opening = factory.open_with_u32(kept.name, 1).map_err(|_| KeyError::Unsupported)?;
     let upgrade = opening.clone();
     let make_store = Closure::once_into_js(move || {
         let Ok(database) = upgrade.result().and_then(|r| r.dyn_into::<IdbDatabase>()) else {
@@ -178,11 +221,11 @@ async fn database() -> Result<IdbDatabase, KeyError> {
         };
         let parameters = web_sys::IdbObjectStoreParameters::new();
         parameters.set_key_path(&JsValue::from_str("fid"));
-        let _ = database.create_object_store_with_optional_parameters(STORE, &parameters);
+        let _ = database.create_object_store_with_optional_parameters(kept.store, &parameters);
     });
     opening.set_onupgradeneeded(Some(make_store.unchecked_ref()));
     let database: IdbDatabase = finished(&opening).await?.dyn_into().map_err(|_| KeyError::Unsupported)?;
-    OPENED.with(|o| *o.borrow_mut() = Some(database.clone()));
+    OPENED.with(|o| o.borrow_mut().push((kept.name, database.clone())));
     Ok(database)
 }
 

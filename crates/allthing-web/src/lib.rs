@@ -32,6 +32,7 @@ use crate::pages::channel::channel_page;
 use crate::pages::channels::channels_page;
 use crate::pages::dau::DauPage;
 use crate::pages::home::Home;
+use crate::pages::messages::MessagesPage;
 use crate::pages::post::post_page;
 use crate::pages::scheduled::ScheduledPage;
 use crate::pages::search::search_page;
@@ -65,6 +66,8 @@ fn App() -> impl IntoView {
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]
+    provide_context(components::dc_key::DcKey::new());
+    #[cfg(not(feature = "static-host"))]
     provide_context(components::compose::Composer::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::handoff::HandOff::new());
@@ -87,6 +90,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("/channels") view=|| split::page(channels_page())/>
                     <Route path=path!("/dau") view=DauPage/>
                     <Route path=path!("/scheduled") view=ScheduledPage/>
+                    <Route path=path!("/messages") view=MessagesPage/>
                     <Route path=path!("/search") view=|| split::page(search_page())/>
                 </Routes>
             </main>
