@@ -1021,10 +1021,11 @@ p.jumbo .emoji img {
   vertical-align: middle;
 }
 
-/* In a one-line excerpt, which clips what leaves its line, a little
-   smaller, so it shows whole. */
+/* In an excerpt that clips what leaves its lines (a one-line excerpt, the
+   media viewer's two-line caption), a little smaller, so it shows whole. */
 .suggestion-title .emoji img,
-.compose-excerpt .emoji img {
+.compose-excerpt .emoji img,
+.lb-text .emoji img {
   height: 1.4em;
   margin: -0.1em 0.05em;
   vertical-align: -0.3em;
@@ -1865,6 +1866,25 @@ p.jumbo .emoji img {
   font-size: 13.5px;
   text-align: center;
   padding: 0 16px;
+}
+
+/* Who posted it and the cast's words, two lines at most. */
+.lb-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.lb-author {
+  font-weight: 600;
+  color: #fff;
+}
+
+.lb-sep {
+  color: #b8b4d0;
 }
 
 .lb-counter {

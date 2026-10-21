@@ -226,7 +226,9 @@ test.describe("media", () => {
     await expect(page.getByRole("button", { name: /Close media viewer/ })).toBeFocused();
     const image = dialog.locator("img.lb-media");
     await expect(image).toHaveAttribute("alt", /^Image 1 of 2 posted by @/);
-    await expect(dialog.locator(".lb-alt")).toContainText("Image 1 of 2");
+    // The caption is who posted it and its words; the alt text is the image's.
+    await expect(dialog.locator(".lb-author")).toHaveText(/^@\S+$/);
+    await expect(dialog.locator(".lb-caption")).not.toContainText("Image 1 of 2");
     await expect(dialog.locator(".lb-counter")).toHaveText("1 of 2");
     await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     await shoot(page, "post-lightbox");
