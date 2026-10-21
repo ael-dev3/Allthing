@@ -457,6 +457,11 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
     }
     let window = web_sys::window().ok_or_else(|| Failure::Failed("no window".into()))?;
     let request = early_response(path).unwrap_or_else(|| window.fetch_with_str(path));
+    read_raw(request).await
+}
+
+/// The answer a request for an API path brings.
+async fn read_raw(request: js_sys::Promise) -> Result<Raw, Failure> {
     let response = JsFuture::from(request).await.map_err(|_| Failure::Failed(UNREACHABLE.into()))?;
     let response: web_sys::Response = response.dyn_into().map_err(|_| Failure::Failed("bad response".into()))?;
     let header = |name: &str| response.headers().get(name).ok().flatten();
@@ -469,6 +474,21 @@ async fn fetch_raw(path: &str) -> Result<Raw, Failure> {
         .as_string()
         .unwrap_or_default();
     Ok(Raw { at: js_sys::Date::now(), status: response.status(), body: text.into(), age, stale, retry_after })
+}
+
+/// Read `path` again from the Worker, past the browser's HTTP cache, and
+/// keep what comes: after the reader's write, this visit and the next page
+/// load have the new copy (the Worker's own was expired first). Its body,
+/// when it came.
+#[cfg(not(feature = "static-host"))]
+pub async fn reload(path: &str) -> Option<Rc<str>> {
+    let window = web_sys::window()?;
+    let init = web_sys::RequestInit::new();
+    init.set_cache(web_sys::RequestCache::Reload);
+    let raw = read_raw(window.fetch_with_str_and_init(path, &init)).await.ok()?;
+    let body = (raw.status == 200).then(|| raw.body.clone());
+    remember(path, raw, js_sys::Date::now());
+    body
 }
 
 /// POST `body` as JSON to a Worker endpoint and read its JSON answer. For

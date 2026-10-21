@@ -260,7 +260,7 @@ fn acting_stat(
     let key = hash.clone();
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
-    let shown = Memo::new(move |_| (n as i64 + writer.delta(&key, reaction)).max(0) as u64);
+    let shown = Memo::new(move |_| writer.shown_count(&key, reaction, n));
     let key = hash.clone();
     let pending = Memo::new(move |_| writer.pending_reaction(&key, reaction));
     let hands_off = Memo::new(move |_| writer.hands_off());
@@ -278,7 +278,7 @@ fn acting_stat(
                 aria-pressed=move || (!hands_off.get() || shows_mine.get()).then(|| mine.get().to_string())
                 aria-haspopup=move || hands_off.get().then_some("dialog")
                 aria-busy=move || busy.get().then_some("true")
-                on:click=move |_| writer.toggle(target, reaction, ask(mine.get_untracked()))
+                on:click=move |_| writer.toggle(target, reaction, ask(mine.get_untracked()), shown.get_untracked())
             >
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
             </button>

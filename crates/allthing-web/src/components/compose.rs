@@ -368,6 +368,8 @@ impl Composer {
                 let draft = self.draft();
                 let saved = self.saved(&draft).to_json();
                 let replaces = self.editing.get_untracked();
+                // What shows where it will be listed, once it goes out.
+                let shown = self.outgoing();
                 spawn_local(async move {
                     let fids = fids_of(&mention_names(&draft.text)).await;
                     let cast = draft.new_cast(|name| fids.get(name).copied());
@@ -382,7 +384,7 @@ impl Composer {
                             self.clear();
                             self.close();
                             if let Some(hash) = hash {
-                                writer.posted(&hash);
+                                writer.cast_posted(shown, hash);
                             }
                         }
                         Err(why) => self.error.set(Some(why)),

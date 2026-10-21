@@ -489,6 +489,81 @@ pub fn replies_path(hash: &str) -> String {
     format!("{API_PREFIX}/replies?hash={hash}")
 }
 
+/// `POST`: a write a signed-in reader just made from Allthing ([`Wrote`]),
+/// for the Worker to refresh the pages it changes.
+pub const REFRESH_PATH: &str = "/api/v1/refresh";
+
+/// A write a signed-in reader just made from Allthing with their key, as
+/// the Worker needs it to refresh the pages it changes: the reader's
+/// profile, which lists their casts; the cast they replied to, with its
+/// replies; the cast they liked or recasted, with its people; the post
+/// they wrote it on; the channel they cast in. The Worker trusts it only
+/// so far: it refreshes a profile only when it is the session's own.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wrote {
+    /// The reader's username, for a cast, a reply or a delete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// The cast a reply answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// The cast liked, recasted, or either taken back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reacted_to: Option<String>,
+    /// The post whose page the reader wrote it on: a reply to one of its
+    /// replies, or a like of one, shows there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    /// The channel a cast went to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+}
+
+impl Wrote {
+    /// The API paths whose pages it changes, as the app reads them, each
+    /// once: what the Worker refreshes, and the browser then reads again.
+    /// A hash that isn't one is left out.
+    pub fn paths(&self) -> Vec<String> {
+        let hash = |h: &Option<String>| h.as_deref().and_then(hash_from_param);
+        let mut paths = Vec::new();
+        if let Some(name) = self.username.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            paths.push(user_path(name));
+        }
+        if let Some(hash) = hash(&self.reply_to) {
+            paths.push(cast_path(&hash));
+            paths.push(replies_path(&hash));
+        }
+        if let Some(hash) = hash(&self.reacted_to) {
+            paths.push(cast_path(&hash));
+            paths.push(reactions_path(&hash, ReactionKind::Likes, REACTIONS_PREVIEW));
+            paths.push(reactions_path(&hash, ReactionKind::Recasts, REACTIONS_PREVIEW));
+        }
+        if let Some(hash) = hash(&self.page) {
+            paths.push(cast_path(&hash));
+        }
+        if let Some(id) = self.channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            paths.push(channel_path(id));
+        }
+        let mut seen = std::collections::HashSet::new();
+        paths.retain(|path| seen.insert(path.clone()));
+        paths
+    }
+
+    /// What of it names any of `due`: a refresh asked again for the pages
+    /// that didn't have the write yet.
+    pub fn only(&self, due: &[String]) -> Wrote {
+        let names = |part: Wrote| part.paths().iter().any(|path| due.contains(path));
+        let kept = |value: &Option<String>, part: Wrote| value.clone().filter(|_| names(part));
+        Wrote {
+            username: kept(&self.username, Wrote { username: self.username.clone(), ..Wrote::default() }),
+            reply_to: kept(&self.reply_to, Wrote { reply_to: self.reply_to.clone(), ..Wrote::default() }),
+            reacted_to: kept(&self.reacted_to, Wrote { reacted_to: self.reacted_to.clone(), ..Wrote::default() }),
+            page: kept(&self.page, Wrote { page: self.page.clone(), ..Wrote::default() }),
+            channel: kept(&self.channel, Wrote { channel: self.channel.clone(), ..Wrote::default() }),
+        }
+    }
+}
+
 /// How long each endpoint's edge-cached payload is served, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicy {
@@ -941,5 +1016,64 @@ mod tests {
         // What /api/v1/replies carries: the link verdicts, and the post's age.
         assert_eq!(preview.notes, Annotations { links: post.notes.links.clone(), ..Default::default() });
         assert_eq!(preview.meta, post.meta);
+    }
+
+    #[test]
+    fn a_write_names_the_pages_it_changes() {
+        let hash = format!("0x{}", "ab".repeat(20));
+        let page = format!("0x{}", "cd".repeat(20));
+        let cast = Wrote { username: Some("ael".into()), channel: Some("books".into()), ..Wrote::default() };
+        assert_eq!(cast.paths(), vec!["/api/v1/user?name=ael".to_owned(), "/api/v1/channel?id=books".to_owned()]);
+        // A reply to a reply, on its post's page: the page is read again too.
+        let reply = Wrote {
+            username: Some("ael".into()),
+            reply_to: Some(hash.to_uppercase().replace("0X", "0x")),
+            page: Some(page.clone()),
+            ..Wrote::default()
+        };
+        assert_eq!(
+            reply.paths(),
+            vec![
+                "/api/v1/user?name=ael".to_owned(),
+                format!("/api/v1/cast?hash={hash}"),
+                format!("/api/v1/replies?hash={hash}"),
+                format!("/api/v1/cast?hash={page}"),
+            ]
+        );
+        // A like on the cast's own page names that page once.
+        let like = Wrote { reacted_to: Some(hash.clone()), page: Some(hash.clone()), ..Wrote::default() };
+        assert_eq!(
+            like.paths(),
+            vec![
+                format!("/api/v1/cast?hash={hash}"),
+                format!("/api/v1/reactions?hash={hash}&type=likes&limit=10"),
+                format!("/api/v1/reactions?hash={hash}&type=recasts&limit=10"),
+            ]
+        );
+        // What isn't a hash or a name is left out.
+        let junk = Wrote { username: Some(" ".into()), reply_to: Some("nope".into()), ..Wrote::default() };
+        assert!(junk.paths().is_empty());
+        let only = Wrote { reacted_to: Some(hash.clone()), ..Wrote::default() };
+        assert_eq!(serde_json::to_string(&only).unwrap(), format!("{{\"reacted_to\":\"{hash}\"}}"));
+    }
+
+    #[test]
+    fn a_write_asked_again_names_only_the_pages_without_it() {
+        let hash = format!("0x{}", "ab".repeat(20));
+        let page = format!("0x{}", "cd".repeat(20));
+        let reply = Wrote {
+            username: Some("ael".into()),
+            reply_to: Some(hash.clone()),
+            page: Some(page.clone()),
+            channel: Some("books".into()),
+            ..Wrote::default()
+        };
+        let due = vec![format!("/api/v1/replies?hash={hash}"), "/api/v1/channel?id=books".to_owned()];
+        assert_eq!(
+            reply.only(&due),
+            Wrote { reply_to: Some(hash.clone()), channel: Some("books".into()), ..Wrote::default() }
+        );
+        assert_eq!(reply.only(&[]), Wrote::default());
+        assert_eq!(reply.only(&reply.paths()), reply);
     }
 }

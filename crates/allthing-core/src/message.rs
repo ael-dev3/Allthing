@@ -59,7 +59,7 @@ impl CastId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Reaction {
     Like = 1,
     Recast = 2,
@@ -474,7 +474,7 @@ pub fn latest_casts(status: u16, body: &str) -> Option<Vec<Posted>> {
 
 /// What went to the Farcaster app to be posted, by what finds it among the
 /// reader's casts there. Hashes are `0x…`, lowercase.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Sent {
     /// A cast that isn't a reply or a quote.
     Cast { text: String },

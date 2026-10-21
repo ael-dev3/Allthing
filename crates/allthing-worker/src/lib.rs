@@ -6,7 +6,8 @@
 //! their likes and recasts with. The Worker posts nothing of its own and
 //! never has a reader's key: it only keeps the casts a reader's browser
 //! signed for later (`scheduled_casts`), and gives them to the node at
-//! their time.
+//! their time. After a reader's write, the pages it changes are rebuilt on
+//! their next read (`refresh`).
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; `/api/*` runs here, and
@@ -21,12 +22,13 @@ mod auth;
 mod cache;
 mod host;
 mod index;
+mod refresh;
 mod scheduled_casts;
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use allthing_core::api::{API_PREFIX, ApiError};
+use allthing_core::api::{API_PREFIX, ApiError, REFRESH_PATH};
 use allthing_core::app_key::writes_path;
 use allthing_core::compose::gif_key_path;
 use allthing_core::index::IndexerState;
@@ -96,6 +98,16 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             return Ok(limited);
         }
         return scheduled_casts::handle(rest, req, &env, (Date::now().as_millis() / 1000) as i64).await;
+    }
+    // A signed-in reader's write, for the pages it changes to be rebuilt:
+    // POST, never cached, nothing upstream.
+    if url.path() == REFRESH_PATH {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        let host = WorkerHost::new(Lifetime::Request(ctx), None, None, node_stand_in(&env));
+        let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
+        return refresh::handle(req, &env, &url, &inv, (Date::now().as_millis() / 1000) as i64).await;
     }
     if !matches!(req.method(), Method::Get | Method::Head) {
         return error(405, "Allthing's API is read-only", None);
