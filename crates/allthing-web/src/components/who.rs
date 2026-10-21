@@ -28,6 +28,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::{Avatar, TimeAgo};
 use crate::components::profile_card::ProfileHover;
+use crate::components::text::ExcerptText;
 use crate::util::{cast_href, user_href};
 
 /// The open full who-list, if any: (cast hash, which reactions).
@@ -328,7 +329,7 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                                             <a class="reply-time muted small" href=post.clone()><TimeAgo ts=reply.ts/></a>
                                         </span>
                                         <a class="reply-item" href=post>
-                                            {(!text.is_empty()).then(|| view! { <span class="reply-text">{truncate_title(text, 220)}</span> })}
+                                            {(!text.is_empty()).then(|| view! { <span class="reply-text"><ExcerptText text=truncate_title(text, 220)/></span> })}
                                             {label.map(|label| view! { <span class="reply-label muted small">{label}</span> })}
                                             {(!thumbs.is_empty()).then(|| view! {
                                                 <span class="reply-thumbs">

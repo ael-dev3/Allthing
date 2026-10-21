@@ -56,6 +56,7 @@ mod with_worker {
     use crate::api;
     use crate::components::compose::{Composer, use_composer};
     use crate::components::signin::use_session;
+    use crate::components::text::ExcerptText;
     use crate::components::writer::{Writer, use_writer};
     use crate::util::{cast_href, local_time, now};
 
@@ -174,7 +175,7 @@ mod with_worker {
                     <time datetime=iso_utc(cast.at)>{when}</time>
                     {saved.context().map(|context| view! { <span class="scheduled-context muted">{context}</span> })}
                 </p>
-                {(!text.is_empty()).then(|| view! { <p class="scheduled-text">{text}</p> })}
+                {(!text.is_empty()).then(|| view! { <p class="scheduled-text"><ExcerptText text/></p> })}
                 {saved.gif.map(|gif| view! {
                     <img class="scheduled-gif" src=gif.tile alt=gif.title width=gif.width height=gif.height loading="lazy"/>
                 })}

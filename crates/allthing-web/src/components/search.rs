@@ -12,6 +12,7 @@ use leptos_router::hooks::use_location;
 
 use crate::api;
 use crate::components::chips::Avatar;
+use crate::components::text::ExcerptText;
 use crate::util::{cast_href, channel_href, href, use_go, use_query_param, user_href, with_query};
 
 /// Typing pauses this long before suggestions are looked up.
@@ -265,7 +266,13 @@ pub fn SearchBox() -> impl IntoView {
                             >
                                 {(kind != Kind::All).then(|| view! { <Avatar url=s.image.clone() size=28/> })}
                                 <span class="suggestion-text">
-                                    <span class="suggestion-title">{s.title.clone()}</span>
+                                    <span class="suggestion-title">
+                                        {if kind == Kind::Post {
+                                            view! { <ExcerptText text=s.title.clone()/> }.into_any()
+                                        } else {
+                                            s.title.clone().into_any()
+                                        }}
+                                    </span>
                                     {(!s.detail.is_empty()).then(|| view! { <span class="suggestion-detail">{s.detail.clone()}</span> })}
                                 </span>
                             </div>

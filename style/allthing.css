@@ -915,6 +915,15 @@ p.jumbo .emoji img {
   vertical-align: middle;
 }
 
+/* In a one-line excerpt, which clips what leaves its line, a little
+   smaller, so it shows whole. */
+.suggestion-title .emoji img,
+.compose-excerpt .emoji img {
+  height: 1.4em;
+  margin: -0.1em 0.05em;
+  vertical-align: -0.3em;
+}
+
 .channel-name {
   color: var(--cyan);
   font-weight: 500;
