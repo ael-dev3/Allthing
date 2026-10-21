@@ -11,8 +11,81 @@ Navigation should feel instant: a post opens as soon as it is clicked, the feed 
 | Largest Contentful Paint, home, cold load | **< 1.5 s** (median of 3) | `e2e/perf.spec.ts` (the later of the LCP entry and the first cast card) |
 | Interaction to Next Paint (slowest interaction) | **< 100 ms** | `e2e/perf.spec.ts` (Event Timing entries with an `interactionId`) |
 | API response from the edge cache | < 50 ms server time | the `Server-Timing` header of `x-allthing-cache: fresh` responses |
+| Smoothness: taps, navigations and presses at 390 and 1280 px | INP < 100 ms, no long task, no blank frame, layout shift < 0.01, Back within 2 px, a press shown in its first frame | `e2e/smoothness.fixture.spec.ts` ([Smoothness](#smoothness)) |
 
 The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after every push to `main` (and on demand through `workflow_dispatch`). Before measuring, it waits for `/version` to report the checked-out commit (the triggering commit for a push, or current `main` for a manual run), or a later commit on `main` that includes it. Workers Builds skips a commit that a newer push supersedes: of five merges made within 33 seconds on 19 October 2026 it built the first and the last, so a commit can be live only as part of a later one, which the job tells from the repository's history. It polls every 10 seconds for at most 30 minutes, aborts an individual version read after five seconds, and fails without benchmarking if that release never arrives. Workers Builds takes 6 to 16 minutes from a push until the commit is live, and about 25 when a second merge queues behind the first: the five-minute wait it replaced gave up 21 seconds before #144 went live on 19 October 2026, and from its introduction (#133) the job failed on every push to `main` it ran for, without measuring anything. This keeps a pending deployment from passing the budget with the previous release's results.
+
+## Smoothness
+
+How the app answers a reader's taps, clicks and scrolls: `e2e/smoothness.fixture.spec.ts`, which CI's browser job runs on every pull request and push to `main`, on the local build with the Worker's API, the node and the images as stand-ins (the API answers after 60 to 180 ms). A signed-in reader with an approved key, on a phone (390 × 844, touch, the CPU slowed 2×) and on a computer (1280 × 900, a mouse):
+
+- taps the sort tabs: new, top, hot;
+- opens a likes count (a tap previews who liked; a click opens the whole list);
+- likes a cast, unlikes it and likes it again;
+- opens the composer;
+- opens a cast from the feed, and a profile, from three places in the feed, and goes Back each time (on the phone a tap on a name opens the profile card, and its "View profile" the profile);
+- goes Back to a cast deep in the feed, in its second server page;
+- scrolls the feed 3,000 px;
+- presses nine controls (a sort tab, the time range, Cast, a like, a recast, a likes count, a replies count, the account's picture, an author's name) and lets go away from them.
+
+A finger stays down 80 ms, and the mouse rests on its target for 250 ms before it clicks, as readers' do. Each interaction runs three times, with the garbage of what came before collected first, and twice more when the median is within a fifth of a timed budget (INP, long tasks), so that five runs, not one noisy one, decide a close call. The budgets hold for the median:
+
+| Check | Budget | How |
+|---|---|---|
+| Interaction to Next Paint | < 100 ms | the interaction's slowest Event Timing entry |
+| Long tasks | none | no `longtask` or `long-animation-frame` entry (> 50 ms) overlapping the interaction, from its input until its handlers are done |
+| Layout shift on navigations | < 0.01 | every `layout-shift` after the navigation's first frame, whether the browser counts it as answering input or not; on a sort tab, whose new order is its answer, only those CLS counts |
+| Blank frames | none | each frame of a navigation, sampled by `requestAnimationFrame`: whether any of 15 points on the page's main content shows something readable (at least half opaque) or a placeholder, or something over it, and whether the page is white |
+| Back | the reader's card within 2 px | the card at the line `nav.rs` reads the reader's place at, before and after |
+| Press feedback | shown in the first frame, nothing moved | the computed transform, scale and opacity of the control and what it holds, in the first frame after `pointerdown`, and its laid-out box |
+
+It also reports, with no budget yet: when a navigation first shows the next page, the longest task and frame in the second after an interaction, frames that show placeholders, and the scroll's frame intervals. `SMOOTH_OUT=numbers.json` writes every run's numbers, and `SMOOTH_TRACE=trace.zip` records a Playwright trace of the phone's run.
+
+A budget the app doesn't meet yet runs as an expected failure (`NOT_YET` in the spec, with what it measured), so CI stays green and the change that meets it takes its line out. One it misses or only just meets, by less than a busy machine's noise, would pass now and then as an expected failure and fail CI, so it doesn't run until a change meets it with room to spare (`TOO_CLOSE`).
+
+**Why the phone's CPU is slowed 2×.** Slowed, it stands for a phone slower than a CI runner, as most readers' are; but a budget only means something if CI can tell a slower app from a busy runner. Calibrated on 21 October 2026 on a 4-core machine shared with other builds and browsers (load average 2 to 11), each figure the median of three, from two to six runs:
+
+| Phone CPU | Sort tab | Likes popover | Like | Composer | Open a cast | Open a profile |
+|---|---|---|---|---|---|---|
+| 1× | 32–56 ms | 40–112 ms | 40–56 ms | 48–64 ms | 96–104 ms | 80–128 ms |
+| 2× | 40–56 ms | 64–88 ms | 48–64 ms | 48–88 ms | 136–216 ms | 128–232 ms |
+| 3× | 48–72 ms | 96 ms | 48–64 ms | 80–88 ms | 184–192 ms | 176–256 ms |
+| 4× | 80 ms | 96–160 ms | 64–96 ms | 88 ms | 216–264 ms | 304–312 ms |
+
+At 2× what the app answers in time stays under the budget even on a busy machine (40 to 88 ms), and what it doesn't (opening a cast or a profile) misses it by far. At 3× and 4× (4× is the speed report's phone) the likes popover and the composer reach 80 to 160 ms, too close to the budget, or over it, to tell a regression from a busy machine. CI's runners are about as fast as that machine: `e2e/perf.spec.ts`'s interactions on production measured 56 to 112 ms on four of them on 21 October, and 48 to 56 ms on it when quiet (136 ms under load).
+
+**Before, 21 October 2026** (main at 32407b7, three runs, and at 87beef5, one; each the median of three, or of five where close to a budget):
+
+| Phone, 390 px, CPU 2× | INP | Long task | Blank frames | Next page shown | Back |
+|---|---|---|---|---|---|
+| Sort tab | 40–56 ms | none | 4–6 | | |
+| Likes popover | 64–88 ms | none | 0 | | |
+| Like | 48–64 ms | none | 0 | | |
+| Composer | 48–88 ms | none | 0 | | |
+| Open a cast | 136–216 ms | 93–168 ms | 5–6 | 190–258 ms | |
+| Back from it | | 110–132 ms in the next second | 2 | 245–392 ms | card within 1–2 px |
+| Open a profile | 184–232 ms | 136–206 ms | 4–6 | 230–283 ms | |
+| Back from it | | 178–260 ms | 2 | 363–409 ms | within 1 px |
+| Back deep in the feed | | 166–245 ms | 2 | 276–455 ms | within 0–1 px |
+
+| Computer, 1280 px | INP | Long task | Blank frames | Next page shown | Back |
+|---|---|---|---|---|---|
+| Sort tab | 24–32 ms | none | 4–8 | | |
+| Likes list | 40–48 ms | none | 0 | | |
+| Like | 24–32 ms | none | 0 | | |
+| Composer | 48–56 ms | none | 0 | | |
+| Open a cast | 64–96 ms | 0–81 ms | 5 | 109–139 ms | |
+| Back from it | | none in the next second | 6–7 | 146–179 ms | card within 1–2 px |
+| Open a profile | 64–96 ms | 50–72 ms | 4–6 | 106–141 ms | |
+| Back from it | | 0–55 ms | 5–7 | 145–194 ms | within 1–2 px |
+| Back deep in the feed | | none | 5–7 | 177–190 ms | within 1–2 px |
+
+- **No control answers a press in its first frame**, of the nine, at either width: a touch screen never shows `:active` there, and where a control has a press style (Cast, the like icon) it eases in over 200 to 300 ms, so its first frame is unchanged.
+- **Every navigation has frames with nothing to read**: the page drawn anew fades in from transparent (`.page > *`), and a list's cards rise in from transparent, one after another.
+- **Opening a cast or a profile draws the page in the tap's own task**: 93 to 206 ms on the phone, most of its INP, and 0 to 81 ms on a computer, which sometimes takes it over the budget there too.
+- **Back draws the feed again all at once**, its 25 to 75 cards in one task: 110 to 260 ms on the phone, and the feed shows 245 to 455 ms after Back.
+- **Nothing moves after a navigation's first frame, and Back puts the reader's place back** within 2 px, even after the feed's second server page.
+- **Scrolling** keeps its frames: 16.7 to 16.8 ms at the 95th percentile, at most 7 of 166 frames dropped.
 
 ## How the app meets it
 
