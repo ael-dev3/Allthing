@@ -2,13 +2,25 @@
 //! Allthing realtime: chat rooms + E2E-encrypted DMs (server stores ciphertext only).
 use spacetimedb::{Identity, ReducerContext, Table, TimeDuration, Timestamp, ViewContext, view};
 
+mod attest_key;
+pub use attest_key::ATTEST_PUBLIC_KEY;
+
 const MAX_MSG: usize = 4000;
 const MAX_CT: usize = 16 * 1024;
 const MAX_ROOM_NAME: usize = 64;
 const MIN_INTERVAL_US: i64 = 250_000; // max ~4 sends/sec per identity
 const TYPING_TTL_US: i64 = 6_000_000;
+/// The longest an attestation may be valid for, from now. The Worker signs
+/// them for 10 minutes; a longer one is refused, so a leaked attestation is
+/// worth little.
+pub const ATTEST_MAX_TTL_SECS: u64 = 3600;
+/// What an attestation signs, so its signature can't stand for anything else
+/// the key might ever sign. Allthing's Worker builds the same string
+/// (`allthing_core::stdb::attestation_message`).
+pub const ATTEST_CONTEXT: &str = "allthing-spacetimedb-fid-v1";
 
-/// SpacetimeDB identity -> Farcaster FID. `verified` false until attestation lands (TODO).
+/// SpacetimeDB identity -> Farcaster FID. `verified` once `verify_fid` checked
+/// Allthing's attestation that this identity signed in as `fid`.
 #[spacetimedb::table(accessor = user, public)]
 pub struct User {
     #[primary_key]
@@ -115,6 +127,17 @@ fn me(ctx: &ReducerContext) -> Result<User, String> {
     ctx.db.user().identity().find(ctx.sender()).ok_or_else(|| "register first".into())
 }
 
+/// The caller, allowed to speak: once the attestation key is pinned, only a
+/// verified FID may publish a key, chat, create rooms, type or send DMs, so
+/// no one can speak as someone else's FID.
+fn speaker(ctx: &ReducerContext) -> Result<User, String> {
+    let u = me(ctx)?;
+    if attestations_on(&ATTEST_PUBLIC_KEY) && !u.verified {
+        return Err("verify your Farcaster account first".into());
+    }
+    Ok(u)
+}
+
 #[spacetimedb::reducer(init)]
 pub fn init(ctx: &ReducerContext) {
     ctx.db.room().insert(Room { id: 0, name: "general".into(), created_by: ctx.sender(), created_at: ctx.timestamp });
@@ -135,11 +158,8 @@ pub fn on_disconnect(ctx: &ReducerContext) {
     ctx.db.typing().identity().delete(ctx.sender());
 }
 
-/// Claim a FID. Unverified until `verify_fid` is implemented.
-/// TODO(FID verification): accept `attestation: Vec<u8>` = Allthing-server Ed25519 signature over
-/// (identity_hex, fid, expiry) after Sign-In-With-Farcaster; verify against a pinned Allthing pubkey
-/// (e.g. ed25519-dalek in-module), then set verified=true. Alternatively verify an EIP-712 SIWF
-/// custody signature (needs on-chain custody lookup -> better done by Allthing backend).
+/// Claim a FID, unverified (`verify_fid` verifies it). Claiming the FID this
+/// identity already verified keeps it verified; claiming another is refused.
 #[spacetimedb::reducer]
 pub fn register(ctx: &ReducerContext, fid: u64) -> Result<(), String> {
     if fid == 0 {
@@ -150,16 +170,42 @@ pub fn register(ctx: &ReducerContext, fid: u64) -> Result<(), String> {
         if old.verified && old.fid != fid {
             return Err("fid locked (verified)".into());
         }
-        ctx.db.user().identity().update(u);
+        ctx.db.user().identity().update(User { verified: old.verified, ..u });
     } else {
         ctx.db.user().insert(u);
     }
     Ok(())
 }
 
+/// Verify the caller's FID with Allthing's attestation: the Ed25519
+/// signature, by the key pinned in `attest_key.rs`, of
+/// `allthing-spacetimedb-fid-v1|<identity hex>|<fid>|<expiry>`, which
+/// Allthing's Worker signs for a reader signed in with Farcaster as `fid`
+/// (`POST /api/v1/auth/attest`). The identity is the caller's own, so an
+/// attestation can't be used by anyone else. Sets `verified`, and moves the
+/// identity (and its key row) to `fid` if it had claimed another.
+#[spacetimedb::reducer]
+pub fn verify_fid(ctx: &ReducerContext, fid: u64, expiry: u64, signature: Vec<u8>) -> Result<(), String> {
+    let now = (ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000).max(0) as u64;
+    let identity = ctx.sender().to_hex().to_string();
+    check_attestation(&ATTEST_PUBLIC_KEY, &identity, fid, expiry, now, &signature)?;
+    let u = User { identity: ctx.sender(), fid, verified: true, online: true, last_seen: ctx.timestamp };
+    if ctx.db.user().identity().find(ctx.sender()).is_some() {
+        ctx.db.user().identity().update(u);
+    } else {
+        ctx.db.user().insert(u);
+    }
+    if let Some(k) = ctx.db.user_key().identity().find(ctx.sender())
+        && k.fid != fid
+    {
+        ctx.db.user_key().identity().update(UserKey { fid, ..k });
+    }
+    Ok(())
+}
+
 #[spacetimedb::reducer]
 pub fn set_public_key(ctx: &ReducerContext, x25519_pub: Vec<u8>) -> Result<(), String> {
-    let u = me(ctx)?;
+    let u = speaker(ctx)?;
     public_key_shape(&x25519_pub)?;
     let t = ctx.db.user_key();
     if let Some(k) = t.identity().find(ctx.sender()) {
@@ -178,7 +224,7 @@ pub fn set_public_key(ctx: &ReducerContext, x25519_pub: Vec<u8>) -> Result<(), S
 
 #[spacetimedb::reducer]
 pub fn create_room(ctx: &ReducerContext, name: String) -> Result<(), String> {
-    me(ctx)?;
+    speaker(ctx)?;
     rate(ctx)?;
     let name = room_name(&name)?;
     ctx.db
@@ -190,7 +236,7 @@ pub fn create_room(ctx: &ReducerContext, name: String) -> Result<(), String> {
 
 #[spacetimedb::reducer]
 pub fn send_message(ctx: &ReducerContext, room_id: u64, text: String) -> Result<(), String> {
-    let u = me(ctx)?;
+    let u = speaker(ctx)?;
     let text = chat_text(&text)?;
     if ctx.db.room().id().find(room_id).is_none() {
         return Err("no such room".into());
@@ -210,7 +256,7 @@ pub fn send_message(ctx: &ReducerContext, room_id: u64, text: String) -> Result<
 
 #[spacetimedb::reducer]
 pub fn set_typing(ctx: &ReducerContext, room_id: u64, typing: bool) -> Result<(), String> {
-    me(ctx)?;
+    speaker(ctx)?;
     ctx.db.typing().identity().delete(ctx.sender());
     if typing {
         if ctx.db.room().id().find(room_id).is_none() {
@@ -235,7 +281,7 @@ pub fn send_dm(
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
 ) -> Result<(), String> {
-    me(ctx)?;
+    speaker(ctx)?;
     if recipient == ctx.sender() {
         return Err("cannot DM self".into());
     }
@@ -312,9 +358,99 @@ pub fn dm_shape(nonce: &[u8], ciphertext: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether attestations are checked: the pinned key isn't the all-zero
+/// placeholder.
+pub fn attestations_on(key: &[u8; 32]) -> bool {
+    key.iter().any(|b| *b != 0)
+}
+
+/// What Allthing's attestation key signs for `identity` (lower-case hex,
+/// big-endian, no `0x`: `Identity::to_hex`) signed in as `fid` until
+/// `expiry` (Unix seconds).
+pub fn attestation_message(identity: &str, fid: u64, expiry: u64) -> String {
+    format!("{ATTEST_CONTEXT}|{identity}|{fid}|{expiry}")
+}
+
+/// Check an attestation at `now` (Unix seconds): the key is pinned, the FID
+/// is real, it hasn't expired and isn't valid for too long, and the
+/// signature is the key's over `attestation_message`.
+pub fn check_attestation(
+    key: &[u8; 32],
+    identity: &str,
+    fid: u64,
+    expiry: u64,
+    now: u64,
+    signature: &[u8],
+) -> Result<(), String> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    if !attestations_on(key) {
+        return Err("FID verification isn't set up yet".into());
+    }
+    if fid == 0 {
+        return Err("bad fid".into());
+    }
+    if expiry <= now {
+        return Err("attestation expired".into());
+    }
+    if expiry > now + ATTEST_MAX_TTL_SECS {
+        return Err("attestation valid for too long".into());
+    }
+    let signature = Signature::from_slice(signature).map_err(|_| "attestation signature must be 64 bytes")?;
+    let key = VerifyingKey::from_bytes(key).map_err(|_| "bad attestation key")?;
+    key.verify_strict(attestation_message(identity, fid, expiry).as_bytes(), &signature)
+        .map_err(|_| "attestation signature doesn't verify".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// The test vector Allthing's Worker side checks too
+    /// (`allthing_core::stdb` tests): RFC 8032's first test key.
+    const SEED: [u8; 32] = [
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4, 0x44, 0x49,
+        0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+    ];
+    const IDENTITY: &str = "c200431f50cf410304546489e2600c8446408f1aa727c91d86bc00aef6724d15";
+    const VECTOR_MESSAGE: &str =
+        "allthing-spacetimedb-fid-v1|c200431f50cf410304546489e2600c8446408f1aa727c91d86bc00aef6724d15|3|1800000000";
+    const VECTOR_SIGNATURE: &str = include_str!("../tests/attestation-vector.sig");
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.trim().len()).step_by(2).map(|i| u8::from_str_radix(&s.trim()[i..i + 2], 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn attestations() {
+        let signer = SigningKey::from_bytes(&SEED);
+        let key = signer.verifying_key().to_bytes();
+        let now = 1_799_999_500;
+        assert_eq!(attestation_message(IDENTITY, 3, 1_800_000_000), VECTOR_MESSAGE);
+        let signature = signer.sign(VECTOR_MESSAGE.as_bytes()).to_bytes();
+        assert_eq!(signature.to_vec(), unhex(VECTOR_SIGNATURE));
+        assert_eq!(check_attestation(&key, IDENTITY, 3, 1_800_000_000, now, &signature), Ok(()));
+        // Anyone else's identity, another FID or expiry, a flipped bit.
+        let other = IDENTITY.replace("c200", "c201");
+        assert!(check_attestation(&key, &other, 3, 1_800_000_000, now, &signature).is_err());
+        assert!(check_attestation(&key, IDENTITY, 4, 1_800_000_000, now, &signature).is_err());
+        assert!(check_attestation(&key, IDENTITY, 3, 1_800_000_001, now, &signature).is_err());
+        let mut bad = signature;
+        bad[0] ^= 1;
+        assert!(check_attestation(&key, IDENTITY, 3, 1_800_000_000, now, &bad).is_err());
+        assert!(check_attestation(&key, IDENTITY, 3, 1_800_000_000, now, &signature[..63]).is_err());
+        // Expired, or valid for too long.
+        assert!(check_attestation(&key, IDENTITY, 3, 1_800_000_000, 1_800_000_000, &signature).is_err());
+        assert!(check_attestation(&key, IDENTITY, 3, 1_800_000_000, 1_800_000_000 - 3601, &signature).is_err());
+        // Another key, or none pinned.
+        let stranger = SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes();
+        assert!(check_attestation(&stranger, IDENTITY, 3, 1_800_000_000, now, &signature).is_err());
+        assert_eq!(
+            check_attestation(&[0; 32], IDENTITY, 3, 1_800_000_000, now, &signature),
+            Err("FID verification isn't set up yet".into())
+        );
+        assert!(!attestations_on(&[0; 32]));
+    }
 
     #[test]
     fn room_names() {

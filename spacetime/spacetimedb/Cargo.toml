@@ -12,3 +12,8 @@ crate-type = ["cdylib"]
 [dependencies]
 spacetimedb = { version = "2.13.*" }
 log = "0.4"
+# verify_fid: Allthing's attestation (Ed25519), checked in the module.
+ed25519-dalek = { version = "2", default-features = false }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", default-features = false, features = ["fast"] }

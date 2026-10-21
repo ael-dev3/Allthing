@@ -21,6 +21,7 @@
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
 
 mod app_key;
+mod attest;
 mod auth;
 mod cache;
 mod dc_relay;
@@ -492,6 +493,13 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // Whether readers can attach images and videos: the MEDIA bucket
         // (R2) and D1, which counts what they take.
         "media": { "ready": media::ready(env) },
+        // Whether signed-in readers' SpacetimeDB identities are attested for
+        // messages (the ATTEST_KEY secret), and its public half, which the
+        // module pins (spacetime/spacetimedb/src/attest_key.rs); never the key.
+        "spacetime": match attest::public_key(env).await {
+            Some(public_key) => serde_json::json!({ "attest": true, "public_key": public_key }),
+            None => serde_json::json!({ "attest": attest::ready(env) }),
+        },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

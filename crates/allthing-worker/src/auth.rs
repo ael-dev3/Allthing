@@ -96,6 +96,9 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
                 None => error(400, "Expected {\"key\": an Ed25519 public key, 0x and 64 hex digits}", None),
             }
         }
+        // A signed-in reader's SpacetimeDB identity, attested for the
+        // module's `verify_fid` (`crate::attest`).
+        "attest" => crate::attest::attest(&mut req, env, now).await,
         "signout" => json(&serde_json::json!({}), &[&clear(SESSION_COOKIE), &clear(USER_COOKIE)]),
         "start" | "verify" | "key" => {
             let Some(secret) = session_secret(env) else {
@@ -450,7 +453,7 @@ pub(crate) fn json<T: Serialize>(value: &T, cookies: &[&str]) -> Result<Response
 }
 
 /// The request's JSON body, if it is small and well formed.
-async fn read_json<T: DeserializeOwned>(req: &mut Request) -> Option<T> {
+pub(crate) async fn read_json<T: DeserializeOwned>(req: &mut Request) -> Option<T> {
     let declared = req.headers().get("content-length").ok().flatten()?.parse::<usize>().ok()?;
     if declared > MAX_BODY {
         return None;
