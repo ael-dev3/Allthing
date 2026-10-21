@@ -70,6 +70,12 @@ pub fn sign_out_path() -> String {
     format!("{API_PREFIX}/auth/signout")
 }
 
+/// Where a sign-in by approving Allthing's key request ends: the browser
+/// shows it holds the key the account approved ([`KeySignIn`]).
+pub fn key_path() -> String {
+    format!("{API_PREFIX}/auth/key")
+}
+
 /// `POST /api/v1/auth/start`'s answer: what the browser opens the relay
 /// channel with. The nonce also goes into a signed cookie, so only this
 /// browser can finish the sign-in.
@@ -83,7 +89,38 @@ pub struct Started {
     /// can't cut the sign-in short.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expiration_time: Option<String>,
+    /// Whether this server signs in by the approval of its key request,
+    /// which also lets the reader write from here (one step), rather than
+    /// by Sign In With Farcaster: where it endorses keys.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keys: bool,
 }
+
+/// `POST /api/v1/auth/key`'s body: an account's fid, the key the browser
+/// made and the account approved in the Farcaster app (`0x` and 64 hex
+/// digits), and its Ed25519 signature (`0x` and 128 hex digits) of
+/// [`key_sign_in_message`] for the sign-in's nonce.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeySignIn {
+    pub fid: u64,
+    pub key: String,
+    pub signature: String,
+}
+
+/// What the browser signs with its key to sign in: the site and the
+/// nonce, so the signature is good for this sign-in on this site only.
+pub fn key_sign_in_message(domain: &str, nonce: &str) -> String {
+    format!("{domain} asks you to sign in with your Allthing key.\nNonce: {nonce}")
+}
+
+/// `key`'s refusal of a key the node doesn't list as one the account
+/// approved for Allthing. The browser asks again a few times: the node may
+/// be a moment behind the Farcaster app.
+pub const KEY_UNKNOWN: &str = "That key isn't one this account approved for Allthing";
+
+/// A sign-in's refusal once its nonce has lapsed: the browser starts again,
+/// with the same key.
+pub const SIGN_IN_LAPSED: &str = "This sign-in expired; start again";
 
 /// `POST /api/v1/auth/qr`'s body: the relay's link for the Farcaster app.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,6 +380,20 @@ fn word(answer: &str, index: usize) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_sign_in_names_the_site_and_the_nonce() {
+        assert_eq!(
+            key_sign_in_message("allthing.social", "8f3c2a1b9d7e4f60a5b3c1d2e0f9a8b7"),
+            "allthing.social asks you to sign in with your Allthing key.\nNonce: 8f3c2a1b9d7e4f60a5b3c1d2e0f9a8b7"
+        );
+        // A server that endorses keys says so; one that doesn't says nothing.
+        let started =
+            Started { nonce: "n".into(), domain: "d".into(), uri: "u".into(), expiration_time: None, keys: true };
+        assert_eq!(serde_json::to_string(&started).unwrap(), r#"{"nonce":"n","domain":"d","uri":"u","keys":true}"#);
+        let old: Started = serde_json::from_str(r#"{"nonce":"n","domain":"d","uri":"u"}"#).unwrap();
+        assert!(!old.keys);
+    }
 
     /// A sign-in for fid 1234 as viem builds it for a Farcaster app (the
     /// Worker's tests check its signature).
