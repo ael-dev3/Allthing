@@ -66,8 +66,9 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 }
 
 /**
- * A point on a card's text, well clear of every open panel (a finger's
- * tap is drawn to a target near it), and the card's hash.
+ * A point on a card's text, well clear of every open panel and of every
+ * other button and link (a finger's tap is drawn to a target near it), and
+ * the card's hash.
  */
 async function besidePanels(page: Page) {
   const point = await page.evaluate(() => {
@@ -78,7 +79,13 @@ async function besidePanels(page: Page) {
       for (let y = Math.max(box.top, 90) + 6; y < Math.min(box.bottom, innerHeight - 90); y += 6) {
         for (let x = box.left + 6; x < box.right - 6; x += 8) {
           const near = panels.some((p) => x >= p.left - clear && x <= p.right + clear && y >= p.top - clear && y <= p.bottom + clear);
-          if (!near && text.contains(document.elementFromPoint(x, y))) {
+          // Clear of other targets too: a finger's tap goes to a button
+          // whose band (44 px tall on a touch screen) is near it.
+          const targets = "a[href], button, [role='button']";
+          const nearTarget = [[0, -26], [0, 26], [-26, 0], [26, 0], [0, 0]].some(([dx, dy]) =>
+            document.elementFromPoint(x + dx, y + dy)?.closest(targets),
+          );
+          if (!near && !nearTarget && text.contains(document.elementFromPoint(x, y))) {
             return { x, y, hash: text.closest(".cast-card")!.getAttribute("data-hash")! };
           }
         }
