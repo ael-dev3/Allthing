@@ -170,8 +170,7 @@ pub fn Popover(
                 let opened_below = outer.class_list().contains("below");
                 let outer = outer.get_bounding_client_rect();
                 let width = panel_width();
-                let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
-                let side = if outer.right() + GAP_PX / 2.0 + width <= inner {
+                let side = if outer.right() + GAP_PX / 2.0 + width <= page_width() {
                     Some(outer.right() + GAP_PX / 2.0)
                 } else {
                     Some(outer.left() - GAP_PX / 2.0 - width).filter(|x| *x >= 0.0)
@@ -460,41 +459,51 @@ pub fn Popover(
             any_scroll.set_value(Some(closure));
         }
     });
-    // Once the panel is laid out, measure it and nudge it back inside the
-    // viewport if it hangs over either side.
+    // Measure the open panel and nudge it back inside the page if it hangs
+    // over either side.
+    let nudge = move |panel: &web_sys::HtmlElement| {
+        let (left, top, width, height) = laid_out(panel);
+        let mut left = left - shift.get_untracked();
+        if fixed {
+            // A transformed ancestor holds fixed elements too: move the
+            // panel by however far it landed from where it was placed.
+            let (want_left, want_edge) = fixed_at.get_untracked();
+            let edge = if below.get_untracked() { top } else { top + height };
+            let (dx, dy) = (want_left - left, want_edge - edge);
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                fixed_at.set((want_left + dx, want_edge + dy));
+            }
+            left = want_left;
+        }
+        let page = page_width();
+        let margin = 8.0;
+        let mut dx = 0.0;
+        if left + width > page - margin {
+            dx = page - margin - width - left;
+        }
+        if left + dx < margin {
+            dx = margin - left;
+        }
+        shift.set(dx.round());
+    };
+    // In the same task as the press that opened it, once the rest of this
+    // update has put it in the page, so nothing painted or run after it sees
+    // it out of place. Placed a frame later, it hung over a phone's edge in
+    // the meantime for anything that measured the page, and widened the
+    // phone's layout viewport.
     Effect::new(move || {
         if state.get() != State::Open {
             return;
         }
-        request_animation_frame(move || {
-            let Some(panel) = panel.try_get_untracked().flatten() else { return };
-            let rect = panel.get_bounding_client_rect();
-            let mut left = rect.left() - shift.get_untracked();
-            if fixed {
-                // A transformed ancestor holds fixed elements too: move the
-                // panel by however far it landed from where it was placed.
-                let (want_left, want_edge) = fixed_at.get_untracked();
-                let edge = if below.get_untracked() { rect.top() } else { rect.bottom() };
-                let (dx, dy) = (want_left - left, want_edge - edge);
-                if dx.abs() > 0.5 || dy.abs() > 0.5 {
-                    fixed_at.set((want_left + dx, want_edge + dy));
+        let in_page = move || panel.try_get_untracked().flatten().filter(|open| open.is_connected());
+        queue_microtask(move || match in_page() {
+            Some(open) => nudge(&open),
+            // Not in the page yet: as soon as it is, before it's painted.
+            None => request_animation_frame(move || {
+                if let Some(open) = in_page() {
+                    nudge(&open);
                 }
-                left = want_left;
-            }
-            // On phones an overflowing panel widens the layout viewport
-            // (innerWidth), so bound it by the screen as well.
-            let inner = window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0);
-            let screen = window().screen().ok().and_then(|s| s.width().ok()).map_or(inner, f64::from);
-            let viewport = inner.min(screen);
-            let margin = 8.0;
-            let mut dx = 0.0;
-            if left + rect.width() > viewport - margin {
-                dx = viewport - margin - rect.width() - left;
-            }
-            if left + dx < margin {
-                dx = margin - left;
-            }
-            shift.set(dx.round());
+            }),
         });
     });
     on_cleanup(move || {
@@ -595,6 +604,39 @@ pub fn Popover(
             </Show>
         </span>
     }
+}
+
+/// The width the page is laid out at, without a scrollbar. Not
+/// `innerWidth`: on a phone, content that hangs over the edge widens that.
+/// Nor `screen.width`, which on an iPhone in landscape stays the width of
+/// the screen upright.
+fn page_width() -> f64 {
+    document()
+        .document_element()
+        .map(|page| f64::from(page.client_width()))
+        .filter(|width| *width > 0.0)
+        .unwrap_or_else(|| window().inner_width().ok().and_then(|w| w.as_f64()).unwrap_or(1024.0))
+}
+
+/// A panel's box in the viewport as laid out (left, top, width, height),
+/// without its own transform: as it opens, its opening animation scales it
+/// about its middle and lifts it, which put the edges it was nudged by a
+/// few pixels out. (`translate`, a fixed panel's nudge and lift, stays in.)
+fn laid_out(panel: &web_sys::HtmlElement) -> (f64, f64, f64, f64) {
+    let rect = panel.get_bounding_client_rect();
+    let (width, height) = (f64::from(panel.offset_width()), f64::from(panel.offset_height()));
+    // A scale about the middle leaves the middle where it was; only the
+    // transform's own move moves it.
+    let (moved_x, moved_y) = window()
+        .get_computed_style(panel)
+        .ok()
+        .flatten()
+        .and_then(|style| style.get_property_value("transform").ok())
+        .and_then(|transform| web_sys::DomMatrixReadOnly::new_with_str(&transform).ok())
+        .map_or((0.0, 0.0), |matrix| (matrix.e(), matrix.f()));
+    let middle_x = (rect.left() + rect.right()) / 2.0 - moved_x;
+    let middle_y = (rect.top() + rect.bottom()) / 2.0 - moved_y;
+    (middle_x - width / 2.0, middle_y - height / 2.0, width, height)
 }
 
 fn next_id() -> u32 {

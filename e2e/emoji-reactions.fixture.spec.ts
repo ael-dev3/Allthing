@@ -69,6 +69,24 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 
 const chips = (page: Page) => page.locator(".post > .reaction-chips .reaction-chip");
 
+/** Holds :hover on an element, as the browser's developer tools can. */
+async function holdHover(page: Page, element: Locator) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("DOM.enable");
+  await cdp.send("CSS.enable");
+  await element.evaluate((el) => el.setAttribute("data-held", ""));
+  const { root } = await cdp.send("DOM.getDocument");
+  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: "[data-held]" });
+  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: ["hover"] });
+}
+
+/** How far apart the middles of the post's counts and buttons are. */
+const footSpread = (page: Page) =>
+  page.locator(".post > .cast-foot > *").evaluateAll((items) => {
+    const middles = items.map((item) => item.getBoundingClientRect()).map((box) => box.top + box.height / 2);
+    return Math.max(...middles) - Math.min(...middles);
+  });
+
 test("a post's emoji replies gather as chips, each account once, most first", async ({ page }) => {
   await serve(page);
   await page.goto(`/p/${post.hash}`);
@@ -185,12 +203,7 @@ test("at 390, React's picker fits the screen and a tap reacts", async ({ browser
   // their middles line up, measured together once the page has settled.
   await expect(react).toBeVisible();
   await expect(react.locator(".react-label")).toBeHidden();
-  const spread = () =>
-    page.locator(".post > .cast-foot > *").evaluateAll((items) => {
-      const middles = items.map((item) => item.getBoundingClientRect()).map((box) => box.top + box.height / 2);
-      return Math.max(...middles) - Math.min(...middles);
-    });
-  await expect.poll(spread).toBeLessThan(2);
+  await expect.poll(() => footSpread(page)).toBeLessThan(2);
   await react.tap();
   const panel = page.getByRole("dialog", { name: "React with a Pepe" });
   await expect(panel).toBeVisible();
@@ -198,6 +211,12 @@ test("at 390, React's picker fits the screen and a tap reacts", async ({ browser
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // Open, it keeps 8 px from the screen's edge. (Placed by its box as it
+  // began to open, scaled about its middle, it kept 5.)
+  await panel.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+  const open = (await panel.boundingBox())!;
+  expect(open.x + open.width).toBeLessThanOrEqual(390 - 8 + 0.5);
+  expect(open.x + open.width).toBeGreaterThan(390 - 8 - 1);
   await panel.locator(".emoji-tile").first().tap();
   await expect.poll(() => sent.length).toBe(1);
   expect(castOf(sent[0]).text).toBe(":pepe_no:");
@@ -212,9 +231,40 @@ test("at 390, React's picker fits the screen and a tap reacts", async ({ browser
   await expect.poll(() => sent.length).toBe(2);
   expect(removed(sent[1])).toBe(sent[0].hash);
   await expect(no).toHaveAttribute("aria-pressed", "false");
-  // The tap's :hover lands on the chip a moment later, and stays.
-  await expect.poll(() => no.evaluate((el) => el.matches(":hover"))).toBe(true);
+  await expect(no).not.toHaveClass(/pending/);
+  // Held hovered, as the phone holds it. (Chrome's emulated phone sometimes
+  // moves the tap's :hover to the page's header a moment later, and then
+  // there was nothing to compare.)
+  await holdHover(page, no);
+  expect(await no.evaluate((el) => el.matches(":hover"))).toBe(true);
   const look = (chip: Locator) => chip.evaluate((el) => [getComputedStyle(el).borderColor, getComputedStyle(el).color]);
   expect(await look(no)).toEqual(await look(heart));
+  await context.close();
+});
+
+test("at 390, React's picker is inside the screen from the moment it opens", async ({ browser }, testInfo) => {
+  const { context, page } = await phone(browser, testInfo);
+  await signIn(page, me);
+  await serve(page);
+  await page.goto(`/p/${post.hash}`);
+  await expect(page.locator(".post")).toBeVisible();
+  await approvedKey(page, me.fid, 3_600_000);
+  await page.reload();
+  const react = page.locator(".post").getByRole("button", { name: "React to @alice's cast with an emoji" });
+  await expect(react).toBeVisible();
+  await expect.poll(() => footSpread(page)).toBeLessThan(2);
+  // Read in the very next task after the press. It's placed in the press's
+  // own; placed a frame later, it hung over the edge until then, where a
+  // test that measured it in time found it, and the phone's page widened
+  // to its right edge.
+  const opened = await react.evaluate(async (button) => {
+    button.click();
+    await new Promise((next) => setTimeout(next, 0));
+    const box = document.querySelector(".react-panel")!.getBoundingClientRect();
+    return { left: box.left, right: box.right, page: innerWidth };
+  });
+  expect(opened.left).toBeGreaterThanOrEqual(0);
+  expect(opened.right).toBeLessThanOrEqual(390);
+  expect(opened.page).toBe(390);
   await context.close();
 });
