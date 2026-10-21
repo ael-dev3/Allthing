@@ -9,6 +9,7 @@ use allthing_core::index::{
     worth_indexing,
 };
 use allthing_core::normalize::RawCast;
+use allthing_core::poll::Counts;
 use allthing_core::ranking::TrendingWindow;
 use futures::future::LocalBoxFuture;
 
@@ -97,6 +98,11 @@ pub trait Index {
         _today: i64,
     ) -> LocalBoxFuture<'static, Result<Option<ActiveWeek>, IndexError>> {
         Box::pin(async { Ok(None) })
+    }
+    /// How many voted each way in Allthing's poll `poll`
+    /// (`allthing_core::poll`), from the counts its votes keep.
+    fn poll(&self, _poll: &'static str) -> LocalBoxFuture<'static, Result<Counts, IndexError>> {
+        Box::pin(async { Err(IndexError("this index keeps no polls".into())) })
     }
 }
 
@@ -191,6 +197,8 @@ pub(crate) mod tests {
         pub rankings: RefCell<BTreeMap<&'static str, (i64, u64, Option<i64>, u64, String)>>,
         pub state: RefCell<Option<String>>,
         pub fail: bool,
+        /// The poll's counts, as its votes keep them.
+        pub poll: Counts,
     }
 
     impl Memory {
@@ -257,6 +265,11 @@ pub(crate) mod tests {
             }
             *self.state.borrow_mut() = Some(state);
             async { Ok(()) }.boxed_local()
+        }
+
+        fn poll(&self, _poll: &'static str) -> LocalBoxFuture<'static, Result<Counts, IndexError>> {
+            let found = if self.fail { Err(IndexError("down".into())) } else { Ok(self.poll) };
+            async move { found }.boxed_local()
         }
     }
 

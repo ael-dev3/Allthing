@@ -27,10 +27,11 @@ const activity = {
 /**
  * The pages' code, which the app fetches ahead of use (`split::preload_pages`:
  * a post's a few seconds in, the others' as a link to them is pointed at),
- * and the code parts share, which comes alongside: left out of the lists the
- * tests below compare.
+ * the front page's poll's, which it fetches once the page is idle, and the
+ * code parts share, which comes alongside: left out of the lists the tests
+ * below compare.
  */
-const ahead = (name: string) => name.startsWith("chunk_") || /^split_(post|user|channel|search|channels)\.wasm$/.test(name);
+const ahead = (name: string) => name.startsWith("chunk_") || /^split_(post|user|channel|search|channels|poll)\.wasm$/.test(name);
 
 /** The fixtures, and the WebAssembly the page fetches, by file name. */
 async function serve(page: Page) {

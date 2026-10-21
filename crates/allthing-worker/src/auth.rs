@@ -120,7 +120,7 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
 }
 
 /// The `SESSION_SECRET` Worker secret, if it is long enough to sign with.
-fn session_secret(env: &Env) -> Option<String> {
+pub(crate) fn session_secret(env: &Env) -> Option<String> {
     env.secret("SESSION_SECRET").ok().map(|s| s.to_string()).filter(|s| s.len() >= MIN_SECRET)
 }
 
@@ -412,7 +412,7 @@ fn qr_code(text: &str) -> Option<QrCode> {
     Some(QrCode { size: (width + 2 * QUIET) as u32, path })
 }
 
-fn mac(secret: &[u8], purpose: &str, value: &str) -> Hmac<Sha256> {
+pub(crate) fn mac(secret: &[u8], purpose: &str, value: &str) -> Hmac<Sha256> {
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).expect("HMAC takes keys of any length");
     mac.update(purpose.as_bytes());
     mac.update(b"\n");
@@ -476,7 +476,7 @@ pub(crate) fn random_hex(bytes: u32) -> Option<String> {
     Some(hex(&array.to_vec()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
         let _ = write!(out, "{b:02x}");
         out

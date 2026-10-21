@@ -97,6 +97,7 @@ fn carried_quote_verdicts_survive_root_checks_without_accumulating_old_links() {
         meta: Meta { backend: Backend::Hypersnap, fetched_at: host.now() as i64, stale: false },
         index: None,
         apps_24h: None,
+        poll: None,
     };
     let result = pages::home(inv, 0, TrendingWindow::Day, Some(Rc::new(serde_json::to_vec(&previous).unwrap())))
         .now_or_never()

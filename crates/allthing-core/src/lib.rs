@@ -33,6 +33,7 @@ pub mod normalize;
 pub mod notifications;
 pub mod params;
 pub mod people;
+pub mod poll;
 pub mod profile;
 pub mod provenance;
 pub mod quotes;

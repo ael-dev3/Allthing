@@ -5,7 +5,8 @@
 //! same database keeps the daily active accounts' sets
 //! (`allthing_data::activity::ActivityStore`), readers' scheduled casts
 //! (`allthing_data::scheduled::ScheduledStore`, and `crate::scheduled_casts`),
-//! and what readers' attachments take (`crate::media`).
+//! what readers' attachments take (`crate::media`), and the votes in
+//! Allthing's poll (`crate::poll`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 7] = [
+const SCHEMA: [&str; 8] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
@@ -33,6 +34,7 @@ const SCHEMA: [&str; 7] = [
     include_str!("../../../migrations/0005_scheduled.sql"),
     include_str!("../../../migrations/0006_reactions.sql"),
     include_str!("../../../migrations/0007_media.sql"),
+    include_str!("../../../migrations/0008_poll.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -160,6 +162,17 @@ const MEDIA_USAGE: &str = "SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS 
 const RECORD_MEDIA: &str = "INSERT INTO media (key, fid, bytes, type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
 const ADD_MEDIA: &str = "INSERT INTO media_total (name, bytes, files) VALUES (?1, ?2, 1) \
     ON CONFLICT (name) DO UPDATE SET bytes = bytes + excluded.bytes, files = files + 1";
+/// Count voter ?2's vote ?3 in poll ?1, unless that voter has voted in it:
+/// run before the vote is kept, in the same transaction, so a vote counts
+/// once. Reads one vote's row by its key, not every vote.
+const COUNT_VOTE: &str = "INSERT INTO poll_counts (poll, choice, n) \
+    SELECT ?1, ?3, 1 WHERE NOT EXISTS (SELECT 1 FROM poll_votes WHERE poll = ?1 AND voter = ?2) \
+    ON CONFLICT (poll, choice) DO UPDATE SET n = n + 1";
+/// Keep voter ?2's vote ?3 in poll ?1, unless they have one: a row back if
+/// it was kept.
+const KEEP_VOTE: &str = "INSERT OR IGNORE INTO poll_votes (poll, voter, choice) VALUES (?1, ?2, ?3) RETURNING choice";
+/// How many voted each way in poll ?1: two rows.
+const POLL_COUNTS: &str = "SELECT choice, n FROM poll_counts WHERE poll = ?1";
 
 thread_local! {
     /// Whether this isolate has made sure the tables exist.
@@ -260,6 +273,12 @@ struct UsageRow {
 }
 
 #[derive(Deserialize)]
+struct CountRow {
+    choice: String,
+    n: f64,
+}
+
+#[derive(Deserialize)]
 struct MetaRow {
     name: String,
     built: f64,
@@ -288,6 +307,20 @@ fn to_json(value: &impl serde::Serialize) -> Result<String, IndexError> {
 
 fn number(n: f64) -> JsValue {
     JsValue::from_f64(n)
+}
+
+/// How many voted each way, from a poll's rows of counts.
+fn counts(rows: Vec<CountRow>) -> allthing_core::poll::Counts {
+    use allthing_core::poll::{Choice, Counts};
+    let mut counts = Counts::default();
+    for row in rows {
+        match Choice::parse(&row.choice) {
+            Some(Choice::Yes) => counts.yes = row.n as u64,
+            Some(Choice::No) => counts.no = row.n as u64,
+            None => {}
+        }
+    }
+    counts
 }
 
 /// Create the tables, once per isolate, before the first write.
@@ -444,6 +477,47 @@ impl Index for D1Index {
                 .collect())
         }
         .boxed_local()
+    }
+
+    /// Where no write has made the poll's tables yet, the read fails, and
+    /// the front page goes without the counts, as it does before anyone
+    /// has voted.
+    fn poll(&self, poll: &'static str) -> LocalBoxFuture<'static, Result<allthing_core::poll::Counts, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let statement = db.prepare(POLL_COUNTS).bind(&[poll.into()]).map_err(failed)?;
+            Ok(counts(statement.all().await.map_err(failed)?.results::<CountRow>().map_err(failed)?))
+        }
+        .boxed_local()
+    }
+}
+
+/// The votes in Allthing's poll, for `crate::poll`.
+impl D1Index {
+    /// Count and keep `voter`'s vote `choice` in `poll`, unless that voter
+    /// has voted in it, in one transaction: whether it was counted, and how
+    /// many voted each way.
+    pub async fn vote(
+        &self,
+        poll: &str,
+        voter: &str,
+        choice: allthing_core::poll::Choice,
+    ) -> Result<(bool, allthing_core::poll::Counts), IndexError> {
+        ensure_schema(&self.db).await?;
+        let args: [JsValue; 3] = [poll.into(), voter.into(), choice.as_str().into()];
+        let count = self.db.prepare(COUNT_VOTE).bind(&args).map_err(failed)?;
+        let keep = self.db.prepare(KEEP_VOTE).bind(&args).map_err(failed)?;
+        let read = self.db.prepare(POLL_COUNTS).bind(&[poll.into()]).map_err(failed)?;
+        let mut results = self.db.batch(vec![count, keep, read]).await.map_err(failed)?.into_iter().skip(1);
+        let kept = match results.next() {
+            Some(kept) => !kept.results::<serde_json::Value>().map_err(failed)?.is_empty(),
+            None => false,
+        };
+        let rows = match results.next() {
+            Some(read) => read.results::<CountRow>().map_err(failed)?,
+            None => Vec::new(),
+        };
+        Ok((kept, counts(rows)))
     }
 }
 

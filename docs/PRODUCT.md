@@ -20,6 +20,7 @@ The name comes from the Allthing in Dan Simmons' *Hyperion Cantos*, the Hegemony
 ## The reading experience
 
 - **Front page**: casts trending across Farcaster, with the author's picture, channel and app, and the three engagement counts. Hovering a count, or its icon, shows who liked, recasted or replied. The heart and recast icons like and recast from here for a signed-in reader who approved Allthing once in the Farcaster app; signed out, or until writing from Allthing is switched on, they open the cast in the Farcaster app, to like or recast there (a QR code for the reader's phone on a computer).
+- **Allthing's poll**: one question of Allthing's own on the front page, "Would you like an Allthing mobile client?", beside the feed on a wide screen and after its fourth cast on a phone. Anyone can vote, signed in or not, and sees how many voted each way once they have. One vote counts per network, so people who share an address share a vote; Allthing keeps a keyed hash of the network, never the address ([ARCHITECTURE.md](ARCHITECTURE.md#allthings-poll)).
 - **Search**: one box for casts, people and channels.
 - **Channels**: a channel's feed with the same sorting, and a directory with search.
 - **Post**: the cast with its media, the parent it replies to, quoted casts, a provenance panel, and threaded replies that collapse and expand.

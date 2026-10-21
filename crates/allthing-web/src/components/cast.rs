@@ -134,6 +134,8 @@ const LOAD_AHEAD_PX: f64 = 1200.0;
 /// rest a screenful at a time after each paint, so a tap shows at once;
 /// scrolling adds cards the same way, instead of 25 in one long task.
 const DRAW_STEP: usize = 6;
+/// A list's inset (the front page's poll) comes after this many cards.
+const INSET_AFTER: usize = 4;
 
 /// A listing that grows as the reader scrolls. `on_end` asks for more casts
 /// (the next server page) a little before the reader reaches the end.
@@ -146,6 +148,10 @@ pub fn CastList(
     /// Changes after a server page completes, even if it added no casts.
     #[prop(into, optional)]
     page_cursor: Signal<u32>,
+    /// Something the list carries after its fourth card, drawn with them
+    /// and keeping its place as they reorder: the front page's poll.
+    #[prop(default = None)]
+    inset: Option<fn() -> AnyView>,
 ) -> impl IntoView {
     // Back to a list shows as many cards as before, so the reader's place
     // exists before the scroll position is restored.
@@ -277,13 +283,26 @@ pub fn CastList(
             }
         });
     });
+    // The cards drawn, each at its place in the list, and the inset (`None`)
+    // after the fourth of them.
+    let items = move || {
+        let mut items: Vec<Option<(usize, Cast)>> = visible().into_iter().map(Some).collect();
+        if inset.is_some() {
+            items.insert(INSET_AFTER.min(items.len()), None);
+        }
+        items
+    };
+
     view! {
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
             <div class="cast-list" node_ref=list>
                 <For
-                    each=visible
-                    key=|(_, cast)| cast.hash.clone()
-                    children=move |(index, cast)| view! { <CastCard cast notes=notes.get_untracked() index show_parent/> }
+                    each=items
+                    key=|item| item.as_ref().map_or_else(String::new, |(_, cast)| cast.hash.clone())
+                    children=move |item| match item {
+                        Some((index, cast)) => view! { <CastCard cast notes=notes.get_untracked() index show_parent/> }.into_any(),
+                        None => inset.map(|inset| inset()).into_any(),
+                    }
                 />
             </div>
             // Its first card waiting for its image's size: the list is still
