@@ -366,7 +366,7 @@ async fn read_json<T: DeserializeOwned>(req: &mut Request) -> Option<T> {
 }
 
 /// `bytes` random bytes from the runtime's `crypto.getRandomValues`, in hex.
-fn random_hex(bytes: u32) -> Option<String> {
+pub(crate) fn random_hex(bytes: u32) -> Option<String> {
     use worker::js_sys::{Function, Reflect, Uint8Array, global};
     use worker::wasm_bindgen::{JsCast, JsValue};
     let crypto = Reflect::get(&global(), &JsValue::from_str("crypto")).ok()?;

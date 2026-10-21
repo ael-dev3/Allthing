@@ -2,8 +2,8 @@
 //! Shared, IO-free logic for Allthing: the normalized Farcaster model, the
 //! Neynar-shaped JSON it is normalized from, ranking, text and media
 //! handling, provenance decoding, wallet shares, the content spam filter,
-//! profile cards, and the budget primitives the Worker uses to stay inside
-//! Cloudflare's limits.
+//! profile cards, the rules of readers' attachments, and the budget
+//! primitives the Worker uses to stay inside Cloudflare's limits.
 //!
 //! Everything here compiles both for the browser app and for the Worker, so it
 //! avoids heavy dependencies (no regex, URL or date crates).
@@ -22,6 +22,7 @@ pub mod hls;
 pub mod index;
 pub mod latest;
 pub mod listing;
+pub mod media;
 pub mod message;
 pub mod model;
 pub mod normalize;

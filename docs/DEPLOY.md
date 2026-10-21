@@ -88,6 +88,32 @@ With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.soci
 - **`ALLTHING_SPONSOR`** (optional): `1` to have the account pay the onchain fee for readers' approvals, which the Farcaster app takes from it in warps (it needs at least 100). Without it, any fee is the reader's. Set it as a *Secret* too: a deploy drops plain variables set only in the dashboard (Wrangler's `keep_vars` is off).
 - **`SOLANA_RPC_URL`** (optional): a keyed Solana RPC endpoint, with its key in the URL, for Solana wallet counts. Set it once in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*), or with `npx wrangler secret put SOLANA_RPC_URL`. It is never committed. Without it, a Solana read shows as unread (see [WALLETS.md](WALLETS.md)). For local development, put it in `.dev.vars` next to `wrangler.toml` (git-ignored), not in the repository. To check that the deployed Worker has it, open `/api/v1/status`: `solana_rpc.keyed` is `true` and `solana_rpc.host` names the provider's host (never the key).
 
+## Attachments (R2)
+
+Readers' images and videos ([ARCHITECTURE.md](ARCHITECTURE.md#attachments)) are kept in a Cloudflare R2 bucket, `allthing-media`, which the Worker reaches through its `MEDIA` binding. Until the binding is there, nothing else changes: uploads answer 404, the composer shows no attach button, and `/api/v1/status` says `"media": {"ready": false}`. The binding is commented out in `wrangler.toml` because `wrangler deploy` fails when a bound bucket doesn't exist, and Workers Builds deploys every push to `main`.
+
+**What it costs.** R2 is free, each month, up to 10 GB-month of storage, 1 million Class A operations (an upload is one) and 10 million Class B operations (reading a file is one), and it has no egress fees ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). The free tier is for the Standard storage class only. The Worker never lets the files stored pass 9 GiB in all, under 10 GB however a gigabyte is counted, takes 2,000 uploads a day at most from everyone together (62,000 writes a month), and holds each reader to 300 MiB and 60 files a day ([BUDGET.md](BUDGET.md#12-attachments-r2)). R2 is priced apart from Workers, which the Workers Paid plan doesn't cover either, so the Workers plan stays Free ([Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)). Enabling R2 is a checkout that adds an R2 subscription to the account ([R2: get started](https://developers.cloudflare.com/r2/get-started/)), and Cloudflare wants a valid payment method on file before it enables a subscription ([billing policy](https://developers.cloudflare.com/billing/understand/billing-policy/)). Usage past the free tier would be billed to it; the caps keep storage under it, and operations far under it.
+
+Once, in the Cloudflare dashboard for account `c647739b4535010b0b13e6fc296e2c4e`:
+
+1. **Enable R2.** Go to **Storage & databases → R2 object storage → Overview**, and complete the checkout that adds R2 to the account. It asks for a payment method if there is none on file. The Workers plan doesn't change.
+2. **Create the bucket.** On the same page, **Create bucket**: name it `allthing-media`, leave its location on **Automatic** (the default) and its default storage class on **Standard** (not Infrequent Access, which the free tier doesn't cover and which charges for reads), and **Create bucket** ([creating buckets](https://developers.cloudflare.com/r2/get-started/s3/), [data location](https://developers.cloudflare.com/r2/reference/data-location/), [storage classes](https://developers.cloudflare.com/r2/buckets/storage-classes/)). From a laptop logged in to wrangler, `npx wrangler r2 bucket create allthing-media` does the same. Leave its public access off: no public bucket, `r2.dev` address, custom domain or API token is needed, since the Worker reads and writes the bucket through its binding and serves the files itself, at `https://allthing.social/m/…`.
+3. **Bind it.** Merge the pull request that uncomments these three lines in `wrangler.toml` (or uncomment them in one of your own):
+
+   ```toml
+   [[r2_buckets]]
+   binding = "MEDIA"
+   bucket_name = "allthing-media"
+   ```
+
+   Workers Builds then deploys it. Its token already has what an R2 binding needs: **Workers R2 Storage: Edit** is among the permissions it is created with ([Workers Builds configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)).
+4. **Check.** `https://allthing.social/api/v1/status` shows `"media": {"ready": true}`. Signed in, `https://allthing.social/api/v1/media` answers the limits: `{"max_image_bytes":10485760,"max_video_bytes":52428800,"max_embeds":2}`.
+
+Afterwards:
+
+- **Keep the bucket and the binding** once readers have attached files: their casts embed `https://allthing.social/m/…` for good, and without the binding those addresses answer 404, so every Farcaster app would show the casts' images and videos as broken.
+- **Removing a file by hand** (abuse, a takedown): delete the object in the dashboard (**R2 → `allthing-media` → Objects**, its name is the URL's path after `/m/`), then its row in D1, so the total no longer counts it: `npx wrangler d1 execute allthing-index --remote --command "DELETE FROM media WHERE key = '<fid>/<id>.<ext>'"`, and `npx wrangler d1 execute allthing-index --remote --command "UPDATE media_total SET bytes = (SELECT COALESCE(SUM(bytes), 0) FROM media), files = (SELECT COUNT(*) FROM media) WHERE name = 'all'"`. Browsers that showed it may keep their copy, as each file is cached for a year.
+
 ## Local development
 
 ```sh
@@ -96,7 +122,7 @@ bash scripts/build.sh                  # the pinned toolchain, the Worker and th
 npx wrangler dev                       # http://127.0.0.1:8787, with a local Cache API
 ```
 
-`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. It gives the `INDEX` binding a local D1 database (in `.wrangler/state`), which starts empty. To run the indexer by hand, call `curl 'http://127.0.0.1:8787/cdn-cgi/local/scheduled?cron=*+*+*+*+*'` once per run (`/__scheduled` would reach the static assets); `/api/v1/status` shows its progress. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
+`wrangler dev` serves `dist/` and runs the Worker from `crates/allthing-worker/build/`; rerun the build after changing Rust code. It gives the `INDEX` binding a local D1 database (in `.wrangler/state`), which starts empty. It has no `MEDIA` binding, as `wrangler.toml` comments it out until the bucket exists: to try attachments locally, uncomment the R2 block without committing it, and `wrangler dev` keeps the files in a local R2 beside D1 (`e2e/media-upload.fixture.spec.ts` runs a Worker that way). To run the indexer by hand, call `curl 'http://127.0.0.1:8787/cdn-cgi/local/scheduled?cron=*+*+*+*+*'` once per run (`/__scheduled` would reach the static assets); `/api/v1/status` shows its progress. A manual deploy from a laptop also works (`npx wrangler login`, then `npx wrangler deploy`) with the owner's own login. Never commit a token, `.dev.vars` or `.env` file; `.gitignore` excludes them.
 
 ## Limits to keep in mind
 
