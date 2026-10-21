@@ -6,7 +6,8 @@ import { signIn } from "./helpers/farcaster";
  * Show less: on a profile, the reader sees much less of the account, in this
  * browser. Its casts drop well down the reader's hot and top feeds, on the
  * front page and in channels (a 25th of their points), and lower in new (as
- * if 6 hours older), with no mark; nothing is hidden. An account is a
+ * if 6 hours older for each day the list spans; these casts span less than
+ * a day), with no mark; nothing is hidden. An account is a
  * favorite or one the reader sees less of, not both. Nothing is sent
  * anywhere. How far, measured: leaning-strength.fixture.spec.ts.
  */

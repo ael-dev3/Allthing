@@ -254,13 +254,16 @@ test("top's first cards come in top's order, with the time range the address nam
 test("an account seen less of is lower in the first cards too, as in the app", async ({ page }) => {
   const held = await hold(page);
   await serve(page);
-  await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 3, username: "cat" }])));
+  await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }])));
   await page.goto("/");
   const boot = page.locator("#boot");
-  // Hot, seeing less of cat: cat's busy cast, as if 17½ hours older, goes
-  // below dee's, and the quote ends the early cards.
-  await expect(boot.locator(".cast-card")).toHaveCount(3);
-  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual([rich.hash, favorite.hash, pair.hash]);
+  // Hot, seeing less of ann: the list spans 1.6 days, so ann's busiest cast
+  // is as if 17½ hours older for each, 28½ in all, and goes below dee's
+  // quiet ones, 8½ hours older (at 17½ hours, it would come 5th).
+  await expect(boot.locator(".cast-card")).toHaveCount(6);
+  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual(
+    [busy, favorite, pair, later, rest[0], rest[1]].map((c) => c.hash),
+  );
   await moduleIn(page, held);
   await settled(page, "#boot");
   const early = await shown(page, "#boot");
