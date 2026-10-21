@@ -259,6 +259,9 @@ test.describe("held, and still", () => {
       await page.getByRole("button", { name: "Write a cast" }).click();
       const dialog = page.getByRole("dialog", { name: "New cast" });
       await dialog.getByRole("button", { name: "Add a sticker" }).click();
+      // Away from the picker, which opens under the pointer: a sticker
+      // pointed at moves, whatever else.
+      await page.mouse.move(0, 0);
       const tiles = dialog.locator(".emoji-results > .sticker-grid .sticker-tile");
       await expect(tiles.first().locator("img")).toHaveAttribute("src", /pepe_jam\.still\.webp$/);
       await expect(tiles.first()).not.toHaveAttribute("data-moving");

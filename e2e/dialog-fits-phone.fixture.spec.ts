@@ -80,11 +80,19 @@ async function placed(dialog: Locator) {
   });
 }
 
-/** Within the screen, with the same margin each side, and its × on screen and reachable. */
-function fits(p: Awaited<ReturnType<typeof placed>>, name: string) {
-  expect(p.left, `${name}: left margin`).toBeGreaterThanOrEqual(16);
-  expect(p.right, `${name}: right edge`).toBeLessThanOrEqual(p.viewport - 16);
-  expect(Math.abs(p.left - (p.viewport - p.right)), `${name}: centred`).toBeLessThanOrEqual(1);
+/**
+ * Within the screen, with the same margin each side (or, for a sheet, the
+ * screen's width exactly), and its × on screen and reachable.
+ */
+function fits(p: Awaited<ReturnType<typeof placed>>, name: string, sheet = false) {
+  if (sheet) {
+    expect(p.left, `${name}: a sheet's left edge`).toBeCloseTo(0, 0);
+    expect(p.right, `${name}: a sheet's right edge`).toBeCloseTo(p.viewport, 0);
+  } else {
+    expect(p.left, `${name}: left margin`).toBeGreaterThanOrEqual(16);
+    expect(p.right, `${name}: right edge`).toBeLessThanOrEqual(p.viewport - 16);
+    expect(Math.abs(p.left - (p.viewport - p.right)), `${name}: centred`).toBeLessThanOrEqual(1);
+  }
   expect(p.close.right, `${name}: its ×`).toBeLessThanOrEqual(p.viewport);
   expect(p.reachable, `${name}: its × takes a tap`).toBe(true);
 }
@@ -182,11 +190,11 @@ test("on a phone, every dialog stays within the screen, whatever it holds", asyn
   await page.goto("/");
   const card = page.locator(`.cast-card[data-hash="${cast.hash}"]`);
   await expect(card).toBeVisible();
-  const check = async (name: string, dialog: Locator) => {
+  const check = async (name: string, dialog: Locator, sheet = false) => {
     await expect(dialog).toBeVisible();
-    fits(await placed(dialog), name);
+    fits(await placed(dialog), name, sheet);
     await widen(dialog);
-    fits(await placed(dialog), `${name}, holding something wider than the screen`);
+    fits(await placed(dialog), `${name}, holding something wider than the screen`, sheet);
     await page.screenshot({ path: testInfo.outputPath(`${name.replace(/\W+/g, "-").toLowerCase()}-390.png`) });
     await dialog.getByRole("button", { name: "Close", exact: true }).tap();
     await expect(dialog).toHaveCount(0);
@@ -201,9 +209,9 @@ test("on a phone, every dialog stays within the screen, whatever it holds", asyn
   // A like handed to the Farcaster app.
   await card.getByRole("button", { name: "Like", exact: true }).tap();
   await check("Like in Farcaster", page.locator(".handoff-modal"));
-  // The composer.
+  // The composer, which on a phone is a sheet the screen's width.
   await page.getByRole("button", { name: "Write a cast" }).first().tap();
-  await check("New cast", page.locator(".compose-modal"));
+  await check("New cast", page.locator(".compose-modal"), true);
   await context.close();
 });
 
