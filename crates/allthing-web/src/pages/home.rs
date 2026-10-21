@@ -52,6 +52,9 @@ pub fn Home() -> impl IntoView {
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
     Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
+    // Leaving the front page before its cards are drawn: its first cards,
+    // drawn before the app came, can't stay over the next page.
+    on_cleanup(crate::boot::hand_over);
     // The tab tapped shows as chosen in the next frame, and the feed follows
     // in a task of its own once that frame is painted: a tap is answered at
     // once, even where drawing the cards takes a while (docs/PERFORMANCE.md).
@@ -243,7 +246,11 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                 </Columns>
             }
             .into_any(),
-            Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
+            Some(Err(failure)) => {
+                // Its first cards, drawn before the app came, can't stay.
+                crate::boot::hand_over();
+                view! { <ErrorPanel failure/> }.into_any()
+            }
             Some(Ok(Fetched { data, stale, .. })) => {
                 let payload: Arc<HomePayload> = data;
                 // A range the index can't rank yet shows the past week.

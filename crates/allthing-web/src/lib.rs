@@ -3,6 +3,7 @@
 //! reading one payload per page from the Worker's `/api/v1`.
 
 mod api;
+mod boot;
 mod components;
 #[cfg(feature = "static-host")]
 mod host;
@@ -52,9 +53,7 @@ pub fn start() {
     let Some(root) = util::element_by_id::<web_sys::HtmlElement>("app") else { return };
     leptos::mount::mount_to(root, App).forget();
     split::preload_pages();
-    if let Some(boot) = util::document().get_element_by_id("boot") {
-        boot.remove();
-    }
+    boot::mounted();
     let _ = util::document().document_element().map(|e| e.class_list().add_1("ready"));
 }
 

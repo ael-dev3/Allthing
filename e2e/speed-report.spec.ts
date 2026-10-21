@@ -20,7 +20,7 @@ const profiles = [
   { width: 390, height: 844, mobile: true, rttMs: 150, downKbps: 1_600, upKbps: 750, cpu: 4 },
 ];
 
-type Sample = { ttfb: number; wasmKB: number; wasm: number; data: number; firstCast: number; lcp: number; inp: number };
+type Sample = { ttfb: number; wasmKB: number; wasm: number; data: number; firstCast: number; appCast: number; lcp: number; inp: number };
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
@@ -41,10 +41,13 @@ async function load(browser: Browser, profile: (typeof profiles)[number]): Promi
   });
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: profile.cpu });
   await page.addInitScript(() => {
-    const seen = ((window as any).__speed = { firstCast: 0, lcp: 0, interactions: [] as number[] });
+    const seen = ((window as any).__speed = { firstCast: 0, appCast: 0, lcp: 0, interactions: [] as number[] });
+    // The first cast on screen, drawn early (web/paint.js) or by the app, and
+    // the app's own first, which shows once the early ones have given way.
     new MutationObserver((_, observer) => {
-      if (document.querySelector(".cast-card:not(.skeleton)")) {
-        seen.firstCast = performance.now();
+      if (!seen.firstCast && document.querySelector(".cast-card:not(.skeleton)")) seen.firstCast = performance.now();
+      if (!seen.appCast && document.querySelector("#app .cast-card:not(.skeleton)") && !document.querySelector("#boot[data-painted]")) {
+        seen.appCast = performance.now();
         observer.disconnect();
       }
     }).observe(document, { childList: true, subtree: true });
@@ -58,7 +61,7 @@ async function load(browser: Browser, profile: (typeof profiles)[number]): Promi
     }).observe({ type: "event", durationThreshold: 16, buffered: true } as PerformanceObserverInit);
   });
   await page.goto("/", { waitUntil: "commit" });
-  await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible({ timeout: 120_000 });
   await page.waitForTimeout(1000);
   const sample = await page.evaluate(() => {
     const seen = (window as any).__speed;
@@ -72,6 +75,7 @@ async function load(browser: Browser, profile: (typeof profiles)[number]): Promi
       wasm: wasm?.responseEnd ?? 0,
       data: data?.responseEnd ?? 0,
       firstCast: seen.firstCast,
+      appCast: seen.appCast,
       // As the perf spec counts it: the later of the LCP entry and the first card.
       lcp: Math.max(seen.lcp, seen.firstCast),
       inp: 0,
@@ -80,7 +84,7 @@ async function load(browser: Browser, profile: (typeof profiles)[number]): Promi
   // The slowest of two sort-tab switches, as Event Timing reports it.
   const before = await page.evaluate(() => (window as any).__speed.interactions.length);
   for (const tab of [/^new$/i, /^hot$/i]) {
-    await page.locator(".sort-row a").filter({ hasText: tab }).first().click({ noWaitAfter: true });
+    await page.locator("#app .sort-row a").filter({ hasText: tab }).first().click({ noWaitAfter: true });
     await page.waitForTimeout(1500);
   }
   sample.inp = await page.evaluate((from) => Math.max(0, ...(window as any).__speed.interactions.slice(from)), before);
@@ -102,7 +106,7 @@ for (const profile of profiles) {
     console.log(
       `speed ${profile.width} px (${network}) on ${commit}, median of ${RUNS}: ` +
         `TTFB ${at("ttfb").toFixed(0)} ms, WebAssembly ${at("wasmKB").toFixed(1)} KB in by ${at("wasm").toFixed(0)} ms, ` +
-        `data in by ${at("data").toFixed(0)} ms, first cast ${at("firstCast").toFixed(0)} ms, LCP ${at("lcp").toFixed(0)} ms, ` +
+        `data in by ${at("data").toFixed(0)} ms, first cast ${at("firstCast").toFixed(0)} ms, the app's ${at("appCast").toFixed(0)} ms, LCP ${at("lcp").toFixed(0)} ms, ` +
         `slowest interaction ${at("inp").toFixed(0)} ms`,
     );
     console.log(`  first cast samples: ${samples.map((s) => s.firstCast.toFixed(0)).join(", ")} ms`);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
@@ -140,6 +141,7 @@ test("a card's picture shows the small copy the feed loaded until its own has lo
     return route.fulfill({ json: { pool: later ? [] : [{ ...cast, author: { ...alice, pfp_url: pfp } }], notes: { users }, meta } });
   });
   await page.goto("/");
+  await appCame(page);
   const small = feedCard(page).locator("header.cast-meta .avatar").first();
   await expect.poll(() => small.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await chipLink(feedCard(page), "user-link").hover();
@@ -183,6 +185,7 @@ test("the card is solid and on top of the cards below it; clicks inside it stay 
 test("keyboard focus resting on a name opens the card, Tab goes through it and on, Escape returns", async ({ page }) => {
   await serve(page);
   await page.goto("/");
+  await appCame(page);
   const handle = chipLink(feedCard(page), "author");
   await expect(handle).toBeVisible();
   for (let i = 0; i < 40 && !(await handle.evaluate((el) => el === document.activeElement)); i++) {

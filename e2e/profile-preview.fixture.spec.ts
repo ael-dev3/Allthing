@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
@@ -51,6 +52,9 @@ async function serve(page: Page) {
 }
 
 const open = async (page: Page, username: string) => {
+  // The app's own cards, not the ones drawn before it came, whose links a
+  // dispatched click would follow as a page load.
+  await appCame(page);
   // The handle's link, followed as the router follows it (a tap on touch
   // screens would show the profile card first).
   await page.locator(`.cast-card header.cast-meta > .user-chip > a.author[href="/u/${username}"]`).dispatchEvent("click");

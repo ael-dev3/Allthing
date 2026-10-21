@@ -67,6 +67,17 @@ fn brotli(input: &Path, output: &Path) {
     }
 }
 
+/// The Pepe pack as web/paint.js reads it: `{"code": [width, height,
+/// animated], …}`. Shortcodes are lowercase words (a unit test of the pack's
+/// says so), so they need no escaping.
+fn emoji_table() -> String {
+    let entries: Vec<String> = allthing_core::emoji::PACK
+        .iter()
+        .map(|e| format!("\"{}\":[{},{},{}]", e.code, e.width, e.height, u8::from(e.animated)))
+        .collect();
+    format!("{{{}}}", entries.join(","))
+}
+
 /// FNV-1a, for cache-busting file names.
 fn fingerprint(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -230,6 +241,19 @@ fn site(site: &Site) -> Result<()> {
     let boot_name = format!("boot-{}.js", fingerprint(boot.as_bytes()));
     write(&assets.join(&boot_name), &boot)?;
 
+    // The front page's first cards before the app has come, with the Pepe
+    // pack as the app has it. The static copy has no early fetch to draw
+    // them from.
+    let paint_tag = if site.static_host {
+        String::new()
+    } else {
+        let template = String::from_utf8(read(&root.join("web/paint.js"))?).map_err(|e| e.to_string())?;
+        let paint = template.replace("{{EMOJI}}", &emoji_table()).replace("{{BASE}}", base);
+        let name = format!("paint-{}.js", fingerprint(paint.as_bytes()));
+        write(&assets.join(&name), &paint)?;
+        format!("<script type=\"module\" src=\"{base}/assets/{name}\"></script>")
+    };
+
     // The emoji and stickers, each version's folder as it is (their
     // CREDITS.md say whose they are).
     for pack in ["emoji", "stickers"] {
@@ -268,6 +292,7 @@ fn site(site: &Site) -> Result<()> {
         .replace("{{PAGE_PARTS}}", &page_parts.replace('"', "&quot;"))
         .replace("{{WASM}}", &wasm_url)
         .replace("{{BOOT}}", &format!("{base}/assets/{boot_name}"))
+        .replace("{{PAINT}}", &paint_tag)
         .replace("{{BASE}}", base);
     write(&dist.join("index.html"), &html)?;
     if site.static_host {
