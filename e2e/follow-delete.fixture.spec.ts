@@ -68,6 +68,9 @@ async function ready(page: Page, path: string, options = {}) {
   const calls = await serve(page, options);
   await page.goto(path);
   await expect(page.locator("main")).toBeVisible();
+  // Someone's profile asks the node whether the reader follows them: once
+  // it has, so a reload doesn't cut the lookup short.
+  if (path.startsWith("/u/")) await expect.poll(() => calls.lookups).toBe(1);
   await approvedKey(page, me.fid, 3_600_000);
   await page.reload();
   return calls;
@@ -86,7 +89,8 @@ test("follow and unfollow from a profile, its count following along", async ({ p
   await expect(follow.locator(".follow-text")).toHaveText("Follow");
   await expect(follow).toHaveAttribute("aria-pressed", "false");
   // One lookup per view of the profile: before the key was kept, and after.
-  expect(calls.lookups).toBe(2);
+  // The button shows as Follow while its lookup is on its way.
+  await expect.poll(() => calls.lookups).toBe(2);
   await expect(followers(page)).toHaveText("120 followers");
   await follow.click();
   await expect(follow).toHaveAttribute("aria-pressed", "true");

@@ -295,15 +295,17 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
   await expect(card(page, first).locator(".stat-recasts .n")).toHaveText("1");
   await expect(dialog).toBeHidden();
 
-  // The key outlives the page; the account menu can turn it off.
+  // The key outlives the page; the account menu can revoke it, by a second click.
   await page.reload();
   await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(calls.endorse).toHaveLength(1);
   await page.mouse.move(5, 300);
   await page.getByRole("link", { name: "Signed in as @reader: your profile" }).hover();
   const menu = page.getByRole("dialog", { name: "Your account" });
-  await menu.getByRole("button", { name: "Stop liking from this browser" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "This browser's key is deleted" })).toBeVisible();
+  await menu.getByRole("button", { name: "Revoke permissions" }).click();
+  expect(await kept(page)).not.toBeNull();
+  await menu.getByRole("button", { name: "Click again to revoke" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Write permission revoked in this browser." })).toBeVisible();
   expect(await kept(page)).toBeNull();
 });
 

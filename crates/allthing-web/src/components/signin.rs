@@ -532,6 +532,9 @@ pub fn Account() -> impl IntoView {
                     links=true
                     class="account"
                     panel_class="account-menu"
+                    // Room for Revoke permissions' explanation, under it,
+                    // without scrolling, where the screen allows.
+                    max_px=640.0
                     trigger=move || view! {
                         <a class="account-button" href=link.clone() aria-label=label.clone()>
                             <Avatar url=pfp.clone() size=32/>
