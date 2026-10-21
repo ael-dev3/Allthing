@@ -58,9 +58,16 @@ impl Default for Hint {
 }
 
 /// Favorite, at the top of a profile: the reader's own, kept in this
-/// browser.
+/// browser. In a profile card, `on_press` instead of the hint: the card says
+/// what a press did.
 #[component]
-pub fn FavoriteButton(fid: u64, username: String) -> impl IntoView {
+pub fn FavoriteButton(
+    fid: u64,
+    username: String,
+    /// Called after a press, in place of the hint.
+    #[prop(optional)]
+    on_press: Option<Callback<()>>,
+) -> impl IntoView {
     let leaning = use_leaning();
     let on = Memo::new(move |_| leaning.is_favorite(fid));
     let hint = Hint::new();
@@ -71,16 +78,21 @@ pub fn FavoriteButton(fid: u64, username: String) -> impl IntoView {
                 class="favorite-button"
                 class:on=on
                 aria-pressed=move || on.get().to_string()
-                aria-describedby="favorite-what"
+                aria-describedby=on_press.is_none().then_some("favorite-what")
                 on:click=move |_| {
                     leaning.toggle_favorite(fid, &username);
-                    hint.flash();
+                    match on_press {
+                        Some(pressed) => pressed.run(()),
+                        None => hint.flash(),
+                    }
                 }
             >
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STAR/></svg>
                 "Favorite"
             </button>
-            {hint.view("favorite-what", "Considerably boosts their casts in your hot and top feeds. Kept in this browser only.")}
+            {on_press.is_none().then(|| {
+                hint.view("favorite-what", "Considerably boosts their casts in your hot and top feeds. Kept in this browser only.")
+            })}
         </span>
     }
 }

@@ -13,6 +13,11 @@
 //! One that shows before they come keeps its size when they do: its vote
 //! row is always there ("Unknown" if it can't be read), and its wallet
 //! section is one height whatever it says (`WalletShares`'s `compact`).
+//!
+//! Favorite and Show less are on it too, as on the profile, and the same
+//! (`crate::leanings`): pressed here, they show pressed there, and in the
+//! reader's other tabs. A feed on screen keeps its order, under the card,
+//! until it is next loaded, sorted or filtered.
 
 use std::time::Duration;
 
@@ -26,8 +31,11 @@ use leptos::prelude::*;
 use crate::api;
 use crate::components::chips::{Avatar, Count};
 use crate::components::facts::{JoinedFact, VoteFact, WALLETS_WHAT, WalletShares, WalletsHelp, vote_data, wallet_data};
+use crate::components::favorite::FavoriteButton;
 use crate::components::popover::Popover;
+use crate::components::show_less::ShowLessButton;
 use crate::components::text::CastText;
+use crate::leanings::use_leaning;
 use crate::util::user_href;
 
 /// A card is at most this tall, room permitting; a taller one scrolls.
@@ -134,6 +142,7 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
                 None => view! { <p class="profile-card-more muted small">"The bio and follower counts are on the profile."</p> }
                     .into_any(),
             }}
+            {leanings(fid, user.username.clone())}
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid data=vote always=true/>
@@ -145,4 +154,47 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
             <a class="popover-foot" href=href>"View profile →"</a>
         </div>
     }
+}
+
+/// Favorite and Show less, one small row of them, on anyone's card but the
+/// reader's own, as on the profile. A press says what it did, politely, to
+/// screen readers: the card keeps its size.
+fn leanings(fid: u64, username: String) -> impl IntoView {
+    let leaning = use_leaning();
+    let said = RwSignal::new(String::new());
+    let handle = username.clone();
+    let on_press = Callback::new(move |()| {
+        let (favorite, less) = untrack(|| (leaning.is_favorite(fid), leaning.shows_less(fid)));
+        said.set(match (favorite, less) {
+            (true, _) => format!("@{handle}'s casts rise in your feeds."),
+            (_, true) => format!("@{handle}'s casts sink in your feeds."),
+            _ => format!("@{handle}'s casts are back in place in your feeds."),
+        });
+    });
+    let own = own_account(fid);
+    move || {
+        (!own.get()).then(|| {
+            view! {
+                <div class="profile-card-leaning">
+                    <FavoriteButton fid username=username.clone() on_press/>
+                    <ShowLessButton fid username=username.clone() on_press/>
+                    <span class="visually-hidden" aria-live="polite">{move || said.get()}</span>
+                </div>
+            }
+        })
+    }
+}
+
+/// Whether `fid` is the reader's own account: their card has no Favorite or
+/// Show less, as their profile hasn't.
+#[cfg(not(feature = "static-host"))]
+fn own_account(fid: u64) -> Signal<bool> {
+    let session = crate::components::signin::use_session();
+    Signal::derive(move || session.user.with(|user| user.as_ref().is_some_and(|user| user.fid == fid)))
+}
+
+/// The static copy has no one signed in.
+#[cfg(feature = "static-host")]
+fn own_account(_: u64) -> Signal<bool> {
+    Signal::stored(false)
 }

@@ -13,9 +13,16 @@ use crate::leanings::use_leaning;
 const LOWER: &str = "M1.5 4.5L6 9l3-3 5.5 5.5M14.5 7.5v4h-4";
 
 /// Show less, beside Favorite at the top of a profile: the reader's own,
-/// kept in this browser.
+/// kept in this browser. In a profile card, `on_press` instead of the hint:
+/// the card says what a press did.
 #[component]
-pub fn ShowLessButton(fid: u64, username: String) -> impl IntoView {
+pub fn ShowLessButton(
+    fid: u64,
+    username: String,
+    /// Called after a press, in place of the hint.
+    #[prop(optional)]
+    on_press: Option<Callback<()>>,
+) -> impl IntoView {
     let leaning = use_leaning();
     let on = Memo::new(move |_| leaning.shows_less(fid));
     let hint = Hint::new();
@@ -26,19 +33,24 @@ pub fn ShowLessButton(fid: u64, username: String) -> impl IntoView {
                 class="show-less-button"
                 class:on=on
                 aria-pressed=move || on.get().to_string()
-                aria-describedby="show-less-what"
+                aria-describedby=on_press.is_none().then_some("show-less-what")
                 on:click=move |_| {
                     leaning.toggle_less(fid, &username);
-                    hint.flash();
+                    match on_press {
+                        Some(pressed) => pressed.run(()),
+                        None => hint.flash(),
+                    }
                 }
             >
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=LOWER/></svg>
                 "Show less"
             </button>
-            {hint.view(
-                "show-less-what",
-                "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
-            )}
+            {on_press.is_none().then(|| {
+                hint.view(
+                    "show-less-what",
+                    "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
+                )
+            })}
         </span>
     }
 }
