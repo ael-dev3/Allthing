@@ -14,7 +14,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::Avatar;
-use crate::components::layout::ErrorPanel;
+use crate::components::layout::{Columns, ErrorPanel};
 use crate::components::profile_card::ProfileHover;
 use crate::util::{channel_href, set_title, use_query_param, user_href};
 
@@ -44,7 +44,8 @@ fn SearchPage() -> impl IntoView {
     });
     Effect::new(move |_| set_title(&q.get().map(|q| format!("“{q}”")).unwrap_or_else(|| "Search".into())));
 
-    move || {
+    // In the feeds' column: the results' casts are as wide as a feed's.
+    let page = move || {
         let Some(term) = q.get() else {
             return view! {
                 <section class="search-page">
@@ -134,7 +135,8 @@ fn SearchPage() -> impl IntoView {
                 .into_any()
             }
         }
-    }
+    };
+    view! { <Columns>{page}</Columns> }
 }
 
 /// "Show all N people" under a capped group; disappears once pressed.
