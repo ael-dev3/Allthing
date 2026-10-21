@@ -1226,6 +1226,22 @@ p.jumbo .emoji img {
   }
 }
 
+/* On a touch screen, a card's row of counts and buttons sits 14 px under
+   what is above it, and a reply's 13 px (9 and 7 px with a mouse), so
+   their bands, 44 px tall, stay 2 px clear of it: a tap on the lower edge
+   of a photo, a link card, a quote or a link on the last line opens it,
+   where the band above took 3 px of it (4 px under a reply), and liked or
+   recasted the cast instead. */
+@media (pointer: coarse) {
+  .cast-card > .cast-foot {
+    margin-top: 14px;
+  }
+
+  .comment-inner > .comment-foot {
+    margin-top: 13px;
+  }
+}
+
 .engagement .popover-trigger.stat-count:focus-visible {
   outline-offset: -2px;
 }
