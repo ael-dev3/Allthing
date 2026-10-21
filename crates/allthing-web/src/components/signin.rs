@@ -4,16 +4,22 @@
 //! Worker endorses keys, the reader signs in by approving Allthing's key in
 //! the Farcaster app, which lets them write from here too: a QR code for
 //! their phone on a computer, a link to the app on a phone (`writer`'s
-//! `signing_in`). Elsewhere, by Sign In With Farcaster: the dialog shows a
-//! QR code, polls Farcaster's relay until the app has approved, and the
-//! Worker checks what the app signed and sets the session cookie
-//! (`allthing_core::siwf`). Not in the static copy, which has no Worker.
+//! `signing_in`). The same dialog, in its approve form, is the only other
+//! approval a reader meets: signed in without a key in this browser (signed
+//! in before keys, after Revoke permissions, or with its storage cleared),
+//! their first write asks for one (`Session::grant`, `writer`'s
+//! `granting`). Elsewhere, where the Worker endorses no keys, by Sign In
+//! With Farcaster: the dialog shows a QR code, polls Farcaster's relay
+//! until the app has approved, and the Worker checks what the app signed
+//! and sets the session cookie (`allthing_core::siwf`). Not in the static
+//! copy, which has no Worker.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
+use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::model::UserSummary;
 use allthing_core::siwf::{self, Proof, QrCode, QrRequest, RELAY, SignedIn, Started, USER_COOKIE};
 use leptos::ev;
@@ -31,8 +37,9 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::popover::Popover;
-use crate::components::writer::{Approving, signing_in};
-use crate::util::{GITHUB_MARK, SOURCE_URL, document, trap_tab, user_href};
+use crate::components::writer::{Approving, Writer, granting, signing_in};
+use crate::keys::Stored;
+use crate::util::{GITHUB_MARK, SOURCE_URL, can_hover, document, trap_tab, user_href};
 
 /// How often the dialog asks the relay whether the app has answered, and
 /// how long a code lasts.
@@ -92,6 +99,14 @@ struct Approver {
     pfp_url: Option<String>,
 }
 
+/// What the dialog is for: signing in, or, for a reader signed in without a
+/// key in this browser, approving Allthing to write from here.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    SignIn,
+    Grant,
+}
+
 /// Who is signed in, as the Worker's user cookie says, and the sign-in
 /// dialog's state. Held by the app, so a sign-in finishing after its dialog
 /// closed has somewhere to land.
@@ -100,6 +115,13 @@ pub struct Session {
     pub user: RwSignal<Option<UserSummary>>,
     open: RwSignal<bool>,
     step: RwSignal<Step>,
+    purpose: RwSignal<Purpose>,
+    /// Whether the Worker endorses keys, once a sign-in's start has said:
+    /// approving Allthing's key then signs in, and lets the reader write.
+    keys: RwSignal<Option<bool>>,
+    /// The account the key request shown is from, as the Farcaster app
+    /// names it.
+    asker: RwSignal<Option<u64>>,
 }
 
 thread_local! {
@@ -112,6 +134,9 @@ thread_local! {
     static RENEWED: Cell<u32> = const { Cell::new(0) };
     /// The page came back into view since the last poll: poll at once.
     static WOKEN: Cell<bool> = const { Cell::new(false) };
+    /// The writer a grant is for (`Session::grant`): it takes the key once
+    /// approved, and does the write that asked for it.
+    static GRANT_FOR: Cell<Option<Writer>> = const { Cell::new(None) };
     static TABS_CHANNEL: RefCell<Option<web_sys::BroadcastChannel>> = const { RefCell::new(None) };
 }
 
@@ -121,6 +146,9 @@ impl Session {
             user: RwSignal::new(cookie_user()),
             open: RwSignal::new(false),
             step: RwSignal::new(Step::Starting),
+            purpose: RwSignal::new(Purpose::SignIn),
+            keys: RwSignal::new(None),
+            asker: RwSignal::new(None),
         };
         session.follow_tabs();
         session
@@ -132,8 +160,14 @@ impl Session {
         let Ok(channel) = web_sys::BroadcastChannel::new(TABS) else { return };
         let heard = Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |_: web_sys::MessageEvent| {
             let user = cookie_user();
-            if user.is_some() && self.open.get_untracked() {
-                self.dismiss();
+            // Signed in there: this tab's sign-in is done. Signed out, or
+            // someone else: its approval is for no one.
+            let done = match self.purpose.get_untracked() {
+                Purpose::SignIn => user.is_some(),
+                Purpose::Grant => user != self.user.get_untracked(),
+            };
+            if done && self.open.get_untracked() {
+                self.close_quietly();
             }
             self.user.set(user);
         });
@@ -151,16 +185,55 @@ impl Session {
     /// Open the sign-in dialog.
     pub fn sign_in(self) {
         if !self.open.get_untracked() {
+            self.purpose.set(Purpose::SignIn);
             self.open();
         }
     }
 
-    /// Close the dialog, stopping its sign-in, and return focus to where it
-    /// was.
+    /// Open the dialog in its approve form, for the reader signed in without
+    /// a key in this browser: the same code (or link to the Farcaster app),
+    /// the same approval, which here signs no one in but lets them write
+    /// from here. Once approved, the key goes to `writer`, which does the
+    /// write that asked for it.
+    pub fn grant(self, writer: Writer) {
+        if self.user.get_untracked().is_none() {
+            return;
+        }
+        GRANT_FOR.with(|g| g.set(Some(writer)));
+        if !self.open.get_untracked() {
+            self.purpose.set(Purpose::Grant);
+            self.open();
+        }
+    }
+
+    /// Close the dialog, stopping its sign-in or approval, and return focus
+    /// to where it was.
     fn close(self) {
+        self.close_quietly();
+        if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
+            let _ = element.focus();
+        }
+    }
+
+    /// Close the dialog: an approval not given drops the write that asked
+    /// for it.
+    fn close_quietly(self) {
+        if let Some(writer) = GRANT_FOR.with(Cell::take) {
+            writer.grant_dropped();
+        }
+        self.dismiss();
+    }
+
+    /// Approved: the key goes to the writer that asked, which does the
+    /// write it asked for, and the dialog closes.
+    fn granted(self, stored: Stored) {
+        let writer = GRANT_FOR.with(Cell::take);
         self.dismiss();
         if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
             let _ = element.focus();
+        }
+        if let Some(writer) = writer {
+            writer.granted(stored);
         }
     }
 
@@ -249,12 +322,24 @@ fn fresh(session: Session) {
     begin(session);
 }
 
-/// Start a sign-in with a fresh code.
+/// Start a sign-in, or an approval, with a fresh code.
 fn begin(session: Session) {
     let run = next_run();
     session.step.set(Step::Starting);
+    session.asker.set(None);
+    if session.purpose.get_untracked() == Purpose::Grant {
+        let Some(fid) = session.user.with_untracked(|u| u.as_ref().map(|u| u.fid)) else { return };
+        spawn_local(async move {
+            match grant(run, session, fid).await {
+                Ok(stored) if current(run) => session.granted(stored),
+                Err(message) if current(run) && !message.is_empty() => session.step.set(Step::Failed(message)),
+                _ => {}
+            }
+        });
+        return;
+    }
     spawn_local(async move {
-        let outcome = match sign_in_flow(run, session.step).await {
+        let outcome = match sign_in_flow(run, session).await {
             Ok(flow) => flow.await,
             Err(_) => Err(UNLOADED.to_owned()),
         };
@@ -288,8 +373,8 @@ type Flow = Pin<Box<dyn Future<Output = Result<UserSummary, String>>>>;
 /// the approval: code of its own, fetched as Sign in is pointed at,
 /// focused or pressed (`warm`), or when the dialog opens (`crate::split`).
 #[wasm_split(signin, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_sign_in))]
-fn sign_in_flow(run: u64, step: RwSignal<Step>) -> Result<Flow, SplitLoaderError> {
-    Ok(Box::pin(sign_in(run, step)))
+fn sign_in_flow(run: u64, session: Session) -> Result<Flow, SplitLoaderError> {
+    Ok(Box::pin(sign_in(run, session)))
 }
 
 /// The Worker's check of an approval again, in the sign-in's code.
@@ -358,12 +443,14 @@ struct Status {
     pfp_url: Option<String>,
 }
 
-async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> {
+async fn sign_in(run: u64, session: Session) -> Result<UserSummary, String> {
+    let step = session.step;
     let failed = |failure: api::Failure| failure.message();
     let started: Started = api::post(&siwf::start_path(), &Nothing {}).await.map_err(failed)?;
+    session.keys.set(Some(started.keys));
     // Where the Worker endorses keys, approving Allthing's key signs in.
     if started.keys {
-        return by_key(run, step).await;
+        return by_key(run, session).await;
     }
     let request = ChannelRequest {
         siwe_uri: &started.uri,
@@ -393,19 +480,36 @@ async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> 
 
 /// A sign-in by approving Allthing's key, in writing's own code (`writer`),
 /// which the dialog follows.
-async fn by_key(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> {
-    let progress = Callback::new(move |approving: Approving| {
-        if current(run) {
-            step.set(match approving {
-                Approving::Waiting { code, link } => Step::Approving { code, link },
-                Approving::Adding => Step::Adding,
-            });
-        }
-    });
-    match signing_in(Rc::new(move || current(run)), progress).await {
+async fn by_key(run: u64, session: Session) -> Result<UserSummary, String> {
+    match signing_in(Rc::new(move || current(run)), following(run, session)).await {
         Ok(flow) => flow.await,
         Err(_) => Err(UNLOADED.to_owned()),
     }
+}
+
+/// An approval of Allthing's key for `fid`, signed in already, in writing's
+/// own code, which the dialog follows as it follows a sign-in by key.
+async fn grant(run: u64, session: Session, fid: u64) -> Result<Stored, String> {
+    match granting(fid, Rc::new(move || current(run)), following(run, session)).await {
+        Ok(flow) => flow.await,
+        Err(_) => Err(UNLOADED.to_owned()),
+    }
+}
+
+/// The dialog's step, as an approval of Allthing's key goes, and who the
+/// request is from.
+fn following(run: u64, session: Session) -> Callback<Approving> {
+    Callback::new(move |approving: Approving| {
+        if current(run) {
+            session.step.set(match approving {
+                Approving::Waiting { code, link, asker } => {
+                    session.asker.set(asker);
+                    Step::Approving { code, link }
+                }
+                Approving::Adding => Step::Adding,
+            });
+        }
+    })
 }
 
 /// The Worker's check of what the app signed. When it can't check just now
@@ -585,6 +689,16 @@ pub fn SignInDialog() -> impl IntoView {
             let _ = root.class_list().toggle_with_force("signin-open", open);
         }
     });
+    // An approval is for whoever is signed in: signed out, it closes.
+    Effect::new(move |_| {
+        if session.user.with(Option::is_none)
+            && session.purpose.get_untracked() == Purpose::Grant
+            && session.open.get_untracked()
+        {
+            session.close_quietly();
+        }
+    });
+    let for_grant = move || session.purpose.get() == Purpose::Grant;
     let keys = window_event_listener(ev::keydown, move |ev| {
         if !session.open.get_untracked() {
             return;
@@ -620,8 +734,10 @@ pub fn SignInDialog() -> impl IntoView {
         restored.remove();
     });
     let status = move || match session.step.get() {
+        Step::Starting if for_grant() => "Getting a code…".to_owned(),
         Step::Starting => "Getting a sign-in code…".to_owned(),
         Step::Waiting { .. } | Step::Approving { .. } => "Waiting for you to approve in Farcaster…".to_owned(),
+        Step::Adding if for_grant() => "Approved. Adding Allthing's key to your account…".to_owned(),
         Step::Adding => "Approved. Signing you in…".to_owned(),
         Step::Checking { who: Some(who) } => format!("@{} approved. Signing you in…", who.username),
         Step::Checking { who: None } => "Approved. Signing you in…".to_owned(),
@@ -629,16 +745,17 @@ pub fn SignInDialog() -> impl IntoView {
         Step::Failed(message) => message,
     };
     let stuck = move || matches!(session.step.get(), Step::Failed(_) | Step::Unconfirmed { .. });
-    // Approving Allthing's key signs in where the Worker endorses keys: on
-    // a phone, by the link to the Farcaster app, as it can't scan its own
-    // screen.
-    let keyed = move || matches!(session.step.get(), Step::Approving { .. } | Step::Adding);
-    let intro = move || match session.step.get() {
-        Step::Approving { code: None, .. } => "Approve Allthing in the Farcaster app, then come back here.",
-        Step::Approving { .. } | Step::Adding => {
-            "Scan the code with your phone's camera, then approve Allthing in the Farcaster app."
-        }
-        _ => "Scan the code with your phone's camera, then approve in the Farcaster app.",
+    // Where the Worker endorses keys, signing in is approving Allthing's
+    // key, which lets the reader write from here too (on a phone, by the
+    // link to the Farcaster app, as it can't scan its own screen); an
+    // approval for a reader signed in already is only ever that.
+    let keyed = move || for_grant() || session.keys.get() == Some(true);
+    // A phone can't scan its own screen: approving Allthing's key, it opens
+    // the Farcaster app by a link instead, from the first step to the last.
+    let intro = move || match (keyed(), can_hover()) {
+        (true, false) => "Approve Allthing in the Farcaster app, then come back here.",
+        (true, true) => "Scan the code with your phone's camera, then approve Allthing in the Farcaster app.",
+        (false, _) => "Scan the code with your phone's camera, then approve in the Farcaster app.",
     };
     move || {
         session.open.get().then(|| {
@@ -654,11 +771,14 @@ pub fn SignInDialog() -> impl IntoView {
                         session.close();
                     }
                 }>
-                    <div class="modal signin-modal" role="dialog" aria-modal="true" aria-labelledby="signin-title" node_ref=dialog>
-                        <header class="modal-head">
-                            <h2 id="signin-title">"Sign in with Farcaster"</h2>
+                    <div class="modal signin-modal" class:key-modal=for_grant role="dialog" aria-modal="true" aria-labelledby="signin-title" node_ref=dialog>
+                        // A div: a header here would be a second banner landmark.
+                        <div class="modal-head">
+                            <h2 id="signin-title">
+                                {move || if for_grant() { "Approve Allthing to write from here" } else { "Sign in with Farcaster" }}
+                            </h2>
                             <button type="button" class="modal-close" aria-label="Close" node_ref=close_button on:click=move |_| session.close()>"×"</button>
-                        </header>
+                        </div>
                         <div class="modal-body signin-body">
                             <p class="signin-intro">{intro}</p>
                             <div
@@ -668,13 +788,28 @@ pub fn SignInDialog() -> impl IntoView {
                             >
                                 {move || match session.step.get() {
                                     Step::Waiting { code } | Step::Approving { code: Some(code), .. } => view! {
-                                        <svg class="qr" viewBox=format!("0 0 {0} {0}", code.size) role="img" aria-label="Sign-in QR code" shape-rendering="crispEdges">
+                                        <svg
+                                            class="qr"
+                                            viewBox=format!("0 0 {0} {0}", code.size)
+                                            role="img"
+                                            aria-label=if for_grant() { "QR code to approve Allthing" } else { "Sign-in QR code" }
+                                            shape-rendering="crispEdges"
+                                        >
                                             <path d=code.path/>
                                         </svg>
                                     }
                                     .into_any(),
                                     Step::Approving { code: None, link } => view! {
                                         <a class="button key-approve" href=link>"Approve in Farcaster"</a>
+                                    }
+                                    .into_any(),
+                                    // The reader approving, signed in already, while their
+                                    // key is added; or a check, signing in.
+                                    Step::Adding if for_grant() => view! {
+                                        <span class="qr-approver" aria-hidden="true">
+                                            <Avatar url=session.user.with_untracked(|u| u.as_ref().and_then(|u| u.pfp_url.clone())) size=88 large=true/>
+                                            <span class="qr-approver-check">"✓"</span>
+                                        </span>
                                     }
                                     .into_any(),
                                     Step::Adding => view! { <span class="qr-check" aria-hidden="true">"✓"</span> }.into_any(),
@@ -705,10 +840,24 @@ pub fn SignInDialog() -> impl IntoView {
                                 {status}
                             </p>
                             <p class="signin-note muted small">
-                                {move || if keyed() {
-                                    "One approval signs you in and lets you post, like and recast from here, shown \u{201c}via Allthing\u{201d}. Allthing's key acts only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it."
-                                } else {
-                                    "Signing in tells Allthing who you are, nothing more."
+                                // What the approval allows, said before the scan; nothing
+                                // until the Worker has said which way a sign-in goes.
+                                {move || match (for_grant(), session.keys.get()) {
+                                    (true, _) => Some("One approval lets you cast, reply, quote, like, recast, follow and delete from here, shown \u{201c}via Allthing\u{201d}. "),
+                                    (false, Some(true)) => Some("One approval signs you in and lets you cast, reply, quote, like, recast, follow and delete from here, shown \u{201c}via Allthing\u{201d}. "),
+                                    (false, Some(false)) => Some("Signing in tells Allthing who you are, nothing more."),
+                                    (false, None) => None,
+                                }}
+                                // The Farcaster app names the account that asks: Allthing's
+                                // own, so a reader can check it is.
+                                {move || {
+                                    (keyed() && session.asker.get() == Some(ALLTHING_APP_FID))
+                                        .then_some("The Farcaster app shows the request as from Allthing, @allthingapp. ")
+                                }}
+                                {move || {
+                                    keyed().then_some(
+                                        "Allthing's key acts only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it.",
+                                    )
                                 }}
                             </p>
                         </div>

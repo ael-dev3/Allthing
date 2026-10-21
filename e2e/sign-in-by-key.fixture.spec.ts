@@ -143,7 +143,7 @@ test("at 1280, one approval of Allthing's key signs in, and the reader likes at 
   // A code for the reader's phone, which asks for Allthing's key.
   await expect(dialog.getByRole("img", { name: "Sign-in QR code" })).toBeVisible();
   await expect(dialog).toContainText("Scan the code with your phone's camera, then approve Allthing in the Farcaster app.");
-  await expect(dialog).toContainText("One approval signs you in and lets you post, like and recast from here");
+  await expect(dialog).toContainText("One approval signs you in and lets you cast, reply, quote, like, recast, follow and delete from here");
   await expect(dialog.getByRole("link", { name: "Approve in Farcaster" })).toHaveCount(0);
   expect(calls.endorse).toHaveLength(1);
   await settled(page);
@@ -205,26 +205,29 @@ test("a node a moment behind the Farcaster app is asked again, with no new appro
   expect(calls.endorse).toHaveLength(1);
 });
 
-test("a reader signed in before Allthing could write for them is asked once to approve its key", async ({ page }) => {
+test("a reader signed in before Allthing could write for them is asked nothing until they write; then the same dialog approves, and the write goes", async ({ page }) => {
   const calls = await serve(page);
   await page.addInitScript((user) => {
     document.cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify(user))}; Path=/; Secure; SameSite=Lax`;
   }, me);
   await page.goto("/");
-  // The approval opens by itself, once.
-  const approve = page.getByRole("dialog", { name: "Approve Allthing" });
-  await expect(approve).toBeVisible();
-  await expect(approve.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("allthing-asked-to-approve"))).toBe(String(me.fid));
-  await page.keyboard.press("Escape");
-  await expect(approve).toBeHidden();
-  // Not again: the page asks what it can do, and opens nothing.
-  const before = calls.writes;
-  await page.reload();
-  await expect.poll(() => calls.writes).toBeGreaterThan(before);
+  // Nothing opens by itself: the page asks what it can do, and that's all.
+  await expect.poll(() => calls.writes).toBeGreaterThan(0);
   await page.waitForTimeout(1000);
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  // A like still asks, as before.
+  // A like asks: the sign-in dialog, in its approve form.
   await page.getByRole("button", { name: "Like", exact: true }).click();
+  const approve = page.getByRole("dialog", { name: "Approve Allthing to write from here" });
   await expect(approve).toBeVisible();
+  await expect(approve).toHaveClass(/\bsignin-modal\b/);
+  await expect(approve.getByRole("img", { name: "QR code to approve Allthing" })).toBeVisible();
+  await expect(approve).toContainText("One approval lets you cast, reply, quote, like, recast, follow and delete from here");
+  await expect(approve).toContainText("The Farcaster app shows the request as from Allthing, @allthingapp.");
+  // Approved: the dialog closes, and the like goes, signed with that key.
+  await expect(approve).toBeHidden({ timeout: 20_000 });
+  await expect.poll(() => calls.sent.length).toBe(1);
+  expect(calls.sent[0]).toEqual({ reaction: 1, target: { fid: alice.fid, hash: first.hash } });
+  expect(calls.signer).toEqual([calls.endorse[0]]);
+  expect(calls.relay).toBe(0);
+  expect(await kept(page, me.fid)).toMatchObject({ key: calls.endorse[0], approved: true });
 });

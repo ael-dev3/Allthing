@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Liking and recasting from Allthing. A signed-in reader approves an app
-//! key once, by QR code in their Farcaster app (`allthing_core::app_key`);
-//! this browser keeps the key (`crate::keys`), signs each like or recast
-//! with it, and hands the message to the node (`allthing_core::message`).
+//! Liking, recasting and the rest of writing from Allthing. A reader
+//! approves Allthing's key once, with the one QR code (a link on a phone)
+//! that signs them in (`signin`, `allthing_core::app_key`); this browser
+//! keeps the key (`crate::keys`), signs each write with it, and hands the
+//! message to the node (`allthing_core::message`).
 //!
 //! The node taking a message isn't Farcaster having it: each write is read
 //! back from the node until its store shows it (`confirm`), and only then
@@ -11,13 +12,14 @@
 //! a notice that says why and, where it may help, offers to try again.
 //!
 //! Here: whether the reader can ([`Writer`]), the like and recast buttons
-//! that `Engagement` shows on every cast, the dialog with the code, what
-//! the reader liked and recasted (their latest of each, from the node, and
-//! what they do here), and a short notice when something fails. All of it
-//! waits until the Worker endorses keys (`/api/v1/signer`), which takes an
-//! account of Allthing's own; until then, and for a reader signed out, each
-//! write goes to the Farcaster app instead (`components::handoff`). Not in
-//! the static copy, which has no sign-in.
+//! that `Engagement` shows on every cast, the approval of a key (which the
+//! sign-in dialog shows), what the reader liked and recasted (their latest
+//! of each, from the node, and what they do here), and a short notice when
+//! something fails. All of it waits until the Worker endorses keys
+//! (`/api/v1/signer`), which takes an account of Allthing's own; until
+//! then, and for a reader signed out, each write goes to the Farcaster app
+//! instead (`components::handoff`). Not in the static copy, which has no
+//! sign-in.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -29,7 +31,6 @@ use allthing_core::api::{REFRESH_PATH, ReactionKind, ReactionsPayload, Wrote};
 use allthing_core::app_key::{
     self, Endorse, KeyState, Writes, endorse_path, key_request_url, key_requests_url, parse_requested, writes_path,
 };
-use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, ReadBack, Sent, Submitted};
@@ -46,14 +47,12 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::HtmlElement;
 
 use crate::api;
-use crate::components::chips::Avatar;
 use crate::components::handoff::{Ask, Dismissed, HandOff, use_hand_off};
 use crate::components::signin::{Session, use_session};
 use crate::keys::{self, KeyError, Stored};
-use crate::util::{can_hover, cast_href, document, local_time, scheduled_href, trap_tab};
+use crate::util::{can_hover, cast_href, document, local_time, scheduled_href};
 
 /// How often the dialog asks the Farcaster app's API about the request (as
 /// Farcaster's own example does), and how often the node is asked whether
@@ -106,9 +105,6 @@ const KEPT_FOR_MS: f64 = 600_000.0;
 /// refreshed again while one doesn't have it yet, as the node's indexes
 /// catch up.
 const REFRESH_MS: [i32; 3] = [1500, 4000, 10_000];
-/// The accounts asked, in this browser, to approve Allthing's key once
-/// signed in (`localStorage`, their fids).
-const ASKED: &str = "allthing-asked-to-approve";
 
 const EXPIRED: &str = "This code has expired. Get a new one to approve Allthing.";
 const FARCASTER_DOWN: &str = "Couldn't reach the Farcaster app's API. Check your connection and try again.";
@@ -128,26 +124,11 @@ enum Can {
     No,
     /// Being found out.
     Checking,
-    /// Once they approve a key: a like or a recast opens the dialog.
+    /// Once they approve a key: their first write opens the sign-in
+    /// dialog's approve form.
     Approve,
     /// Yes: the key signs.
     Yes,
-}
-
-/// Where an approval stands, in the dialog.
-#[derive(Clone, PartialEq)]
-enum Step {
-    /// Making the key, and the request, and the code.
-    Starting,
-    /// The link is up, drawn as a code where a phone has to scan it; the
-    /// Farcaster app hasn't answered yet.
-    Waiting {
-        code: Option<QrCode>,
-        link: String,
-    },
-    /// Approved: the Farcaster app is adding the key to the account.
-    Adding,
-    Failed(String),
 }
 
 /// Where a sign-in by approving Allthing's key stands, for the sign-in
@@ -155,8 +136,9 @@ enum Step {
 #[derive(Clone, PartialEq)]
 pub enum Approving {
     /// The link is up, drawn as a code where a phone has to scan it; the
-    /// Farcaster app hasn't answered yet.
-    Waiting { code: Option<QrCode>, link: String },
+    /// Farcaster app hasn't answered yet. `asker`: the account the request
+    /// is from, as the app shows it.
+    Waiting { code: Option<QrCode>, link: String, asker: Option<u64> },
     /// Approved: the Farcaster app is adding the key, then the Worker
     /// checks it.
     Adding,
@@ -331,10 +313,6 @@ pub struct Writer {
     session: Session,
     hand_off: HandOff,
     can: RwSignal<Can>,
-    /// The account the Worker asks for readers' keys as, once it has said.
-    app: RwSignal<Option<u64>>,
-    open: RwSignal<bool>,
-    step: RwSignal<Step>,
     mine: RwSignal<Mine>,
     notice: RwSignal<Option<Notice>>,
     /// Moves on whenever the reader schedules, changes or cancels a cast,
@@ -352,13 +330,10 @@ type Action = (u64, Box<dyn FnOnce()>);
 thread_local! {
     /// The reader's approved key.
     static KEY: RefCell<Option<Stored>> = const { RefCell::new(None) };
-    /// The approval under way: closing the dialog moves this on, and the
-    /// older one stops polling.
-    static RUN: Cell<u64> = const { Cell::new(0) };
     /// Which check of the reader's state is current.
     static CHECK: Cell<u64> = const { Cell::new(0) };
-    /// What opened the dialog (a like, a recast, a cast): done once the
-    /// key is approved.
+    /// The write that asked for an approval (a like, a recast, a cast):
+    /// done once the key is approved, dropped if the dialog closes first.
     static WAITING: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
     /// A write asked for before the check was back: done once it is (after
     /// approving a key, if the reader needs one), or handed to the
@@ -366,7 +341,6 @@ thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     /// Usernames looked up for mentions this visit, and whose they are.
     static NAMES: RefCell<HashMap<String, Option<u64>>> = RefCell::new(HashMap::new());
-    static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
     /// The last timestamp each like or recast was sent with: a message that
     /// undoes another goes out at least a second later, so it wins.
     static SENT_AT: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
@@ -398,9 +372,6 @@ impl Writer {
             session,
             hand_off: use_hand_off(),
             can: RwSignal::new(Can::No),
-            app: RwSignal::new(None),
-            open: RwSignal::new(false),
-            step: RwSignal::new(Step::Starting),
             mine: RwSignal::new(Mine { deleted: deleted_before(), ..Mine::default() }),
             notice: RwSignal::new(None),
             scheduled: RwSignal::new(0),
@@ -411,7 +382,7 @@ impl Writer {
                 match fid {
                     // Signed in when the page loaded, or just now.
                     Some(fid) => {
-                        writer.check(fid, before.is_none());
+                        writer.check(fid);
                         writer.restore(fid);
                     }
                     None => writer.signed_out(before.flatten()),
@@ -559,7 +530,8 @@ impl Writer {
     }
 
     /// Run `then` with the reader's key: at once, or when they have
-    /// approved one, for which the dialog opens; while the Worker is asked,
+    /// approved one, for which the sign-in dialog opens in its approve form
+    /// (dropped if it closes unapproved); while the Worker is asked,
     /// it waits for the answer. Signed out, or where the Worker endorses no
     /// keys, the reader does it in the Farcaster app: `ask` opens there, and,
     /// signed in, what it asks for (`expect`) shows here once they have.
@@ -1413,8 +1385,7 @@ impl Writer {
 
     /// Find out whether `fid` can like and recast here: whether the Worker
     /// endorses keys, and whether this browser keeps an approved one.
-    /// `at_load`: the reader was signed in when the page loaded.
-    fn check(self, fid: u64, at_load: bool) {
+    fn check(self, fid: u64) {
         let check = CHECK.with(|c| {
             c.set(c.get() + 1);
             c.get()
@@ -1427,15 +1398,12 @@ impl Writer {
         });
         spawn_local(async move {
             let can = match api::get::<Writes>(&writes_path()).await {
-                Ok(writes) => {
-                    self.app.set(Some(writes.data.app_fid));
-                    // Without writing's own code, writes go to the
-                    // Farcaster app.
-                    match keeping(fid).await {
-                        Ok(keeping) => keeping.await,
-                        Err(_) => Can::No,
-                    }
-                }
+                // Without writing's own code, writes go to the Farcaster
+                // app.
+                Ok(_) => match keeping(fid).await {
+                    Ok(keeping) => keeping.await,
+                    Err(_) => Can::No,
+                },
                 Err(_) => Can::No,
             };
             if CHECK.with(Cell::get) != check {
@@ -1447,13 +1415,10 @@ impl Writer {
             if matches!(can, Can::Yes | Can::No) {
                 self.load_mine(fid);
             }
-            // A write that came before the answer. Without one, a reader
-            // who was signed in when the page loaded, with no key here, is
-            // asked once, in this browser, to approve one.
-            match PENDING.with(|p| p.borrow_mut().take()) {
-                Some((then, ask, expect)) => self.when_ready(then, ask, expect),
-                None if at_load && can == Can::Approve && !modal_open() && ask_once(fid) => self.connect(),
-                None => {}
+            // A write that came before the answer. A reader with no key here
+            // isn't asked for one until they write: no dialog opens by itself.
+            if let Some((then, ask, expect)) = PENDING.with(|p| p.borrow_mut().take()) {
+                self.when_ready(then, ask, expect);
             }
         });
     }
@@ -1468,9 +1433,6 @@ impl Writer {
         UNDO.with(|u| u.borrow_mut().clear());
         // What was deleted stays deleted, whoever is signed in.
         self.mine.update(|m| *m = Mine { deleted: std::mem::take(&mut m.deleted), ..Mine::default() });
-        if self.open.get_untracked() {
-            self.dismiss();
-        }
         // Signing out forgets this browser's key: whoever uses it next
         // can't like as the reader.
         if let Some(fid) = fid {
@@ -1501,21 +1463,24 @@ impl Writer {
         }
     }
 
-    /// The key was approved: it signs from now on, and the like or recast
-    /// that opened the dialog goes out, if the dialog is still open.
-    fn approved(self, stored: Stored, run: u64) {
+    /// Approved in the sign-in dialog's approve form (`Session::grant`): the
+    /// key signs from now on, here and in the site's other tabs, and the
+    /// write that asked for it goes.
+    pub fn granted(self, stored: Stored) {
         let fid = stored.fid;
-        let waiting = if current(run) { WAITING.with(|w| w.borrow_mut().take()) } else { None };
+        let waiting = WAITING.with(|w| w.borrow_mut().take());
         KEY.with(|k| *k.borrow_mut() = Some(stored));
         self.can.set(Can::Yes);
         self.load_mine(fid);
         tell_tabs();
-        if current(run) {
-            self.close();
-        }
         if let Some(then) = waiting {
             then();
         }
+    }
+
+    /// The approval closed unapproved: the write that asked for it doesn't go.
+    pub fn grant_dropped(self) {
+        WAITING.with(|w| w.borrow_mut().take());
     }
 
     /// The node no longer knows the key: the reader removed it in the
@@ -1614,65 +1579,29 @@ impl Writer {
         }
     }
 
-    /// The dialog to approve a key, for a reader whose key is gone.
+    /// The sign-in dialog's approve form (`connect`), for a reader whose
+    /// key is gone.
     fn approve(self) {
         if self.can.get_untracked() == Can::Approve {
             self.connect();
         }
     }
 
-    /// Open the dialog. A key approved in another tab meanwhile is used at
-    /// once instead.
+    /// Ask the reader to approve Allthing to write from here: the sign-in
+    /// dialog, in its approve form (`Session::grant`), the one approval a
+    /// reader meets. A key approved in another tab meanwhile is used at once
+    /// instead.
     fn connect(self) {
         let Some(fid) = self.fid() else { return };
-        RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
         spawn_local(async move {
             if let Ok(Some(stored)) = keys::load(fid).await
                 && stored.approved_at.is_some()
             {
-                let run = RUN.with(Cell::get);
-                self.approved(stored, run);
+                self.granted(stored);
                 return;
             }
-            self.open.set(true);
-            self.begin(fid);
+            self.session.grant(self);
         });
-    }
-
-    fn begin(self, fid: u64) {
-        let run = RUN.with(|r| {
-            r.set(r.get() + 1);
-            r.get()
-        });
-        self.step.set(Step::Starting);
-        spawn_local(async move {
-            let outcome = match approving(run, self.step, fid).await {
-                Ok(approving) => approving.await,
-                Err(_) => Err(UNLOADED.to_owned()),
-            };
-            match outcome {
-                Ok(stored) => self.approved(stored, run),
-                Err(message) if current(run) && !message.is_empty() => self.step.set(Step::Failed(message)),
-                Err(_) => {}
-            }
-        });
-    }
-
-    /// Close the dialog, stopping its polls, and return focus to where it
-    /// was. A request the reader hasn't approved yet is kept: its code shows
-    /// again next time, until it lapses. The like or recast that opened the
-    /// dialog is dropped.
-    fn close(self) {
-        WAITING.with(|w| w.borrow_mut().take());
-        self.dismiss();
-        if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
-            let _ = element.focus();
-        }
-    }
-
-    fn dismiss(self) {
-        RUN.with(|r| r.set(r.get() + 1));
-        self.open.set(false);
     }
 
     /// When another tab approves or forgets a key, this one checks again.
@@ -1681,7 +1610,7 @@ impl Writer {
         let heard = Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |_: web_sys::MessageEvent| {
             if let Some(fid) = self.fid() {
                 KEY.with(|k| k.borrow_mut().take());
-                self.check(fid, false);
+                self.check(fid);
             }
         });
         channel.set_onmessage(Some(heard.as_ref().unchecked_ref()));
@@ -1826,27 +1755,6 @@ fn remember_reacted(fid: u64, key: &(String, Reaction), on: bool, made: u64) {
     });
 }
 
-/// Whether `fid` hasn't yet been asked, in this browser, to approve
-/// Allthing's key since signing in; it has been now.
-fn ask_once(fid: u64) -> bool {
-    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else { return false };
-    let asked = storage.get_item(ASKED).ok().flatten().unwrap_or_default();
-    if asked.split(',').any(|f| f == fid.to_string()) {
-        return false;
-    }
-    let asked = if asked.is_empty() { fid.to_string() } else { format!("{asked},{fid}") };
-    storage.set_item(ASKED, &asked).is_ok()
-}
-
-/// Whether a dialog is open: the reader is in the middle of something.
-fn modal_open() -> bool {
-    document().query_selector("[aria-modal='true']").ok().flatten().is_some()
-}
-
-fn current(run: u64) -> bool {
-    RUN.with(|r| r.get() == run)
-}
-
 fn now_secs() -> f64 {
     js_sys::Date::now() / 1000.0
 }
@@ -1880,11 +1788,12 @@ async fn kept_key(fid: u64) -> Can {
     Can::Yes
 }
 
-/// The dialog's work: a key and its request (or the one still waiting),
-/// the code, then polls until the reader has approved in the Farcaster app,
-/// the key is added, and the node knows it.
-async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, String> {
-    let still = move || current(run);
+/// An approval of Allthing's key for `fid`, who is signed in, in the
+/// sign-in dialog's approve form: a key and its request (or the one still
+/// waiting), the code, then polls until the reader has approved in the
+/// Farcaster app, the key is added, and the node knows it. `progress` hears
+/// where it stands, as a sign-in by key's does.
+async fn grant(fid: u64, still: Rc<dyn Fn() -> bool>, progress: Callback<Approving>) -> Result<Stored, String> {
     let stored = match keys::load(fid).await {
         Ok(Some(stored)) if stored.approved_at.is_some() => return Ok(stored),
         Ok(kept) => waiting_or_new(kept, fid).await?,
@@ -1894,10 +1803,10 @@ async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, Str
     if !still() {
         return Err(String::new());
     }
-    step.set(Step::Waiting { code, link: request.link.clone() });
-    approval(&still, &stored, &request, Some(fid), &|| step.set(Step::Adding)).await?;
-    step.set(Step::Adding);
-    listed(&still, fid, &stored.key).await?;
+    progress.run(Approving::Waiting { code, link: request.link.clone(), asker: request.asker });
+    approval(&*still, &stored, &request, Some(fid), &|| progress.run(Approving::Adding)).await?;
+    progress.run(Approving::Adding);
+    listed(&*still, fid, &stored.key).await?;
     let stored = stored.approved();
     keys::save(&stored).await.map_err(key_message)?;
     Ok(stored)
@@ -1916,7 +1825,7 @@ async fn sign_in_by_key(still: Rc<dyn Fn() -> bool>, progress: Callback<Approvin
     if !still() {
         return Err(String::new());
     }
-    progress.run(Approving::Waiting { code, link: request.link.clone() });
+    progress.run(Approving::Waiting { code, link: request.link.clone(), asker: request.asker });
     let fid = approval(&*still, &stored, &request, None, &|| progress.run(Approving::Adding)).await?;
     progress.run(Approving::Adding);
     listed(&*still, fid, &stored.key).await?;
@@ -2041,11 +1950,12 @@ async fn listed(still: &dyn Fn() -> bool, fid: u64, key: &str) -> Result<(), Str
 /// kept in this browser.
 async fn request(fid: u64) -> Result<Stored, String> {
     let mut stored = keys::generate(fid).await.map_err(key_message)?;
-    // An `app_key::KeyRequest`, passed on as it is: only its deadline is
-    // read here.
+    // An `app_key::KeyRequest`, passed on as it is: only its deadline, and
+    // the account that asks, are read here.
     let endorsed: serde_json::Value =
         api::post(&endorse_path(), &Endorse { key: stored.key.clone() }).await.map_err(|f| f.message())?;
     let deadline = endorsed.get("deadline").and_then(serde_json::Value::as_f64).ok_or(FARCASTER_DOWN)?;
+    let asker = endorsed.get("requestFid").and_then(serde_json::Value::as_u64);
     let body = serde_json::to_string(&endorsed).map_err(|_| FARCASTER_DOWN.to_owned())?;
     let (status, answer) = fetch("POST", &key_requests_url(), Some(("application/json", JsValue::from_str(&body))))
         .await
@@ -2057,7 +1967,7 @@ async fn request(fid: u64) -> Result<Stored, String> {
             None => FARCASTER_DOWN.to_owned(),
         });
     };
-    stored.request = Some(keys::Request { token: requested.token, link: requested.link, deadline });
+    stored.request = Some(keys::Request { token: requested.token, link: requested.link, deadline, asker });
     keys::save(&stored).await.map_err(key_message)?;
     Ok(stored)
 }
@@ -2204,9 +2114,15 @@ fn confirming(signed: Signed) -> Result<Later<Option<bool>>, SplitLoaderError> {
     Ok(Box::pin(confirm(signed)))
 }
 
+/// An approval of Allthing's key by a reader signed in already, for the
+/// sign-in dialog's approve form (`signin`).
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
-fn approving(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Later<Result<Stored, String>>, SplitLoaderError> {
-    Ok(Box::pin(approve(run, step, fid)))
+pub fn granting(
+    fid: u64,
+    still: Rc<dyn Fn() -> bool>,
+    progress: Callback<Approving>,
+) -> Result<Later<Result<Stored, String>>, SplitLoaderError> {
+    Ok(Box::pin(grant(fid, still, progress)))
 }
 
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
@@ -2349,37 +2265,14 @@ async fn pause(ms: i32) {
     }
 }
 
-/// The dialog that shows the code to approve Allthing's key with, and the
-/// notice for likes and recasts that didn't go out.
+/// The writer's notices ("Posted.", "Couldn't reach Farcaster's network…"),
+/// and, while an approval polls the Farcaster app's API, asking at once
+/// when the page is back in view (the phone's own app, another tab). The
+/// approval itself is the sign-in dialog's, in its approve form
+/// (`signin::SignInDialog`, `Session::grant`).
 #[component]
 pub fn WriterDialog() -> impl IntoView {
     let Some(writer) = use_writer() else { return ().into_any() };
-    let session = writer.session;
-    let dialog = NodeRef::<leptos::html::Div>::new();
-    Effect::new(move |_| {
-        let open = writer.open.get();
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().toggle_with_force("key-open", open);
-        }
-    });
-    let keys = window_event_listener(ev::keydown, move |ev| {
-        if !writer.open.get_untracked() {
-            return;
-        }
-        match ev.key().as_str() {
-            "Escape" => {
-                ev.prevent_default();
-                writer.close();
-            }
-            "Tab" => {
-                if let Some(root) = dialog.get_untracked() {
-                    trap_tab(&root, &ev, "button, a[href]");
-                }
-            }
-            _ => {}
-        }
-    });
-    // Back in view (the phone's own app, another tab): ask at once.
     let woken = |_| {
         if !document().hidden() {
             WAKES.with(|w| w.set(w.get() + 1));
@@ -2388,102 +2281,10 @@ pub fn WriterDialog() -> impl IntoView {
     let shown = window_event_listener_untyped("visibilitychange", woken);
     let focused = window_event_listener_untyped("focus", woken);
     on_cleanup(move || {
-        keys.remove();
         shown.remove();
         focused.remove();
     });
-    let status = move || match writer.step.get() {
-        Step::Starting => "Getting a code…",
-        Step::Waiting { .. } => "Waiting for you to approve in Farcaster…",
-        Step::Adding => "Approved. Adding Allthing's key to your account…",
-        Step::Failed(_) => "",
-    };
-    let failed = move || match writer.step.get() {
-        Step::Failed(message) => Some(message),
-        _ => None,
-    };
-    let dialog_view = move || {
-        writer.open.get().then(|| {
-            let close_button = NodeRef::<leptos::html::Button>::new();
-            Effect::new(move |_| {
-                if let Some(button) = close_button.get() {
-                    let _ = button.focus();
-                }
-            });
-            view! {
-                <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
-                    if ev.target() == ev.current_target() {
-                        writer.close();
-                    }
-                }>
-                    <div class="modal signin-modal key-modal" role="dialog" aria-modal="true" aria-labelledby="key-title" node_ref=dialog>
-                        <header class="modal-head">
-                            <h2 id="key-title">"Approve Allthing"</h2>
-                            <button type="button" class="modal-close" aria-label="Close" node_ref=close_button on:click=move |_| writer.close()>"×"</button>
-                        </header>
-                        <div class="modal-body signin-body">
-                            <p class="signin-intro">
-                                {if can_hover() {
-                                    "Once, to post, like, recast and follow from here: scan the code with your phone's camera, then approve Allthing in the Farcaster app."
-                                } else {
-                                    "Once, to post, like, recast and follow from here: approve Allthing in the Farcaster app."
-                                }}
-                            </p>
-                            <div
-                                class="qr-frame"
-                                class:failed=move || failed().is_some()
-                                class:as-link=move || matches!(writer.step.get(), Step::Waiting { code: None, .. })
-                            >
-                                {move || match writer.step.get() {
-                                    Step::Waiting { code: Some(code), .. } => view! {
-                                        <svg class="qr" viewBox=format!("0 0 {0} {0}", code.size) role="img" aria-label="QR code to approve Allthing" shape-rendering="crispEdges">
-                                            <path d=code.path/>
-                                        </svg>
-                                    }
-                                    .into_any(),
-                                    Step::Waiting { code: None, link } => view! {
-                                        <a class="button key-approve" href=link>"Approve in Farcaster"</a>
-                                    }
-                                    .into_any(),
-                                    // The reader, while their key is added.
-                                    Step::Adding => view! {
-                                        <span class="qr-approver" aria-hidden="true">
-                                            <Avatar url=session.user.with_untracked(|u| u.as_ref().and_then(|u| u.pfp_url.clone())) size=88 large=true/>
-                                            <span class="qr-approver-check">"✓"</span>
-                                        </span>
-                                    }
-                                    .into_any(),
-                                    Step::Failed(_) => view! {
-                                        <button type="button" class="button" on:click=move |_| {
-                                            if let Some(fid) = writer.fid() {
-                                                writer.begin(fid);
-                                            }
-                                        }>"Get a new code"</button>
-                                    }
-                                    .into_any(),
-                                    Step::Starting => view! { <span class="qr-loading" aria-hidden="true"></span> }.into_any(),
-                                }}
-                            </div>
-                            <p class="signin-status" class:error=move || failed().is_some() role="status">
-                                {move || failed().unwrap_or_else(|| status().to_owned())}
-                            </p>
-                            <p class="signin-note muted small">
-                                // The Farcaster app names the account that asks: Allthing's
-                                // own, so a reader can check it is.
-                                {move || {
-                                    (writer.app.get() == Some(ALLTHING_APP_FID))
-                                        .then_some("The Farcaster app shows the request as from Allthing, @allthingapp. ")
-                                }}
-                                "Allthing gets a key that can like, recast and post for you, and uses it only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it."
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            }
-        })
-    };
     view! {
-        {dialog_view}
         <p class="toast" role="status" aria-live="polite" class:shown=move || writer.notice.with(Option::is_some)>
             {move || writer.notice.get().map(|notice| view! {
                 {notice.text}

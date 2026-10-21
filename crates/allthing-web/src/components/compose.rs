@@ -1398,11 +1398,12 @@ pub fn ComposerDialog() -> impl IntoView {
         }
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
-        // The key dialog, over the composer for a first post, or the
-        // hand-off to the Farcaster app, has the keys.
-        let over = document()
-            .document_element()
-            .is_some_and(|root| root.class_list().contains("key-open") || root.class_list().contains("handoff-open"));
+        // The approval of Allthing's key (the sign-in dialog, in its approve
+        // form), over the composer for a first post, or the hand-off to the
+        // Farcaster app, has the keys.
+        let over = document().document_element().is_some_and(|root| {
+            root.class_list().contains("signin-open") || root.class_list().contains("handoff-open")
+        });
         if !composer.open.get_untracked() || over {
             return;
         }

@@ -77,7 +77,6 @@ html {
 html.lightbox-open,
 html.who-open,
 html.signin-open,
-html.key-open,
 html.compose-open,
 html.handoff-open {
   overflow: hidden;
