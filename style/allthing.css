@@ -6924,3 +6924,704 @@ p.jumbo .emoji img {
 .scheduled-view {
   font-weight: 600;
 }
+
+/* The reader's Direct Casts (pages/messages): the conversations beside the
+   one open, in a box whose height is fixed so nothing moves as they load;
+   on a phone, one at a time. */
+.dm {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.dm-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.dm-lede {
+  margin: 0;
+}
+
+.dm .button.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.dm .button.primary:hover {
+  background: #4337c4;
+}
+
+.dm .button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.dm a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.dm-box {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  height: clamp(460px, calc(100vh - 230px), 760px);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.dm-box-single {
+  grid-template-columns: minmax(0, 1fr);
+  height: auto;
+  min-height: 380px;
+}
+
+.dm-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--paper-2);
+}
+
+.dm-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 60px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dm-list-title {
+  margin: 0;
+  font: 600 13px/1.2 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.dm-new-button {
+  min-height: 36px;
+  padding: 0 13px;
+  font-size: 13px;
+}
+
+.dm-rows {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.dm-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 10px;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 10px;
+  border-radius: 10px;
+  color: var(--ink);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dm-row:hover,
+.dm-row:focus-visible {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.dm-row[aria-current="page"] {
+  background: rgba(79, 67, 212, 0.14);
+}
+
+/* Readable on the tint: the muted grey is too light on it. */
+.dm-row[aria-current="page"] .dm-row-time,
+.dm-row:hover .dm-row-time {
+  color: var(--ink-2);
+}
+
+/* While the page's code comes: rows drawn by the box itself. */
+.dm-waiting .dm-list::before {
+  content: "";
+  display: block;
+  height: 262px;
+  margin: 66px 6px 6px;
+  border-radius: 10px;
+  background: repeating-linear-gradient(to bottom, #eceae3 0 64px, transparent 64px 66px);
+  opacity: 0.7;
+}
+
+.dm-row.skeleton {
+  display: block;
+  height: 64px;
+  background: linear-gradient(90deg, #eceae3 25%, #f8f6f0 50%, #eceae3 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+  opacity: 0.7;
+}
+
+.dm-row-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dm-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dm-row-name {
+  font-weight: 600;
+  font-size: 14.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-row-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.dm-row-last {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-unread .dm-row-name,
+.dm-unread .dm-row-last {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.dm-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.dm-more {
+  margin: 6px 12px 12px;
+  min-height: 40px;
+}
+
+.dm-list-note {
+  margin: 0;
+  padding: 16px;
+  line-height: 1.5;
+}
+
+.dm-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dm-empty {
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.dm-thread {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.dm-box-single .dm-thread {
+  min-height: 380px;
+}
+
+.dm-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dm-back {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-left: -8px;
+  border-radius: 50%;
+  color: var(--ink);
+}
+
+.dm-back:hover {
+  background: var(--accent-soft);
+}
+
+.dm-back .icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dm-thread-who {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.dm-thread-title {
+  margin: 0;
+  font: 600 15px/1.25 var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-thread-handle {
+  font-size: 13px;
+  justify-self: start;
+}
+
+.dm-open-app {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dm-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.dm-older {
+  align-self: center;
+}
+
+.dm-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dm-message {
+  display: grid;
+  justify-items: start;
+  max-width: min(78%, 520px);
+}
+
+.dm-message.dm-mine {
+  justify-items: end;
+  margin-left: auto;
+}
+
+.dm-bubble {
+  margin: 0;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 16px 6px;
+  background: var(--paper);
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dm-mine .dm-bubble {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  border-radius: 16px 16px 6px 16px;
+}
+
+.dm-deleted,
+.dm-mine .dm-deleted {
+  font-style: italic;
+  color: var(--ink-3);
+  background: none;
+  border: 1px dashed var(--line-2);
+}
+
+.dm-outgoing:not(.dm-failed) .dm-bubble {
+  opacity: 0.82;
+}
+
+.dm-failed .dm-bubble,
+.dm-mine.dm-failed .dm-bubble {
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid rgba(163, 50, 42, 0.55);
+}
+
+.dm-time {
+  margin: 3px 4px 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.dm-sender {
+  margin: 0 4px 2px;
+  font-size: 12px;
+}
+
+.dm-failure {
+  margin: 4px 4px 0;
+  color: #a3322a;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.dm-failure-actions {
+  display: flex;
+  gap: 14px;
+  margin: 2px 4px 0;
+  font-size: 13.5px;
+}
+
+.dm-composer {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 4px 10px;
+  padding: 14px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.dm-text {
+  height: 44px;
+  min-height: 44px;
+  max-height: 168px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 22px;
+  background: var(--paper-2);
+  color: var(--ink);
+  font: 15px/1.45 var(--font-ui);
+  resize: none;
+}
+
+.dm-text:focus-visible,
+.dm-picker-input:focus-visible,
+.dm-key-row input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dm-send {
+  min-height: 44px;
+  padding: 0 18px;
+}
+
+/* Counted down from 900 characters, over the box, so it takes no room. */
+.dm-left {
+  position: absolute;
+  top: 0;
+  right: 18px;
+  font-size: 11.5px;
+  line-height: 14px;
+  color: var(--ink-3);
+}
+
+.dm-left.dm-over {
+  color: #a3322a;
+  font-weight: 600;
+}
+
+.dm-problem {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #a3322a;
+  font-size: 13.5px;
+}
+
+.dm-problem:empty {
+  display: none;
+}
+
+.dm-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  line-height: 1.5;
+}
+
+.dm-panel h2 {
+  margin: 0;
+  font: 400 26px/1.15 var(--font-display);
+}
+
+.dm-panel p {
+  margin: 0;
+}
+
+.dm-panel > .button {
+  justify-self: start;
+}
+
+/* Links in a sentence are underlined, not told apart by colour alone. */
+.dm-panel p a:not(.button),
+.dm-steps a,
+.dm-note a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dm-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 8px;
+}
+
+.dm-key-form {
+  display: grid;
+  gap: 6px;
+}
+
+.dm-key-form label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dm-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dm-key-row input {
+  flex: 1 1 260px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--paper-2);
+  font: 15px var(--font-mono);
+}
+
+.dm-key-row .button {
+  min-height: 44px;
+}
+
+.dm-note {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.dm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dm-actions .button {
+  min-height: 44px;
+}
+
+.dm-key-line {
+  margin: 0;
+  font-size: 13.5px;
+  text-align: center;
+}
+
+.dm .link-button {
+  display: inline;
+  margin: 0;
+}
+
+.dm-picker {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+
+.dm-picker-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dm-picker-input {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 22px;
+  background: var(--paper-2);
+  font: 15px var(--font-ui);
+  color: var(--ink);
+}
+
+.dm-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+}
+
+.dm-picker-list[hidden] {
+  display: none;
+}
+
+.dm-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.dm-person[aria-selected="true"],
+.dm-person:hover {
+  background: var(--accent-soft);
+}
+
+.dm-person-text {
+  display: grid;
+  min-width: 0;
+}
+
+.dm-picker-status {
+  min-height: 1.5em;
+  margin: 0;
+  font-size: 13px;
+}
+
+.dm-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+/* On a touch screen, a fingertip's size: buttons 44 px tall, and the
+   small links and text buttons a tap band 44 px tall (their ::after), as
+   wide as they are and centred on them, leaving the layout as it is. */
+@media (pointer: coarse) {
+  .dm-new-button,
+  .dm-more,
+  .dm-older {
+    min-height: 44px;
+  }
+
+  .dm .link-button,
+  .dm-open-app,
+  .dm-thread-handle {
+    position: relative;
+  }
+
+  .dm .link-button::after,
+  .dm-open-app::after,
+  .dm-thread-handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: max(100%, 44px);
+    transform: translateY(-50%);
+  }
+}
+
+/* A phone: the conversations, or the one open with a way back. */
+@media (max-width: 760px) {
+  .dm-box {
+    grid-template-columns: minmax(0, 1fr);
+    height: clamp(420px, calc(100dvh - 190px), 760px);
+  }
+
+  .dm-box-single {
+    height: auto;
+  }
+
+  .dm-box.dm-has-pane .dm-list {
+    display: none;
+  }
+
+  .dm-box:not(.dm-has-pane):not(.dm-box-single) .dm-pane {
+    display: none;
+  }
+
+  .dm-list {
+    border-right: 0;
+  }
+
+  .dm-back {
+    display: inline-flex;
+  }
+
+  .dm-message {
+    max-width: 86%;
+  }
+
+  .dm-panel {
+    padding: 16px;
+  }
+
+  .dm-panel h2 {
+    font-size: 23px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-row.skeleton {
+    animation: none;
+  }
+}

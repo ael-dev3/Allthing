@@ -53,10 +53,19 @@ pub const CONVERSATIONS_PER_PAGE: u32 = 25;
 pub const MESSAGES_PER_PAGE: u32 = 30;
 
 /// Where the Worker relays the Direct Cast API, when its owner turns that
-/// on: `/api/v1/dc/<endpoint>`.
+/// on: `/api/v1/dc/<endpoint>`. `GET /api/v1/dc` itself says whether it is
+/// on (200) or not (404).
 pub fn relay_path() -> String {
     format!("{API_PREFIX}/dc")
 }
+
+/// The header the browser hands the reader's key to the relay in, which
+/// sends it on to the API as `Authorization: Bearer <key>`.
+pub const KEY_HEADER: &str = "x-dc-key";
+/// The header that marks the relay's answers that are the API's own
+/// (`upstream`), as against the relay's refusals (no session, too many
+/// requests), whose statuses would otherwise read as the API's.
+pub const RELAY_HEADER: &str = "x-allthing-relay";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
