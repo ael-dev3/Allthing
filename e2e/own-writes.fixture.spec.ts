@@ -136,6 +136,13 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 }
 
 const outgoing = (page: Page) => page.locator(".cast-card.outgoing");
+/** Once the page's finite animations (a page change's fade) are done: for screenshots. */
+const settled = (page: Page) =>
+  page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
 /** The API paths this page load read again past the browser's cache. */
 const reloads = (page: Page) => page.evaluate(() => (window as unknown as { reloads: string[] }).reloads);
 
@@ -159,6 +166,7 @@ for (const atPhone of [false, true]) {
     await expect(outgoing(page)).toHaveCount(1);
     await expect(outgoing(page)).toContainText("gm from Allthing");
     await expect(outgoing(page).getByRole("link", { name: "Posted" })).toHaveAttribute("href", `/p/${hash}`);
+    await settled(page);
     await page.screenshot({ path: testInfo.outputPath(`feed-${atPhone ? 390 : 1280}.png`) });
 
     // On their own profile at once, above the casts it read before, on
@@ -167,6 +175,7 @@ for (const atPhone of [false, true]) {
     await expect(page.locator(".profile")).toBeVisible();
     await expect(outgoing(page)).toContainText("gm from Allthing");
     await expect(page.locator(`.cast-card[data-hash="${older.hash}"]`)).toBeVisible();
+    await settled(page);
     await page.screenshot({ path: testInfo.outputPath(`profile-${atPhone ? 390 : 1280}.png`) });
     await page.getByRole("link", { name: "Replies", exact: true }).click();
     await expect(outgoing(page)).toHaveCount(0);
