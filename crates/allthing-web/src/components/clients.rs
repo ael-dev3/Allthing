@@ -121,15 +121,17 @@ fn ClientCard(
     }
 }
 
-/// A thin bar of the apps `casts` (trending over `window`) were posted from,
-/// by share, with a legend. Nothing while too few of their apps are known
-/// yet. With `counted` (the cron's accounts by app), hovering, focusing or
-/// tapping an app opens its card.
+/// A thin bar of the apps `casts` were posted from, by share, with a legend:
+/// trending over `window`, or, without one, the newest casts. Nothing while
+/// too few of their apps are known yet. With `counted` (the cron's accounts
+/// by app), hovering, focusing or tapping an app opens its card.
 #[component]
 pub fn ClientShareBar(
     casts: Vec<Cast>,
     notes: Notes,
-    window: TrendingWindow,
+    /// The time range `casts` trend over; none for the newest casts.
+    #[prop(optional)]
+    window: Option<TrendingWindow>,
     #[prop(optional_no_strip)] counted: Option<AppsWindow>,
 ) -> impl IntoView {
     let Some(shares) = client_shares(&casts, &notes, TOP_APPS, MIN_KNOWN) else { return ().into_any() };
@@ -139,16 +141,17 @@ pub fn ClientShareBar(
     let known: u64 = shares.iter().map(|s| s.casts).sum();
     let summary = shares.iter().map(|s| format!("{} {}%", s.name, s.percent)).collect::<Vec<_>>().join(", ");
     let period = match window {
-        TrendingWindow::Hour => "the past hour's",
-        TrendingWindow::Day => "today's",
-        TrendingWindow::Week => "the past week's",
-        TrendingWindow::Month => "the past month's",
-        TrendingWindow::Year => "the past year's",
-        TrendingWindow::All => "all-time",
+        Some(TrendingWindow::Hour) => "the past hour's",
+        Some(TrendingWindow::Day) => "today's",
+        Some(TrendingWindow::Week) => "the past week's",
+        Some(TrendingWindow::Month) => "the past month's",
+        Some(TrendingWindow::Year) => "the past year's",
+        Some(TrendingWindow::All) => "all-time",
+        None => "the newest",
     };
-    let note = format!(
-        "Apps that posted {known} of {period} trending casts, from the app that registered each cast's signing key."
-    );
+    let listed = if window.is_some() { "trending casts" } else { "casts" };
+    let note =
+        format!("Apps that posted {known} of {period} {listed}, from the app that registered each cast's signing key.");
     let pct_of = |percent: u32| if percent == 0 { "<1%".to_owned() } else { format!("{percent}%") };
     // An app's card, for its segment and its legend entry.
     let card = {
@@ -167,7 +170,7 @@ pub fn ClientShareBar(
     // What the bar is, read out rather than a native tooltip, which would
     // be drawn over the apps' cards, inside it (and the legend says it all).
     view! {
-        <section class="client-share" aria-label=format!("Apps posting {period} trending casts") aria-description=note>
+        <section class="client-share" aria-label=format!("Apps posting {period} {listed}") aria-description=note>
             <div class="share-bar" class:counted=counted.is_some() role="img" aria-label=summary>
                 {shares.iter().enumerate().filter(|(_, s)| s.percent > 0).map(|(i, s)| {
                     let grow = format!("flex-grow: {}", s.percent);
