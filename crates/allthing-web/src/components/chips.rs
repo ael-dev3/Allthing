@@ -4,7 +4,7 @@
 use crate::Notes;
 use allthing_core::clients::{client_name, client_profile};
 use allthing_core::embeds::{ImageSize, resized_image_url};
-use allthing_core::format::{compact_number, full_number, short_address};
+use allthing_core::format::{compact_number, full_number, short_address, short_number};
 use allthing_core::model::{Cast, UserSummary};
 use allthing_core::profile::UserCard;
 use allthing_core::ranking::points;
@@ -90,13 +90,24 @@ pub fn UserChip(
     }
 }
 
-fn stat_body(icon: &'static str, n: u64, one: &'static str, many: &'static str) -> AnyView {
+fn stat_body(icon: &'static str, n: u64, one: &'static str, many: &'static str, tight: bool) -> AnyView {
     view! {
         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg>
-        <span class="n">{compact_number(n)}</span>
+        <span class="n">{count_text(n, tight)}</span>
         <span class="label">{if n == 1 { one } else { many }}</span>
     }
     .into_any()
+}
+
+/// A count as a row shows it: compact, or, where room is short (`tight`),
+/// as the Farcaster app does (1.2k).
+fn count_text(n: u64, tight: bool) -> String {
+    if tight { short_number(n) } else { compact_number(n) }
+}
+
+/// A count as its trigger reads it out: in full where the row shortens it.
+fn count_spoken(n: u64, tight: bool) -> String {
+    if tight { full_number(n) } else { compact_number(n) }
 }
 
 const HEART: &str = "M8 13.5S2.5 10 2.5 6.2A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.2C13.5 10 8 13.5 8 13.5z";
@@ -105,9 +116,15 @@ const BUBBLE: &str = "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z";
 
 /// Likes, recasts and replies as what they are: Farcaster has no downvotes.
 /// Hovering a count previews who liked or recasted, or the replies; clicking
-/// opens the full list, or the post.
+/// opens the full list, or the post. `tight`, under a reply, where room is
+/// short: the counts as the Farcaster app shows them (1.2k), read out in
+/// full.
 #[component]
-pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> impl IntoView {
+pub fn Engagement(
+    cast: Cast,
+    #[prop(optional)] reply_href: Option<String>,
+    #[prop(optional)] tight: bool,
+) -> impl IntoView {
     let who = use_who_list();
     let navigate = use_go();
     let pts = points(&cast);
@@ -118,14 +135,14 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
         full_number(cast.replies),
         full_number(pts)
     );
-    let likes = reaction_stat(&cast, ReactionKind::Likes, cast.likes, who);
-    let recasts = reaction_stat(&cast, ReactionKind::Recasts, cast.recasts, who);
+    let likes = reaction_stat(&cast, ReactionKind::Likes, cast.likes, who, tight);
+    let recasts = reaction_stat(&cast, ReactionKind::Recasts, cast.recasts, who, tight);
     // With the reader's replies handed to the Farcaster app since, at once.
     let (n, pending) = replies_shown(&cast.hash, cast.replies);
     let replies = if cast.replies == 0 {
         view! {
             <span class=move || format!("stat stat-replies{}", if pending.get() { " pending" } else { "" })>
-                {move || stat_body(BUBBLE, n.get(), " reply", " replies")}
+                {move || stat_body(BUBBLE, n.get(), " reply", " replies", tight)}
             </span>
         }
         .into_any()
@@ -137,12 +154,12 @@ pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> i
                 label="Replies"
                 trigger_label=Signal::derive(move || {
                     let n = n.get();
-                    format!("{} {}: preview", compact_number(n), if n == 1 { "reply" } else { "replies" })
+                    format!("{} {}: preview", count_spoken(n, tight), if n == 1 { "reply" } else { "replies" })
                 })
                 trigger_class="stat stat-replies"
                 hover=true
                 on_activate=Callback::new(move |()| navigate(&target, Default::default()))
-                trigger=move || view! { <span class="stat-body" class:pending=pending>{move || stat_body(BUBBLE, n.get(), " reply", " replies")}</span> }
+                trigger=move || view! { <span class="stat-body" class:pending=pending>{move || stat_body(BUBBLE, n.get(), " reply", " replies", tight)}</span> }
                 content=move || view! { <RepliesPreview hash=hash.clone()/> }
             />
         }
@@ -178,18 +195,17 @@ pub fn replies_shown(hash: &str, read: u64) -> (Signal<u64>, Signal<bool>) {
 /// preview). The icon never opens the list: in front of the Worker it is the
 /// button that likes or recasts (`acting_stat`); in the static copy, a
 /// picture.
-fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList) -> AnyView {
+fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList, tight: bool) -> AnyView {
     #[cfg(not(feature = "static-host"))]
     if let Some(writer) = crate::components::writer::use_writer()
         && let Some(target) = allthing_core::message::CastId::new(cast.author.fid, &cast.hash)
     {
-        let url = allthing_core::compose::cast_url(&cast.author.username, &cast.hash);
-        return acting_stat(writer, target, cast.hash.clone(), url, kind, n, who);
+        return acting_stat(writer, target, cast, kind, n, who, tight);
     }
     let (icon, _, _, class) = reaction_words(kind);
     let lead =
         ViewFn::from(move || view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> });
-    view! { <span class=format!("stat {class}")>{count_stat(kind, Signal::stored(n), cast.hash.clone(), who, lead)}</span> }
+    view! { <span class=format!("stat {class}")>{count_stat(kind, Signal::stored(n), cast.hash.clone(), who, lead, tight)}</span> }
         .into_any()
 }
 
@@ -203,12 +219,12 @@ fn reaction_words(kind: ReactionKind) -> (&'static str, &'static str, &'static s
 
 /// The count, after `lead` (its icon, or the button that likes or
 /// recasts): the preview's trigger, or plain text while it is 0.
-fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, lead: ViewFn) -> AnyView {
+fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, lead: ViewFn, tight: bool) -> AnyView {
     let (_, one, many, _) = reaction_words(kind);
     let words = move || if n.get() == 1 { one } else { many };
     let body = move || {
         view! {
-            <span class="n">{move || compact_number(n.get())}</span>
+            <span class="n">{move || count_text(n.get(), tight)}</span>
             <span class="label">{words}</span>
         }
     };
@@ -216,7 +232,7 @@ fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, le
     view! {
         <Popover
             label=match kind { ReactionKind::Likes => "Liked by", ReactionKind::Recasts => "Recasted by" }
-            trigger_label=Signal::derive(move || format!("{}{}: show who", compact_number(n.get()), words()))
+            trigger_label=Signal::derive(move || format!("{}{}: show who", count_spoken(n.get(), tight), words()))
             trigger_class="stat-count"
             hover=true
             lead
@@ -238,14 +254,16 @@ fn count_stat(kind: ReactionKind, n: Signal<u64>, hash: String, who: WhoList, le
 fn acting_stat(
     writer: crate::components::writer::Writer,
     target: allthing_core::message::CastId,
-    hash: String,
-    url: String,
+    cast: &Cast,
     kind: ReactionKind,
     n: u64,
     who: WhoList,
+    tight: bool,
 ) -> AnyView {
     use crate::components::handoff::Ask;
     use allthing_core::message::Reaction;
+    let hash = cast.hash.clone();
+    let url = allthing_core::compose::cast_url(&cast.author.username, &cast.hash);
     let (icon, _, _, class) = reaction_words(kind);
     let (reaction, action) = match kind {
         ReactionKind::Likes => (Reaction::Like, "Like"),
@@ -288,7 +306,7 @@ fn acting_stat(
         <span class=move || {
             format!("stat {class} acting{}{}", if mine.get() { " mine" } else { "" }, if pending.get() { " pending" } else { "" })
         }>
-            {count_stat(kind, shown.into(), hash, who, lead)}
+            {count_stat(kind, shown.into(), hash, who, lead, tight)}
         </span>
     }
     .into_any()

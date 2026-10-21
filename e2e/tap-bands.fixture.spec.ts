@@ -78,7 +78,7 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 }
 
 /** For the screenshots only: each tap band, outlined. */
-const outlined = [".comment-head .toggle", ".fact-help", ".client-legend a", ".client-other", ".seg-pop .seg", ".sort-tabs a", ".engagement .act", ".engagement .popover-trigger", ".reply-button", ".permalink"]
+const outlined = [".comment-head .toggle", ".fact-help", ".client-legend a", ".client-other", ".seg-pop .seg", ".sort-tabs a", ".engagement .act", ".engagement .popover-trigger", ".reply-button"]
   .map((target) => `${target}::after`).join(", ") + " { outline: 1px dashed #d6247a; outline-offset: -1px; }";
 
 /**

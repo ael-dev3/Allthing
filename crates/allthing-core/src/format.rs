@@ -13,6 +13,12 @@ pub fn compact_number(n: u64) -> String {
     }
 }
 
+/// Counts where room is short, as the Farcaster app shows them: 999, 1.2k,
+/// 12.3k, 123k, 1.2m (a reply's row, under the post).
+pub fn short_number(n: u64) -> String {
+    if (1_000..10_000).contains(&n) { trim_zero(format!("{:.1}", n as f64 / 1000.0)) + "k" } else { compact_number(n) }
+}
+
 fn trim_zero(value: String) -> String {
     value.strip_suffix(".0").map(str::to_owned).unwrap_or(value)
 }
@@ -103,6 +109,16 @@ mod tests {
         assert_eq!(full_number(999), "999");
         assert_eq!(plural(1, "reply", "replies"), "1 reply");
         assert_eq!(plural(2048, "reply", "replies"), "2,048 replies");
+    }
+
+    #[test]
+    fn short_numbers() {
+        assert_eq!(short_number(999), "999");
+        assert_eq!(short_number(1_000), "1k");
+        assert_eq!(short_number(1_234), "1.2k");
+        assert_eq!(short_number(9_960), "10k");
+        assert_eq!(short_number(12_345), "12.3k");
+        assert_eq!(short_number(1_221_548), "1.2m");
     }
 
     #[test]
