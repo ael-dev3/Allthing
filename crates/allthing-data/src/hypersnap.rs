@@ -13,8 +13,8 @@ use allthing_core::channels::{
 use allthing_core::index::Source;
 use allthing_core::model::Channel;
 use allthing_core::normalize::{
-    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawReaction, RawReactionList,
-    RawTransfers, RawUser, RawUserData, RawUserList, RawUserSearch,
+    self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawHubReactions, RawNotifications,
+    RawReaction, RawReactionList, RawTransfers, RawUser, RawUserData, RawUserList, RawUserSearch,
 };
 use allthing_core::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 use allthing_core::ranking::TrendingWindow;
@@ -109,6 +109,60 @@ pub async fn reactions(
     };
     let found: RawReactionList = upstream::parse(&body)?;
     Ok((found.reactions, body.len()))
+}
+
+/// What happened to `fid`'s account, newest first: a page of `limit`
+/// notifications from `cursor` (the newest without one), with a cursor for
+/// the next. Hypersnap lists likes (recasts among them), follows and
+/// replies (mentions and quotes among them); see `normalize::notifications`.
+/// An answer of 400 is a failure here, not an account with none: those
+/// answer an empty list.
+pub async fn notifications(
+    inv: &Invocation,
+    fid: u64,
+    limit: u32,
+    cursor: Option<&str>,
+) -> Result<RawNotifications, UpstreamError> {
+    let (fid, limit) = (fid.to_string(), limit.to_string());
+    let mut query = vec![("fid", fid.as_str()), ("limit", limit.as_str())];
+    if let Some(cursor) = cursor {
+        query.push(("cursor", cursor));
+    }
+    let found: Option<RawNotifications> =
+        get_json(inv, Upstream::Hypersnap, &v2("notifications", &query), false).await?;
+    Ok(found.unwrap_or_default())
+}
+
+/// The newest recasts of the cast `hash`, by `author`, from the hub: who
+/// recasted it and when (Unix seconds), `per_shard` of each shard's newest,
+/// one shard after another. Not `reactions/cast`, which lists each shard's
+/// oldest first and stops at its limit: for a cast with more recasts than
+/// that, it names the first recasters, not the latest.
+pub async fn newest_recasts(
+    inv: &Invocation,
+    author: u64,
+    hash: &str,
+    per_shard: u32,
+) -> Result<Vec<(u64, i64)>, UpstreamError> {
+    let (author, per_shard) = (author.to_string(), per_shard.to_string());
+    let query = [
+        ("target_fid", author.as_str()),
+        ("target_hash", hash),
+        ("reaction_type", "Recast"),
+        ("pageSize", per_shard.as_str()),
+        ("reverse", "true"),
+    ];
+    let found: Option<RawHubReactions> =
+        get_json(inv, Upstream::Hypersnap, &v1("reactionsByCast", &query), true).await?;
+    Ok(found.as_ref().map(normalize::hub_reactors).unwrap_or_default())
+}
+
+/// The casts that quote the cast `hash`, at most `limit`.
+pub async fn quotes(inv: &Invocation, hash: &str, limit: u32) -> Result<Vec<RawCast>, UpstreamError> {
+    let limit = limit.to_string();
+    let query = [("identifier", hash), ("type", "hash"), ("limit", limit.as_str())];
+    let found: Option<CastList> = get_json(inv, Upstream::Hypersnap, &v2("cast/quotes", &query), true).await?;
+    Ok(found.map(|l| l.casts).unwrap_or_default())
 }
 
 pub async fn trending_channels(inv: &Invocation, limit: u32) -> Result<Vec<RawChannel>, UpstreamError> {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One payload per page, assembled from upstream reads.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use allthing_core::activity::AppsWindow;
@@ -17,6 +17,7 @@ use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
 use allthing_core::normalize::{self, RawAppChannel, RawCast, RawFeed};
+use allthing_core::notifications::{self, Event, Kind, NotificationsPayload, Recasts};
 use allthing_core::params::fid_username;
 use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
@@ -1003,6 +1004,143 @@ pub async fn vote(inv: Rc<Invocation>, fid: u64) -> Result<Built, Failure> {
         meta: meta(&inv),
     };
     Built::json(&payload, api::VOTE_CACHE)
+}
+
+/// Notifications a page reads from Hypersnap. Each repeats its person and
+/// its cast whole, about 3 KB, so thirty are about 100 KB.
+const NOTIFICATIONS_PAGE: u32 = 30;
+/// The reader's latest casts, read with the first page: their counts of
+/// recasts, and whose quotes to read.
+const RECENT_CASTS: u32 = 10;
+/// Whose quotes are read: the reader's newest casts, replies last.
+const QUOTED_CASTS: usize = 4;
+/// Quotes read of each, at most: few casts are quoted more often.
+const QUOTES_PER_CAST: u32 = 10;
+/// Casts whose recasts are read to tell them from likes, at most: the most
+/// recently liked first. With the quotes, one batch of reads.
+const RECAST_READS: usize = 6;
+/// Recasts read of each of the hub's shards, newest first.
+const RECASTS_PER_SHARD: u32 = 10;
+
+/// Whether a notification of this kind is a cast someone wrote: a reply, a
+/// mention or a quote, which shows its text.
+fn is_cast(kind: Kind) -> bool {
+    matches!(kind, Kind::Reply | Kind::Mention | Kind::Quote)
+}
+
+/// The cast a reply, a mention or a quote is.
+fn shown_cast(event: &Event) -> Option<&Cast> {
+    event.cast.as_ref().filter(|_| is_cast(event.kind))
+}
+
+/// What a batch of the notifications' reads brought.
+enum NotificationRead {
+    Recasts(String, Option<Recasts>),
+    Quotes(Vec<RawCast>),
+}
+
+/// A signed-in reader's notifications (`fid` is the session's): a page of
+/// Hypersnap's from `cursor` (the newest without one), grouped as the
+/// Farcaster app groups them.
+///
+/// Hypersnap lists a recast as one more like: the hub's newest recasts of
+/// the casts liked on the page tell them apart (one read each, for those
+/// that may have some). With the first page come the reader's latest casts,
+/// whose counts say which those are, and the quotes of the newest of them,
+/// which Hypersnap doesn't list (those as new as the page's oldest item, or
+/// all on a last page). Replies, mentions and quotes that are spam or mini
+/// apps are left out, as listings leave them out, after their links are
+/// checked; never for who wrote them. Reads beyond the page are
+/// best-effort: one that fails leaves its likes as they came, or its quotes
+/// out. Upper bound: 2 reads, then 10 in one batch, then link pages.
+pub async fn notifications(
+    inv: Rc<Invocation>,
+    fid: u64,
+    cursor: Option<String>,
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<Built, Failure> {
+    let first = cursor.is_none();
+    let (page, recent) = join(hypersnap::notifications(&inv, fid, NOTIFICATIONS_PAGE, cursor.as_deref()), async {
+        if first { hypersnap::user_casts(&inv, fid, RECENT_CASTS).await.unwrap_or_default() } else { Vec::new() }
+    })
+    .await;
+    let page = page.map_err(Failure::upstream)?;
+    let mut events = normalize::notifications(&page, fid);
+    let recent: Vec<Cast> = recent.iter().map(normalize::cast).filter(|c| c.author.fid == fid).collect();
+    let counts: HashMap<String, u64> = recent.iter().map(|c| (c.hash.clone(), c.recasts)).collect();
+    let reads = notifications::recasts_to_read(&events, &counts, RECAST_READS)
+        .into_iter()
+        .map(|hash| (true, hash))
+        .chain(notifications::quoted_casts(&recent, QUOTED_CASTS).into_iter().map(|c| (false, c.hash.clone())));
+    let done: Vec<NotificationRead> = stream::iter(reads.map(|(recasts, hash)| {
+        let inv = &inv;
+        async move {
+            if recasts {
+                let read = hypersnap::newest_recasts(inv, fid, &hash, RECASTS_PER_SHARD).await;
+                NotificationRead::Recasts(hash, read.ok().map(|by| Recasts::read(by, RECASTS_PER_SHARD as usize)))
+            } else {
+                NotificationRead::Quotes(hypersnap::quotes(inv, &hash, QUOTES_PER_CAST).await.unwrap_or_default())
+            }
+        }
+    }))
+    .buffered(PARALLEL)
+    .collect()
+    .await;
+    let mut recasts = HashMap::new();
+    let mut quoting: Vec<RawCast> = Vec::new();
+    for read in done {
+        match read {
+            NotificationRead::Recasts(hash, Some(read)) => {
+                recasts.insert(hash, read);
+            }
+            NotificationRead::Recasts(_, None) => {}
+            NotificationRead::Quotes(found) => quoting.extend(found),
+        }
+    }
+    notifications::sort_reactions(&mut events, &recasts);
+    let quotes: Vec<Event> = quoting
+        .iter()
+        .map(normalize::cast)
+        .filter(|cast| notifications::quotes(cast, fid))
+        .map(|cast| Event {
+            kind: Kind::Quote,
+            actor: cast.author.clone(),
+            ts: cast.ts,
+            mentions_you: notifications::mentions(&cast, fid),
+            cast: Some(cast),
+        })
+        .collect();
+    let oldest = events.iter().map(|event| event.ts).min();
+    events.extend(notifications::within_page(quotes, oldest, page.cursor().is_some()));
+
+    // Replies, mentions and quotes as listings show casts: without spam or
+    // mini apps, their links checked within the build's budget.
+    let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
+    notes.links = miniapps::check(&inv, events.iter().filter_map(shown_cast), &known_links).await;
+    for event in &mut events {
+        if is_cast(event.kind)
+            && let Some(cast) = event.cast.as_mut()
+        {
+            mark_mini_apps(std::slice::from_mut(cast), &notes.links);
+        }
+    }
+    events.retain(|event| !is_cast(event.kind) || shown_cast(event).is_some_and(|cast| !cast.hidden()));
+
+    let groups = notifications::group(events, fid);
+    // The profile cards of the people shown, from the user objects that came
+    // with them: no request.
+    let mut cards: BTreeMap<u64, UserCard> = BTreeMap::new();
+    for user in page.notifications.iter().filter_map(|item| item.user.as_ref()) {
+        if let Some(card) = normalize::summary_card(user) {
+            cards.entry(user.fid).or_insert(card);
+        }
+    }
+    cards.extend(normalize::author_cards(&quoting));
+    notes.keep_users(cards, groups.iter().flat_map(|g| g.actors.iter().map(|a| a.fid)));
+    let newest = groups.first().map_or(0, |group| group.ts);
+    let next = page.cursor().map(str::to_owned);
+    Built::json(&NotificationsPayload { groups, next, newest, notes, meta: meta(&inv) }, api::NOTIFICATIONS_CACHE)
 }
 
 /// At most this many addresses of each kind are measured per account.
@@ -2910,5 +3048,260 @@ mod reaction_tests {
         assert!(read_reactions(&inv, &[listed("0xb", 0)], BTreeMap::new()).now_or_never().unwrap().is_empty());
         assert!(quiet.asked.borrow().is_empty());
         assert_eq!(inv.remaining_subrequests(), 45);
+    }
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use std::cell::RefCell;
+
+    use allthing_core::notifications::{Group, Opens};
+    use allthing_core::time::parse_rfc3339;
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    const ME: u64 = 539_854;
+    const D506: &str = "0xd506281357e47c2bf94a770116c74c3d33eb322c";
+    const SIX: &str = "0x6fe6f775495c0fb1ed11dcdf53a17105b028da34";
+    const OLD: &str = "0x281dd7fc80dda450f6ab3f23dff0ec24ada9c1a4";
+    const NONE: &str = r#"{"messages":[],"nextPageToken":""}"#;
+
+    /// Hypersnap as it answered for @0xael.eth (fid 539854) on 21 October
+    /// 2026: a page of notifications, the latest casts, and the newest
+    /// recasts of three of them: 0xd506… by warpcast-com and 0x6fe6… by
+    /// eth3, who liked them too, and 0x281d… (none of them on the page).
+    /// The quotes of 0xd506… (with `quoted`) are made up: one by another
+    /// account, one from before the page, one that is spam, and the
+    /// reader's own. Link pages are plain pages, or a mini app's at
+    /// `game.example`.
+    struct Node {
+        page: String,
+        quotes: serde_json::Value,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Node {
+        fn new(page: &str, quoted: bool) -> Rc<Node> {
+            let quote = |fid: u64, name: &str, at: &str, text: &str| {
+                serde_json::json!({"hash": format!("0x{fid:040x}"), "author": {"fid": fid, "username": name,
+                    "profile": {"bio": {"text": format!("{name} quotes")}}, "follower_count": 7},
+                    "text": text, "timestamp": at, "embeds": [{"cast_id": {"fid": ME, "hash": D506}}]})
+            };
+            let own: serde_json::Value =
+                serde_json::from_str(include_str!("../../allthing-core/tests/fixtures/hypersnap-cast-quotes.json"))
+                    .unwrap();
+            let quotes = if quoted {
+                serde_json::json!({ "casts": [
+                    quote(7, "seven", "2026-10-21T07:00:00Z", "Favorite and Show less, at last"),
+                    quote(8, "eight", "2026-10-19T00:00:00Z", "From before the page"),
+                    quote(9, "nine", "2026-10-21T06:00:00Z", "Just unlocked my DEGEN rewards"),
+                    own["casts"][0].clone(),
+                ]})
+            } else {
+                serde_json::json!({ "casts": [] })
+            };
+            Rc::new(Node { page: page.to_owned(), quotes, requests: RefCell::new(Vec::new()) })
+        }
+
+        fn asked(&self) -> Vec<String> {
+            self.requests.borrow().clone()
+        }
+    }
+
+    impl Host for Node {
+        fn now(&self) -> f64 {
+            1_792_580_000_000.0
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let path = request.url.strip_prefix(hypersnap::BASE).map(str::to_owned);
+            self.requests.borrow_mut().push(path.clone().unwrap_or_else(|| request.url.clone()));
+            let body: Option<String> = match path.as_deref() {
+                Some(p) if p.starts_with("/v2/farcaster/notifications?") => Some(self.page.clone()),
+                Some(p) if p.starts_with("/v2/farcaster/feed/user/casts?") => {
+                    Some(include_str!("../../allthing-core/tests/fixtures/hypersnap-notifications-casts.json").into())
+                }
+                Some(p) if p.starts_with("/v1/reactionsByCast?") && p.contains(SIX) => {
+                    Some(r#"{"messages":[{"data":{"type":"MESSAGE_TYPE_REACTION_ADD","fid":635889,"timestamp":183035898}}],"nextPageToken":""}"#.into())
+                }
+                Some(p) if p.starts_with("/v1/reactionsByCast?") && p.contains(D506) => {
+                    Some(r#"{"messages":[{"data":{"type":"MESSAGE_TYPE_REACTION_ADD","fid":434449,"timestamp":183114069}}],"nextPageToken":""}"#.into())
+                }
+                Some(p) if p.starts_with("/v1/reactionsByCast?") && p.contains(OLD) => {
+                    Some(include_str!("../../allthing-core/tests/fixtures/hub-reactions-recasts.json").into())
+                }
+                Some(p) if p.starts_with("/v1/reactionsByCast?") => Some(NONE.into()),
+                Some(p) if p.starts_with("/v2/farcaster/cast/quotes?") && p.contains(D506) => {
+                    Some(self.quotes.to_string())
+                }
+                Some(p) if p.starts_with("/v2/farcaster/cast/quotes?") => Some(r#"{"casts":[],"next":{}}"#.into()),
+                Some(_) => None,
+                None if request.url.starts_with("https://game.example") => {
+                    Some(r#"<html><head><meta name="fc:miniapp" content="{}"></head></html>"#.into())
+                }
+                None => Some("<html><head><title>A page</title></head><body></body></html>".into()),
+            };
+            let response = HttpResponse {
+                status: if body.is_some() { 200 } else { 404 },
+                retry_after: None,
+                body: body.map(String::into_bytes),
+            };
+            async move { Ok(response) }.boxed_local()
+        }
+    }
+
+    fn build(node: &Rc<Node>, cursor: Option<&str>) -> (NotificationsPayload, u32) {
+        let inv = Rc::new(Invocation::new(node.clone(), 45));
+        let built = notifications(inv.clone(), ME, cursor.map(str::to_owned), None).now_or_never().unwrap().unwrap();
+        assert_eq!((built.status, built.policy), (200, api::NOTIFICATIONS_CACHE));
+        (serde_json::from_slice(&built.body).unwrap(), 45 - inv.remaining_subrequests())
+    }
+
+    fn shape(groups: &[Group]) -> Vec<(Kind, String, u32, String)> {
+        groups
+            .iter()
+            .map(|g| {
+                let opens = match g.opens() {
+                    Some(Opens::Cast(hash)) => hash[..8].to_owned(),
+                    Some(Opens::Profile(name)) => format!("@{name}"),
+                    None => String::new(),
+                };
+                (g.kind, g.first().map(|u| u.username.clone()).unwrap_or_default(), g.count, opens)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn builds_the_first_page_from_hypersnap_and_the_hub() {
+        let node = Node::new(include_str!("../../allthing-core/tests/fixtures/hypersnap-notifications.json"), true);
+        let (payload, spent) = build(&node, None);
+        let at = |iso: &str| parse_rfc3339(iso).unwrap();
+        let row = |kind, first: &str, count, opens: &str| (kind, first.to_owned(), count, opens.to_owned());
+        assert_eq!(
+            shape(&payload.groups),
+            [
+                row(Kind::Reply, "ivc", 1, "0x83c2e8"),
+                row(Kind::Like, "ivc", 3, "0xd50628"),
+                row(Kind::Follow, "experttrader", 2, "@experttrader"),
+                // warpcast-com liked and recasted it: the later is the recast.
+                row(Kind::Recast, "warpcast-com", 1, "0xd50628"),
+                row(Kind::Like, "chengsengchee", 2, "0x45555a"),
+                // The quote by another account; the reader's own, the one
+                // before the page and the spam one are left out.
+                row(Kind::Quote, "seven", 1, "0x000000"),
+                row(Kind::Mention, "nounishprof", 1, "0xafa73c"),
+                // eth3's like stays a like, their recast is one (the hub's).
+                row(Kind::Like, "onedreamoneshot", 11, "0x6fe6f7"),
+                row(Kind::Like, "cryptopoorboyeth.base.eth", 1, "0x281dd7"),
+                row(Kind::Reply, "vrn.eth", 1, "0x3991be"),
+                row(Kind::Like, "vrn.eth", 1, "0x849ba4"),
+                row(Kind::Reply, "vrn.eth", 1, "0x57ff90"),
+                row(Kind::Recast, "eth3", 1, "0x6fe6f7"),
+                row(Kind::Like, "hazelramon", 2, "0xba9d2d"),
+                row(Kind::Follow, "klaassen", 1, "@klaassen"),
+                row(Kind::Reply, "4050", 1, "0x861675"),
+            ]
+        );
+        let six = &payload.groups[7];
+        assert_eq!(six.actors.len(), 5);
+        assert!(six.cast.as_ref().unwrap().excerpt.starts_with("Always wanted to see custom emojis for Farcaster"));
+        assert_eq!(payload.groups[1].sentence(), "ivc and 2 others liked your cast");
+        assert_eq!(payload.newest, at("2026-10-21T10:26:56Z"));
+        assert!(payload.next.as_deref().is_some_and(|c| c.starts_with("eyJ")));
+        // The cards of the people shown came with them; a quote's too.
+        assert!(payload.notes.users[&1_469_572].bio.starts_with("No bots allowed"));
+        assert_eq!(payload.notes.users[&7].bio, "seven quotes");
+        let shown: HashSet<u64> = payload.groups.iter().flat_map(|g| g.actors.iter().map(|a| a.fid)).collect();
+        assert!(payload.notes.users.keys().all(|fid| shown.contains(fid)));
+
+        // The page and the latest casts, then one batch: the recasts of the
+        // two liked casts whose counts its pairs don't account for, and the
+        // quotes of the four newest casts. The mention's link page, once.
+        let asked = node.asked();
+        let hub: Vec<&str> = asked.iter().filter(|p| p.starts_with('/')).map(String::as_str).collect();
+        assert_eq!(
+            hub[..2],
+            [
+                "/v2/farcaster/notifications?fid=539854&limit=30",
+                "/v2/farcaster/feed/user/casts?fid=539854&limit=10&include_replies=true",
+            ]
+        );
+        assert_eq!(
+            hub[2],
+            format!(
+                "/v1/reactionsByCast?target_fid=539854&target_hash={SIX}&reaction_type=Recast&pageSize=10&reverse=true"
+            )
+        );
+        assert!(hub[3].contains(OLD));
+        let quoted: Vec<&str> = hub[4..].iter().map(|p| &p[p.find("0x").unwrap()..][..10]).collect();
+        assert_eq!(quoted, ["0xd5062813", "0x45555a30", "0xba9d2d95", "0x6fe6f775"]);
+        let pages: Vec<&String> = asked.iter().filter(|p| !p.starts_with('/')).collect();
+        assert_eq!(pages, ["https://www.gmfarcaster.com/episodes/ep397"]);
+        assert_eq!(spent as usize, asked.len());
+        assert_eq!(spent, 9);
+    }
+
+    #[test]
+    fn a_later_page_reads_its_likes_recasts_and_no_quotes() {
+        let node = Node::new(include_str!("../../allthing-core/tests/fixtures/hypersnap-notifications.json"), true);
+        let (payload, spent) = build(&node, Some("eyJiZWZvcmVfdGltZXN0YW1wIjoxODMwMjk1MDJ9"));
+        let asked = node.asked();
+        assert!(asked[0].ends_with("&cursor=eyJiZWZvcmVfdGltZXN0YW1wIjoxODMwMjk1MDJ9"));
+        // No latest casts to say which have none: every liked cast's recasts
+        // (six), and no quotes.
+        assert_eq!(asked.iter().filter(|p| p.starts_with("/v1/reactionsByCast?")).count(), 6);
+        assert!(!asked.iter().any(|p| p.contains("feed/user/casts") || p.contains("cast/quotes")));
+        assert_eq!(spent, 8);
+        // The same recasts as on the first page, both found by the hub's
+        // reads this time.
+        let kinds: Vec<(Kind, &str)> = payload
+            .groups
+            .iter()
+            .filter(|g| g.kind == Kind::Recast)
+            .map(|g| (g.kind, g.first().unwrap().username.as_str()))
+            .collect();
+        assert_eq!(kinds, [(Kind::Recast, "warpcast-com"), (Kind::Recast, "eth3")]);
+        assert!(!payload.groups.iter().any(|g| g.kind == Kind::Quote));
+    }
+
+    #[test]
+    fn replies_that_are_spam_or_mini_apps_are_left_out() {
+        let reply = |n: u32, text: &str, embeds: serde_json::Value| {
+            serde_json::json!({"type": "reply", "timestamp": "2026-10-21T10:00:00Z",
+                "user": {"fid": 7, "username": "seven"},
+                "cast": {"hash": format!("{n:040x}"), "author": {"fid": 7}, "text": text, "parent_author": {"fid": ME},
+                    "timestamp": "2026-10-21T10:00:00Z", "embeds": embeds}})
+        };
+        let page = serde_json::json!({"notifications": [
+            reply(1, "Play with me", serde_json::json!([{"url": "https://game.example/play"}])),
+            reply(2, "Stake your DEGEN at yeetr.fun", serde_json::json!([])),
+            reply(3, "Thanks for this", serde_json::json!([{"url": "https://blog.example/post"}])),
+        ], "next": {}});
+        let node = Node::new(&page.to_string(), false);
+        let (payload, _) = build(&node, None);
+        assert_eq!(shape(&payload.groups), [(Kind::Reply, "seven".to_owned(), 1, "0x000000".to_owned())]);
+        assert_eq!(payload.groups[0].cast.as_ref().unwrap().hash, format!("0x{:040x}", 3));
+        assert_eq!(payload.groups[0].cast.as_ref().unwrap().excerpt, "Thanks for this");
+        // The verdicts come with the payload, for its next build.
+        assert_eq!(payload.notes.links.get("https://game.example/play"), Some(&true));
+        assert_eq!(payload.notes.links.get("https://blog.example/post"), Some(&false));
+        let previous = Rc::new(serde_json::to_vec(&payload).unwrap());
+        let again = Node::new(&page.to_string(), false);
+        let inv = Rc::new(Invocation::new(again.clone(), 45));
+        notifications(inv, ME, None, Some(previous)).now_or_never().unwrap().unwrap();
+        assert!(again.asked().iter().all(|p| p.starts_with('/')));
+        assert!(payload.next.is_none());
+    }
+
+    #[test]
+    fn a_page_hypersnap_cant_give_is_a_failure() {
+        let node = Node::new("", false);
+        let inv = Rc::new(Invocation::new(node, 45));
+        let failure = notifications(inv, ME, None, None).now_or_never().unwrap().map(|_| ()).unwrap_err();
+        assert_eq!(failure.status, 502);
     }
 }

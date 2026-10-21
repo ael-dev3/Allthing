@@ -6,7 +6,7 @@
 //! Only the fields Allthing reads are declared; serde skips the rest, which
 //! keeps parsing cheap inside the Worker's CPU budget.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -16,6 +16,7 @@ use crate::channels::{
 };
 use crate::embeds::{MediaKind, classify_url};
 use crate::model::{Cast, Channel, ChannelRef, Embed, ExternalLink, Mention, ThreadNode, User, UserSummary};
+use crate::notifications::{Event, Kind, classify};
 use crate::params::{hash_from_param, normalize_hash};
 use crate::profile::{CARD_BIO_CHARS, UserCard, bio_excerpt};
 use crate::text::splice_mentions;
@@ -133,6 +134,13 @@ pub struct RawChannelId {
     pub id: Option<String>,
 }
 
+/// Who wrote the cast a cast replies to: `{"fid": null}` for a cast that
+/// replies to none.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawParentAuthor {
+    pub fid: Option<u64>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct RawCast {
     pub hash: String,
@@ -140,6 +148,9 @@ pub struct RawCast {
     pub timestamp: Option<String>,
     pub author: Option<RawUser>,
     pub parent_hash: Option<String>,
+    /// Sent with notifications' casts, which tell a reply from a mention by
+    /// it (see [`crate::notifications::classify`]).
+    pub parent_author: Option<RawParentAuthor>,
     pub parent_url: Option<String>,
     pub root_parent_url: Option<String>,
     pub channel: Option<RawChannelId>,
@@ -418,6 +429,70 @@ pub struct RawReactionList {
     pub reactions: Vec<RawReaction>,
 }
 
+/// `notifications?fid=`: what happened to an account, newest first, and a
+/// cursor for older ones (base64 of a time and a hash). Hypersnap names
+/// three kinds, `likes`, `follows` and `reply`; see [`notifications`].
+#[derive(Debug, Default, Deserialize)]
+pub struct RawNotifications {
+    #[serde(default)]
+    pub notifications: Vec<RawNotification>,
+    pub next: Option<RawNext>,
+}
+
+impl RawNotifications {
+    /// The cursor for the next page, if there is more.
+    pub fn cursor(&self) -> Option<&str> {
+        self.next.as_ref().and_then(|n| n.cursor.as_deref()).filter(|c| !c.is_empty())
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawNotification {
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub timestamp: Option<String>,
+    /// Who did it, as a whole user object: only what a name and a profile
+    /// card show is read.
+    pub user: Option<RawUserSummary>,
+    /// The reader's cast for a like, theirs for a reply; null for a follow.
+    /// A like repeats the whole cast, its mentions' user objects too.
+    pub cast: Option<RawCast>,
+}
+
+/// The hub's reaction messages (`/v1/reactionsByCast`): one shard's after
+/// another, each newest first with `reverse`, a page of each.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawHubReactions {
+    #[serde(default)]
+    pub messages: Vec<RawHubReaction>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawHubReaction {
+    pub data: Option<RawHubReactionData>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RawHubReactionData {
+    pub fid: Option<u64>,
+    /// Farcaster time: seconds since 2021-01-01T00:00:00Z.
+    pub timestamp: Option<u64>,
+}
+
+/// Who reacted, and when (Unix seconds), as a hub page lists them: each
+/// message's account and its Farcaster time made Unix time. Messages
+/// without either are left out.
+pub fn hub_reactors(raw: &RawHubReactions) -> Vec<(u64, i64)> {
+    raw.messages
+        .iter()
+        .filter_map(|message| {
+            let data = message.data.as_ref()?;
+            let at = i64::try_from(data.timestamp?).ok()?;
+            Some((data.fid.filter(|fid| *fid > 0)?, at + crate::latest::FARCASTER_EPOCH))
+        })
+        .collect()
+}
+
 fn username_or_fid(fid: u64, username: Option<&str>) -> String {
     match username.map(str::trim) {
         Some(name) if !name.is_empty() => name.to_owned(),
@@ -444,6 +519,57 @@ fn summary(fid: u64, username: Option<&str>, display_name: Option<&str>, pfp_url
 
 pub fn user_summary(raw: &RawUser) -> UserSummary {
     summary(raw.fid, raw.username.as_deref(), raw.display_name.as_deref(), raw.pfp_url.as_deref())
+}
+
+/// A [`UserSummary`] from the lighter user objects of reactions and
+/// notifications.
+pub fn summary_of(raw: &RawUserSummary) -> UserSummary {
+    summary(raw.fid, raw.username.as_deref(), raw.display_name.as_deref(), raw.pfp_url.as_deref())
+}
+
+/// A profile card's facts from one of those lighter user objects, `None`
+/// when it carries none of them.
+pub fn summary_card(raw: &RawUserSummary) -> Option<UserCard> {
+    card(raw.profile.as_ref(), raw.follower_count, raw.following_count, raw.registered_at.as_deref())
+}
+
+/// The reader `me`'s notifications on a page of Hypersnap's, as events:
+/// a like (or, as Hypersnap lists one, a recast: see
+/// [`crate::notifications::sort_reactions`]) of one of their casts, a
+/// follow, or a cast Hypersnap calls a reply, which is a reply, a mention
+/// or a quote ([`crate::notifications::classify`]). Kinds it doesn't know,
+/// and items without a person, a time or the cast they need, are left out.
+/// A like repeats its cast with each item, so each cast is normalized once.
+pub fn notifications(raw: &RawNotifications, me: u64) -> Vec<Event> {
+    let mut casts: HashMap<&str, Cast> = HashMap::new();
+    raw.notifications
+        .iter()
+        .filter_map(|item| {
+            let raw_cast = item.cast.as_ref();
+            let normalized = raw_cast.map(|raw| casts.entry(raw.hash.as_str()).or_insert_with(|| cast(raw)).clone());
+            let kind = match item.kind.as_deref()?.trim() {
+                "likes" | "like" => Kind::Like,
+                "recasts" | "recast" => Kind::Recast,
+                "follows" | "follow" => Kind::Follow,
+                "reply" | "replies" | "mention" | "mentions" | "quote" | "quotes" => {
+                    let parent = raw_cast?.parent_author.as_ref().and_then(|p| p.fid);
+                    classify(normalized.as_ref()?, parent, me)
+                }
+                _ => return None,
+            };
+            // A like or a recast is of one of the reader's casts.
+            if matches!(kind, Kind::Like | Kind::Recast) {
+                let author = normalized.as_ref()?.author.fid;
+                if author != 0 && author != me {
+                    return None;
+                }
+            }
+            let ts = item.timestamp.as_deref().and_then(parse_rfc3339)?;
+            let mentions_you = normalized.as_ref().is_some_and(|c| crate::notifications::mentions(c, me));
+            let cast = if kind == Kind::Follow { None } else { normalized };
+            Some(Event { kind, actor: summary_of(item.user.as_ref()?), ts, cast, mentions_you })
+        })
+        .collect()
 }
 
 /// Who reacted, newest first: at most `limit` people, and whether more
@@ -889,6 +1015,114 @@ mod tests {
         // dwr reports the ID registry's migration as his registration.
         assert_eq!(cards[&3].joined(), Some(crate::model::Joined::BeforeMigration));
         assert_eq!(user_cards([author, &bare]).keys().copied().collect::<Vec<_>>(), [3_353_201]);
+    }
+
+    #[test]
+    fn reads_hypersnap_notifications() {
+        // Recorded on 21 October 2026, for @0xael.eth (fid 539854).
+        let me = 539_854;
+        let raw: RawNotifications = serde_json::from_str(&fixture("hypersnap-notifications.json")).unwrap();
+        assert_eq!(raw.notifications.len(), 30);
+        assert!(raw.cursor().is_some_and(|cursor| cursor.starts_with("eyJiZWZvcmVfdGltZXN0YW1w")));
+        let events = notifications(&raw, me);
+        assert_eq!(events.len(), 30);
+        let kinds = |kind| events.iter().filter(|e| e.kind == kind).count();
+        // Hypersnap names likes (recasts among them), follows and replies.
+        assert_eq!([Kind::Like, Kind::Reply, Kind::Mention, Kind::Follow].map(kinds), [22, 4, 1, 3]);
+        assert_eq!(kinds(Kind::Recast) + kinds(Kind::Quote), 0);
+        // Newest first, as Hypersnap lists them.
+        assert!(events.windows(2).all(|pair| pair[0].ts >= pair[1].ts));
+        assert_eq!(events[0].ts, parse_rfc3339("2026-10-21T10:26:56Z").unwrap());
+
+        // Each reply to the reader is one, its cast normalized.
+        let reply = &events[0];
+        assert_eq!((reply.kind, reply.actor.username.as_str()), (Kind::Reply, "ivc"));
+        let cast = reply.cast.as_ref().unwrap();
+        assert_eq!(
+            (cast.hash.as_str(), cast.text.as_str()),
+            ("0x83c2e8275cc2ef922a3f76db933d5993a6f37ddc", "looks clean. ilikeit")
+        );
+        // A cast in /gmfarcaster that names ten accounts, the reader among
+        // them, replying to no one: a mention.
+        let mention = events.iter().find(|e| e.kind == Kind::Mention).unwrap();
+        assert_eq!(mention.actor.username, "nounishprof");
+        assert!(mention.mentions_you);
+        assert!(mention.cast.as_ref().unwrap().text.contains("@0xael.eth"));
+        // Follows carry no cast; likes carry the reader's cast.
+        assert!(events.iter().filter(|e| e.kind == Kind::Follow).all(|e| e.cast.is_none()));
+        let likes: Vec<&Event> = events.iter().filter(|e| e.kind == Kind::Like).collect();
+        assert!(likes.iter().all(|e| e.cast.as_ref().is_some_and(|c| c.author.fid == me && c.hash.starts_with("0x"))));
+        // An account that liked and recasted shows twice, identically.
+        let eth3: Vec<&&Event> = likes.iter().filter(|e| e.actor.username == "eth3").collect();
+        assert_eq!(eth3.len(), 2);
+        assert_eq!(eth3[0], eth3[1]);
+        assert_eq!(eth3[0].actor.display_name, "eth.base.eth 🔵");
+
+        // The people's profile cards come with them.
+        let follower = raw.notifications[2].user.as_ref().unwrap();
+        assert_eq!(summary_of(follower).username, "experttrader");
+        let card = summary_card(follower).unwrap();
+        assert!(card.bio.starts_with("No bots allowed") && card.followers > 0 && card.registered_at.is_some());
+    }
+
+    #[test]
+    fn notifications_keep_to_what_concerns_the_reader() {
+        let raw: RawNotifications = serde_json::from_str(
+            r#"{"notifications":[
+                {"type":"likes","timestamp":"2026-10-21T10:00:00Z","user":{"fid":2,"username":"two"},
+                 "cast":{"hash":"aa","author":{"fid":9},"text":"someone else's"}},
+                {"type":"likes","timestamp":"2026-10-21T10:00:00Z","user":{"fid":2,"username":"two"},
+                 "cast":{"hash":"ab","author":{"fid":5},"text":"mine"}},
+                {"type":"likes","timestamp":"2026-10-21T10:00:00Z","cast":{"hash":"ab","author":{"fid":5}}},
+                {"type":"follows","user":{"fid":3,"username":"three"}},
+                {"type":"poke","timestamp":"2026-10-21T10:00:00Z","user":{"fid":3,"username":"three"}},
+                {"type":"reply","timestamp":"2026-10-21T10:00:00Z","user":{"fid":4,"username":"four"}},
+                {"type":"reply","timestamp":"2026-10-21T09:00:00Z","user":{"fid":4,"username":"four"},
+                 "cast":{"hash":"ac","author":{"fid":4},"text":"quoting","parent_author":{"fid":null},
+                 "embeds":[{"cast_id":{"fid":5,"hash":"ab"}}]}}
+            ],"next":{"cursor":""}}"#,
+        )
+        .unwrap();
+        // Another's cast liked, an item without a person, a time, a kind
+        // known or the cast it needs: left out. A reply that quotes the
+        // reader's cast is a quote.
+        let events = notifications(&raw, 5);
+        let kept: Vec<(Kind, u64)> = events.iter().map(|e| (e.kind, e.actor.fid)).collect();
+        assert_eq!(kept, [(Kind::Like, 2), (Kind::Quote, 4)]);
+        assert_eq!(raw.cursor(), None);
+    }
+
+    #[test]
+    fn reads_the_hubs_newest_recasts() {
+        // Recorded on 21 October 2026: the newest ten recasts of each of
+        // the two shards of a cast that had 279, newest first in each.
+        let raw: RawHubReactions = serde_json::from_str(&fixture("hub-reactions-recasts.json")).unwrap();
+        let by = hub_reactors(&raw);
+        assert_eq!(by.len(), 20);
+        // Farcaster time is seconds since 2021.
+        assert_eq!(by[0], (1_062_657, 1_792_416_122));
+        assert_eq!(crate::time::iso_utc(by[0].1), "2026-10-19T13:22:02Z");
+        // The second shard starts over, newer than the end of the first.
+        assert!(by[10].1 > by[9].1);
+        let read = crate::notifications::Recasts::read(by, 10);
+        assert!(read.by.windows(2).all(|pair| pair[0].1 >= pair[1].1));
+        // Its newest ten are certain; older ones may be missing.
+        assert_eq!(read.since, Some(182_930_457 + crate::latest::FARCASTER_EPOCH));
+        assert_eq!(hub_reactors(&serde_json::from_str(r#"{"messages":[],"nextPageToken":""}"#).unwrap()), []);
+        let odd: RawHubReactions =
+            serde_json::from_str(r#"{"messages":[{"data":{"fid":0,"timestamp":1}},{}]}"#).unwrap();
+        assert_eq!(hub_reactors(&odd), []);
+    }
+
+    #[test]
+    fn reads_quotes_of_a_cast() {
+        // The reader quoting their own cast: a quote, by them.
+        let raw: RawFeed = serde_json::from_str(&fixture("hypersnap-cast-quotes.json")).unwrap();
+        let quotes: Vec<Cast> = raw.casts.iter().map(cast).collect();
+        assert_eq!(quotes.len(), 1);
+        assert_eq!(quotes[0].author.fid, 539_854);
+        assert!(crate::notifications::quotes(&quotes[0], 539_854));
+        assert_eq!(quotes[0].quoted().collect::<Vec<_>>(), ["0x281dd7fc80dda450f6ab3f23dff0ec24ada9c1a4"]);
     }
 
     #[test]
