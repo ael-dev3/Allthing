@@ -7,8 +7,12 @@ import { expect, test, type Browser, type Page, type TestInfo } from "@playwrigh
  */
 
 const DAY = 86_400;
-const now = Math.floor(Date.now() / 1000);
-const today = Math.floor(now / DAY);
+// The page's clock is pinned to noon UTC today (`serve`), so "today", how far
+// reading has got and the clock never fall either side of midnight, as they
+// did for the minute after it, when reading was a minute behind in the day
+// before.
+const today = Math.floor(Date.now() / 1000 / DAY);
+const now = today * DAY + 12 * 3_600;
 const reached = now - 60;
 const to = Math.floor(reached / 3_600) * 3_600;
 const hour = `${String(new Date(to * 1000).getUTCHours()).padStart(2, "0")}:00 UTC`;
@@ -50,6 +54,7 @@ function payload(extra: object = {}) {
 
 /** Serve `body` (or 503, before the first count); the requests are counted. */
 async function serve(page: Page, body: object | null) {
+  await page.clock.setFixedTime(now * 1000);
   const calls: string[] = [];
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/activity", (route) => {
@@ -275,6 +280,9 @@ test.describe("with the Worker", () => {
       json: { pool, notes: { origins, apps: { "9152": { fid: 9152, username: "warpcast", display_name: "Warpcast" } } }, meta: payload().meta, apps_24h: payload().apps_24h },
     }));
     await page.goto("/");
+    // Gone if the page reloads. (The pinned clock fakes `performance`, so
+    // its navigation entries can't say.)
+    await page.evaluate(() => Object.assign(window, { sameDocument: true }));
     await page.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).hover();
     const card = page.getByRole("dialog", { name: "Farcaster: active accounts" });
     // Its count is the link.
@@ -282,7 +290,7 @@ test.describe("with the Worker", () => {
     await count.click();
     await expect(page).toHaveURL(/\/dau$/);
     await expect(page.locator(".dau-meter")).toContainText("6,174");
-    expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(1);
+    expect(await page.evaluate(() => "sameDocument" in window)).toBe(true);
   });
 
   test("at 390, everything fits the screen", async ({ browser }, testInfo) => {
