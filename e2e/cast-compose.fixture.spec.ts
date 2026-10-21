@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
 
 /*
@@ -148,7 +149,7 @@ test("with a key, a cast with a mention and a GIF goes out from the composer", a
   const posted = page.getByRole("status").filter({ hasText: "Posted." });
   await expect(posted.getByRole("link", { name: "View" })).toHaveAttribute("href", `/p/${sent.hash}`);
   await page.getByRole("button", { name: "Write a cast" }).click();
-  await expect(dialog.getByRole("textbox")).toHaveValue("");
+  await expectDraft(dialog.getByRole("textbox"), "");
 });
 
 test("a reply, a quote, and a cast in a channel go where they belong", async ({ page }) => {
@@ -206,7 +207,7 @@ test("long casts, too-long ones, and one the network refuses", async ({ page }) 
   await text.fill("refused, but kept");
   await post.click();
   await expect(dialog.getByRole("alert")).toHaveText("Farcaster didn't take it: text too long");
-  await expect(text).toHaveValue("refused, but kept");
+  await expectDraft(text, "refused, but kept");
   await expect(post).toBeEnabled();
   expect(calls.sent).toHaveLength(2);
 });

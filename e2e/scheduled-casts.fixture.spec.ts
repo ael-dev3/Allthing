@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, envelope, signIn } from "./helpers/farcaster";
 
 /*
@@ -151,7 +152,7 @@ test("the clock schedules a cast: signed now for the time picked, kept by the Wo
   await page.goBack();
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   await page.getByRole("button", { name: "Write a cast" }).click();
-  await expect(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox", { name: "What's happening?" })).toHaveValue("");
+  await expectDraft(page.getByRole("dialog", { name: "New cast" }).getByRole("textbox", { name: "What's happening?" }), "");
   await expect(page.getByRole("button", { name: "Schedule for later" })).toHaveAttribute("aria-pressed", "false");
 });
 
@@ -174,7 +175,7 @@ test("a time too soon, or too far, is refused before anything is signed; the Wor
   await field.fill((await shown(page, (Math.floor(now() / 3600) + 3) * 3600)).input);
   await dialog.getByRole("button", { name: "Schedule", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveText("You have 25 casts waiting already: cancel one, or wait for one to go out");
-  await expect(text).toHaveValue("Too soon");
+  await expectDraft(text, "Too soon");
   expect(calls.scheduled).toHaveLength(1);
   // The clock again: posted now after all.
   await dialog.getByRole("button", { name: "Schedule for later" }).click();
@@ -213,7 +214,7 @@ test("the list: one waiting to change or cancel, one that didn't go out, one pos
   const dialog = page.getByRole("dialog", { name: "Scheduled cast" });
   await expect(dialog).toContainText("Replying to @alice");
   const reply = dialog.getByRole("textbox", { name: "Write your reply" });
-  await expect(reply).toHaveValue("Later reply");
+  await expectDraft(reply, "Later reply");
   await expect(dialog.getByRole("button", { name: "Schedule for later" })).toBeDisabled();
   const field = dialog.getByLabel("Goes out");
   await expect(field).toHaveValue((await shown(page, list[0].at)).input);

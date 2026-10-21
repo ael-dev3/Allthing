@@ -7,6 +7,8 @@ pub mod clients;
 #[cfg(not(feature = "static-host"))]
 pub mod compose;
 #[cfg(not(feature = "static-host"))]
+pub mod editor;
+#[cfg(not(feature = "static-host"))]
 pub mod emoji_picker;
 pub mod facts;
 pub mod favorite;

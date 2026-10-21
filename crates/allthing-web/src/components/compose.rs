@@ -55,6 +55,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
 
 use crate::api;
+use crate::components::editor::{self, ComposeText};
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
 use crate::components::signin::use_session;
@@ -688,7 +689,7 @@ pub fn ComposerDialog() -> impl IntoView {
             // Focus stays in the dialog.
             "Tab" => {
                 if let Some(root) = dialog.get_untracked() {
-                    trap_tab(&root, &ev, "button:not([disabled]), a[href], textarea, input");
+                    trap_tab(&root, &ev, "button:not([disabled]), a[href], [contenteditable], input");
                 }
             }
             _ => {}
@@ -701,10 +702,17 @@ pub fn ComposerDialog() -> impl IntoView {
             let gif_key = RwSignal::new(None::<String>);
             // Only the field's showing, not its value, redraws the row.
             let scheduling = Memo::new(move |_| composer.when.with(Option::is_some));
-            let text = NodeRef::<leptos::html::Textarea>::new();
+            let text = NodeRef::<leptos::html::Div>::new();
+            // The draft it holds already, with the caret at its end.
             Effect::new(move |_| {
-                if let Some(text) = text.get() {
-                    let _ = text.focus();
+                if let Some(root) = text.get() {
+                    let draft = composer.text.get_untracked();
+                    if editor::text_of(&root) != draft {
+                        editor::show(&root, &draft);
+                    }
+                    let _ = root.focus();
+                    let end = draft.encode_utf16().count();
+                    editor::place(&root, end, end);
                 }
             });
             // Where the caret was when the text lost focus, or after the last
@@ -756,20 +764,7 @@ pub fn ComposerDialog() -> impl IntoView {
                         // A picker open makes the text smaller, to fit both.
                         <div class="modal-body compose-body" class:picking=move || composer.picker.get() != Picker::Closed>
                             {context}
-                            <textarea
-                                class="compose-text"
-                                node_ref=text
-                                rows="4"
-                                placeholder=placeholder
-                                aria-label=placeholder
-                                prop:value=move || composer.text.get()
-                                on:input=move |ev| composer.text.set(event_target_value(&ev))
-                                on:blur=move |_| {
-                                    if let Some(area) = text.get_untracked() {
-                                        caret.set_value(selection(&area));
-                                    }
-                                }
-                            ></textarea>
+                            <ComposeText node_ref=text text=composer.text caret label=placeholder/>
                             {crate::split::lazy_view(|| (), extras)}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -779,12 +774,6 @@ pub fn ComposerDialog() -> impl IntoView {
             }
         })
     }
-}
-
-/// Where the caret is in `area`, or what is selected.
-fn selection(area: &web_sys::HtmlTextAreaElement) -> Option<(usize, usize)> {
-    let (from, to) = (area.selection_start().ok().flatten(), area.selection_end().ok().flatten());
-    from.zip(to).map(|(from, to)| (from as usize, to as usize))
 }
 
 /// The composer's bar while its code comes, the first time it opens.
@@ -804,7 +793,7 @@ fn pending_bar() -> impl IntoView {
 #[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_composer))]
 fn composer_extras(
     composer: Composer,
-    text: NodeRef<leptos::html::Textarea>,
+    text: NodeRef<leptos::html::Div>,
     caret: StoredValue<Option<(usize, usize)>>,
     gif_key: RwSignal<Option<String>>,
     scheduling: Memo<bool>,
@@ -817,21 +806,25 @@ fn composer_extras(
     // An emoji's shortcode goes in at the caret, or in place of what
     // is selected, and the caret after it.
     let insert = Callback::new(move |(emoji, again): Pick| {
-        let Some(area) = text.get_untracked() else { return };
-        let value = area.value();
-        let focused = document().active_element().is_some_and(|el| el.is_same_node(Some(&area)));
+        let Some(root) = text.get_untracked() else { return };
+        let value = composer.text.get_untracked();
+        let focused = document().active_element().is_some_and(|el| el.is_same_node(Some(&root)));
         let end = value.encode_utf16().count();
-        let (from, to) = if focused { selection(&area) } else { caret.get_value() }.unwrap_or((end, end));
+        let (from, to) = if focused { editor::caret_in(&root) } else { caret.get_value() }.unwrap_or((end, end));
         let (value, at) = emoji::insert(&value, from, to, emoji);
-        area.set_value(&value);
+        editor::show(&root, &value);
         composer.text.set(value);
         caret.set_value(Some((at, at)));
         emoji_picker::used(emoji);
+        // Picked to stay in the picker, the text box isn't focused, as a
+        // caret placed in it would be, so a phone's keyboard stays down.
         if !again {
             composer.picker.set(Picker::Closed);
-            let _ = area.focus();
+            let _ = root.focus();
+            editor::place(&root, at, at);
+        } else if focused {
+            editor::place(&root, at, at);
         }
-        let _ = area.set_selection_range(at as u32, at as u32);
     });
     // A sticker goes with the cast as its GIF does, in the GIF's place.
     let stick = Callback::new(move |sticker: &'static Sticker| {

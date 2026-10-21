@@ -140,6 +140,46 @@ pub fn text_and_emoji(text: &str) -> Vec<Token> {
     tokens
 }
 
+/// `text` with what lies between `from` and `to` (offsets in UTF-16 units,
+/// as a text box counts them) replaced by `put`, and the offset just after
+/// what was put. Offsets past the end are the end.
+pub fn splice(text: &str, from: usize, to: usize, put: &str) -> (String, usize) {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (from, to) = (from.min(to).min(units.len()), to.max(from).min(units.len()));
+    let mut out = String::from_utf16_lossy(&units[..from]);
+    out.push_str(put);
+    let at = from + put.encode_utf16().count();
+    out.push_str(&String::from_utf16_lossy(&units[to..]));
+    (out, at)
+}
+
+/// What lies between `from` and `to` in `text`, offsets in UTF-16 units.
+pub fn between(text: &str, from: usize, to: usize) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (from, to) = (from.min(to).min(units.len()), to.max(from).min(units.len()));
+    String::from_utf16_lossy(&units[from..to])
+}
+
+/// `text` as the composer's text box shows it while it is written: runs of
+/// text, and the pack's emoji, each with its shortcode as written, which the
+/// box keeps so that the draft is what was typed. The same shortcodes are
+/// emoji as in a cast's text (not inside a link).
+pub fn written_emoji(text: &str) -> Vec<(Option<&'static crate::emoji::Emoji>, &str)> {
+    let mut parts = Vec::new();
+    let mut last = 0;
+    for (start, end, emoji) in emoji_spans(text) {
+        if start > last {
+            parts.push((None, &text[last..start]));
+        }
+        parts.push((Some(emoji), &text[start..end]));
+        last = end;
+    }
+    if last < text.len() {
+        parts.push((None, &text[last..]));
+    }
+    parts
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
     Text(String),
@@ -438,6 +478,36 @@ mod tests {
             vec![Token::Text("see https://x.com/:pepe_gm: at 10:30 :smile:".into())]
         );
         assert!(text_and_emoji("").is_empty());
+    }
+
+    #[test]
+    fn splices_count_as_a_text_box_does() {
+        // "é" is one unit, "🐸" two.
+        assert_eq!(splice("gm 🐸 fren", 3, 5, ":pepe_gm:"), ("gm :pepe_gm: fren".to_owned(), 12));
+        assert_eq!(splice("ab", 2, 2, "\n"), ("ab\n".to_owned(), 3));
+        assert_eq!(splice("ab", 9, 1, "x"), ("ax".to_owned(), 2));
+        assert_eq!(splice("", 0, 0, ""), (String::new(), 0));
+        assert_eq!(between("é 🐸 x", 2, 4), "🐸");
+        assert_eq!(between("abc", 3, 1), "bc");
+    }
+
+    #[test]
+    fn written_emoji_keep_their_shortcodes_as_typed() {
+        let gm = crate::emoji::find("pepe_gm").unwrap();
+        let text = "gm :PEPE_GM::pepe_gm:\nhttps://x.com/:pepe_gm: :nope:";
+        let parts = written_emoji(text);
+        assert_eq!(
+            parts,
+            vec![
+                (None, "gm "),
+                (Some(gm), ":PEPE_GM:"),
+                (Some(gm), ":pepe_gm:"),
+                (None, "\nhttps://x.com/:pepe_gm: :nope:"),
+            ]
+        );
+        // Put back together, it is the text as typed.
+        assert_eq!(parts.iter().map(|(_, part)| *part).collect::<String>(), text);
+        assert!(written_emoji("").is_empty());
     }
 
     #[test]
