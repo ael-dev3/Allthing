@@ -11,6 +11,7 @@ use allthing_core::api::{
     UserPayload,
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
+use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
@@ -188,18 +189,54 @@ async fn annotate_listing(
 ) -> BTreeMap<u64, UserCard> {
     let refs: Vec<&Cast> = pool.iter().collect();
     let known = std::mem::take(&mut notes.quotes);
-    let ((quotes, links, cards), ()) = join(
+    let reactions = read_reactions(inv, pool, std::mem::take(&mut notes.reactions));
+    let ((quotes, links, cards), (), reactions) = join3(
         async {
             let (mut quotes, cards) = quoted_casts(inv, pool, known).await;
             let links = check_quotes(inv, quotes.values_mut(), known_links).await;
             (quotes, links, cards)
         },
         annotate(inv, notes, &targets(&refs), max_authors),
+        reactions,
     )
     .await;
     notes.quotes = quotes;
     notes.links.extend(links);
+    notes.reactions = reactions;
     cards
+}
+
+/// The emoji reactions the cron keeps to those of `pool`'s casts that have
+/// replies, by cast, oldest first: one D1 read, its subrequest taken at
+/// once, so origins size their batch to what is left. A read that can't be
+/// made or fails leaves those carried from the last build (`carried`) for
+/// the casts still listed. None without an index: the static copy.
+fn read_reactions(
+    inv: &Invocation,
+    pool: &[Cast],
+    carried: BTreeMap<String, Vec<ReactionReply>>,
+) -> impl Future<Output = BTreeMap<String, Vec<ReactionReply>>> + 'static {
+    let casts: Vec<String> = pool.iter().filter(|c| c.replies > 0).map(|c| c.hash.clone()).collect();
+    let index = match inv.index() {
+        Some(index) if !casts.is_empty() && inv.take_subrequests(1) => Some(index),
+        _ => None,
+    };
+    async move {
+        let read = match index {
+            Some(index) => index.reactions(casts.clone()).await.ok(),
+            None => None,
+        };
+        match read {
+            Some(rows) => {
+                let mut by_cast: BTreeMap<String, Vec<ReactionReply>> = BTreeMap::new();
+                for (cast, reply) in rows {
+                    by_cast.entry(cast).or_default().push(reply);
+                }
+                by_cast
+            }
+            None => carried.into_iter().filter(|(hash, _)| casts.contains(hash)).collect(),
+        }
+    }
 }
 
 /// The accounts a listing shows by name: the authors of its casts and of
@@ -2170,5 +2207,141 @@ mod wallet_tests {
         let keyed = wallet_sources(false, true, true, &[solana(None)]);
         assert!(keyed[0].contains("keyed Solana RPC endpoint"), "{}", keyed[0]);
         assert!(wallet_sources(false, false, false, &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reaction_tests {
+    use std::cell::RefCell;
+
+    use allthing_core::index::Entry;
+    use allthing_core::model::UserSummary;
+    use futures::future::{FutureExt, LocalBoxFuture};
+
+    use super::*;
+    use crate::indexer::{Index, IndexError, Saved};
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+
+    /// The reactions the cron keeps, and which casts were asked for.
+    #[derive(Default)]
+    struct Kept {
+        rows: Vec<(String, ReactionReply)>,
+        fails: bool,
+        asked: RefCell<Vec<Vec<String>>>,
+    }
+
+    impl Index for Kept {
+        fn ranking(&self, _: Span) -> LocalBoxFuture<'static, Result<Option<Ranking>, IndexError>> {
+            async { Ok(None) }.boxed_local()
+        }
+
+        fn load(&self) -> LocalBoxFuture<'static, Result<Saved, IndexError>> {
+            async { Ok(Saved::default()) }.boxed_local()
+        }
+
+        fn save(
+            &self,
+            _: Vec<Entry>,
+            _: Option<Span>,
+            _: String,
+            _: f64,
+        ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+            async { Ok(()) }.boxed_local()
+        }
+
+        fn reactions(
+            &self,
+            casts: Vec<String>,
+        ) -> LocalBoxFuture<'static, Result<Vec<(String, ReactionReply)>, IndexError>> {
+            let rows = self.rows.iter().filter(|(cast, _)| casts.contains(cast)).cloned().collect();
+            self.asked.borrow_mut().push(casts);
+            let result = if self.fails { Err(IndexError("D1 is down".into())) } else { Ok(rows) };
+            async move { result }.boxed_local()
+        }
+    }
+
+    struct Runtime(Rc<Kept>);
+
+    impl Host for Runtime {
+        fn now(&self) -> f64 {
+            0.0
+        }
+
+        fn fetch(&self, _: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            panic!("reactions are read from the index alone")
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn index(&self) -> Option<Rc<dyn Index>> {
+            Some(self.0.clone() as Rc<dyn Index>)
+        }
+    }
+
+    fn listed(hash: &str, replies: u64) -> Cast {
+        Cast {
+            hash: hash.into(),
+            author: UserSummary { fid: 1, username: "a".into(), display_name: String::new(), pfp_url: None },
+            text: String::new(),
+            mentions: vec![],
+            ts: 0,
+            parent_hash: None,
+            parent_url: None,
+            channel: None,
+            embeds: vec![],
+            likes: 0,
+            recasts: 0,
+            replies,
+            mini_app: false,
+            spam: false,
+        }
+    }
+
+    fn reply(hash: &str, emoji: &str, fid: u64) -> ReactionReply {
+        ReactionReply { hash: hash.into(), emoji: emoji.into(), fid, ts: 100 }
+    }
+
+    #[test]
+    fn a_listing_reads_its_casts_reactions_in_one_query_and_keeps_the_last_good_ones() {
+        let pool = [listed("0xa", 2), listed("0xb", 0), listed("0xc", 1)];
+        let kept = Rc::new(Kept {
+            rows: vec![
+                ("0xa".into(), reply("0xa1", "pepe_no", 7)),
+                ("0xc".into(), reply("0xc1", "pepe_heart_hug", 8)),
+                ("0xa".into(), reply("0xa2", "pepe_no", 9)),
+            ],
+            ..Kept::default()
+        });
+        let inv = Invocation::new(Rc::new(Runtime(kept.clone())), 45);
+        let read = read_reactions(&inv, &pool, BTreeMap::new()).now_or_never().unwrap();
+        // One read, for the casts with replies, its subrequest taken at once.
+        assert_eq!(*kept.asked.borrow(), [vec!["0xa".to_owned(), "0xc".to_owned()]]);
+        assert_eq!(inv.remaining_subrequests(), 44);
+        assert_eq!(read["0xa"], [reply("0xa1", "pepe_no", 7), reply("0xa2", "pepe_no", 9)]);
+        assert_eq!(read["0xc"], [reply("0xc1", "pepe_heart_hug", 8)]);
+        assert_eq!(read.len(), 2);
+
+        // A read that fails, or can't be made, keeps the last build's for
+        // the casts still listed.
+        let carried = BTreeMap::from([
+            ("0xa".to_owned(), vec![reply("0xa1", "pepe_no", 7)]),
+            ("0xgone".to_owned(), vec![reply("0xg1", "pepe_no", 7)]),
+        ]);
+        let failing = Rc::new(Kept { fails: true, ..Kept::default() });
+        let inv = Invocation::new(Rc::new(Runtime(failing)), 45);
+        let read = read_reactions(&inv, &pool, carried.clone()).now_or_never().unwrap();
+        assert_eq!(read.keys().collect::<Vec<_>>(), ["0xa"]);
+        let spent = Rc::new(Kept::default());
+        let inv = Invocation::new(Rc::new(Runtime(spent.clone())), 0);
+        let read = read_reactions(&inv, &pool, carried).now_or_never().unwrap();
+        assert_eq!(read.keys().collect::<Vec<_>>(), ["0xa"]);
+        assert!(spent.asked.borrow().is_empty());
+
+        // No cast with replies: nothing to read.
+        let quiet = Rc::new(Kept::default());
+        let inv = Invocation::new(Rc::new(Runtime(quiet.clone())), 45);
+        assert!(read_reactions(&inv, &[listed("0xb", 0)], BTreeMap::new()).now_or_never().unwrap().is_empty());
+        assert!(quiet.asked.borrow().is_empty());
+        assert_eq!(inv.remaining_subrequests(), 45);
     }
 }

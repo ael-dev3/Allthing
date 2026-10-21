@@ -574,8 +574,28 @@ pub fn reaction(cast: &Cast) -> Option<&'static Emoji> {
     if !cast.embeds.is_empty() || cast.hidden() {
         return None;
     }
-    let text = cast.text.trim();
+    reaction_text(&cast.text)
+}
+
+/// The emoji `text` is, when it is one emoji and nothing else.
+pub fn reaction_text(text: &str) -> Option<&'static Emoji> {
+    let text = text.trim();
     shortcode_at(text).filter(|(_, len)| *len == text.len()).map(|(emoji, _)| emoji)
+}
+
+/// A reply that is one emoji (an emoji reaction) as the hub event follower
+/// keeps it for the cast it replies to (`activity`), and as a listing's
+/// notes carry it for its casts (`api::Annotations::reactions`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReactionReply {
+    /// The reply's hash, lowercase `0x` hex.
+    pub hash: String,
+    /// The emoji's code (`pepe_no`).
+    pub emoji: String,
+    /// Whose reply it is.
+    pub fid: u64,
+    /// When it was merged, Unix seconds.
+    pub ts: i64,
 }
 
 /// One emoji's reactions to a cast, and who reacted.

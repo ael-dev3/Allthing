@@ -5,7 +5,8 @@
 //! UTC hour's and day's active fids, and each hour's signing keys. The apps
 //! that requested those keys are looked up a few accounts a run and kept
 //! (a key's app never changes), and once an hour the past 24 hours' keys
-//! are counted by app.
+//! are counted by app. The same read keeps the emoji reactions it finds,
+//! and drops those taken back, for listings' cards.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -14,6 +15,7 @@ use allthing_core::activity::{
     day, day_set, hour, hour_set, key_pair, key_set,
 };
 use allthing_core::api::Meta;
+use allthing_core::emoji::ReactionReply;
 use allthing_core::latest::{Cursor, SHARDS};
 use allthing_core::normalize;
 use futures::future::{LocalBoxFuture, join_all};
@@ -48,6 +50,8 @@ const AFTER: u32 = 2;
 const HISTORY: u32 = 6;
 /// Keys counted by app in one statement, about 30 KB of JSON.
 const COUNT_CHUNK: usize = 2_000;
+/// How long emoji reactions are kept for listings' cards, days.
+pub const REACTIONS_KEPT_DAYS: i64 = 400;
 
 /// What the follower writes at the end of a run, in one transaction.
 pub struct Saving {
@@ -58,6 +62,12 @@ pub struct Saving {
     pub keep_from: (i64, i64),
     /// Keys' apps learned, as `(key_pair, app)`; a key's app never changes.
     pub keys: Vec<(u64, u64)>,
+    /// Emoji reactions read, each with the cast it replies to; then the
+    /// casts removed, and reactions revoked or pruned, whose reactions go.
+    pub reactions: Vec<(String, ReactionReply)>,
+    pub removed: Vec<String>,
+    /// Drop reactions from before this, Unix seconds.
+    pub reactions_from: i64,
     pub state: String,
     /// The payload served.
     pub summary: Snapshot,
@@ -173,6 +183,7 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let mut report = Report::default();
     let mut actions = Vec::new();
     let mut learned: HashMap<u64, u64> = HashMap::new();
+    let (mut reactions, mut removed) = (Vec::new(), Vec::new());
     for ((shard, after), page) in afters.into_iter().zip(pages) {
         let Some(page) = page.ok().and_then(|body| activity::activity(&body)) else {
             // Read again from the same place next run.
@@ -201,6 +212,8 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         }
         actions.extend(page.actions);
         learned.extend(page.keys);
+        reactions.extend(page.reactions);
+        removed.extend(page.removed);
     }
     report.actions = actions.len();
     report.learned = learned.len();
@@ -338,7 +351,10 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let keep_from = (now_hour - KEEP_HOURS, today - KEEP_DAYS);
     d1(inv)?;
     let summary = Snapshot { built: inv.now(), body };
-    store.save_activity(Saving { sets: writes, keep_from, keys, state, summary }).await?;
+    let reactions_from = now - REACTIONS_KEPT_DAYS * 86_400;
+    store
+        .save_activity(Saving { sets: writes, keep_from, keys, reactions, removed, reactions_from, state, summary })
+        .await?;
     Ok(report)
 }
 
@@ -421,6 +437,8 @@ mod tests {
         sets: RefCell<HashMap<String, String>>,
         keys: RefCell<HashMap<u64, u64>>,
         summary: RefCell<Option<Snapshot>>,
+        /// Kept emoji reactions by reply: the cast replied to, the reply.
+        reactions: RefCell<std::collections::BTreeMap<String, (String, ReactionReply)>>,
     }
 
     impl ActivityStore for Memory {
@@ -484,6 +502,13 @@ mod tests {
             for (pair, app) in saving.keys {
                 keys.entry(pair).or_insert(app);
             }
+            // As the Worker's statements do: add, then drop those taken back
+            // and those too old.
+            let mut reactions = self.reactions.borrow_mut();
+            for (cast, reply) in saving.reactions {
+                reactions.entry(reply.hash.clone()).or_insert((cast, reply));
+            }
+            reactions.retain(|hash, (_, reply)| !saving.removed.contains(hash) && reply.ts >= saving.reactions_from);
             *self.state.borrow_mut() = Some(saving.state);
             *self.summary.borrow_mut() = Some(saving.summary);
             async { Ok(()) }.boxed_local()
@@ -509,6 +534,14 @@ mod tests {
         )
     }
 
+    /// A reply by `fid` with `text` to the cast `parent`.
+    fn reply(block: u64, seq: u64, fid: u64, hash: &str, text: &str, parent: &str) -> String {
+        format!(
+            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{block},"mergeMessageBody":{{"message":{{"hash":"{hash}","data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":{fid},"timestamp":1,"castAddBody":{{"text":"{text}","parentCastId":{{"fid":3,"hash":"{parent}"}}}}}},"signer":"0x0{seq}"}}}}}}"#,
+            (block << 14) | seq
+        )
+    }
+
     fn page(events: &[String]) -> String {
         format!(r#"{{"events":[{}]}}"#, events.join(","))
     }
@@ -520,6 +553,64 @@ mod tests {
 
     fn state(store: &Memory) -> Follow {
         serde_json::from_str(store.state.borrow().as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_run_keeps_emoji_reactions_and_drops_those_taken_back_or_too_old() {
+        let at = NOW - 90;
+        let (cast, mine, theirs) = (
+            "0x1111111111111111111111111111111111111111",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let mut hub = Hub::default();
+        for shard in ["1", "2"] {
+            hub.events.insert((shard.into(), "newest".into()), page(&[block(HEAD, NOW)]));
+        }
+        let from = (START << 14).to_string();
+        hub.events.insert(
+            ("1".into(), from.clone()),
+            page(&[
+                block(START, at),
+                reply(START, 1, 42, mine, ":pepe_no:", cast),
+                reply(START, 2, 7, theirs, ":pepe_heart_hug:", cast),
+                reply(START, 3, 9, "0xcccccccccccccccccccccccccccccccccccccccc", "words, not a reaction", cast),
+            ]),
+        );
+        hub.events.insert(("2".into(), from), page(&[block(START, at)]));
+        let store = Memory::default();
+        // Kept from long ago: too old to keep now.
+        let old = ReactionReply { hash: "0xdd".into(), emoji: "pepe_no".into(), fid: 5, ts: NOW - 401 * 86_400 };
+        store.reactions.borrow_mut().insert("0xdd".into(), (cast.into(), old));
+        run_once(&Rc::new(hub), &store).unwrap();
+        let kept = |store: &Memory| {
+            store
+                .reactions
+                .borrow()
+                .values()
+                .map(|(c, r)| (c.clone(), r.hash.clone(), r.emoji.clone(), r.fid, r.ts))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kept(&store),
+            [
+                (cast.into(), mine.into(), "pepe_no".into(), 42, at),
+                (cast.into(), theirs.into(), "pepe_heart_hug".into(), 7, at),
+            ]
+        );
+
+        // The next run reads 42 deleting theirs: it's gone.
+        let mut hub = Hub::default();
+        let after_1 = ((START << 14) | 3) + 1;
+        let removal = format!(
+            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{},"mergeMessageBody":{{"message":{{"hash":"0x9999999999999999999999999999999999999999","data":{{"type":"MESSAGE_TYPE_CAST_REMOVE","fid":42,"timestamp":1,"castRemoveBody":{{"targetHash":"qqqqqqqqqqqqqqqqqqqqqqqqqqo="}}}},"signer":"0x01"}}}}}}"#,
+            ((START + 1) << 14) | 1,
+            START + 1
+        );
+        hub.events.insert(("1".into(), after_1.to_string()), page(&[block(START + 1, at + 1), removal]));
+        hub.events.insert((("2".into()), ((START << 14) + 1).to_string()), page(&[]));
+        run_once(&Rc::new(hub), &store).unwrap();
+        assert_eq!(kept(&store), [(cast.into(), theirs.into(), "pepe_heart_hug".into(), 7, at)]);
     }
 
     #[test]

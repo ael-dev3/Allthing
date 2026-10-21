@@ -21,12 +21,20 @@
 //! The cron keeps each UTC hour's and each UTC day's active fids as a
 //! compact set (`Fids`), so every count is exact: an account is counted once
 //! in a window however many hours or shards it was seen in.
+//!
+//! The same read picks out emoji reactions, replies that are one Pepe and
+//! nothing else (`emoji::reaction`), and the casts removed, and reactions
+//! revoked or pruned, so the cron can keep each cast's reactions for the
+//! cards of listings (`api::Annotations::reactions`). No other cast text is
+//! kept, or even built.
 
 use std::collections::HashMap;
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use crate::latest::{Cursor, FARCASTER_EPOCH};
+use crate::emoji::{Emoji, ReactionReply, reaction_text};
+use crate::latest::{Cursor, FARCASTER_EPOCH, base64_to_hex};
 use crate::model::UserSummary;
 use crate::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
 
@@ -97,6 +105,13 @@ pub struct ActivityPage {
     /// Signing keys added onchain on the page (`key_pair`), each with the
     /// app that requested it, 0 for none.
     pub keys: Vec<(u64, u64)>,
+    /// Emoji reactions merged on the page: replies that are one emoji and
+    /// nothing else (`emoji::reaction`), each with the hash of the cast it
+    /// replies to.
+    pub reactions: Vec<(String, ReactionReply)>,
+    /// Casts the page removes, or whose emoji reactions it revokes or
+    /// prunes: their hashes, lowercase `0x` hex.
+    pub removed: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +130,12 @@ struct Event {
     confirmed: Option<Confirmed>,
     #[serde(rename = "mergeMessageBody")]
     merge: Option<Merge>,
+    /// A message gone with its key (revoked) or over its account's storage
+    /// (pruned).
+    #[serde(rename = "revokeMessageBody")]
+    revoke: Option<Merge>,
+    #[serde(rename = "pruneMessageBody")]
+    prune: Option<Merge>,
     #[serde(rename = "mergeOnChainEventBody")]
     chain: Option<OnChain>,
 }
@@ -154,10 +175,12 @@ struct Merge {
     message: Option<Message>,
 }
 
-/// Only what is counted is read; serde skips the rest of each message
-/// (its body, hash and signature) without building it.
+/// Only what is counted is read, and what an emoji reaction needs; serde
+/// skips the rest of each message (its signature, a cast's text that isn't
+/// one emoji) without building it.
 #[derive(Deserialize)]
 struct Message {
+    hash: Option<String>,
     data: Option<Data>,
     signer: Option<String>,
 }
@@ -168,6 +191,80 @@ struct Data {
     kind: Option<String>,
     fid: Option<u64>,
     timestamp: Option<i64>,
+    #[serde(rename = "castAddBody")]
+    add: Option<CastAdd>,
+    #[serde(rename = "castRemoveBody")]
+    remove: Option<CastRemove>,
+}
+
+#[derive(Deserialize)]
+struct CastAdd {
+    text: Option<ReactionText>,
+    /// Set on replies.
+    #[serde(rename = "parentCastId")]
+    parent: Option<CastId>,
+    /// Zero-sized items: counted, not built.
+    embeds: Option<Vec<IgnoredAny>>,
+}
+
+#[derive(Deserialize)]
+struct CastId {
+    hash: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CastRemove {
+    #[serde(rename = "targetHash")]
+    target: Option<String>,
+}
+
+/// A cast's text, read only for the emoji it is when it is one emoji and
+/// nothing else (`emoji::reaction_text`); any other text isn't kept.
+struct ReactionText(Option<&'static Emoji>);
+
+impl<'de> Deserialize<'de> for ReactionText {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Text;
+        impl serde::de::Visitor<'_> for Text {
+            type Value = ReactionText;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a cast's text")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<ReactionText, E> {
+                Ok(ReactionText(reaction_text(text)))
+            }
+        }
+        deserializer.deserialize_str(Text)
+    }
+}
+
+/// A hash as lowercase `0x` hex: events give a message's in hex and a
+/// removal's target in base64.
+fn hex_hash(value: &str) -> Option<String> {
+    let hex = value.strip_prefix("0x").filter(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    match hex {
+        Some(_) => Some(value.to_ascii_lowercase()),
+        None => base64_to_hex(value),
+    }
+}
+
+/// The emoji reaction a message is, at `at`, with the hash of the cast it
+/// replies to: a cast that replies to one, with no embeds and one emoji for
+/// its text.
+fn reaction(hash: Option<&str>, data: &Data, at: Option<i64>) -> Option<(String, ReactionReply)> {
+    if data.kind.as_deref() != Some("MESSAGE_TYPE_CAST_ADD") {
+        return None;
+    }
+    let add = data.add.as_ref()?;
+    let emoji = add.text.as_ref()?.0?;
+    if add.embeds.as_ref().is_some_and(|embeds| !embeds.is_empty()) {
+        return None;
+    }
+    let parent = add.parent.as_ref()?.hash.as_deref().and_then(hex_hash)?;
+    let fid = data.fid.filter(|fid| *fid > 0)?;
+    Some((parent, ReactionReply { hash: hex_hash(hash?)?, emoji: emoji.code.to_owned(), fid, ts: at? }))
 }
 
 /// Farcaster time (seconds since 2021-01-01), as Unix seconds, if it is one.
@@ -197,16 +294,30 @@ pub fn activity(json: &[u8]) -> Option<ActivityPage> {
                 out.started = Some(out.started.map_or(at, |s| s.min(at)));
             }
             Some("HUB_EVENT_TYPE_MERGE_MESSAGE") => {
-                let Some(Message { data: Some(data), signer: Some(signer), .. }) = event.merge.and_then(|m| m.message)
-                else {
+                let Some(Message { hash, data: Some(data), signer }) = event.merge.and_then(|m| m.message) else {
                     continue;
                 };
+                let block_time = event.block.and_then(|b| blocks.get(&b).copied());
+                let at = block_time.or_else(|| data.timestamp.and_then(unix));
+                out.reactions.extend(reaction(hash.as_deref(), &data, at));
+                out.removed.extend(data.remove.as_ref().and_then(|r| r.target.as_deref()).and_then(hex_hash));
+                let Some(signer) = signer else { continue };
                 let Some(family) = data.kind.as_deref().and_then(Family::of) else { continue };
                 let Some(fid) = data.fid.filter(|fid| (1..=u64::from(u32::MAX)).contains(fid)) else { continue };
                 let Some(signer) = normalize_key(&signer) else { continue };
-                let block_time = event.block.and_then(|b| blocks.get(&b).copied());
-                let Some(at) = block_time.or_else(|| data.timestamp.and_then(unix)) else { continue };
+                let Some(at) = at else { continue };
                 out.actions.push(Action { fid, signer, at, family });
+            }
+            // Not activity, but a reaction revoked or pruned is gone.
+            Some("HUB_EVENT_TYPE_REVOKE_MESSAGE" | "HUB_EVENT_TYPE_PRUNE_MESSAGE") => {
+                let Some(Message { hash: Some(hash), data: Some(data), .. }) =
+                    event.revoke.or(event.prune).and_then(|m| m.message)
+                else {
+                    continue;
+                };
+                if reaction(Some(&hash), &data, Some(0)).is_some() {
+                    out.removed.extend(hex_hash(&hash));
+                }
             }
             // A key added for an account: which app requested it is in its
             // signed key request (`provenance`), so it needn't be looked up.
@@ -860,6 +971,63 @@ mod tests {
         );
         assert_eq!(activity(b"{}"), None);
         assert_eq!(activity(br#"{"events":[]}"#), Some(ActivityPage::default()));
+    }
+
+    #[test]
+    fn keeps_emoji_reactions_and_the_casts_that_take_them_back() {
+        let parent = "0x1111111111111111111111111111111111111111";
+        let message = |id: u32, hash: &str, body: &str| {
+            format!(
+                r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{id},"blockNumber":9,"mergeMessageBody":{{"message":{{
+                  "hash":"{hash}","signer":"0x0a","data":{{"fid":7,"timestamp":183000090,{body}}}}}}}}}"#
+            )
+        };
+        let reply = |text: &str, embeds: &str| {
+            format!(
+                r#""type":"MESSAGE_TYPE_CAST_ADD","castAddBody":{{"text":"{text}","embeds":[{embeds}],"parentCastId":{{"fid":3,"hash":"0x1111111111111111111111111111111111111111"}}}}"#
+            )
+        };
+        let gone = |kind: &str, body: &str, hash: &str, text: &str| {
+            format!(
+                r#"{{"type":"HUB_EVENT_TYPE_{kind}_MESSAGE","id":209,"{body}":{{"message":{{"hash":"{hash}",
+                  "data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":8,"timestamp":183000000,
+                  "castAddBody":{{"text":"{text}","parentCastId":{{"fid":3,"hash":"0x1111111111111111111111111111111111111111"}}}}}}}}}}}}"#
+            )
+        };
+        let events = [
+            r#"{"type":"HUB_EVENT_TYPE_BLOCK_CONFIRMED","id":200,"blockNumber":9,"blockConfirmedBody":{"blockNumber":9,"timestamp":183000100}}"#.to_owned(),
+            // A reaction, its hashes in upper case.
+            message(201, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", &reply(":pepe_no:", "")),
+            // Spaces, a line break and capitals around it, escaped: still one.
+            message(202, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", &reply("  :PEPE_HEART_HUG:\\n", "")),
+            // Not reactions: words with it, an image with it, a top-level cast.
+            message(203, "0xcccccccccccccccccccccccccccccccccccccccc", &reply("gm :pepe_no:", "")),
+            message(204, "0xdddddddddddddddddddddddddddddddddddddddd", &reply(":pepe_no:", r#"{"url":"https://example.com/a.png"}"#)),
+            message(205, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", r#""type":"MESSAGE_TYPE_CAST_ADD","castAddBody":{"text":":pepe_no:","parentCastId":null}"#),
+            // A cast removed: its target in base64.
+            message(206, "0xffffffffffffffffffffffffffffffffffffffff", r#""type":"MESSAGE_TYPE_CAST_REMOVE","castRemoveBody":{"targetHash":"MwDCsNIIAE0e6G2gW0WL+TQUCqQ="}"#),
+            // A reaction revoked with its key; a cast that isn't one pruned.
+            gone("REVOKE", "revokeMessageBody", "0x2222222222222222222222222222222222222222", ":pepe_pls:"),
+            gone("PRUNE", "pruneMessageBody", "0x3333333333333333333333333333333333333333", "an old cast"),
+        ];
+        let page = activity(format!(r#"{{"events":[{}]}}"#, events.join(",")).as_bytes()).unwrap();
+        let at = 183_000_100 + FARCASTER_EPOCH;
+        let reacted = |hash: &str, emoji: &str| {
+            (parent.to_owned(), ReactionReply { hash: hash.into(), emoji: emoji.into(), fid: 7, ts: at })
+        };
+        assert_eq!(
+            page.reactions,
+            [
+                reacted("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "pepe_no"),
+                reacted("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "pepe_heart_hug"),
+            ]
+        );
+        assert_eq!(
+            page.removed,
+            ["0x3300c2b0d208004d1ee86da05b458bf934140aa4", "0x2222222222222222222222222222222222222222"]
+        );
+        // Every merge still counts as activity, a reaction's too.
+        assert_eq!(page.actions.len(), 6);
     }
 
     #[test]
