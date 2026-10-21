@@ -85,30 +85,65 @@ async function openPost(page: Page, signedIn = true) {
   return asked;
 }
 
+type Frame = {
+  /** What has focus once the first frame after the press is drawn. */
+  focus: string | null;
+  /** Whether the composer's bar is there in that frame (not "Loading…"). */
+  bar: boolean;
+  /** That frame's time. */
+  at: number;
+  /** From the press to that frame, to the text box's focus, and to the bar, in ms. */
+  frameMs: number;
+  focusMs: number | null;
+  barMs: number | null;
+};
+
 /**
  * Press `button` as a reader does (a tap on a phone), and say what has focus
- * once the first frame after the press is drawn, and when that frame was.
+ * and whether the bar is there once the first frame after the press is
+ * drawn, and how long the box's focus and the bar took.
  */
-async function press(page: Page, button: Locator, touch: boolean) {
+async function press(page: Page, button: Locator, touch: boolean): Promise<Frame> {
   await page.evaluate(() => {
-    const w = window as unknown as { __frame?: { focus: string | null; at: number } };
+    const w = window as unknown as { __frame?: Frame };
     delete w.__frame;
+    const ready = () => Boolean(document.querySelector(".compose-modal .compose-post:not(.compose-loading)"));
     addEventListener(
       "click",
-      () =>
+      (event) => {
+        const t0 = event.timeStamp;
+        const state: Frame = { focus: null, bar: false, at: 0, frameMs: 0, focusMs: null, barMs: ready() ? 0 : null };
+        const focused = (e: FocusEvent) => {
+          if ((e.target as Element).classList?.contains("compose-text") && state.focusMs === null) state.focusMs = performance.now() - t0;
+        };
+        addEventListener("focusin", focused, true);
+        const watch = new MutationObserver(() => {
+          if (state.barMs === null && ready()) state.barMs = performance.now() - t0;
+        });
+        watch.observe(document.body, { childList: true, subtree: true });
         requestAnimationFrame((at) =>
           setTimeout(() => {
-            w.__frame = { focus: document.activeElement?.getAttribute("aria-label") ?? null, at };
+            Object.assign(state, { focus: document.activeElement?.getAttribute("aria-label") ?? null, bar: ready(), at, frameMs: at - t0 });
+            w.__frame = state;
           }, 0),
-        ),
+        );
+        setTimeout(() => {
+          removeEventListener("focusin", focused, true);
+          watch.disconnect();
+        }, 5000);
+      },
       { capture: true, once: true },
     );
   });
   await (touch ? button.tap() : button.click());
-  return expect
-    .poll(() => page.evaluate(() => (window as unknown as { __frame?: { focus: string | null; at: number } }).__frame))
-    .toBeTruthy()
-    .then(() => page.evaluate(() => (window as unknown as { __frame: { focus: string | null; at: number } }).__frame));
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __frame?: Frame }).__frame))).toBe(true);
+  return page.evaluate(() => (window as unknown as { __frame: Frame }).__frame);
+}
+
+/** How long the bar took to come, once it has (`press` watches for 5 s). */
+async function barMs(page: Page) {
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __frame: Frame }).__frame.barMs)).not.toBeNull();
+  return page.evaluate(() => (window as unknown as { __frame: Frame }).__frame.barMs!);
 }
 
 /** How much moved after `at` (a frame's time), in a second's watching: CLS's sum, input or not. */
@@ -296,4 +331,83 @@ test("signed out, the reader's place beside the box is an empty picture, and a d
   await page.locator(".post").getByRole("button", { name: "Reply to @alice" }).click();
   await expect(dialog.getByRole("textbox", { name: "Cast your reply" })).toHaveText("Kept for later");
   await expect(dialog.locator(".reply-parent")).toBeVisible();
+});
+
+/** Whether the page has fetched the composer's part of the app. */
+const composerCame = (page: Page) =>
+  page.evaluate(() => performance.getEntriesByType("resource").some((e) => e.name.includes("split_composer")));
+
+for (const width of [1280, 390] as const) {
+  test(`at ${width}, signed in, the composer's code comes while the page is idle: Reply opens with its bar and the box focused in its first frame, the second time too`, async ({ browser }, testInfo) => {
+    const touch = width === 390;
+    const context = await browser.newContext({
+      baseURL: testInfo.project.use.baseURL,
+      viewport: { width, height: touch ? 844 : 900 },
+      isMobile: touch,
+      hasTouch: touch,
+    });
+    const page = await context.newPage();
+    await openPost(page);
+    // A phone's slower CPU, as the smoothness budgets take it.
+    if (touch) await (await context.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: 2 });
+    // Fetched once the page is idle, before any Reply is pointed at.
+    await expect.poll(() => composerCame(page), { timeout: 10_000 }).toBe(true);
+    await page.waitForTimeout(300);
+    const button = page.locator(".post").getByRole("button", { name: "Reply to @alice" });
+    const first = await press(page, button, touch);
+    expect([first.focus, first.bar]).toEqual(["Cast your reply", true]);
+    const dialog = page.getByRole("dialog", { name: "Reply" });
+    await expect(dialog.locator(".compose-loading")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    const second = await press(page, button, touch);
+    expect([second.focus, second.bar]).toEqual(["Cast your reply", true]);
+    const numbers = `first open: box focused ${first.focusMs?.toFixed(1)} ms, bar ${(await barMs(page)).toFixed(1)} ms after the click, first frame ${first.frameMs.toFixed(1)} ms; second: focused ${second.focusMs?.toFixed(1)} ms, frame ${second.frameMs.toFixed(1)} ms`;
+    testInfo.annotations.push({ type: `open latency at ${width}`, description: numbers });
+    console.log(`open latency at ${width}${touch ? " (CPU 2×)" : ""}: ${numbers}`);
+    await context.close();
+  });
+}
+
+test("signed out, nothing is fetched ahead: the composer's code comes with the first Reply", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openPost(page, false);
+  await page.waitForTimeout(2500);
+  expect(await composerCame(page)).toBe(false);
+  await page.locator(".post").getByRole("button", { name: "Reply to @alice" }).click();
+  await expect(page.getByRole("dialog", { name: "Reply" }).locator(".compose-post:not(.compose-loading)")).toBeVisible();
+  expect(await composerCame(page)).toBe(true);
+});
+
+test("the bar: 32 px tools on the left, a 40 px tap on a phone; the ring and Reply on the right", async ({ browser }, testInfo) => {
+  for (const [width, tool] of [
+    [1280, 32],
+    [390, 40],
+  ] as const) {
+    const touch = width === 390;
+    const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width, height: 844 }, isMobile: touch, hasTouch: touch });
+    const page = await context.newPage();
+    await openPost(page);
+    const button = page.locator(".post").getByRole("button", { name: "Reply to @alice" });
+    await (touch ? button.tap() : button.click());
+    const dialog = page.getByRole("dialog", { name: "Reply" });
+    const bar = dialog.locator(".compose-bar");
+    await expect(bar.getByRole("button", { name: "Add an emoji" })).toBeVisible();
+    const laid = await bar.evaluate((bar) => {
+      const box = (el: Element) => el.getBoundingClientRect();
+      const tools = [...bar.querySelectorAll(".compose-tool")].map((el) => [Math.round(box(el).width), Math.round(box(el).height)]);
+      const ring = box(bar.querySelector(".length")!);
+      const post = box(bar.querySelector(".compose-post")!);
+      const last = box([...bar.querySelectorAll(".compose-tool")].pop()!);
+      return { tools, ringBeforePost: ring.right <= post.left, gap: ring.left - last.right, end: Math.abs(Math.round(box(bar).right - post.right)) };
+    });
+    for (const size of laid.tools) expect(size).toEqual([tool, tool]);
+    // The ring sits right before Reply, away from the tools, Reply at the end.
+    expect(laid.ringBeforePost).toBe(true);
+    expect(laid.gap).toBeGreaterThan(40);
+    expect(laid.end).toBe(0);
+    await expect(dialog.locator(".length-ring")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`bar-${width}.png`) });
+    await context.close();
+  }
 });

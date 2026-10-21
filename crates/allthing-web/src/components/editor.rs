@@ -26,7 +26,8 @@ use crate::util::{document, href, prefers_reduced_motion};
 /// `files` takes what is pasted as files (a screenshot); a copy or a cut is
 /// the draft's text, shortcodes and all; undo and redo go by the draft (the
 /// box is drawn again, which a browser's own undo can't follow).
-/// `described_by` names what a screen reader hears with it.
+/// `described_by` names what a screen reader hears with it; Cmd or Ctrl
+/// and Enter runs `submit`.
 #[component]
 pub fn ComposeText(
     node_ref: NodeRef<Div>,
@@ -35,6 +36,7 @@ pub fn ComposeText(
     label: &'static str,
     #[prop(optional)] files: Option<Callback<web_sys::DataTransfer, bool>>,
     #[prop(optional)] described_by: Option<&'static str>,
+    #[prop(optional)] submit: Option<Callback<()>>,
 ) -> impl IntoView {
     let edits = StoredValue::new(Edits::default());
     // Where the caret was after the last change: where undoing it goes.
@@ -153,6 +155,14 @@ pub fn ComposeText(
                     return;
                 }
                 match (ev.key().to_ascii_lowercase().as_str(), ev.shift_key()) {
+                    // Posts, as in the Farcaster app: no newline. Not while
+                    // an input method is composing a word.
+                    ("enter", _) if !ev.is_composing() => {
+                        ev.prevent_default();
+                        if let Some(submit) = submit {
+                            submit.run(());
+                        }
+                    }
                     ("z", false) => {
                         ev.prevent_default();
                         undo();

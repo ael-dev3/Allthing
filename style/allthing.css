@@ -5263,7 +5263,7 @@ p.jumbo .emoji img {
 .compose-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
 }
 
 /* The bar while the composer's code comes, the first time it opens: the
@@ -5284,49 +5284,33 @@ p.jumbo .emoji img {
   font-size: 14px;
 }
 
-.gif-button {
-  font: 700 12.5px/1 var(--font-ui);
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  padding: 8px 11px;
-  border: 1px solid rgba(79, 67, 212, 0.35);
-  border-radius: 8px;
-  background: var(--card);
-  cursor: pointer;
-  animation: fade-in 0.15s ease both;
-}
-
-.gif-button:hover,
-.gif-button[aria-expanded="true"] {
-  background: var(--accent-soft);
-}
-
-/* The emoji button, one of the pack, as on Discord, the sticker button, a
-   sticker peeling, as on Telegram, and the attach button, a picture. */
-.attach-button,
-.emoji-button,
-.sticker-button {
+/* The bar's tools, as compact as the Farcaster app's: the attach button, a
+   picture; the emoji button, one of the pack, as on Discord; the sticker
+   button, a sticker peeling, as on Telegram; GIF; and the clock. 32 px
+   icons without a frame, the accent's tint behind the one pointed at or
+   open. */
+.compose-tool {
   display: inline-grid;
   place-items: center;
-  padding: 3px 7px;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   color: var(--accent);
-  border: 1px solid rgba(79, 67, 212, 0.35);
+  border: 0;
   border-radius: 8px;
-  background: var(--card);
+  background: none;
   cursor: pointer;
 }
 
-.emoji-button img {
+.compose-tool img,
+.compose-tool .icon {
   display: block;
   width: 22px;
   height: 22px;
 }
 
-.attach-button .icon,
-.sticker-button .icon {
-  display: block;
-  width: 22px;
-  height: 22px;
+.compose-tool .icon {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.3;
@@ -5334,26 +5318,34 @@ p.jumbo .emoji img {
   stroke-linejoin: round;
 }
 
-.attach-button:hover,
-.emoji-button:hover,
-.emoji-button[aria-expanded="true"],
-.sticker-button:hover,
-.sticker-button[aria-expanded="true"] {
+.compose-tool:hover,
+.compose-tool[aria-expanded="true"],
+.compose-tool[aria-pressed="true"] {
   background: var(--accent-soft);
 }
 
+/* GIF, drawn as the others are: the word in a rounded frame. */
+.gif-button {
+  animation: fade-in 0.15s ease both;
+}
+
+.gif-mark {
+  display: block;
+  padding: 3px 3px 2px;
+  font: 800 9.5px/1 var(--font-ui);
+  letter-spacing: 0.04em;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
 /* No room for another embed: the button says why when pressed. */
-.attach-button[aria-disabled="true"],
-.sticker-button[aria-disabled="true"],
-.gif-button[aria-disabled="true"] {
+.compose-tool[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.attach-button[aria-disabled="true"]:hover,
-.sticker-button[aria-disabled="true"]:hover,
-.gif-button[aria-disabled="true"]:hover {
-  background: var(--card);
+.compose-tool[aria-disabled="true"]:hover {
+  background: none;
 }
 
 /* On a touch screen, the attach button takes a tap 44 px square. */
@@ -5373,36 +5365,9 @@ p.jumbo .emoji img {
   }
 }
 
-/* The clock: schedule the draft for later. */
-.schedule-button {
-  display: inline-grid;
-  place-items: center;
-  padding: 3px 7px;
-  color: var(--accent);
-  border: 1px solid rgba(79, 67, 212, 0.35);
-  border-radius: 8px;
-  background: var(--card);
-  cursor: pointer;
-}
-
-.schedule-button .icon {
-  display: block;
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.schedule-button:hover,
+/* The clock: schedule the draft for later. On, it's ringed. */
 .schedule-button[aria-pressed="true"] {
-  background: var(--accent-soft);
-}
-
-.schedule-button[aria-pressed="true"] {
-  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 /* Changing a scheduled cast: it stays scheduled. */
@@ -5585,21 +5550,55 @@ p.jumbo .emoji img {
   display: block;
 }
 
-/* How long the text is, as it nears what a cast takes. */
-.compose-count {
+/* How long the text is (components/compose.rs, `LengthRing`): a ring
+   toward a cast's 320 bytes, then a long cast's 1,024, amber at the end;
+   then the bytes left, red below zero. Before Cast, at the bar's right. */
+.length {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 24px;
+  height: 24px;
   margin-left: auto;
-  font-size: 12.5px;
-  color: var(--ink-3);
+  font: 600 12.5px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
 }
 
-.compose-count.over {
+.length + .compose-post {
+  margin-left: 10px;
+}
+
+.length-ring {
+  width: 20px;
+  height: 20px;
+}
+
+.length-ring.gone {
+  display: none;
+}
+
+.length-track,
+.length-fill {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.length-track {
+  stroke: var(--line-2);
+}
+
+.length-fill {
+  stroke: var(--accent);
+  transition: stroke-dasharray 0.12s ease;
+}
+
+.length-ring.alert .length-fill {
+  stroke: #d99a1e;
+}
+
+.length-left.over {
   color: #a3322a;
-  font-weight: 600;
-}
-
-.compose-count + .compose-post {
-  margin-left: 0;
 }
 
 /* Why a post didn't go out; the draft stays. */
@@ -6056,21 +6055,15 @@ p.jumbo .emoji img {
     height: 128px;
   }
 
-  /* The bar's five buttons and Post, "Uploading…" or "Post in Farcaster"
-     on one line. */
+  /* The bar's five tools, a 40 px tap each, and Post, "Uploading…" or
+     "Post in Farcaster", on one line. */
   .compose-bar {
-    gap: 6px;
+    gap: 2px;
   }
 
-  .attach-button,
-  .emoji-button,
-  .sticker-button,
-  .schedule-button {
-    padding: 3px 5px;
-  }
-
-  .gif-button {
-    padding: 8px;
+  .compose-tool {
+    width: 40px;
+    height: 40px;
   }
 
   .gif-grid {

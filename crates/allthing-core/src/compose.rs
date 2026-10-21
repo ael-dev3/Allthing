@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::API_PREFIX;
 use crate::embeds::{ImageSize, resized_image_url};
-use crate::message::{CastId, Embed, NewCast, Parent};
+use crate::message::{CastId, Embed, MAX_CAST_BYTES, NewCast, Parent, SHORT_CAST_BYTES};
 use crate::model::{Cast, Embed as CastEmbed};
 use crate::params::percent_encode;
 use crate::text::{split_mentions, text_start, truncate_title};
@@ -77,6 +77,51 @@ impl Quoted {
     /// there.
     pub fn url(&self) -> String {
         cast_url(&self.username, &self.hash)
+    }
+}
+
+/// How long a draft is, as the composer's ring shows it, as the Farcaster
+/// app's does ([`length`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Length {
+    /// A ring this full, from 0 to 1: toward a cast's 320 bytes, then
+    /// toward a long cast's 1,024. Amber (`alert`) under [`ALERT_LEFT`]
+    /// bytes left.
+    Ring { full: f64, alert: bool },
+    /// The bytes left, said as a number under [`NUMBER_LEFT`]: below zero
+    /// past the limit.
+    Left(i64),
+}
+
+/// Bytes left under which the ring turns amber.
+pub const ALERT_LEFT: i64 = 75;
+/// Bytes left under which the ring gives way to their number.
+pub const NUMBER_LEFT: i64 = 25;
+
+/// How long a draft of `bytes` is ([`Length`]).
+pub fn length(bytes: usize) -> Length {
+    let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
+    let (short, long) = (SHORT_CAST_BYTES as i64, MAX_CAST_BYTES as i64);
+    if bytes < short {
+        Length::Ring { full: bytes as f64 / short as f64, alert: false }
+    } else if long - bytes >= NUMBER_LEFT {
+        Length::Ring { full: bytes as f64 / long as f64, alert: long - bytes < ALERT_LEFT }
+    } else {
+        Length::Left(long - bytes)
+    }
+}
+
+/// What a screen reader hears of a draft's length: something only where it
+/// crosses a line (a long cast, then the last 75 and 25 bytes, then over),
+/// so a live region speaks as each is crossed and not at each key.
+pub fn length_note(bytes: usize) -> Option<&'static str> {
+    let left = MAX_CAST_BYTES as i64 - i64::try_from(bytes).unwrap_or(i64::MAX);
+    match left {
+        _ if bytes <= SHORT_CAST_BYTES => None,
+        ALERT_LEFT.. => Some("A long cast: up to 1,024 bytes."),
+        NUMBER_LEFT..ALERT_LEFT => Some("Under 75 bytes left."),
+        0..NUMBER_LEFT => Some("Under 25 bytes left."),
+        _ => Some("Too long to post."),
     }
 }
 
@@ -728,6 +773,41 @@ mod tests {
         plain.author.display_name.clear();
         let preview = ParentPreview::of(&plain);
         assert_eq!((preview.name.as_str(), preview.text.as_str(), preview.media.len()), ("alice", "two\nlines", 0));
+    }
+
+    #[test]
+    fn the_ring_fills_toward_a_cast_then_a_long_cast_and_then_counts_down() {
+        assert_eq!(length(0), Length::Ring { full: 0.0, alert: false });
+        assert_eq!(length(160), Length::Ring { full: 0.5, alert: false });
+        // At 320 a cast is long, and the ring starts again toward 1,024.
+        assert_eq!(length(320), Length::Ring { full: 320.0 / 1024.0, alert: false });
+        assert_eq!(length(512), Length::Ring { full: 0.5, alert: false });
+        assert_eq!(length(949), Length::Ring { full: 949.0 / 1024.0, alert: false });
+        assert_eq!(length(950), Length::Ring { full: 950.0 / 1024.0, alert: true });
+        assert_eq!(length(999), Length::Ring { full: 999.0 / 1024.0, alert: true });
+        assert_eq!(length(1000), Length::Left(24));
+        assert_eq!(length(1024), Length::Left(0));
+        assert_eq!(length(1030), Length::Left(-6));
+    }
+
+    #[test]
+    fn a_screen_reader_hears_the_length_only_as_it_crosses_a_line() {
+        let notes: Vec<Option<&str>> =
+            [0, 320, 321, 949, 950, 999, 1000, 1024, 1025].into_iter().map(length_note).collect();
+        assert_eq!(
+            notes,
+            vec![
+                None,
+                None,
+                Some("A long cast: up to 1,024 bytes."),
+                Some("A long cast: up to 1,024 bytes."),
+                Some("Under 75 bytes left."),
+                Some("Under 75 bytes left."),
+                Some("Under 25 bytes left."),
+                Some("Under 25 bytes left."),
+                Some("Too long to post."),
+            ]
+        );
     }
 
     #[test]
