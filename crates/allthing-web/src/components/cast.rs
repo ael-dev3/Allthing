@@ -34,9 +34,9 @@ pub fn ChannelLink(cast: Cast) -> impl IntoView {
 /// it quotes, and its engagement. The whole card opens the post (text stays
 /// selectable), except a quoted cast's card, which opens the quoted cast.
 /// Hovering or touching the card prefetches the post's data, and in view it
-/// has who liked and recasted it preloaded with its neighbours
-/// (`crate::preload`), from the counts it carries in `data-likes` and
-/// `data-recasts`.
+/// has who liked and recasted it, and its replies, preloaded with its
+/// neighbours (`crate::preload`), from the counts it carries in
+/// `data-likes`, `data-recasts` and `data-replies`.
 #[component]
 pub fn CastCard(
     cast: Cast,
@@ -85,6 +85,7 @@ pub fn CastCard(
             data-points=allthing_core::ranking::points(&cast)
             data-likes=cast.likes
             data-recasts=cast.recasts
+            data-replies=cast.replies
             style=format!("--i: {}", index.min(16))
             on:click=click
             on:pointerenter=move |_| warm()

@@ -4,10 +4,11 @@
 //!
 //! A preview whose data the client cache already holds renders it in the
 //! frame it opens, without "Loading…": feeds preload who liked and recasted
-//! the cards in view (`crate::preload`), and hovering a card prefetches its
-//! post, whose thread holds the replies. Once the reader shows interest in
-//! a preview's list, the votes and wallets of the people it names load too,
-//! so a card opened from a row is complete at once.
+//! the cards in view, and their replies (`crate::preload`), and hovering a
+//! card prefetches its post, whose thread holds the replies too. Once the
+//! reader shows interest in a preview's list, the votes and wallets of the
+//! people it names load too, so a card opened from a row is complete at
+//! once.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -259,9 +260,10 @@ fn replies_of(post: api::Fetched<CastPayload>) -> api::Fetched<RepliesPayload> {
     api::Fetched { data: Arc::new(RepliesPayload::from_post(&post.data)), age: post.age, stale: post.stale }
 }
 
-/// A cast's most engaged direct replies. They come from the post's own
-/// payload when hovering the card prefetched it (at once, or once that
-/// prefetch lands), and are loaded on their own otherwise.
+/// A cast's most engaged direct replies. They come with the feed's batch,
+/// filed under their own path (`api::preload_engagement`), or from the
+/// post's own payload when hovering the card prefetched it (at once, or once
+/// that prefetch lands), and are loaded on their own otherwise.
 #[component]
 pub fn RepliesPreview(hash: String) -> impl IntoView {
     let path = replies_path(&hash);

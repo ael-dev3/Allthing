@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Who liked and recasted the feed cards in view and just below it, loaded
-//! before anyone hovers a count, so those popovers open with their people
-//! already there.
+//! Who liked and recasted the feed cards in view and just below it, and
+//! their replies, loaded before anyone hovers a count, so those popovers
+//! open with their people and replies already there.
 //!
 //! - **Cards in view**: the shared prefetch observer in `components/cast.rs`
 //!   reports cards entering and leaving the viewport. Once they have stayed
@@ -13,7 +13,11 @@
 //!   page (a run the next page is still to fill would be asked for twice).
 //! - **Batches follow the list**: a card brings the run of
 //!   [`ENGAGEMENT_CHUNK`] cards it belongs to, in list order (cards 1–6,
-//!   7–12, …), with a list only for counts above zero. Readers of the same
+//!   7–12, …), with a list or replies preview only for counts above zero,
+//!   and replies only for cards with at most
+//!   [`allthing_core::api::ENGAGEMENT_MAX_REPLY_COUNT`]: the Worker parses
+//!   replies only in a batch's share of CPU, and a popover loads what its
+//!   batch lacks when it opens. Readers of the same
 //!   feed ask for the same batches, so the edge cache answers most of them
 //!   and upstream reads don't grow with readers.
 //! - **Within a budget** per page view: one batch on its way at a time,
@@ -187,7 +191,7 @@ fn send(request: &EngagementRequest, path: String, now: f64) {
 }
 
 /// The cards of `card`'s list, in order. Each names its hash and counts in
-/// `data-hash`, `data-likes` and `data-recasts`.
+/// `data-hash`, `data-likes`, `data-recasts` and `data-replies`.
 fn cards_beside(card: &Element) -> Vec<Element> {
     let mut cards = Vec::new();
     let mut sibling = card.parent_element().and_then(|list| list.first_element_child());
@@ -219,12 +223,18 @@ fn next_run(card: &Element, below: f64) -> Option<EngagementRequest> {
     (run[0].get_bounding_client_rect().top() < below).then(|| request_for(run))
 }
 
-/// Who liked and recasted the cards of `run` with counts above zero.
+/// Who liked and recasted the cards of `run`, and their replies, for counts
+/// above zero.
 fn request_for(run: &[Element]) -> EngagementRequest {
     let count = |card: &Element, name: &str| card.get_attribute(name).and_then(|n| n.parse().ok()).unwrap_or(0);
-    let run: Vec<(String, u64, u64)> = run
+    let run: Vec<(String, [u64; 3])> = run
         .iter()
-        .filter_map(|c| Some((c.get_attribute("data-hash")?, count(c, "data-likes"), count(c, "data-recasts"))))
+        .filter_map(|c| {
+            let counts = [count(c, "data-likes"), count(c, "data-recasts"), count(c, "data-replies")];
+            Some((c.get_attribute("data-hash")?, counts))
+        })
         .collect();
-    EngagementRequest::for_casts(run.iter().map(|(hash, likes, recasts)| (hash.as_str(), *likes, *recasts)))
+    EngagementRequest::for_casts(
+        run.iter().map(|(hash, [likes, recasts, replies])| (hash.as_str(), *likes, *recasts, *replies)),
+    )
 }

@@ -214,8 +214,9 @@ pub enum Endpoint {
     Channels(Option<String>),
     Search(String),
     Reactions(String, ReactionKind, u32),
-    /// Who liked and recasted a batch of feed cards, each list as its own
-    /// preview (`Reactions` with a limit of 10) answers it.
+    /// Who liked and recasted a batch of feed cards, and their replies, each
+    /// as its own preview (`Reactions` with a limit of 10, `Replies`)
+    /// answers it.
     Engagement(EngagementRequest),
     Replies(String),
     Vote(u64),
@@ -259,9 +260,13 @@ impl Endpoint {
                 };
                 Ok(Endpoint::Reactions(hash, kind, limit))
             }
-            "/engagement" => EngagementRequest::parse(query("likes").as_deref(), query("recasts").as_deref())
-                .map(Endpoint::Engagement)
-                .ok_or(bad(ENGAGEMENT_USAGE)),
+            "/engagement" => EngagementRequest::parse(
+                query("likes").as_deref(),
+                query("recasts").as_deref(),
+                query("replies").as_deref(),
+            )
+            .map(Endpoint::Engagement)
+            .ok_or(bad(ENGAGEMENT_USAGE)),
             "/vote" => query("fid")
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|f| *f > 0)
@@ -425,37 +430,53 @@ mod tests {
     #[test]
     fn parses_engagement_batches_into_one_cache_name_per_set() {
         let (a, b) = (format!("0x{}", "a".repeat(40)), format!("0x{}", "b".repeat(40)));
-        let request = EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&b)).unwrap();
+        let request = EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&b), Some(&a)).unwrap();
         let endpoint = Endpoint::Engagement(request.clone());
         // Any order and spelling of the same lists is one cache entry.
-        let messy =
-            format!("/api/v1/engagement?recasts={}&likes={b},{}", b.to_uppercase().replace("0X", "0x"), &a[2..]);
+        let messy = format!(
+            "/api/v1/engagement?replies={}&recasts={}&likes={b},{}",
+            a.to_uppercase().replace("0X", "0x"),
+            b.to_uppercase().replace("0X", "0x"),
+            &a[2..]
+        );
         assert_eq!(Endpoint::from_path(&messy), Ok(endpoint.clone()));
         assert_eq!(Endpoint::from_path(&request.path()), Ok(endpoint.clone()));
-        assert_eq!(endpoint.cache_name(), format!("engagement?likes={a},{b}&recasts={b}"));
+        assert_eq!(endpoint.cache_name(), format!("engagement?likes={a},{b}&recasts={b}&replies={a}"));
         // Commas may arrive escaped, and query values as the Worker decodes them.
         assert_eq!(
-            Endpoint::from_path(&format!("/api/v1/engagement?likes={a}%2C{b}&recasts={b}")),
+            Endpoint::from_path(&format!("/api/v1/engagement?likes={a}%2C{b}&recasts={b}&replies={a}")),
             Ok(endpoint.clone())
         );
         let worker = |key: &str| match key {
             "likes" => Some(format!("{b}, {a}")),
             "recasts" => Some(b.clone()),
+            "replies" => Some(format!(" {a}")),
             _ => None,
         };
         assert_eq!(Endpoint::parse("/engagement", worker), Ok(endpoint));
-        // A batch holds a run of cards' lists; one more list is too many.
+        // A batch without replies keeps the cache name it had before them.
+        let lists = EngagementRequest::parse(Some(&format!("{a},{b}")), Some(&b), None).unwrap();
+        assert_eq!(Endpoint::Engagement(lists).cache_name(), format!("engagement?likes={a},{b}&recasts={b}"));
+        // A batch holds a run of cards' lists and replies; one more of
+        // either is too many.
         let most = allthing_core::api::ENGAGEMENT_MAX_LISTS;
+        let replies = allthing_core::api::ENGAGEMENT_MAX_REPLIES;
         let hashes: Vec<String> = (0..=most).map(|i| format!("0x{i:040x}")).collect();
         let half = most / 2;
-        let full =
-            format!("/api/v1/engagement?likes={}&recasts={}", hashes[..half].join(","), hashes[half..most].join(","));
-        assert!(matches!(Endpoint::from_path(&full), Ok(Endpoint::Engagement(r)) if r.len() == most));
+        let full = format!(
+            "/api/v1/engagement?likes={}&recasts={}&replies={}",
+            hashes[..half].join(","),
+            hashes[half..most].join(","),
+            hashes[..replies].join(",")
+        );
+        assert!(matches!(Endpoint::from_path(&full), Ok(Endpoint::Engagement(r)) if r.len() == most + replies));
         for bad in [
             "/api/v1/engagement".to_owned(),
             "/api/v1/engagement?likes=".to_owned(),
             "/api/v1/engagement?likes=0x12".to_owned(),
+            "/api/v1/engagement?replies=0x12".to_owned(),
             format!("/api/v1/engagement?likes={}&recasts={}", hashes[..=half].join(","), hashes[half + 1..].join(",")),
+            format!("/api/v1/engagement?replies={}", hashes[..=replies].join(",")),
         ] {
             let refused = Endpoint::from_path(&bad).map_err(|e| (e.status, e.message));
             assert_eq!(refused, Err((400, ENGAGEMENT_USAGE)), "{bad}");

@@ -248,13 +248,15 @@ fn start_prefetch(path: &str, landed: impl FnOnce(Option<&Raw>, f64) + 'static) 
     Prefetch::Started
 }
 
-/// Preload who liked and recasted a batch of feed cards
+/// Preload who liked and recasted a batch of feed cards, and their replies
 /// (`/api/v1/engagement`), through [`prefetch`]'s cap and checks, and file
-/// each list under its own `/reactions?…&limit=10` path as if it had been
-/// asked for alone, so hovering a count shows its people at once. A preview
-/// opened while the batch is on its way waits for it instead of asking
-/// again. When this returns [`Prefetch::Started`], `landed` runs once the
-/// batch is in, whatever came of it.
+/// each list under its own `/reactions?…&limit=10` path and each replies
+/// preview under its own `/replies?hash=…` path, as if each had been asked
+/// for alone, so hovering or tapping a count shows its people or replies at
+/// once. A preview opened while the batch is on its way waits for it
+/// instead of asking again; one the batch lacks then asks for itself. When
+/// this returns [`Prefetch::Started`], `landed` runs once the batch is in,
+/// whatever came of it.
 pub fn preload_engagement(request: &EngagementRequest, landed: impl FnOnce() + 'static) -> Prefetch {
     let covered: Vec<String> = request.preview_paths().collect();
     let filed = covered.clone();
@@ -278,33 +280,41 @@ pub fn preload_engagement(request: &EngagementRequest, landed: impl FnOnce() + '
 }
 
 /// File the previews of an engagement batch that were `asked` for, each
-/// under its own reactions path, dated as the batch: with its arrival time
-/// and its age, so the client cache expires each one, and reports its age,
-/// as if it had been asked for alone when the batch was. An answer already
-/// kept for a path stays when it was read upstream no earlier.
+/// under its own reactions or replies path, dated as the batch: with its
+/// arrival time and its age, so the client cache expires each one, and
+/// reports its age, as if it had been asked for alone when the batch was.
+/// An answer already kept for a path stays when it was read upstream no
+/// earlier.
 fn seed_engagement(batch: &Raw, asked: &[String], now: f64) {
     if batch.status != 200 {
         return;
     }
     let Ok(payload) = serde_json::from_str::<EngagementPayload>(&batch.body) else { return };
+    for (path, preview) in payload.by_path() {
+        file_preview(batch, asked, &path, preview, now);
+    }
+    for (path, preview) in payload.replies_by_path() {
+        file_preview(batch, asked, &path, preview, now);
+    }
+}
+
+/// File one of `batch`'s previews under `path`, for [`seed_engagement`].
+fn file_preview<T: serde::Serialize>(batch: &Raw, asked: &[String], path: &str, preview: &T, now: f64) {
+    if !asked.iter().any(|p| p == path) {
+        return;
+    }
     // When an answer was read upstream, on this browser's clock.
     let read_at = |raw: &Raw| raw.at - f64::from(raw.age) * 1000.0;
-    for (path, preview) in payload.by_path() {
-        if !asked.contains(&path) {
-            continue;
-        }
-        let newer = CACHE.with(|c| {
-            c.borrow()
-                .get(&path)
-                .is_some_and(|kept| kept.status == 200 && now - kept.at < ttl(&path) && read_at(kept) >= read_at(batch))
-        });
-        if newer {
-            continue;
-        }
-        let Ok(body) = serde_json::to_string(preview) else { continue };
-        let raw = Raw { status: 200, body: body.into(), retry_after: None, ..batch.clone() };
-        keep(&path, raw, now);
+    let newer = CACHE.with(|c| {
+        c.borrow()
+            .get(path)
+            .is_some_and(|kept| kept.status == 200 && now - kept.at < ttl(path) && read_at(kept) >= read_at(batch))
+    });
+    if newer {
+        return;
     }
+    let Ok(body) = serde_json::to_string(preview) else { return };
+    keep(path, Raw { status: 200, body: body.into(), retry_after: None, ..batch.clone() }, now);
 }
 
 /// A cached answer for `path`, if there is a fresh one: read synchronously,
@@ -647,7 +657,7 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
 
 #[cfg(test)]
 mod tests {
-    use allthing_core::api::{ReactionKind, ReactionsPayload, reactions_path};
+    use allthing_core::api::{ReactionKind, ReactionsPayload, RepliesPayload, reactions_path, replies_path};
 
     use super::*;
 
@@ -761,6 +771,31 @@ mod tests {
         assert!(cached::<ReactionsPayload>(&likes, 1000.0 + CLIENT_TTL_MS).is_none());
         // A list the batch didn't bring loads when its popover opens.
         assert!(cached::<ReactionsPayload>(&recasts, 3000.0).is_none());
+    }
+
+    #[test]
+    fn engagement_batches_file_each_replies_preview_under_its_own_path() {
+        let (hash, other) = (format!("0x{}", "f".repeat(40)), format!("0x{}", "a".repeat(40)));
+        let (replies, likes) = (replies_path(&hash), reactions_path(&hash, ReactionKind::Likes, 10));
+        let batch_body = format!(
+            r#"{{"previews":[{{"hash":"{hash}","kind":"likes","users":[{{"fid":2,"username":"liker"}}],"meta":{{"backend":"hypersnap","fetched_at":7}}}}],
+                "replies":[{{"hash":"{hash}","replies":[{{"hash":"0x01","author":{{"fid":3,"username":"replier"}},"text":"First!","ts":1}}],
+                             "notes":{{"users":{{"3":{{"bio":"Replies.","followers":4}}}}}},"meta":{{"backend":"hypersnap","fetched_at":7}}}},
+                           {{"hash":"{other}","replies":[],"meta":{{"backend":"hypersnap","fetched_at":7}}}}],
+                "meta":{{"backend":"hypersnap","fetched_at":7}}}}"#
+        );
+        seed_engagement(&batch(1000.0, 30, &batch_body), &[likes.clone(), replies.clone()], 1000.0);
+        // Read back as /api/v1/replies would answer, dated as the batch.
+        let hit = cached::<RepliesPayload>(&replies, 3000.0).unwrap().unwrap();
+        assert_eq!(hit.data.hash, hash);
+        assert_eq!(hit.data.replies[0].text, "First!");
+        assert_eq!(hit.data.notes.users[&3].bio, "Replies.");
+        assert_eq!(hit.age, 32);
+        assert!(cached::<RepliesPayload>(&replies, 1000.0 + CLIENT_TTL_MS).is_none());
+        // Its lists alongside, as before.
+        assert_eq!(cached::<ReactionsPayload>(&likes, 3000.0).unwrap().unwrap().data.users[0].username, "liker");
+        // A replies preview that wasn't asked for isn't filed.
+        assert!(cached::<RepliesPayload>(&replies_path(&other), 3000.0).is_none());
     }
 
     #[test]
