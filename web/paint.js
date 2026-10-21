@@ -21,7 +21,6 @@ const PACK = {{EMOJI}};
 const CARDS = 6;
 /** The usage bar's apps and the casts it needs to show (components/clients.rs). */
 const TOP_APPS = 4;
-const MIN_KNOWN = 20;
 const FARCASTER_APP = 9152;
 const ALLTHING_APP = 3356318;
 const MINUTE = 60;
@@ -230,7 +229,8 @@ function percents(counts) {
   return out;
 }
 
-/** The apps the casts were posted from (ClientShareBar). */
+/** The apps the casts were posted from (ClientShareBar), each a share of all
+ * the casts, and those whose app isn't known yet in grey at the end. */
 function shareBar(payload, notes, range) {
   const origins = notes.origins || {};
   const apps = notes.apps || {};
@@ -240,12 +240,18 @@ function shareBar(payload, notes, range) {
     if (fid !== undefined && fid !== null) counts.set(fid, (counts.get(fid) || 0) + 1);
   }
   const known = [...counts.values()].reduce((a, b) => a + b, 0);
-  if (known === 0 || known < MIN_KNOWN) return null;
+  const pending = notes.pending || 0;
+  // As allthing_core::clients::client_shares: nothing when no app is known and none is coming.
+  if (payload.pool.length === 0 || (known === 0 && pending === 0)) return null;
+  const unknown = Math.max(0, payload.pool.length - known);
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
   const shares = ranked.slice(0, TOP_APPS).map(([fid, casts]) => ({ fid, casts, name: apps[fid] ? clientName(apps[fid]) : "app fid " + fid }));
   const rest = ranked.slice(TOP_APPS).reduce((a, [, n]) => a + n, 0);
   if (rest > 0) shares.push({ fid: null, casts: rest, name: "Other apps" });
-  percents(shares.map((s) => s.casts)).forEach((p, i) => (shares[i].percent = p));
+  const split = percents([...shares.map((s) => s.casts), unknown]);
+  const unknownPercent = split.pop();
+  split.forEach((p, i) => (shares[i].percent = p));
+  const unknownLabel = unknown > 0 ? `${unknown} not known${pending > 0 ? " yet" : ""}` : null;
   const counted = Boolean(payload.apps_24h);
   const period = PERIODS[range];
   const pct = (p) => (p === 0 ? "<1%" : p + "%");
@@ -266,6 +272,7 @@ function shareBar(payload, notes, range) {
       }
       return el("span", { style: grow, class: "seg client-" + i });
     });
+  if (unknownPercent > 0) segments.push(el("span", { class: "seg seg-unknown", style: "flex-grow: " + unknownPercent }));
   const legend = shares.map((s, i) => {
     const swatch = el("span", { class: "swatch client-" + i, "aria-hidden": "true" });
     const share = [swatch, s.name + " ", el("strong", { class: "pct" }, pct(s.percent))];
@@ -275,6 +282,7 @@ function shareBar(payload, notes, range) {
     const link = el("a", { href: target(s.fid) }, share);
     return el("li", {}, counted ? el("span", { class: "popover " }, link) : link);
   });
+  if (unknownLabel) legend.push(el("li", { class: "client-unknown" }, el("span", { class: "swatch seg-unknown", "aria-hidden": "true" }), unknownLabel));
   return el(
     "section",
     {
@@ -282,7 +290,7 @@ function shareBar(payload, notes, range) {
       "aria-label": `Apps posting ${period} trending casts`,
       "aria-description": `Apps that posted ${known} of ${period} trending casts, from the app that registered each cast's signing key.`,
     },
-    el("div", { class: counted ? "share-bar counted" : "share-bar", role: "img", "aria-label": shares.map((s) => `${s.name} ${s.percent}%`).join(", ") }, segments),
+    el("div", { class: counted ? "share-bar counted" : "share-bar", role: "img", "aria-label": [...shares.map((s) => `${s.name} ${s.percent}%`), ...(unknownLabel ? [unknownLabel] : [])].join(", ") }, segments),
     el("ul", { class: "client-legend" }, legend),
   );
 }

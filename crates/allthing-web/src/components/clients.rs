@@ -48,8 +48,6 @@ pub fn ClientChip(fid: u64, notes: Notes) -> impl IntoView {
 
 /// Apps shown by name; the rest are "Other apps".
 const TOP_APPS: usize = 4;
-/// Casts with a known app needed before shares mean anything.
-const MIN_KNOWN: u64 = 20;
 
 /// When a window of accounts by app ends: "14:00 UTC", with its date if
 /// that isn't today.
@@ -121,10 +119,15 @@ fn ClientCard(
     }
 }
 
-/// A thin bar of the apps `casts` were posted from, by share, with a legend:
-/// trending over `window`, or, without one, the newest casts. Nothing while
-/// too few of their apps are known yet. With `counted` (the cron's accounts
-/// by app), hovering, focusing or tapping an app opens its card.
+/// A thin bar of the apps `casts` were posted from, by share of them all,
+/// with a legend: trending over `window`, or, without one, the newest casts.
+/// The casts whose app isn't known yet (it is read in the background after
+/// a list is built) are a light grey segment at the bar's end, and say so in
+/// the legend, so the known apps aren't overstated. The legend is one line
+/// whatever it lists, scrolling sideways where it doesn't fit, so the feed
+/// under it never moves as the apps come. Nothing when no app is known and
+/// none is coming. With `counted` (the cron's accounts by app), hovering,
+/// focusing or tapping an app opens its card.
 #[component]
 pub fn ClientShareBar(
     casts: Vec<Cast>,
@@ -134,12 +137,23 @@ pub fn ClientShareBar(
     window: Option<TrendingWindow>,
     #[prop(optional_no_strip)] counted: Option<AppsWindow>,
 ) -> impl IntoView {
-    let Some(shares) = client_shares(&casts, &notes, TOP_APPS, MIN_KNOWN) else { return ().into_any() };
+    let Some(split) = client_shares(&casts, &notes, TOP_APPS) else { return ().into_any() };
+    let known = split.known();
+    let shares = split.shares;
+    // "48 not known yet", while they're being read; "2 not known" after.
+    let unknown = (split.unknown > 0).then(|| {
+        let yet = if notes.pending > 0 { " yet" } else { "" };
+        format!("{} not known{yet}", split.unknown)
+    });
     let query = use_query_map();
     let current = move || client_param(&query.read());
     let rest = StoredValue::new(other_clients(&casts, &notes, TOP_APPS));
-    let known: u64 = shares.iter().map(|s| s.casts).sum();
-    let summary = shares.iter().map(|s| format!("{} {}%", s.name, s.percent)).collect::<Vec<_>>().join(", ");
+    let summary = shares
+        .iter()
+        .map(|s| format!("{} {}%", s.name, s.percent))
+        .chain(unknown.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
     let period = match window {
         Some(TrendingWindow::Hour) => "the past hour's",
         Some(TrendingWindow::Day) => "today's",
@@ -201,6 +215,9 @@ pub fn ClientShareBar(
                         None => view! { <span class=format!("seg client-{i}") style=grow></span> }.into_any(),
                     }
                 }).collect_view()}
+                {(split.unknown_percent > 0).then(|| view! {
+                    <span class="seg seg-unknown" style=format!("flex-grow: {}", split.unknown_percent)></span>
+                })}
             </div>
             <ul class="client-legend">
                 {shares.iter().enumerate().map(|(i, s)| {
@@ -225,6 +242,7 @@ pub fn ClientShareBar(
                                             label=card_label(&s.name)
                                             hover=true
                                             links=true
+                                            fixed=true
                                             panel_class="client-card"
                                             trigger=link
                                             content=content
@@ -242,6 +260,7 @@ pub fn ClientShareBar(
                                     trigger_label="Other apps"
                                     trigger_class="client-other"
                                     hover=true
+                                    fixed=true
                                     trigger=move || view! {
                                         <span class=format!("swatch client-{i}") aria-hidden="true"></span>
                                         {label.clone()}" "<strong class="pct">{pct.clone()}</strong>
@@ -276,6 +295,9 @@ pub fn ClientShareBar(
                         .into_any(),
                     }
                 }).collect_view()}
+                {unknown.map(|unknown| view! {
+                    <li class="client-unknown"><span class="swatch seg-unknown" aria-hidden="true"></span>{unknown}</li>
+                })}
             </ul>
         </section>
     }

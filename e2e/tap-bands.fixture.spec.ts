@@ -207,10 +207,11 @@ test("at 390 on a touch screen, the apps under the front page's bar take a 44 px
   await appCame(page);
   const legend = page.locator(".client-legend").locator("a, .client-other");
   await expect(legend).toHaveCount(5);
-  // Two rows of them on a phone.
+  // One line of them, which scrolls sideways where it doesn't fit.
   const rows = new Set(await legend.evaluateAll((items) => items.map((i) => Math.round(i.getBoundingClientRect().top))));
-  expect(rows.size).toBe(2);
+  expect(rows.size).toBe(1);
   for (let i = 0; i < 5; i++) {
+    await legend.nth(i).scrollIntoViewIfNeeded();
     const t = await takes(legend.nth(i));
     expect(t.band[1], `app ${i}: band height`).toBeGreaterThanOrEqual(44);
     expect([t.middle, t.above, t.below], `app ${i}: a tap on it, above and below`).toEqual([true, true, true]);

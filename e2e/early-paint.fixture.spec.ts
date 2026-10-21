@@ -232,6 +232,27 @@ for (const width of [1280, 390]) {
   });
 }
 
+test("with most of the casts' apps still being read, the early usage bar is the app's: the known as shares of all, the rest in grey", async ({ page }) => {
+  const held = await hold(page);
+  // The first five casts' apps are known; the other 21 are being read.
+  const known = Object.fromEntries(pool.slice(0, 5).map((c) => [c.hash, origins[c.hash]]));
+  await serve(page, { ...payload, notes: { ...payload.notes, origins: known, pending: pool.length - 5 } });
+  await page.goto("/");
+  const boot = page.locator("#boot");
+  await expect(boot.locator(".cast-card")).toHaveCount(painted.length);
+  const bar = boot.locator(".client-share");
+  await expect(bar.locator(".client-legend li")).toHaveText([/^Farcaster\s*15%$/, /^wake\s*4%$/, /^21 not known yet$/]);
+  await expect(bar.locator(".share-bar > .seg-unknown")).toHaveCount(1);
+  await settled(page, "#boot");
+  await moduleIn(page, held);
+  const early = await shown(page, "#boot");
+  held.js("continue");
+  await expect(boot).toHaveCount(0);
+  await expect(page.locator("#app .cast-card").first()).toBeVisible();
+  const app = await shown(page, "#app");
+  expect(app.slice(0, early.length)).toEqual(early);
+});
+
 test("top's first cards come in top's order, with the time range the address names", async ({ page }) => {
   const held = await hold(page);
   await serve(page);
