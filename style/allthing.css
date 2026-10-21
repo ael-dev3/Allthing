@@ -1067,6 +1067,7 @@ p.jumbo .emoji img {
   .follow-button,
   .favorite-button,
   .show-less-button,
+  .cast-pill,
   .site-footer a {
     position: relative;
   }
@@ -1082,6 +1083,7 @@ p.jumbo .emoji img {
   .follow-button::after,
   .favorite-button::after,
   .show-less-button::after,
+  .cast-pill::after,
   .site-footer a::after {
     content: "";
     position: absolute;
@@ -2144,7 +2146,8 @@ p.jumbo .emoji img {
 }
 
 /* Favorite and Show less, the reader's own leanings: at the header's top
-   right, beside the name and counts, which take the rest of the row. */
+   right, beside the name and counts, which take the rest of the row. On
+   the reader's own profile, Cast, the feeds' pill, takes their place. */
 .profile-id {
   flex: 1 1 0;
   min-width: 0;
@@ -2158,6 +2161,12 @@ p.jumbo .emoji img {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.profile-cast {
+  flex: none;
+  align-self: flex-start;
+  display: flex;
 }
 
 /* What each does, under the pair: on hover (after a moment) or keyboard
@@ -4102,10 +4111,11 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
-/* Cast, at the top right of the front page's feed and a channel's
-   (components/compose.rs): a pill in Allthing's indigo accent, turning to
-   the portal cyan as the wordmark's sheen does, lettered in the wordmark's
-   serif. On a phone, a round button over the feed instead. */
+/* Cast, at the top right of the front page's feed and a channel's, and of
+   the reader's own profile (components/compose.rs): a pill in Allthing's
+   indigo accent, turning to the portal cyan as the wordmark's sheen does,
+   lettered in the wordmark's serif. On a phone, a round button over the
+   feed instead; a profile keeps its pill. */
 .cast-pill,
 .cast-fab {
   align-items: center;
@@ -4113,7 +4123,7 @@ p.jumbo .emoji img {
   color: #fff;
   border: 0;
   cursor: pointer;
-  background: linear-gradient(115deg, var(--accent) 0%, var(--accent) 38%, #3260bd 72%, #0b7c91 100%);
+  background: var(--accent) linear-gradient(115deg, var(--accent) 0%, var(--accent) 38%, #3260bd 72%, #0b7c91 100%);
   box-shadow: 0 1px 2px rgba(27, 34, 51, 0.12), 0 10px 24px -12px rgba(79, 67, 212, 0.7);
   -webkit-tap-highlight-color: transparent;
   transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease);
@@ -5436,8 +5446,15 @@ p.jumbo .emoji img {
   }
 
   /* On a phone, a row of their own under the picture and name. */
-  .leaning-buttons {
+  .leaning-buttons,
+  .profile-cast {
     flex-basis: 100%;
+  }
+
+  /* No round Cast floats over a profile: the reader's own keeps its pill,
+     in that row. */
+  .profile-cast .cast-pill {
+    display: inline-flex;
   }
 
   .leaning-hint {
