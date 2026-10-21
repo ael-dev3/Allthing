@@ -4,6 +4,7 @@ import path from "node:path";
 import { expect, test, type Browser, type JSHandle, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Images and videos with a cast (crates/allthing-web/src/components/
@@ -105,7 +106,9 @@ class Media {
  * from here). `calls.feed` holds casts as Allthing's payloads carry them, newest first, above the feed's own.
  */
 async function serve(page: Page, media: Media, { key = true } = {}) {
-  const calls = { sent: [] as Envelope[], scheduled: [] as { message: string; draft: string; replaces?: number }[], feed: [] as { hash: string }[] };
+  // The node: it checks each message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid });
+  const calls = { sent: node.sent as Envelope[], scheduled: [] as { message: string; draft: string; replaces?: number }[], feed: [] as { hash: string }[] };
   const kept: Kept[] = [];
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => {
@@ -129,11 +132,6 @@ async function serve(page: Page, media: Media, { key = true } = {}) {
   await page.route("https://farcaster.xyz/**", (route) => route.fulfill({ body: "<title>Farcaster</title>", contentType: "text/html" }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
   await page.route(`${NODE}/castsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [], nextPageToken: "" } }));
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    calls.sent.push(envelope(route.request().postDataBuffer()!));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   await page.route("**/api/v1/scheduled", (route) => {
     const request = route.request();
     if (request.method() === "GET") return route.fulfill({ json: { casts: kept } });

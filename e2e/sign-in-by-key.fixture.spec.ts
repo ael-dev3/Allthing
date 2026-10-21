@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createPublicKey, verify } from "node:crypto";
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { envelope, kept, reaction } from "./helpers/farcaster";
+import { kept, reaction } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Signing in in one step. Where the Worker endorses keys, the sign-in
@@ -37,16 +38,32 @@ type Calls = {
   polls: number;
   signers: number;
   signIns: { fid: number; key: string; signature: string; good: boolean }[];
-  sent: ReturnType<typeof reaction>[];
-  signer: string[];
+  readonly sent: ReturnType<typeof reaction>[];
+  readonly signer: string[];
   relay: number;
   writes: number;
 };
 
 /** The page's stand-ins. `refuse` answers the Worker's first `n` checks of the key as a node a moment behind would. */
 async function serve(page: Page, opts: { behind?: number } = {}) {
-  const calls: Calls = { starts: [], endorse: [], polls: 0, signers: 0, signIns: [], sent: [], signer: [], relay: 0, writes: 0 };
   let key = "";
+  // The node: it checks each message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid, key: () => key });
+  const calls: Calls = {
+    starts: [],
+    endorse: [],
+    polls: 0,
+    signers: 0,
+    signIns: [],
+    get sent() {
+      return node.sent.map(reaction);
+    },
+    get signer() {
+      return node.sent.map((e) => e.signer);
+    },
+    relay: 0,
+    writes: 0,
+  };
   const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => {
@@ -101,13 +118,6 @@ async function serve(page: Page, opts: { behind?: number } = {}) {
     return route.fulfill({ headers: cors, json: { signers: calls.signers < 2 ? [] : [{ key, keyType: 1, fid: me.fid }] } });
   });
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    const e = envelope(route.request().postDataBuffer()!);
-    calls.sent.push(reaction(e));
-    calls.signer.push(e.signer);
-    return route.fulfill({ headers: cors, json: {} });
-  });
   // One step: Sign In With Farcaster's relay is never asked.
   await page.route(`${RELAY}/**`, (route) => {
     calls.relay += 1;

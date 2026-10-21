@@ -1985,6 +1985,29 @@ p.jumbo .emoji img {
   text-decoration: underline;
 }
 
+/* What the notice offers (Retry, Approve again): a link's look, with room
+   for a finger. */
+.toast .toast-action {
+  display: inline-block;
+  min-height: 24px;
+  margin: -2px 0;
+  padding: 0 4px;
+  font: inherit;
+  font-weight: 600;
+  line-height: 24px;
+  color: #fff;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toast .toast-action:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
 .toast:empty {
   padding: 0;
 }

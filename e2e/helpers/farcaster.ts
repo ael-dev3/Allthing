@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createPublicKey, verify } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
+// BLAKE3, as Wrangler brings it (MIT): a message's hash.
+import { hash as blake3 } from "blake3-wasm";
 
 /*
  * Farcaster messages as the browser hands them to the node, decoded, and
@@ -62,12 +64,17 @@ export function packed(bytes: Buffer): number[] {
 
 export type Envelope = { hash: string; signer: string; type: number; fid: number; at: number; network: number; body: Fields };
 
-/** A message the node was given: its signature checked, its data read. */
+/**
+ * A message the node was given, checked as Snapchain checks it: its hash is
+ * BLAKE3 of its data's bytes, cut to 20 bytes, and its signature the
+ * signer's, of the hash. Its data, read.
+ */
 export function envelope(body: Buffer): Envelope {
   const message = fields(body);
   const [hash, signature, signer, data] = [buf(message, 2), buf(message, 4), buf(message, 6), buf(message, 7)];
   expect(hash).toHaveLength(20);
   expect([num(message, 3), num(message, 5)]).toEqual([1, 1]); // BLAKE3, Ed25519
+  expect(Buffer.from(blake3(data)).subarray(0, 20).toString("hex")).toBe(hash.toString("hex"));
   const key = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), signer]), format: "der", type: "spki" });
   expect(verify(null, hash, key, signature)).toBe(true);
   const d = fields(data);

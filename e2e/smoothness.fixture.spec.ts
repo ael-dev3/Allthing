@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { appCame } from "./helpers/app";
 import { approvedKey, signIn } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Smoothness (docs/PERFORMANCE.md#smoothness): how the app answers a
@@ -173,7 +174,6 @@ const LATENCY = { feed: 60, page: 180, list: 90 };
 
 /** The Worker, the node and the image hosts, as stand-ins. */
 async function serve(page: Page) {
-  const calls = { submitted: 0 };
   const json = async (route: Parameters<Parameters<Page["route"]>[1]>[0], body: object, latency: number, status = 200) => {
     await wait(latency);
     return route.fulfill({ status, json: body }).catch(() => {});
@@ -220,18 +220,19 @@ async function serve(page: Page) {
       : route.fulfill({ status: 400, headers: cors, json: { error: "Not found", error_detail: 'status: NotFound, message: "not found"' } }),
   );
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/submitMessage`, (route) => {
-    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    calls.submitted += 1;
-    return route.fulfill({ headers: cors, json: {} });
-  });
+  // Each like as the node takes it, and shows it read back.
+  const node = await standIn(page, { fid: me.fid });
   await page.route("https://imagedelivery.net/**", (route) => {
     const url = route.request().url();
     const body = url.includes("/pfp-") ? svg(64, 64, "#c9b8f0") : url.includes("/thumb-") ? svg(140, 140) : svg(720, 480);
     return route.fulfill({ body, contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*", "cache-control": "max-age=3600" } });
   });
   await page.route("https://example.org/**", (route) => route.fulfill({ status: 404, body: "" }));
-  return calls;
+  return {
+    get submitted() {
+      return node.sent.length;
+    },
+  };
 }
 
 // ------------------------------------------------------- in-page harness

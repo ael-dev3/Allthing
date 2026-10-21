@@ -5,10 +5,11 @@
 //! the reader's own profile. A clock says Farcaster doesn't have it yet;
 //! once the node has it, a check, and a link to it (`Writer::watch`). Not
 //! posted in time, it goes, and the draft is back in the composer. A cast
-//! posted from here with the reader's key shows the same way at once, and
-//! after a reload for ten minutes (`Writer::cast_posted`). Once the page
-//! lists a cast itself, or it's deleted, its card goes. Not in the static
-//! copy.
+//! posted from here with the reader's key shows the same way at once, as
+//! posting until the node's store has it, then as posted, and after a
+//! reload for ten minutes (`Writer::cast_posted`); one that doesn't show up
+//! on the node in time goes, and its draft is back. Once the page lists a
+//! cast itself, or it's deleted, its card goes. Not in the static copy.
 
 use std::collections::HashSet;
 
@@ -92,13 +93,24 @@ pub fn OutgoingCasts(place: Place, #[prop(into)] listed: Signal<HashSet<String>>
 
 #[component]
 fn OutgoingCard(cast: Outgoing, user: allthing_core::model::UserSummary) -> impl IntoView {
-    let posted = cast.hash.is_some();
+    let posted = cast.hash.is_some() && !cast.pending;
+    let clock = |state: &'static str| {
+        view! {
+            <span class="outgoing-state">
+                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
+                {state}
+            </span>
+        }
+        .into_any()
+    };
     view! {
         <article class="cast-card outgoing" class:posted=posted>
             <header class="cast-meta">
                 <span class="byline">
                     <UserChip user show_name=true card=None/>
                     {match cast.hash {
+                        // The node has taken it; its store doesn't show it yet.
+                        Some(_) if cast.pending => clock("Posting…"),
                         Some(hash) => view! {
                             <a class="when outgoing-state" href=cast_href(&hash)>
                                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=CHECK/></svg>
@@ -106,13 +118,7 @@ fn OutgoingCard(cast: Outgoing, user: allthing_core::model::UserSummary) -> impl
                             </a>
                         }
                         .into_any(),
-                        None => view! {
-                            <span class="outgoing-state">
-                                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
-                                "Posting in Farcaster"
-                            </span>
-                        }
-                        .into_any(),
+                        None => clock("Posting in Farcaster"),
                     }}
                 </span>
             </header>
