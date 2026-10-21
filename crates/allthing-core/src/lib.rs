@@ -24,6 +24,7 @@ pub mod latest;
 pub mod listing;
 pub mod media;
 pub mod message;
+pub mod metadata;
 pub mod model;
 pub mod normalize;
 pub mod params;

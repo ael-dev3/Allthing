@@ -176,6 +176,15 @@ mod with_worker {
                     {saved.context().map(|context| view! { <span class="scheduled-context muted">{context}</span> })}
                 </p>
                 {(!text.is_empty()).then(|| view! { <p class="scheduled-text"><ExcerptText text/></p> })}
+                {(!saved.media.is_empty()).then(|| view! {
+                    <div class="scheduled-media">
+                        {saved.media.iter().map(|media| if media.media_type.starts_with("video/") {
+                            view! { <video src=format!("{}#t=0.1", media.url) muted=true prop:muted=true playsinline=true preload="metadata" aria-label="Video"></video> }.into_any()
+                        } else {
+                            view! { <img src=media.url.clone() alt="Image" loading="lazy"/> }.into_any()
+                        }).collect_view()}
+                    </div>
+                })}
                 {saved.gif.map(|gif| view! {
                     <img class="scheduled-gif" src=gif.tile alt=gif.title width=gif.width height=gif.height loading="lazy"/>
                 })}

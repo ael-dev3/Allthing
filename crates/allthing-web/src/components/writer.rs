@@ -268,7 +268,7 @@ pub struct Outgoing {
     pub id: u64,
     pub sent: Sent,
     pub text: String,
-    /// The GIF it embeds, as its tile.
+    /// What it shows: its first image or video, or its GIF, as its tile.
     pub image: Option<String>,
     /// Whose cast it quotes, or replies to.
     pub quoting: Option<String>,

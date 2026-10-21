@@ -24,13 +24,21 @@
 //! stickers come from Allthing's own pack (`components::emoji_picker`); a
 //! sticker takes the GIF's place.
 //!
+//! Images and videos go with it too, from the attach button (a phone's
+//! photo picker), a paste or a drop (`components::attach`), once the Worker
+//! has said it takes them (`/api/v1/media`, for a reader signed in). Each is
+//! uploaded as it's added, and the cast embeds its URL. A cast carries two
+//! embeds: its files, its GIF or sticker, and the cast it quotes, together.
+//! Where the Worker takes none (no R2 bucket bound), there's no trace of
+//! them: no button, and pastes and drops go as they did.
+//!
 //! The clock schedules the draft for later: it is signed with the reader's
 //! key at once, for the time they pick, and kept by the Worker until then
 //! (`allthing_core::scheduled`). A scheduled cast opens here again to be
 //! changed (`Composer::edit`). There is no clock where the draft goes to the
 //! Farcaster app. Not in the static copy, which has no sign-in.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
@@ -41,9 +49,10 @@ use allthing_core::compose::{
     Draft, Gif, GifKey, GifPage, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path, gifs_url,
 };
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
+use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
 use allthing_core::message::{MAX_CAST_BYTES, Sent};
 use allthing_core::model::Cast;
-use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, ScheduledCast};
+use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, SavedMedia, ScheduledCast};
 use allthing_core::text::mention_names;
 use allthing_core::text::truncate_title;
 use leptos::ev;
@@ -56,6 +65,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
 
 use crate::api;
+use crate::components::attach::{self, AttachButton, Attached};
 use crate::components::editor::{self, ComposeText};
 use crate::components::emoji_picker::{self, EmojiPicker, Pick, Tab};
 use crate::components::handoff::{Ask, use_hand_off};
@@ -92,6 +102,108 @@ thread_local! {
     /// the picker, or going back to an earlier search, asks for nothing again.
     static PAGES: RefCell<HashMap<String, (f64, Found)>> = RefCell::new(HashMap::new());
     static RETURN_FOCUS: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
+    /// What each attachment's upload needs of the browser, by its id.
+    pub(crate) static LIVE: RefCell<HashMap<u64, Live>> = RefCell::new(HashMap::new());
+    /// Files pasted or dropped, for the composer's part to take
+    /// (`attach::take_incoming`).
+    pub(crate) static INCOMING: RefCell<Vec<web_sys::File>> = const { RefCell::new(Vec::new()) };
+    static NEXT_FILE: Cell<u64> = const { Cell::new(1) };
+}
+
+/// An image or a video the draft carries, and how its upload goes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attachment {
+    pub id: u64,
+    /// The file's name, for its labels and what is said of it.
+    pub name: String,
+    pub media: MediaType,
+    /// The file in this browser (`URL.createObjectURL`), shown while the
+    /// draft lasts; none for one taken up again, which shows from its URL.
+    pub local: Option<String>,
+    pub state: Sending,
+}
+
+/// How an attachment's upload goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sending {
+    /// On its way: bytes sent, of how many.
+    Up { sent: f64, of: f64 },
+    /// Kept by the Worker, at the URL the cast embeds.
+    Done { url: String },
+    /// Refused, or lost on the way: why, as the Worker or the browser says.
+    Failed { why: String },
+}
+
+impl Attachment {
+    /// A new attachment's id.
+    pub fn next_id() -> u64 {
+        NEXT_FILE.with(|n| {
+            let id = n.get();
+            n.set(id + 1);
+            id
+        })
+    }
+
+    /// The URL the cast embeds, once it's uploaded.
+    pub fn url(&self) -> Option<&str> {
+        match &self.state {
+            Sending::Done { url } => Some(url),
+            _ => None,
+        }
+    }
+
+    /// Where its preview shows from.
+    pub fn preview(&self) -> String {
+        self.local.clone().or_else(|| self.url().map(str::to_owned)).unwrap_or_default()
+    }
+
+    /// One a draft kept, taken up again: uploaded, shown from its URL.
+    fn kept(saved: &SavedMedia) -> Option<Attachment> {
+        let name = saved.url.rsplit('/').next().unwrap_or_default().to_owned();
+        let media = MediaType::of_file(&name, &saved.media_type)?;
+        Some(Attachment {
+            id: Attachment::next_id(),
+            name,
+            media,
+            local: None,
+            state: Sending::Done { url: saved.url.clone() },
+        })
+    }
+
+    /// The same, without its preview in this browser, which goes with the
+    /// draft: for a draft kept to come back.
+    fn kept_copy(&self) -> Attachment {
+        Attachment { local: None, ..self.clone() }
+    }
+}
+
+/// What an attachment's upload needs of the browser, which no signal holds:
+/// the file, what is sent (the file, or the file without its metadata), the
+/// request on its way, and its handlers.
+pub struct Live {
+    pub file: web_sys::File,
+    pub body: Option<web_sys::Blob>,
+    pub request: Option<web_sys::XmlHttpRequest>,
+    pub progress: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::ProgressEvent)>>,
+    pub ended: Option<wasm_bindgen::closure::Closure<dyn FnMut()>>,
+}
+
+/// Let an attachment go: its upload stopped if it's on its way, and its
+/// preview's object URL let go.
+pub fn let_go(file: &Attachment) {
+    if let Some(live) = LIVE.with(|l| l.borrow_mut().remove(&file.id))
+        && let Some(request) = &live.request
+    {
+        request.set_onload(None);
+        request.set_onerror(None);
+        if let Ok(upload) = request.upload() {
+            upload.set_onprogress(None);
+        }
+        let _ = request.abort();
+    }
+    if let Some(local) = &file.local {
+        let _ = web_sys::Url::revoke_object_url(local);
+    }
 }
 
 /// The cast a reply answers or a quote quotes.
@@ -186,6 +298,19 @@ pub struct Composer {
     channel_url: RwSignal<Option<String>>,
     /// For a reply, its cast's reply count as the page read it.
     replies: RwSignal<u64>,
+    /// The images and videos it carries, in order.
+    pub files: RwSignal<Vec<Attachment>>,
+    /// This server's limits for them, once it has said it takes them
+    /// (`/api/v1/media` answered 200). Until then, and where it doesn't (no
+    /// bucket, or the reader signed out), the composer neither shows nor
+    /// takes files.
+    pub limits: RwSignal<Option<MediaLimits>>,
+    /// A word about what was just asked: a file refused, no room for more.
+    pub note: RwSignal<Option<String>>,
+    /// Moves on as files are pasted or dropped (`INCOMING`).
+    pub incoming: RwSignal<u32>,
+    /// Files are being dragged over it.
+    dragging: RwSignal<bool>,
 }
 
 impl Composer {
@@ -203,6 +328,11 @@ impl Composer {
             editing: RwSignal::new(None),
             channel_url: RwSignal::new(None),
             replies: RwSignal::new(0),
+            files: RwSignal::new(Vec::new()),
+            limits: RwSignal::new(None),
+            note: RwSignal::new(None),
+            incoming: RwSignal::new(0),
+            dragging: RwSignal::new(false),
         }
     }
 
@@ -227,6 +357,9 @@ impl Composer {
         self.when.set(None);
         self.editing.set(None);
         self.channel_url.set(None);
+        self.files.get_untracked().iter().for_each(let_go);
+        self.files.set(Vec::new());
+        self.note.set(None);
     }
 
     /// Open one of the reader's scheduled casts, to change it or its time:
@@ -234,6 +367,7 @@ impl Composer {
     /// has passed (one that didn't go out) is given a new one.
     pub fn edit(self, cast: &ScheduledCast) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
+        self.clear();
         let saved = SavedDraft::parse(&cast.draft);
         let target = match (&saved.reply, &saved.quote) {
             (Some(to), _) => Target::Reply(Other::from_saved(to)),
@@ -248,6 +382,7 @@ impl Composer {
             tile: Rendition { url: gif.tile.clone(), width: gif.width, height: gif.height },
             embed: Rendition { url: gif.embed.clone(), width: gif.width, height: gif.height },
         }));
+        self.files.set(saved.media.iter().filter_map(Attachment::kept).collect());
         self.channel_url.set(saved.channel_url.clone());
         let at = if cast.at >= now() + MIN_AHEAD { cast.at } else { later(now()) };
         self.when.set(Some(local_input(at)));
@@ -277,9 +412,16 @@ impl Composer {
                 height: g.tile.height,
             })
         });
+        let media = self.files.with_untracked(|files| {
+            files
+                .iter()
+                .filter_map(|f| Some(SavedMedia { url: f.url()?.to_owned(), media_type: f.media.mime().to_owned() }))
+                .collect()
+        });
         let mut saved = SavedDraft {
             text: self.text.get_untracked(),
             gif,
+            media,
             channel: draft.channel.clone(),
             channel_url: draft.channel_url.clone(),
             ..SavedDraft::default()
@@ -292,10 +434,13 @@ impl Composer {
         saved
     }
 
-    /// Close, keeping the draft, and return focus to where it was.
+    /// Close, keeping the draft, and return focus to where it was. Files
+    /// dropped that weren't taken yet are let go.
     fn close(self) {
         self.open.set(false);
         self.picker.set(Picker::Closed);
+        self.dragging.set(false);
+        INCOMING.with(|incoming| incoming.borrow_mut().clear());
         if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|el| el.is_connected()) {
             let _ = element.focus();
         }
@@ -321,8 +466,71 @@ impl Composer {
         }
     }
 
+    /// Whether the draft quotes a cast, which is one of its embeds.
+    fn quoting(self) -> bool {
+        matches!(self.target.get(), Target::Quote(_))
+    }
+
+    /// How many more embeds the draft takes.
+    pub fn embeds_left(self) -> usize {
+        embeds_left(self.files.with(Vec::len), self.gif.with(Option::is_some), self.quoting())
+    }
+
+    /// Whether a GIF or a sticker can go with it: in the place of the one
+    /// it has, or in a free place.
+    pub fn room_for_gif(self) -> bool {
+        self.gif.with(Option::is_some) || self.embeds_left() > 0
+    }
+
+    /// Whether a file is on its way.
+    pub fn uploading(self) -> bool {
+        self.files.with(|files| files.iter().any(|f| matches!(f.state, Sending::Up { .. })))
+    }
+
+    /// Whether a file didn't go.
+    pub fn upload_failed(self) -> bool {
+        self.files.with(|files| files.iter().any(|f| matches!(f.state, Sending::Failed { .. })))
+    }
+
+    /// Take a file off the draft, stopping its upload.
+    pub fn remove_file(self, id: u64) {
+        let gone = self.files.with_untracked(|files| files.iter().find(|f| f.id == id).cloned());
+        if let Some(file) = gone {
+            let_go(&file);
+            self.files.update(|files| files.retain(|f| f.id != id));
+            self.note.set(None);
+        }
+    }
+
+    /// Whether this server takes files with a cast, as it has said.
+    fn takes_files(self) -> bool {
+        self.limits.with_untracked(Option::is_some)
+    }
+
+    /// Files pasted (`dropped` false) or dropped on the composer, where this
+    /// server takes them: taken for the composer's part to attach
+    /// (`attach::take_incoming`); whether they were. Text copied from a word
+    /// processor, a spreadsheet or a page comes with a picture of itself,
+    /// which isn't what's meant: it's pasted as text.
+    fn take_files(self, data: &web_sys::DataTransfer, dropped: bool) -> bool {
+        if !self.takes_files() {
+            return false;
+        }
+        let Some(list) = data.files().filter(|list| list.length() > 0) else { return false };
+        let has = |kind: &str| data.types().includes(&wasm_bindgen::JsValue::from_str(kind), 0);
+        let text = data.get_data("text/plain").is_ok_and(|text| !text.trim().is_empty());
+        if !dropped && text && (has("text/html") || has("text/rtf")) {
+            return false;
+        }
+        INCOMING.with(|incoming| incoming.borrow_mut().extend((0..list.length()).filter_map(|i| list.get(i))));
+        self.incoming.update(|n| *n = n.wrapping_add(1));
+        true
+    }
+
     fn draft(self) -> Draft {
-        let embeds = self.gif.with(|gif| gif.iter().map(|g| g.embed.url.clone()).collect());
+        let mut embeds: Vec<String> =
+            self.files.with(|files| files.iter().filter_map(|f| f.url().map(str::to_owned)).collect());
+        self.gif.with(|gif| embeds.extend(gif.iter().map(|g| g.embed.url.clone())));
         let mut draft = Draft { text: self.text.get(), embeds, ..Draft::default() };
         match self.target.get() {
             Target::Reply(to) => {
@@ -435,7 +643,10 @@ impl Composer {
             id: 0,
             sent,
             text,
-            image: self.gif.with_untracked(|gif| gif.as_ref().map(|g| g.tile.url.clone())),
+            image: self
+                .files
+                .with_untracked(|files| files.first().and_then(|f| f.url().map(str::to_owned)))
+                .or_else(|| self.gif.with_untracked(|gif| gif.as_ref().map(|g| g.tile.url.clone()))),
             quoting,
             replying_to,
             channel: draft.channel,
@@ -448,13 +659,16 @@ impl Composer {
     /// is posted there (`true`): lets it go, if it still holds it. Not
     /// posted in time, it has it back, closed and holding no other.
     fn settle(self) -> Settle {
-        let held = (self.target.get_untracked(), self.text.get_untracked(), self.gif.get_untracked());
+        let files: Vec<Attachment> =
+            self.files.with_untracked(|files| files.iter().map(Attachment::kept_copy).collect());
+        let held = (self.target.get_untracked(), self.text.get_untracked(), self.gif.get_untracked(), files);
         std::sync::Arc::new(move |posted: bool| {
-            let (target, text, gif) = &held;
+            let (target, text, gif, files) = &held;
             if posted {
                 let holds = self.target.with_untracked(|t| t == target)
                     && self.text.with_untracked(|t| t == text)
-                    && self.gif.with_untracked(|g| g == gif);
+                    && self.gif.with_untracked(|g| g == gif)
+                    && self.files.with_untracked(|f| f.iter().map(|f| f.id).eq(files.iter().map(|f| f.id)));
                 if holds {
                     self.clear();
                     self.close();
@@ -462,10 +676,12 @@ impl Composer {
             } else if !self.open.get_untracked()
                 && self.text.with_untracked(|t| t.trim().is_empty())
                 && self.gif.with_untracked(Option::is_none)
+                && self.files.with_untracked(Vec::is_empty)
             {
                 self.target.set(target.clone());
                 self.text.set(text.clone());
                 self.gif.set(gif.clone());
+                self.files.set(files.clone());
             }
         })
     }
@@ -656,9 +872,13 @@ pub fn ComposerDialog() -> impl IntoView {
     let session = use_session();
     let location = use_location();
     let dialog = NodeRef::<leptos::html::Div>::new();
-    // A history navigation, or signing out, closes it.
+    // A history navigation, or signing out, closes it. Signed out, it
+    // takes no files.
     Effect::new(move |_| {
-        let _ = (location.pathname.get(), location.search.get(), session.user.with(Option::is_some));
+        let _ = (location.pathname.get(), location.search.get());
+        if session.user.with(Option::is_none) && composer.limits.with_untracked(Option::is_some) {
+            composer.limits.set(None);
+        }
         if composer.open.get_untracked() {
             composer.close();
         }
@@ -667,6 +887,11 @@ pub fn ComposerDialog() -> impl IntoView {
         let open = composer.open.get();
         if let Some(root) = document().document_element() {
             let _ = root.class_list().toggle_with_force("compose-open", open);
+        }
+        // Whether files can go with the draft, asked while the composer's
+        // code comes the first time (`composer_bar` reads it).
+        if open && session.user.with_untracked(Option::is_some) {
+            api::prefetch(MEDIA_PATH);
         }
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
@@ -693,7 +918,7 @@ pub fn ComposerDialog() -> impl IntoView {
             // Focus stays in the dialog.
             "Tab" => {
                 if let Some(root) = dialog.get_untracked() {
-                    trap_tab(&root, &ev, "button:not([disabled]), a[href], [contenteditable], input");
+                    trap_tab(&root, &ev, "button:not([disabled]), a[href], [contenteditable], input:not([type=file])");
                 }
             }
             _ => {}
@@ -754,13 +979,67 @@ pub fn ComposerDialog() -> impl IntoView {
             let extras = async move {
                 Ok(composer_extras(composer, text, caret, gif_key, scheduling).await.unwrap_or_else(|_| ().into_any()))
             };
+            // Files dragged over the composer, which takes them dropped
+            // anywhere on it, where this server takes files; nested elements
+            // each say they're entered and left, so it counts them.
+            let entered = StoredValue::new(0i32);
+            let files_in = move |ev: &ev::DragEvent| {
+                composer.takes_files()
+                    && ev
+                        .data_transfer()
+                        .is_some_and(|data| data.types().includes(&wasm_bindgen::JsValue::from_str("Files"), 0))
+            };
+            // A paste of files attaches them, where they can go.
+            let pasted = Callback::new(move |data: web_sys::DataTransfer| composer.take_files(&data, false));
             view! {
-                <div class="modal-backdrop" on:click=move |ev: ev::MouseEvent| {
-                    if ev.target() == ev.current_target() {
-                        composer.close();
+                <div
+                    class="modal-backdrop"
+                    on:click=move |ev: ev::MouseEvent| {
+                        if ev.target() == ev.current_target() {
+                            composer.close();
+                        }
                     }
-                }>
+                    on:dragenter=move |ev: ev::DragEvent| {
+                        if files_in(&ev) {
+                            ev.prevent_default();
+                            entered.update_value(|n| *n += 1);
+                            composer.dragging.set(true);
+                        }
+                    }
+                    on:dragover=move |ev: ev::DragEvent| {
+                        if files_in(&ev) {
+                            ev.prevent_default();
+                            if let Some(data) = ev.data_transfer() {
+                                data.set_drop_effect("copy");
+                            }
+                            if !composer.dragging.get_untracked() {
+                                composer.dragging.set(true);
+                            }
+                        }
+                    }
+                    on:dragleave=move |ev: ev::DragEvent| {
+                        if files_in(&ev) {
+                            entered.update_value(|n| *n -= 1);
+                            if entered.get_value() <= 0 {
+                                entered.set_value(0);
+                                composer.dragging.set(false);
+                            }
+                        }
+                    }
+                    // Never opened in the tab in the composer's place.
+                    on:drop=move |ev: ev::DragEvent| {
+                        if let Some(data) = ev.data_transfer().filter(|_| files_in(&ev)) {
+                            ev.prevent_default();
+                            entered.set_value(0);
+                            composer.dragging.set(false);
+                            composer.take_files(&data, true);
+                        }
+                    }
+                >
                     <div class="modal compose-modal" role="dialog" aria-modal="true" aria-labelledby="compose-title" node_ref=dialog>
+                        {move || composer.dragging.get().then(|| view! {
+                            <div class="compose-drop" aria-hidden="true"><p>"Drop images or videos to attach them"</p></div>
+                        })}
                         <header class="modal-head">
                             <h2 id="compose-title">{composer.title()}</h2>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
@@ -768,7 +1047,7 @@ pub fn ComposerDialog() -> impl IntoView {
                         // A picker open makes the text smaller, to fit both.
                         <div class="modal-body compose-body" class:picking=move || composer.picker.get() != Picker::Closed>
                             {context}
-                            <ComposeText node_ref=text text=composer.text caret label=placeholder/>
+                            <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted/>
                             {crate::split::lazy_view(|| (), extras)}
                         </div>
                         // Below what scrolls, so the picker never hides it.
@@ -802,8 +1081,20 @@ fn composer_extras(
     gif_key: RwSignal<Option<String>>,
     scheduling: Memo<bool>,
 ) -> Result<AnyView, SplitLoaderError> {
+    attach::take_incoming(composer);
+    // With two embeds already (files, and the cast it quotes), a GIF or a
+    // sticker can't go too.
+    let full = move || {
+        let full = !composer.room_for_gif();
+        if full {
+            composer.note.set(Some(EMBEDS_FULL.to_owned()));
+        }
+        full
+    };
     let picked = Callback::new(move |gif: Gif| {
-        composer.gif.set(Some(gif));
+        if !full() {
+            composer.gif.set(Some(gif));
+        }
         composer.picker.set(Picker::Closed);
         focus_soon(".compose-text");
     });
@@ -832,6 +1123,11 @@ fn composer_extras(
     });
     // A sticker goes with the cast as its GIF does, in the GIF's place.
     let stick = Callback::new(move |sticker: &'static Sticker| {
+        if full() {
+            composer.picker.set(Picker::Closed);
+            focus_soon(".compose-text");
+            return;
+        }
         emoji_picker::used_sticker(sticker);
         let (width, height) = (u32::from(sticker.width), u32::from(STICKER_HEIGHT));
         composer.gif.set(Some(Gif {
@@ -844,6 +1140,7 @@ fn composer_extras(
         focus_soon(".compose-text");
     });
     Ok(view! {
+        <Attached composer/>
         {move || composer.gif.get().map(|gif| view! {
             <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>
                 <img src=gif.tile.url.clone() width=gif.tile.width height=gif.tile.height alt=gif.title.clone()/>
@@ -874,6 +1171,8 @@ fn composer_extras(
                 </div>
             }
         })}
+        // There before anything is said in it, for it to be heard.
+        <p class="attach-note" role="status">{move || composer.note.get()}</p>
         {move || composer.error.get().map(|why| view! { <p class="compose-error" role="alert">{why}</p> })}
     }
     .into_any())
@@ -893,6 +1192,21 @@ fn composer_bar(
     Effect::new(move |_| {
         gif_key.set(key.get().and_then(Result::ok).map(|k| k.data.key.clone()).filter(|k| !k.is_empty()));
     });
+    // Whether files can go with a cast: asked as the composer opens, for a
+    // reader signed in (kept 5 minutes).
+    let session = use_session();
+    let media = LocalResource::new(move || {
+        let signed_in = session.user.with(Option::is_some);
+        async move { if signed_in { Some(api::get::<MediaLimits>(MEDIA_PATH).await) } else { None } }
+    });
+    // Only a 200 shows the attach button: not set up (404), signed out or
+    // not answered, the composer is as it was without files.
+    Effect::new(move |_| {
+        if let Some(answer) = media.get() {
+            composer.limits.set(answer.and_then(Result::ok).map(|fetched| *fetched.data));
+        }
+    });
+    let room = Memo::new(move |_| composer.room_for_gif());
     let writer = use_writer();
     // Posted from here wherever the Worker endorses keys, with no
     // way round it; the Farcaster app only where it doesn't.
@@ -902,6 +1216,7 @@ fn composer_bar(
     Ok(view! {
         <footer class="compose-foot">
             <div class="compose-bar">
+                <AttachButton composer/>
                 <button
                     type="button"
                     class="emoji-button"
@@ -918,7 +1233,15 @@ fn composer_bar(
                     aria-label="Add a sticker"
                     aria-expanded=move || composer.showing(Tab::Stickers).to_string()
                     aria-controls="emoji-picker"
-                    on:click=move |_| composer.toggle_tab(Tab::Stickers)
+                    aria-disabled=move || (!room.get()).then_some("true")
+                    aria-description=move || (!room.get()).then_some(EMBEDS_FULL)
+                    on:click=move |_| {
+                        if room.get_untracked() {
+                            composer.toggle_tab(Tab::Stickers);
+                        } else {
+                            composer.note.set(Some(EMBEDS_FULL.to_owned()));
+                        }
+                    }
                 >
                     <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STICKER/></svg>
                 </button>
@@ -929,7 +1252,15 @@ fn composer_bar(
                         aria-label="Add a GIF"
                         aria-expanded=move || (composer.picker.get() == Picker::Gifs).to_string()
                         aria-controls="gif-picker"
-                        on:click=move |_| composer.toggle(Picker::Gifs)
+                        aria-disabled=move || (!room.get()).then_some("true")
+                        aria-description=move || (!room.get()).then_some(EMBEDS_FULL)
+                        on:click=move |_| {
+                            if room.get_untracked() {
+                                composer.toggle(Picker::Gifs);
+                            } else {
+                                composer.note.set(Some(EMBEDS_FULL.to_owned()));
+                            }
+                        }
                     >"GIF"</button>
                 })}
                 {move || (posts_here.get() == Some(true)).then(|| view! {
@@ -968,11 +1299,19 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
     let blocked = Memo::new(move |_| {
         let empty = composer.text.with(|t| t.trim().is_empty())
             && composer.gif.with(Option::is_none)
+            && composer.files.with(Vec::is_empty)
             && !matches!(composer.target.get(), Target::Quote(_));
-        empty || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES) || writer.posts_here().is_none()
+        empty
+            || composer.text.with(|t| t.trim().len() > MAX_CAST_BYTES)
+            || writer.posts_here().is_none()
+            || composer.uploading()
+            || composer.upload_failed()
     });
     let label = move || {
         let later = composer.when.with(Option::is_some);
+        if composer.uploading() {
+            return "Uploading…";
+        }
         match (composer.posting.get(), later, composer.target.get()) {
             (true, true, _) => "Scheduling…",
             (true, false, _) => "Posting…",
@@ -1003,10 +1342,18 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
 #[component]
 fn PostLink(composer: Composer) -> impl IntoView {
     let empty = Memo::new(move |_| composer.draft().is_empty());
+    // Files on their way, or one that didn't go: not yet.
+    let waiting = Memo::new(move |_| match (composer.uploading(), composer.upload_failed()) {
+        (true, _) => Some("Uploading…"),
+        (false, true) => Some("Post in Farcaster"),
+        _ => None,
+    });
     let hand_off = use_hand_off();
     let writer = use_writer();
     move || {
-        if empty.get() {
+        if let Some(label) = waiting.get() {
+            view! { <button type="button" class="button compose-post" disabled=true>{label}</button> }.into_any()
+        } else if empty.get() {
             view! { <button type="button" class="button compose-post" disabled=true>"Post in Farcaster"</button> }
                 .into_any()
         } else if can_hover() {
