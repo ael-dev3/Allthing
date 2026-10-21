@@ -103,7 +103,7 @@ fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bo
                             <a class="who-link" href=href.clone()>
                                 <Avatar url=pfp.clone() size=28/>
                                 <span class="who-name">{name.clone()}</span>
-                                <span class="muted">"@"{username.clone()}</span>
+                                <span class="who-handle muted">"@"{username.clone()}</span>
                             </a>
                         </ProfileHover>
                     </li>
