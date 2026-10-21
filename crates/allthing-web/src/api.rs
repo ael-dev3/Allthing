@@ -118,6 +118,9 @@ struct Raw {
 thread_local! {
     static CACHE: RefCell<HashMap<String, Raw>> = RefCell::new(HashMap::new());
     static IN_FLIGHT: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// How many reads of the API through [`get`] have come in this visit:
+    /// a page's own, then its popovers'.
+    static SETTLED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Reactions previews that an engagement batch on its way will file: a
     /// preview opened meanwhile waits for it instead of asking again.
     static COVERED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
@@ -372,6 +375,7 @@ pub fn fetch_ahead(path: &str) {
             remember(&path, raw, js_sys::Date::now());
         }
         IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
+        arrived();
         pump_cards();
     });
 }
@@ -772,6 +776,23 @@ pub async fn settled<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T
     peek(path)
 }
 
+/// Whether a page's own read has come in and none is on its way: no read,
+/// prefetch or profile card's facts, waiting or under way. Then a request
+/// that is no part of the page (the presence beat) can go without holding
+/// the page up.
+#[cfg(not(feature = "static-host"))]
+pub fn quiet() -> bool {
+    SETTLED.with(|settled| settled.get() > 0)
+        && IN_FLIGHT.with(|f| f.borrow().is_empty())
+        && CARD_QUEUE.with(|q| q.borrow().is_empty())
+}
+
+/// A read of the API has come in, or was ready: a page's own read, read
+/// ahead or not, counts for [`quiet`].
+fn arrived() {
+    SETTLED.with(|settled| settled.set(settled.get().saturating_add(1)));
+}
+
 /// GET an API path, reusing a recent answer for the same path.
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure> {
     // A request that brings this path is on its way: wait for it, don't
@@ -779,6 +800,7 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     arriving(path).await;
     let now = js_sys::Date::now();
     if let Some(result) = cached(path, now) {
+        arrived();
         return result;
     }
     let mine = IN_FLIGHT.with(|f| f.borrow_mut().insert(path.to_owned()));
@@ -786,6 +808,7 @@ pub async fn get<T: DeserializeOwned>(path: &str) -> Result<Fetched<T>, Failure>
     if mine {
         IN_FLIGHT.with(|f| f.borrow_mut().remove(path));
     }
+    arrived();
     let result = raw.and_then(|raw| {
         let result = decode::<T>(&raw);
         if result.is_ok() || raw.status == 404 {

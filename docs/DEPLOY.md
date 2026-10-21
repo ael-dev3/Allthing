@@ -132,6 +132,14 @@ Afterwards:
 - **Keep the bucket and the binding** once readers have attached files: their casts embed `https://allthing.social/m/…` for good, and without the binding those addresses answer 404, so every Farcaster app would show the casts' images and videos as broken.
 - **Removing a file by hand** (abuse, a takedown): delete the object in the dashboard (**R2 → `allthing-media` → Objects**, its name is the URL's path after `/m/`), then its row in D1, so the total no longer counts it: `npx wrangler d1 execute allthing-index --remote --command "DELETE FROM media WHERE key = '<fid>/<id>.<ext>'"`, and `npx wrangler d1 execute allthing-index --remote --command "UPDATE media_total SET bytes = (SELECT COALESCE(SUM(bytes), 0) FROM media), files = (SELECT COUNT(*) FROM media) WHERE name = 'all'"`. Browsers that showed it may keep their copy, as each file is cached for a year.
 
+## Presence
+
+The header's small "● 12" ([ARCHITECTURE.md](ARCHITECTURE.md#presence)) is on while `wrangler.toml`'s `[vars]` has `PRESENCE = "on"`: `/api/v1/status` says `"presence": {"ready": true}`. It also needs `SESSION_SECRET` ([Secrets](#secrets)), without which a beat answers 503 and no chip shows. What it costs: [BUDGET.md](BUDGET.md#14-presence).
+
+- **Turning it off at once, from the dashboard.** Workers & Pages → `allthing` → Settings → Variables and Secrets: edit `PRESENCE`, set it to `off` (anything but `on` will do) and deploy. From then on a beat answers 404 without touching D1, and each browser drops the chip at its next beat and sends none for 6 hours. Its rows in D1, the last quarter of an hour's, stay until it is on again; `npx wrangler d1 execute allthing-index --remote --command "DELETE FROM presence"` clears them.
+- **Keeping it off.** The next deploy from `main` sets the variables in `wrangler.toml` again (Wrangler's `keep_vars` is off), so make it `PRESENCE = "off"` there too, or it comes back on.
+- **Turning it on again.** `PRESENCE = "on"`, in `wrangler.toml` and, for at once, in the dashboard. Browsers that heard it was off ask again once their 6 hours are up.
+
 ## Local development
 
 ```sh

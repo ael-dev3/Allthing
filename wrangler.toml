@@ -71,3 +71,7 @@ head_sampling_rate = 0.05
 # writes go to the Farcaster app.
 [vars]
 ALLTHING_FID = "3356318"
+# The header's small "online" count and the beats behind it
+# (docs/ARCHITECTURE.md#presence). Anything but "on" turns both off: the
+# endpoint answers 404 and the chip never shows (docs/DEPLOY.md#presence).
+PRESENCE = "on"

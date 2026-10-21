@@ -412,6 +412,9 @@ fn qr_code(text: &str) -> Option<QrCode> {
     Some(QrCode { size: (width + 2 * QUIET) as u32, path })
 }
 
+/// HMAC-SHA256 of `value` for `purpose` under `secret`: the purpose, a line
+/// break and the value, so a MAC made for one purpose never passes for
+/// another's.
 pub(crate) fn mac(secret: &[u8], purpose: &str, value: &str) -> Hmac<Sha256> {
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).expect("HMAC takes keys of any length");
     mac.update(purpose.as_bytes());

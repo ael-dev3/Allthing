@@ -80,6 +80,8 @@ fn App() -> impl IntoView {
     provide_context(components::handoff::HandOff::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::writer::Writer::new());
+    #[cfg(not(feature = "static-host"))]
+    provide_context(components::presence::Presence::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>

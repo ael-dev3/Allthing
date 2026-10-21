@@ -32,6 +32,8 @@ pub mod player;
 #[cfg(not(feature = "static-host"))]
 pub mod poll;
 pub mod popover;
+#[cfg(not(feature = "static-host"))]
+pub mod presence;
 pub mod profile_card;
 pub mod quote;
 pub mod reactions;

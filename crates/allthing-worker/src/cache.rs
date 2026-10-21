@@ -117,7 +117,7 @@ async fn store(inv: &Invocation, key: &str, built: Built) -> Rc<Entry> {
 }
 
 /// Keep `entry` under `key` for `keep` seconds at the edge; whether it was.
-async fn put(inv: &Invocation, key: &str, entry: &Entry, keep: u32) -> bool {
+pub(crate) async fn put(inv: &Invocation, key: &str, entry: &Entry, keep: u32) -> bool {
     if !inv.take_subrequests(1) {
         return false;
     }

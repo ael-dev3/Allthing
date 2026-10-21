@@ -36,6 +36,7 @@ pub mod notifications;
 pub mod params;
 pub mod people;
 pub mod poll;
+pub mod presence;
 pub mod profile;
 pub mod provenance;
 pub mod quotes;
