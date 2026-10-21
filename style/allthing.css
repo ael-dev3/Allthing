@@ -2043,9 +2043,14 @@ p.jumbo .emoji img {
 
 /* ---------- Profile ---------- */
 
+/* Its glow (::before) reaches 40 px past its sides, clipped. Clipped by a box
+   that can scroll, anything that scrolled it, such as focus or find in page,
+   moved the whole card's content 40 px to the left, under its edge; clip
+   can't be scrolled. Older browsers keep hidden. */
 .profile {
   position: relative;
   overflow: hidden;
+  overflow: clip;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 20px;

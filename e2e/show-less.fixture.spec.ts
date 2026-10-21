@@ -156,3 +156,15 @@ test("at 1280, Favorite and Show less sit at the profile's top right, level with
   expect(card!.x + card!.width - (less!.x + less!.width)).toBeLessThan(40);
   expect(favorite!.y).toBeLessThan(name!.y + name!.height);
 });
+
+test("the profile card's content can't be moved sideways under its edge", async ({ page }) => {
+  await serve(page);
+  await page.goto("/u/ann");
+  await expect(page.getByRole("button", { name: "Show less" })).toBeVisible();
+  // The glow behind the name reaches past the card's sides. When the card
+  // could be scrolled, anything that scrolled it moved its avatar and text
+  // 40 px to the left, cut off by the card's edge.
+  const card = page.locator("section.profile");
+  expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(0);
+  expect(await card.evaluate((el) => { el.scrollLeft = 40; return el.scrollLeft; })).toBe(0);
+});
