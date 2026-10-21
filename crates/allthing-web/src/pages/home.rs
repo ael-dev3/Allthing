@@ -88,9 +88,11 @@ fn after_a_paint(sort: Memo<Sort>) -> ReadSignal<Sort> {
 }
 
 /// The newest casts on Farcaster, read from Snapchain's event stream and
-/// rebuilt at the edge every 30 seconds.
+/// rebuilt at the edge every 30 seconds: newest first, with the casts of
+/// accounts the reader sees less of lower (`sorted_for`).
 #[component]
 fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+    let leaning = crate::leanings::use_leaning();
     let data = LocalResource::new(|| async { api::get::<LatestPayload>(&latest_path()).await });
     // Only another client filter redraws the list: a tap on a sort tab
     // changes the query too, and mustn't rebuild the cards it's leaving.
@@ -108,17 +110,19 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
         Some(Ok(Fetched { data, stale, .. })) => {
             let notes = Arc::new(data.notes.clone());
             let client = client.get();
-            let casts = top_level(&data.pool);
-            let casts = match client {
-                Some(fid) => from_client(casts, &notes, fid),
-                None => casts,
+            let pool = top_level(&data.pool);
+            let pool = match client {
+                Some(fid) => from_client(pool, &notes, fid),
+                None => pool,
             };
+            // Seeing less of an account reorders the list in place.
+            let casts = Memo::new(move |_| sorted_for(&pool, Sort::New, &leaning.leanings()));
             view! {
                 <Columns>
                     <Heading sort range/>
                     {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
-                    <CastList casts=Signal::stored(casts) notes=Signal::stored(notes)/>
+                    <CastList casts notes=Signal::stored(notes)/>
                 </Columns>
             }
             .into_any()

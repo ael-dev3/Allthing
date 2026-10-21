@@ -119,10 +119,23 @@ function hotScore(p, ts) {
 
 const newestFirst = (a, b) => b.ts - a.ts || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0);
 
+/** A favorite's casts weigh 25 times their points, and those of an account the reader sees less of a 25th (`FAVORITE_WEIGHT`, `SHOW_LESS_WEIGHT`). */
+const FAVORITE_WEIGHT = 25;
+const SHOW_LESS_WEIGHT = 1 / FAVORITE_WEIGHT;
+
+/** How many days the casts span, from the oldest to the newest, and one at least (`span_days`). */
+function spanDays(casts) {
+  if (!casts.length) return 1;
+  const times = casts.map((c) => c.ts);
+  return Math.max(1, (Math.max(...times) - Math.min(...times)) / DAY);
+}
+
 function sorted(casts, sort, lean) {
-  const weight = (c) => (lean.favorites.has(c.author.fid) ? 4 : lean.less.has(c.author.fid) ? 0.5 : 1);
-  const key = sort === "top" ? (c) => points(c) * weight(c) : (c) => hotScore(points(c), c.ts) + (weight(c) === 1 ? 0 : Math.log10(weight(c)));
-  return [...casts].sort((a, b) => key(b) - key(a) || newestFirst(a, b));
+  const weight = (c) => (lean.favorites.has(c.author.fid) ? FAVORITE_WEIGHT : lean.less.has(c.author.fid) ? SHOW_LESS_WEIGHT : 1);
+  const days = spanDays(casts);
+  // In top, the points plus one times the weight; in hot, the weight's log added once for each day the casts span. On a tie, the heavier first.
+  const key = sort === "top" ? (c) => (points(c) + 1) * weight(c) : (c) => hotScore(points(c), c.ts) + (weight(c) === 1 ? 0 : Math.log10(weight(c)) * days);
+  return [...casts].sort((a, b) => key(b) - key(a) || weight(b) - weight(a) || newestFirst(a, b));
 }
 
 /** The reader's favorites and those they see less of (leanings.rs). */

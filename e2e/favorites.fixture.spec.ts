@@ -4,9 +4,10 @@ import { signIn } from "./helpers/farcaster";
 
 /*
  * Favorites: the star on a profile makes the account one of the reader's
- * favorites, kept in this browser. Its casts rise in the reader's hot and
- * top feeds, on the front page and in channels, and carry a small star
- * there; new stays in time order. Nothing is sent anywhere.
+ * favorites, kept in this browser. Its casts rise well up the reader's hot
+ * and top feeds, on the front page and in channels (25 times their points),
+ * and carry a small star there; new stays in time order. Nothing is sent
+ * anywhere. How far, measured: leaning-strength.fixture.spec.ts.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -31,6 +32,7 @@ async function serve(page: Page) {
     const later = new URL(route.request().url()).searchParams.has("offset");
     return route.fulfill({ json: { pool: later ? [] : pool, notes: {}, meta } });
   });
+  await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool, notes: {}, cursors: [], meta } }));
   await page.route("**/api/v1/channel?*", (route) =>
     route.fulfill({ json: { channel: { id: "books", name: "Books", parent_url: "https://farcaster.xyz/~/channel/books", follower_count: 10 }, pool, notes: {}, meta } }),
   );
@@ -59,7 +61,7 @@ test("a favorite's casts rise in hot and top, on the front page and in channels,
   await page.goto("/u/bob");
   const star = page.getByRole("button", { name: "Favorite" });
   await expect(star).toHaveAttribute("aria-pressed", "false");
-  await expect(star).toHaveAccessibleDescription("Their casts rise in your hot and top feeds. Kept in this browser only.");
+  await expect(star).toHaveAccessibleDescription("Considerably boosts their casts in your hot and top feeds. Kept in this browser only.");
   await star.click();
   await expect(star).toHaveAttribute("aria-pressed", "true");
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("allthing.favorites") ?? "[]"))).toEqual([{ fid: 2, username: "bob" }]);
@@ -67,13 +69,15 @@ test("a favorite's casts rise in hot and top, on the front page and in channels,
   await expect(page.locator(".cast-card", { hasText: "Quiet" })).toBeVisible();
   await expect(page.getByRole("img", { name: "One of your favorites" })).toHaveCount(0);
 
-  // Bob's 10 points weigh as 40: over ann's 30, in top and in hot.
+  // Bob's 10 points weigh as (10 + 1) × 25 = 275: over ann's 30, in top and
+  // in hot.
   await feed(page, "/?sort=top", ["Quiet", "Busy", "Newest"]);
   const marked = page.getByRole("img", { name: "One of your favorites" });
   await expect(marked).toHaveCount(1);
   await expect(page.locator(".cast-card", { hasText: "Quiet" }).getByRole("img", { name: "One of your favorites" })).toBeVisible();
   await feed(page, "/?sort=hot", ["Quiet", "Busy", "Newest"]);
   await feed(page, "/c/books?sort=new", ["Newest", "Busy", "Quiet"]);
+  await feed(page, "/?sort=new", ["Newest", "Busy", "Quiet"]);
   await feed(page, "/c/books?sort=top", ["Quiet", "Busy", "Newest"]);
 
   // Undone, everything is as it was.

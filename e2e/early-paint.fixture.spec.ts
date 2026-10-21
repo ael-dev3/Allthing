@@ -238,11 +238,32 @@ test("top's first cards come in top's order, with the time range the address nam
   await favorites(page);
   await page.goto("/?sort=top&t=week");
   const boot = page.locator("#boot");
-  // Top: cat's 14,746 points, bob's 10 counted 4 times, ann's 28.
+  // Top: cat's 14,746 points, bob's 10 (and one) counted 25 times, ann's 28.
   await expect(boot.locator(".cast-card")).toHaveCount(4);
   expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual([busy.hash, favorite.hash, rich.hash, pair.hash]);
   await expect(boot.locator(".sort-tabs a.selected")).toHaveText("top");
   await expect(boot.locator(".time-filter option[selected]")).toHaveText("Past week");
+  await moduleIn(page, held);
+  await settled(page, "#boot");
+  const early = await shown(page, "#boot");
+  held.js("continue");
+  await expect(boot).toHaveCount(0);
+  expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+});
+
+test("an account seen less of is lower in the first cards too, as in the app", async ({ page }) => {
+  const held = await hold(page);
+  await serve(page);
+  await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }])));
+  await page.goto("/");
+  const boot = page.locator("#boot");
+  // Hot, seeing less of ann: the list spans 1.6 days, so ann's busiest cast
+  // is as if 17½ hours older for each, 28½ in all, and goes below dee's
+  // quiet ones, 8½ hours older (at 17½ hours, it would come 5th).
+  await expect(boot.locator(".cast-card")).toHaveCount(6);
+  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual(
+    [busy, favorite, pair, later, rest[0], rest[1]].map((c) => c.hash),
+  );
   await moduleIn(page, held);
   await settled(page, "#boot");
   const early = await shown(page, "#boot");

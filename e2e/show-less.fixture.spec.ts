@@ -3,11 +3,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { signIn } from "./helpers/farcaster";
 
 /*
- * Show less: on a profile, the reader sees less of the account, in this
- * browser. Its casts sit a little lower in the reader's hot and top feeds,
- * on the front page and in channels (half their points), with no mark;
- * nothing is hidden, and new stays in time order. An account is a favorite
- * or one the reader sees less of, not both. Nothing is sent anywhere.
+ * Show less: on a profile, the reader sees much less of the account, in this
+ * browser. Its casts drop well down the reader's hot and top feeds, on the
+ * front page and in channels (a 25th of their points), and lower in new (as
+ * if 6 hours older for each day the list spans; these casts span less than
+ * a day), with no mark; nothing is hidden. An account is a
+ * favorite or one the reader sees less of, not both. Nothing is sent
+ * anywhere. How far, measured: leaning-strength.fixture.spec.ts.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -23,7 +25,7 @@ const me = { fid: 1234, username: "reader", display_name: "Reader" };
 // Ann's busy cast, bob's middling one, and cat's newest, quietest one.
 const busy = { hash: hex(1), author: ann, text: "Busy", ts, likes: 30, replies: 0 };
 const middling = { hash: hex(2), author: bob, text: "Middling", ts, likes: 20, replies: 0 };
-const newest = { hash: hex(3), author: cat, text: "Newest", ts: ts + 3600, likes: 1, replies: 0 };
+const newest = { hash: hex(3), author: cat, text: "Newest", ts: ts + 7200, likes: 1, replies: 0 };
 const pool = [busy, middling, newest];
 
 async function serve(page: Page) {
@@ -32,6 +34,7 @@ async function serve(page: Page) {
     const later = new URL(route.request().url()).searchParams.has("offset");
     return route.fulfill({ json: { pool: later ? [] : pool, notes: {}, meta } });
   });
+  await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool, notes: {}, cursors: [], meta } }));
   await page.route("**/api/v1/channel?*", (route) =>
     route.fulfill({ json: { channel: { id: "books", name: "Books", parent_url: "https://farcaster.xyz/~/channel/books", follower_count: 10 }, pool, notes: {}, meta } }),
   );
@@ -57,25 +60,32 @@ const kept = (page: Page) =>
     less: JSON.parse(localStorage.getItem("allthing.show-less") ?? "[]"),
   }));
 
-test("show less lowers an account's casts a little in hot and top, with no mark and nothing hidden; new stays in time order", async ({ page }) => {
+test("show less drops an account's casts to the end of hot and top, and lower in new, with no mark and nothing hidden", async ({ page }) => {
   await serve(page);
   await feed(page, "/?sort=top", ["Busy", "Middling", "Newest"]);
+  await feed(page, "/?sort=new", ["Newest", "Busy", "Middling"]);
 
   await page.goto("/u/ann");
   const less = page.getByRole("button", { name: "Show less" });
   await expect(less).toHaveAttribute("aria-pressed", "false");
-  await expect(less).toHaveAccessibleDescription("Their casts sit a little lower in your hot and top feeds. Nothing is hidden. Kept in this browser only.");
+  await expect(less).toHaveAccessibleDescription(
+    "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
+  );
   await less.click();
   await expect(less).toHaveAttribute("aria-pressed", "true");
   expect(await kept(page)).toEqual({ favorites: [], less: [{ fid: 1, username: "ann" }] });
 
-  // Ann's 30 points weigh as 15: under bob's 20, still over cat's 1.
-  await feed(page, "/?sort=top", ["Middling", "Busy", "Newest"]);
+  // Ann's 30 points weigh as (30 + 1) / 25, about 1.2: under bob's 20 and
+  // even cat's 1 (2, with the one). In hot, as if 17½ hours older: under
+  // cat's cast too. Still listed.
+  await feed(page, "/?sort=top", ["Middling", "Newest", "Busy"]);
   await expect(page.locator(".cast-card", { hasText: "Busy" })).toBeVisible();
   await expect(page.locator(".cast-card", { hasText: "Busy" }).locator(".favorite-mark")).toHaveCount(0);
-  await feed(page, "/?sort=hot", ["Middling", "Busy", "Newest"]);
-  await feed(page, "/c/books?sort=top", ["Middling", "Busy", "Newest"]);
-  await feed(page, "/c/books?sort=new", ["Newest", "Busy", "Middling"]);
+  await feed(page, "/?sort=hot", ["Middling", "Newest", "Busy"]);
+  await feed(page, "/c/books?sort=top", ["Middling", "Newest", "Busy"]);
+  // In new, as if 6 hours older: under bob's cast from the same moment.
+  await feed(page, "/c/books?sort=new", ["Newest", "Middling", "Busy"]);
+  await feed(page, "/?sort=new", ["Newest", "Middling", "Busy"]);
 
   // Undone, everything is as it was.
   await page.goto("/u/ann");
@@ -99,7 +109,7 @@ test("an account is a favorite or one you see less of, not both, and another tab
   await expect(favorite).toHaveAttribute("aria-pressed", "false");
   expect(await kept(other)).toEqual({ favorites: [], less: [{ fid: 1, username: "ann" }] });
   // The first tab's feed re-sorts in place.
-  await expect.poll(() => order(page)).toEqual(["Middling", "Busy", "Newest"]);
+  await expect.poll(() => order(page)).toEqual(["Middling", "Newest", "Busy"]);
   await favorite.click();
   await expect(less).toHaveAttribute("aria-pressed", "false");
   expect(await kept(other)).toEqual({ favorites: [{ fid: 1, username: "ann" }], less: [] });

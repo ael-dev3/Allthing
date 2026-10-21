@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Show less (`crate::leanings`): on a profile, the reader sees less of the
-//! account, in this browser. Its casts sit a little lower in the reader's hot
-//! and top feeds; they carry no mark, and nothing is hidden.
+//! Show less (`crate::leanings`): on a profile, the reader sees much less of
+//! the account, in this browser. Its casts drop well down the reader's hot
+//! and top feeds, and lower in new (`allthing_core::ranking::sorted_for`);
+//! they carry no mark, and nothing is hidden.
 
 use leptos::prelude::*;
 
@@ -36,7 +37,7 @@ pub fn ShowLessButton(fid: u64, username: String) -> impl IntoView {
             </button>
             {hint.view(
                 "show-less-what",
-                "Their casts sit a little lower in your hot and top feeds. Nothing is hidden. Kept in this browser only.",
+                "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
             )}
         </span>
     }
