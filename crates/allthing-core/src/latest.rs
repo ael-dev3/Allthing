@@ -96,7 +96,7 @@ struct RemoveBody {
 }
 
 /// Hub event JSON gives removed casts' hashes in base64.
-fn base64_to_hex(value: &str) -> Option<String> {
+pub(crate) fn base64_to_hex(value: &str) -> Option<String> {
     let bytes = base64_decode(value).filter(|b| b.len() == 20)?;
     Some(format!("0x{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }

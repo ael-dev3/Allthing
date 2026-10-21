@@ -2,6 +2,7 @@
 //! Allthing's index of notable casts (see `allthing_core::index`): the
 //! storage it needs from the runtime, and the cron job's run.
 
+use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{
     Entry, Feed, IndexerState, Ranking, RankingMeta, Span, Step, candidates, due, notable_authors, recompute_reads,
     worth_indexing,
@@ -69,6 +70,14 @@ pub trait Index {
         _snapshot: Snapshot,
     ) -> LocalBoxFuture<'static, Result<(), IndexError>> {
         Box::pin(async { Err(IndexError("this index stores no copies".into())) })
+    }
+    /// The emoji reactions the cron keeps (`activity`) to any of `casts`,
+    /// each with the cast it replies to, oldest first.
+    fn reactions(
+        &self,
+        _casts: Vec<String>,
+    ) -> LocalBoxFuture<'static, Result<Vec<(String, ReactionReply)>, IndexError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 

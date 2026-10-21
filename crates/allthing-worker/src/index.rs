@@ -10,6 +10,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
 use allthing_core::scheduled::{Checked, ScheduledCast, State};
 use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
@@ -21,12 +22,13 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 5] = [
+const SCHEMA: [&str; 6] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
     include_str!("../../../migrations/0004_signer_apps.sql"),
     include_str!("../../../migrations/0005_scheduled.sql"),
+    include_str!("../../../migrations/0006_reactions.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -75,6 +77,19 @@ const COUNT_APPS: &str = "SELECT k.app AS app, COUNT(DISTINCT j.value >> 32) AS 
       json_group_array(CAST(j.value AS TEXT)) FILTER (WHERE k.pair IS NULL) AS unknown \
     FROM json_each(?1) AS j LEFT JOIN signer_apps AS k ON k.pair = j.value GROUP BY k.app";
 const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
+/// Emoji reactions, given as one JSON array of `[parent, hash, emoji, fid,
+/// ts]`; one already kept stays as it is.
+const STORE_REACTIONS: &str = "INSERT OR IGNORE INTO reactions (hash, parent, emoji, fid, ts) \
+    SELECT json_extract(value, '$[1]'), json_extract(value, '$[0]'), json_extract(value, '$[2]'), \
+      json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?1)";
+/// Drop the reactions among the casts given as one JSON array: removed,
+/// revoked or pruned.
+const DROP_REACTIONS: &str = "DELETE FROM reactions WHERE hash IN (SELECT value FROM json_each(?1))";
+/// Drop reactions from before ?1, Unix seconds.
+const OLD_REACTIONS: &str = "DELETE FROM reactions WHERE ts < ?1";
+/// The reactions to the casts given as one JSON array, oldest first.
+const REACTIONS: &str = "SELECT parent, hash, emoji, fid, ts FROM reactions \
+    WHERE parent IN (SELECT value FROM json_each(?1)) ORDER BY ts, hash LIMIT 2000";
 /// A reader's (?1) scheduled casts: waiting, and finished since ?2, soonest
 /// first.
 const SCHEDULED: &str = "SELECT id, at, hash, state, error, draft FROM scheduled \
@@ -133,6 +148,15 @@ struct StateRow {
 struct SetRow {
     name: String,
     body: String,
+}
+
+#[derive(Deserialize)]
+struct ReactionRow {
+    parent: String,
+    hash: String,
+    emoji: String,
+    fid: f64,
+    ts: f64,
 }
 
 #[derive(Deserialize)]
@@ -302,6 +326,25 @@ impl Index for D1Index {
         }
         .boxed_local()
     }
+
+    /// Before the follower first keeps one, there is no table yet: the read
+    /// fails, and the listing keeps the reactions it had.
+    fn reactions(
+        &self,
+        casts: Vec<String>,
+    ) -> LocalBoxFuture<'static, Result<Vec<(String, ReactionReply)>, IndexError>> {
+        let db = self.db.clone();
+        async move {
+            let casts = serde_json::to_string(&casts).map_err(|e| IndexError(e.to_string()))?;
+            let statement = db.prepare(REACTIONS).bind(&[casts.into()]).map_err(failed)?;
+            let rows = statement.all().await.map_err(failed)?.results::<ReactionRow>().map_err(failed)?;
+            Ok(rows
+                .into_iter()
+                .map(|r| (r.parent, ReactionReply { hash: r.hash, emoji: r.emoji, fid: r.fid as u64, ts: r.ts as i64 }))
+                .collect())
+        }
+        .boxed_local()
+    }
 }
 
 impl ActivityStore for D1Index {
@@ -374,7 +417,7 @@ impl ActivityStore for D1Index {
     fn save_activity(&self, saving: Saving) -> LocalBoxFuture<'static, Result<(), IndexError>> {
         let db = self.db.clone();
         async move {
-            let Saving { sets, keep_from, keys, state, summary } = saving;
+            let Saving { sets, keep_from, keys, reactions, removed, reactions_from, state, summary } = saving;
             let mut statements = Vec::new();
             if !sets.is_empty() {
                 let rows = serde_json::to_string(&sets).map_err(|e| IndexError(e.to_string()))?;
@@ -386,6 +429,17 @@ impl ActivityStore for D1Index {
             }
             let keep = [number(keep_from.0 as f64), number(keep_from.1 as f64)];
             statements.push(db.prepare(DROP_SETS).bind(&keep).map_err(failed)?);
+            if !reactions.is_empty() {
+                let rows: Vec<_> =
+                    reactions.into_iter().map(|(cast, r)| (cast, r.hash, r.emoji, r.fid, r.ts)).collect();
+                let rows = serde_json::to_string(&rows).map_err(|e| IndexError(e.to_string()))?;
+                statements.push(db.prepare(STORE_REACTIONS).bind(&[rows.into()]).map_err(failed)?);
+            }
+            if !removed.is_empty() {
+                let hashes = serde_json::to_string(&removed).map_err(|e| IndexError(e.to_string()))?;
+                statements.push(db.prepare(DROP_REACTIONS).bind(&[hashes.into()]).map_err(failed)?);
+            }
+            statements.push(db.prepare(OLD_REACTIONS).bind(&[number(reactions_from as f64)]).map_err(failed)?);
             statements.push(db.prepare(SAVE_ACTIVITY_STATE).bind(&[state.into()]).map_err(failed)?);
             let args = [SUMMARY.into(), number(summary.built.floor()), summary.body.into()];
             statements.push(db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?);

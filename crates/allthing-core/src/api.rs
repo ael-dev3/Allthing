@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::emoji::ReactionReply;
 use crate::latest::Cursor;
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::{hash_from_param, percent_encode};
@@ -59,6 +60,12 @@ pub struct Annotations {
     /// request, and carried to the next build while the account is shown.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub users: BTreeMap<u64, UserCard>,
+    /// Cast hash -> its emoji reactions (replies that are one emoji, see
+    /// [`crate::emoji::reaction`]) as the cron keeps them from the hub's
+    /// events, oldest first, for a listing's cards. Read anew for each
+    /// build, with one D1 query; none in the static copy.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reactions: BTreeMap<String, Vec<ReactionReply>>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -75,6 +82,7 @@ impl Annotations {
         self.links.extend(newer.links.clone());
         self.quotes.extend(newer.quotes.clone());
         self.users.extend(newer.users.clone());
+        self.reactions.extend(newer.reactions.clone());
         self.pending = self.pending.saturating_add(newer.pending);
     }
 
@@ -584,6 +592,7 @@ mod tests {
             links: BTreeMap::from([("https://later.example".into(), true), ("https://both.example".into(), true)]),
             quotes: BTreeMap::from([("0xq2".into(), quoted("0xq2"))]),
             users: BTreeMap::from([(7, card("", 12))]),
+            reactions: BTreeMap::from([("0xq2".into(), vec![])]),
             pending: 1,
         };
         notes.merge(&newer);
@@ -599,6 +608,7 @@ mod tests {
             ])
         );
         assert_eq!(notes.quotes.keys().collect::<Vec<_>>(), ["0xq1", "0xq2"]);
+        assert_eq!(notes.reactions.keys().collect::<Vec<_>>(), ["0xq2"]);
         assert_eq!(notes.pending, 3);
     }
 
