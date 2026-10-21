@@ -6,13 +6,14 @@
 //! their likes and recasts with. The Worker posts nothing of its own and
 //! never has a reader's key: it only keeps the casts a reader's browser
 //! signed for later (`scheduled_casts`), and gives them to the node at
-//! their time. After a reader's write, the pages it changes are rebuilt on
-//! their next read (`refresh`).
+//! their time; and it keeps the images and videos readers attach to their
+//! casts, in R2, and serves them at `/m/` (`media`). After a reader's write,
+//! the pages it changes are rebuilt on their next read (`refresh`).
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
-//! Workers Static Assets without invoking this code; `/api/*` runs here, and
+//! Workers Static Assets without invoking this code; `/api/*` runs here,
 //! `/wasm/*`, the app's WebAssembly compressed at brotli's highest level
-//! (`wasm_module`).
+//! (`wasm_module`), and `/m/*`, readers' attachments.
 //! Every page costs one API call, every payload is edge-cached with
 //! stale-while-revalidate, and every upstream call goes through a per-isolate
 //! rate guard and a per-invocation subrequest budget (see docs/BUDGET.md).
@@ -22,6 +23,7 @@ mod auth;
 mod cache;
 mod host;
 mod index;
+mod media;
 mod refresh;
 mod scheduled_casts;
 
@@ -33,6 +35,7 @@ use allthing_core::app_key::writes_path;
 use allthing_core::compose::gif_key_path;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
+use allthing_core::media::{MEDIA_PATH, SERVED_PREFIX};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::scheduled::SCHEDULED_PATH;
 use allthing_core::time::iso_utc;
@@ -80,6 +83,12 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     if let Some(name) = url.path().strip_prefix("/wasm/") {
         return wasm_module(&req, &env, &url, name).await;
     }
+    // Readers' attachments, to anyone (other apps load them from here too),
+    // so not under the API's per-client limit: browsers keep each for a
+    // year.
+    if url.path().starts_with(SERVED_PREFIX) {
+        return media::serve(&req, &env, url.path()).await;
+    }
     if !url.path().starts_with("/api/") {
         return error(404, "Not found", None);
     }
@@ -108,6 +117,13 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         let host = WorkerHost::new(Lifetime::Request(ctx), None, None, node_stand_in(&env));
         let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
         return refresh::handle(req, &env, &url, &inv, (Date::now().as_millis() / 1000) as i64).await;
+    }
+    // A signed-in reader's attachments: GET, and POST (never cached).
+    if url.path() == MEDIA_PATH {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        return media::handle(req, &env, &ctx, Date::now().as_millis() as f64).await;
     }
     if !matches!(req.method(), Method::Get | Method::Head) {
         return error(405, "Allthing's API is read-only", None);
@@ -389,6 +405,9 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
             }),
             None => serde_json::json!({ "ready": false }),
         },
+        // Whether readers can attach images and videos: the MEDIA bucket
+        // (R2) and D1, which counts what they take.
+        "media": { "ready": media::ready(env) },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

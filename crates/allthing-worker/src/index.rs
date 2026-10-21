@@ -3,8 +3,9 @@
 //! behind `allthing_data::indexer::Index`. Rankings are computed inside D1,
 //! so the Worker never handles more than one page of casts at a time. The
 //! same database keeps the daily active accounts' sets
-//! (`allthing_data::activity::ActivityStore`), and readers' scheduled casts
-//! (`allthing_data::scheduled::ScheduledStore`, and `crate::scheduled_casts`).
+//! (`allthing_data::activity::ActivityStore`), readers' scheduled casts
+//! (`allthing_data::scheduled::ScheduledStore`, and `crate::scheduled_casts`),
+//! and what readers' attachments take (`crate::media`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use std::rc::Rc;
 
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
+use allthing_core::media::{Usage, WINDOW, day_row};
 use allthing_core::scheduled::{Checked, ScheduledCast, State};
 use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
@@ -22,13 +24,14 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 6] = [
+const SCHEMA: [&str; 7] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
     include_str!("../../../migrations/0004_signer_apps.sql"),
     include_str!("../../../migrations/0005_scheduled.sql"),
     include_str!("../../../migrations/0006_reactions.sql"),
+    include_str!("../../../migrations/0007_media.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -119,6 +122,19 @@ const AGAIN: &str = "UPDATE scheduled SET tries = tries + 1 WHERE id = ?1 AND ha
 /// Drop casts that went out, or didn't, before ?1.
 const DROP_DONE: &str = "DELETE FROM scheduled WHERE state <> 'waiting' AND done_at < ?1";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
+/// What reader ?1 has uploaded since ?2 (Unix seconds): how many files, how
+/// many bytes and when the oldest came; everyone's uploads on the UTC day
+/// whose row is ?3; and the bytes stored in all. Reads the reader's index
+/// entries in the window, and two rows of totals.
+const MEDIA_USAGE: &str = "SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes, MIN(created_at) AS oldest, \
+      COALESCE((SELECT files FROM media_total WHERE name = ?3), 0) AS today, \
+      COALESCE((SELECT bytes FROM media_total WHERE name = 'all'), 0) AS stored \
+    FROM media WHERE fid = ?1 AND created_at > ?2";
+/// An attachment R2 has kept; then it is added to the total (`all`) and to
+/// its day's row.
+const RECORD_MEDIA: &str = "INSERT INTO media (key, fid, bytes, type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+const ADD_MEDIA: &str = "INSERT INTO media_total (name, bytes, files) VALUES (?1, ?2, 1) \
+    ON CONFLICT (name) DO UPDATE SET bytes = bytes + excluded.bytes, files = files + 1";
 
 thread_local! {
     /// Whether this isolate has made sure the tables exist.
@@ -193,6 +209,15 @@ struct DueRow {
 #[derive(Deserialize)]
 struct IdRow {
     id: f64,
+}
+
+#[derive(Deserialize)]
+struct UsageRow {
+    files: f64,
+    bytes: f64,
+    oldest: Option<f64>,
+    today: f64,
+    stored: f64,
 }
 
 #[derive(Deserialize)]
@@ -507,6 +532,37 @@ impl D1Index {
     }
 }
 
+/// What readers' attachments take, for `crate::media`.
+impl D1Index {
+    /// What `fid` has uploaded in the 24 hours to `now` (Unix seconds),
+    /// what everyone has today, and what is stored in all.
+    pub async fn media_usage(&self, fid: u64, now: i64) -> Result<Usage, IndexError> {
+        ensure_schema(&self.db).await?;
+        let args = [number(fid as f64), number((now - WINDOW) as f64), day_row(now).into()];
+        let statement = self.db.prepare(MEDIA_USAGE).bind(&args).map_err(failed)?;
+        let row: Option<UsageRow> = statement.first(None).await.map_err(failed)?;
+        Ok(row.map_or_else(Usage::default, |row| Usage {
+            files: row.files as u32,
+            bytes: row.bytes as u64,
+            oldest: row.oldest.map(|at| at as i64),
+            today: row.today as u32,
+            stored: row.stored as u64,
+        }))
+    }
+
+    /// Record an attachment that R2 has kept, and add it to the total and
+    /// to its day's count, in one transaction.
+    pub async fn record_media(&self, key: &str, fid: u64, bytes: u64, mime: &str, now: i64) -> Result<(), IndexError> {
+        let size = number(bytes as f64);
+        let args = [key.into(), number(fid as f64), size.clone(), mime.into(), number(now as f64)];
+        let record = self.db.prepare(RECORD_MEDIA).bind(&args).map_err(failed)?;
+        let total = self.db.prepare(ADD_MEDIA).bind(&["all".into(), size.clone()]).map_err(failed)?;
+        let day = self.db.prepare(ADD_MEDIA).bind(&[day_row(now).into(), size]).map_err(failed)?;
+        self.db.batch(vec![record, total, day]).await.map_err(failed)?;
+        Ok(())
+    }
+}
+
 impl ScheduledStore for D1Index {
     fn due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
         let db = self.db.clone();
@@ -540,5 +596,30 @@ impl ScheduledStore for D1Index {
             Ok(())
         }
         .boxed_local()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_schema_is_every_migration_in_order() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../migrations");
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".sql"))
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), SCHEMA.len(), "{names:?}");
+        for (name, script) in names.iter().zip(SCHEMA) {
+            assert_eq!(std::fs::read_to_string(format!("{dir}/{name}")).unwrap(), script, "{name}");
+            // Each isolate runs them all again before it first writes.
+            for statement in sql_statements(script) {
+                let again = ["CREATE TABLE IF NOT EXISTS ", "CREATE INDEX IF NOT EXISTS "];
+                assert!(again.iter().any(|start| statement.starts_with(start)), "{name}: {statement}");
+            }
+        }
     }
 }

@@ -7,7 +7,7 @@ The relevant Free plan limits, as of October 2026:
 
 | Limit | Value | Allthing's design |
 |---|---|---|
-| Worker requests | 100,000/day (resets 00:00 UTC) | `/api/*`, `/version` and `/wasm/*` run the Worker; everything else is a static asset. `/wasm/*` is the app's WebAssembly, fetched once per browser (it is cached for a year), so it adds one request to a first visit only |
+| Worker requests | 100,000/day (resets 00:00 UTC) | `/api/*`, `/version`, `/wasm/*` and `/m/*` run the Worker; everything else is a static asset. `/wasm/*` is the app's WebAssembly, fetched once per browser (it is cached for a year), so it adds one request to a first visit only. `/m/*` is readers' attachments, a request for each a browser doesn't have yet ([§12](#12-attachments-r2)) |
 | Static asset requests | free and unlimited | The app, styles, fonts, emoji and stickers are all static, and so are the parts of the app fetched when used (the DAU page's dashboard, the composer, React's picker, signing in, the list on /scheduled, writing, and the pages of posts, profiles, channels and search). Other Farcaster apps load a cast's sticker from allthing.social too, as a static asset |
 | CPU time | 10 ms per invocation | Payloads are parsed once per refresh and cached; cache hits copy bytes |
 | Subrequests | 50 per invocation (`fetch` **and** Cache API calls) | Hard budget of 45 per invocation, enforced in code |
@@ -50,9 +50,11 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | After posting a cast, a reply or a quote, or deleting one | 1 to refresh its pages (`/api/v1/refresh`) and 1 to read each again past the browser's cache: the reader's profile, and for a reply its cast and that cast's replies, the post page it was written on, and for a cast in a channel the channel. A page that doesn't have it yet is refreshed and read again after 4 and 10 s: 2 to 5 requests, 15 at most | none |
 | A profile, for a reader who can follow | **0** more: the browser asks Hypersnap whether the reader follows the account (`/v1/linkById`, one request per profile view) | none |
 | Following, unfollowing, or deleting one's own cast | **0**: signed and handed to Hypersnap by the browser, like a like | none |
+| Attaching an image or a video to a cast | 1 per file (`POST /api/v1/media`: D1 1–2 and R2 1, no upstream call), and 1 when the composer asks whether it may attach (`/api/v1/media`: no subrequest, kept 5 minutes by the browser) ([§12](#12-attachments-r2)) | none |
+| Showing a reader's attachment, here or in any other app | 1 per file a browser doesn't have (`/m/…`, an R2 read; each kept a year, as immutable); a video as many as the ranges its player asks for, usually 1 to 3 | none |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 
-Images and videos never touch the Worker. They load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.
+Images and videos never touch the Worker, except readers' own attachments, which it serves from R2 at `/m/` ([§12](#12-attachments-r2)). The others load straight from `imagedelivery.net` and Cloudflare Stream; HLS segments are fetched by the browser, never proxied.
 
 The front page fills the space near the end of the list even when filtering leaves a batch short or empty. It can request offsets 100 through 900, at most nine additional payloads (1,000 source casts including the first page). Each payload remains a separate cached, guarded invocation with the same 45-subrequest budget. Failed pages keep their 2, 4 and 8 second retry delays. Deep scrolling or short filtered batches can therefore cost up to ten home requests per visit; the typical capacity estimate below does not describe that worst case.
 
@@ -127,6 +129,9 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | sign-in `start`, `qr`, `signout`; a key's endorsement (`auth/signer`) and `/api/v1/signer` | 0 |
 | scheduled casts: the list, scheduling, cancelling | D1 1 (+ the schema once per isolate); no upstream calls; never cached |
 | refresh (after a reader's write) | per page (≤ 5): cache read 1 + cache write 1, of an entry there is (≤ 10); no upstream calls; never cached |
+| an attachment's upload (`POST /api/v1/media`) | D1 1 (the reader's day, the day's uploads and the total) + the schema once per isolate + R2 put 1 + D1 1 (the file, the total and the day's count, in one batch) + R2 delete 1, only for a file that can't be recorded (≤ 5); no upstream calls; never cached |
+| an attachment (`/m/…`) | R2 1 (a read of all or a range, or of its metadata for `HEAD` and `If-None-Match`; a range past the end 2) |
+| `/api/v1/media` | 0 |
 | `/version` | 0 |
 
 **Preloaded previews** (`/engagement`) give way to page builds. As each list's read starts, the batch checks the isolate's Hypersnap bucket and reads only while it holds more than 16 tokens, likes first. Lists left out make the batch partial: it is cached for 15 s, then rebuilt, and the client loads those lists when their popover opens. With no room at all it answers 503, and the client does the same. A batch's cache key is its sorted hashes, and batches follow the list (cards 1–6, 7–12, …), so readers of the same feed share each batch's edge cache entry.
@@ -158,6 +163,8 @@ Profile cards (`notes.users`) come from objects a build has already parsed. For 
 
 Endorsing a reader's key signs one EIP-712 digest with secp256k1 (two with `ALLTHING_SPONSOR`): **0.074 ms** a signature natively at `opt-level = "z"` (`k256` without its precomputed tables, as the Worker builds it), so about 1 ms or less as WebAssembly. The Keccak-256 hashes around it take microseconds.
 
+An attachment's upload costs the same CPU whatever its size: the Worker hands the request's own body stream to R2 and never reads it, so none of it passes through WebAssembly. Measured on the real Worker under `wrangler dev`, its WebAssembly memory stayed at 1.31 MiB through two 45 MiB uploads, where a body read into Rust would have grown it by 45 MiB at least, and for good. The work around the stream, natively at `opt-level = "z"`: **0.0012 ms** an upload (the session's HMAC, the type and size, the quota, the name, URL and answer) and **0.0007 ms** a range served; the rest is a few runtime calls and D1's two queries. A sampling profiler attached to the local runtime isn't a measure of it: it charges the runtime's own receiving of a large body to whichever JavaScript frame ran last, about 230 ms for a 45 MiB body refused before anything touched it.
+
 Signing in costs little CPU, measured the same way: a `verify` parses the message (under 0.001 ms), recovers its signer with secp256k1 (**0.10 ms**) and signs the session cookie (0.001 ms); drawing a sign-in QR code takes **0.86 ms**, most of it scoring the code's eight masks. Even at several times slower as WebAssembly, that is about 0.5 ms and 2 to 4 ms.
 
 WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. A Solana history read (up to 1,000 signatures per address, about 200 KB) is parsed without keeping its entries.
@@ -188,7 +195,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 
 - **Per-client limit**: the `API_LIMITER` rate-limiting binding allows 120 API calls a minute per IP per Cloudflare location, and answers 429 with `Retry-After: 60` beyond that. It is a backstop; normal browsing uses a few calls a minute.
 - **Batches**: one `/api/v1/engagement` request can cost up to 12 upstream reads, but only while the isolate's Hypersnap bucket holds more than 16 tokens. A flood of batches for made-up combinations of casts gets 503s once it reaches that floor, and page builds keep the rest.
-- **Reads only**: anything but GET or HEAD on `/api/*` gets 405, except the sign-in endpoints and the endorsement of a key (`/api/v1/auth/*`), which take only POSTs whose `Origin` is the site's own and are under the same per-IP limit. An endorsement needs a session, makes no upstream call and costs one or two signatures. The Worker submits nothing to Farcaster: a reader's likes and recasts go from their browser to Hypersnap, under Hypersnap's own limits. A sign-in's checks run only for a browser holding the signed nonce cookie its `start` set, and a `verify` costs at most 3 upstream calls under the OP Mainnet RPC's own bucket (burst 10, 2 a second). The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
+- **Reads only**: anything but GET or HEAD on `/api/*` gets 405, except the sign-in endpoints and the endorsement of a key (`/api/v1/auth/*`), scheduled casts and the upload of an attachment, which take only POSTs whose `Origin` is the site's own and are under the same per-IP limit. An upload also needs a session, and is held to a reader's 20 a minute, 60 files and 300 MiB a day, 2,000 a day from everyone and 9 GiB in all ([§12](#12-attachments-r2)). An endorsement needs a session, makes no upstream call and costs one or two signatures. The Worker submits nothing to Farcaster: a reader's likes and recasts go from their browser to Hypersnap, under Hypersnap's own limits. A sign-in's checks run only for a browser holding the signed nonce cookie its `start` set, and a `verify` costs at most 3 upstream calls under the OP Mainnet RPC's own bucket (burst 10, 2 a second). The API sends no CORS headers, so other sites' scripts cannot read its answers, which leaves little reason to call it from elsewhere.
 - **The browser app** never polls; it makes one API call per page, caches answers for 5 minutes, prefetches within the caps above, and shows a "busy, try again" panel on 429 or 503 instead of retrying in a loop.
 - **When 100,000 requests/day is reached**: requests that would run the Worker (`/api/*`, `/wasm/*`) get 429 until 00:00 UTC. Static assets keep being served free, and `boot.js` then loads the static copy of the module from `/assets/`, so the site still loads and shows the error panel. Nothing is billed: the Free plan has no overage.
 - **Optional, set up in the dashboard**: a WAF rate-limiting rule on `/api/` and Bot Fight Mode stop abusive traffic *before* it reaches the Worker, so it doesn't count against the daily allowance.
@@ -201,7 +208,7 @@ Linked HTML uses the same 128 KB body limit in the browser: chunks are copied on
 
 ## 8. Watching it
 
-- `GET /api/v1/status` reports, for the isolate that answers, its request count and each upstream's requests, failures and breaker state, how fresh the cached "new" and trending lists are, and the index's rankings (when each was computed, how many casts, its floor) and the indexer's progress and D1 use today. It makes no upstream calls.
+- `GET /api/v1/status` reports, for the isolate that answers, its request count and each upstream's requests, failures and breaker state, how fresh the cached "new" and trending lists are, and the index's rankings (when each was computed, how many casts, its floor) and the indexer's progress and D1 use today, and whether attachments are set up (`media.ready`, [§12](#12-attachments-r2)). It makes no upstream calls.
 - Workers Logs are enabled with 5% head sampling (`wrangler.toml`), to stay within the free log allowance.
 - Every API response carries `x-allthing-cache` (`fresh`, `revalidating`, `miss` or `stale-if-error`) and `x-allthing-age`.
 
@@ -253,3 +260,24 @@ A reader's scheduled casts ([ARCHITECTURE.md](ARCHITECTURE.md#scheduled-casts)) 
 | D1 storage | 5 GB | Under 9 KB a cast (its message, 2 KB at most, and its draft, 6 KB at most); finished ones are dropped after a week |
 
 **Load on Hypersnap**: one `submitMessage` per scheduled cast, through the same token bucket and breaker as page builds, and while the node is busy or down, one again each minute, 30 times at most. A run whose breaker is open, or whose bucket is empty, leaves its casts for the next minute without counting a try.
+
+## 12. Attachments (R2)
+
+Readers' images and videos ([ARCHITECTURE.md](ARCHITECTURE.md#attachments)) are kept in R2, in the bucket `allthing-media`, and served by the Worker at `/m/`. R2 has a free tier of its own, apart from the Workers plan ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)); against it and the Free plan:
+
+| Limit | Free | Attachments |
+|---|---|---|
+| R2 storage | 10 GB-month, Standard class | 9 GiB at most (9.66 GB; R2's free 10 GB is 9.31 GiB): an upload that would take the total stored past it is refused (507), so no month's average can pass it. The total is a row in D1 (`media_total`). The Worker deletes no file, as casts embed them for good, so once 9 GiB are kept, attaching stops until files are removed by hand ([DEPLOY.md](DEPLOY.md#attachments-r2)); at an average of 1 MB a file, that is about 9,600 files |
+| R2 Class A operations (writes) | 1 million a month | One `put` an upload. At most 2,000 uploads a UTC day from everyone together: 62,000 a month at most. A reader may make 60 a day and 20 a minute |
+| R2 Class B operations (reads) | 10 million a month | One read a request to `/m/` (two for a range past the end). Each is a Worker request too, so the 100,000 a day bound them: 3.1 million a month at most |
+| R2 egress | free | Free, whatever is read |
+| Worker requests | 100,000/day | An upload is 1. A file shown is 1 per browser (or app's server) that doesn't have it yet, as each is cached for a year; a video is as many as the ranges its player asks for, usually 1 to 3. A file viewed often costs a request per viewer, wherever it is shown: a popular video in other Farcaster apps could take a large share of the day's 100,000. If it ever does, the bucket can be given a custom domain of its own (`media.` on the zone), which Cloudflare's cache serves with no Worker request, and new uploads' URLs pointed at it |
+| Request body | 100 MB (the zone's plan) | 50 MiB at most, a video; 10 MiB an image |
+| CPU time | 10 ms per invocation | The same at any size: the body goes from the client to R2 inside the runtime ([§4](#4-cpu-time)) |
+| Subrequests | 50 per invocation | An upload 3 to 5, a file 1 or 2 ([§3](#3-subrequests-per-invocation)) |
+| D1 rows written | 100,000/day | 4 an upload (its row and its index entry, the total and the day's count): 8,000 a day at the 2,000 uploads |
+| D1 rows read | 5,000,000/day | An upload reads the reader's index entries of the past 24 hours (60 at most) and two rows of totals |
+| D1 storage | 5 GB | About 100 bytes a file |
+
+**Not set up**, as until R2 is enabled and the bucket bound, the upload and `/m/` answer 404 at once, with no subrequest.
+
