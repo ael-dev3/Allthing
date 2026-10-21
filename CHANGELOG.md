@@ -156,6 +156,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Wallet activity by chain follows the current rules even when the edge serves a payload it cached under older ones, which it keeps for hours. For up to a day after 0.4.0, a chain under 1% could still show as 1% (0xael.eth's Optimism, 0.3% of its transactions). The browser now works out the shares from the counts itself.
 - Wallet activity says when Solana isn't counted. Solana's public RPC refuses Allthing's requests (from browsers, and so far from Cloudflare Workers), so an account's Solana wallets were left out of the chart without a word; an account whose only wallets are on Solana read "No onchain activity". The chart now says "Solana isn't counted: its public RPC refuses Allthing's requests", and the wallet payload's `sources` no longer claims Solana was read.
 - Older cached wallet responses also redact private Solana RPC diagnostics without losing counts, carried flags or cache policy.
+- At 1280 px, search results are in the feeds' column: 770 px wide and centred, as the front page's cards are, where they ran 1,100 px across the page. People come two to a row and channels three; a phone's column is as it was.
 
 ## [0.4.0] - 2026-10-18
 
