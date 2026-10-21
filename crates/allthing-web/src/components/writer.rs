@@ -575,6 +575,12 @@ impl Writer {
         }
     }
 
+    /// A word in the notice at the foot of the screen, for a few seconds:
+    /// "Draft kept", as the composer closes with one.
+    pub fn tell(self, message: &str) {
+        self.say(message.to_owned());
+    }
+
     /// Hand a write to the Farcaster app: the dialog opens with `ask`, and,
     /// signed in, what it asks for (`expect`) shows here at once, as theirs
     /// but not done yet, until the node has it. Closing the dialog without

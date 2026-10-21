@@ -4917,6 +4917,204 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
+/* The composer's tabs, as the Farcaster app's: Compose, and Drafts with
+   how many this browser keeps (components/compose.rs, `ComposeTabs`). The
+   dialog's title names it for screen readers. Each tab is 32 px tall, a
+   bar under the one shown. */
+.compose-head {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.compose-tabs {
+  display: flex;
+  gap: 18px;
+}
+
+.compose-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ink-3);
+  font: 600 15px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.compose-tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.compose-tab:hover {
+  color: var(--ink);
+}
+
+.compose-tab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 600 11.5px/18px var(--font-ui);
+  text-align: center;
+}
+
+/* On a phone, a notice at the screen's foot would sit over the composer's
+   sheet: while it's open, none shows ("Draft kept", from closing the
+   last, still in its few seconds, among them). */
+@media (max-width: 640px) {
+  html.compose-open .toast {
+    visibility: hidden;
+  }
+}
+
+/* With the Drafts tab shown, the draft and its bar, kept as they are. */
+.compose-modal.drafts-shown .compose-body,
+.compose-modal.drafts-shown .compose-foot {
+  display: none;
+}
+
+/* The drafts this browser keeps, newest first. */
+.drafts-pane {
+  padding: 8px 10px 12px;
+  overflow-y: auto;
+}
+
+.drafts-empty {
+  margin: 12px 8px;
+  font-size: 14px;
+}
+
+.drafts-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.draft-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.draft-item:last-child {
+  border-bottom: 0;
+}
+
+.draft-open {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: 400 14.5px/1.4 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.draft-open:hover {
+  background: var(--paper-2);
+}
+
+.draft-label {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.draft-label time {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+/* Its first two lines. */
+.draft-snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.draft-delete {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-3);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.draft-delete:hover {
+  color: #a3322a;
+  background: rgba(163, 50, 42, 0.08);
+}
+
+/* Discard, a word in the bar while there's a draft; and its question. */
+.compose-discard {
+  flex: none;
+  height: 32px;
+  padding: 0 8px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  font: 500 13.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.compose-discard:hover {
+  color: #a3322a;
+}
+
+.compose-discard + .length {
+  margin-left: 4px;
+}
+
+.compose-discard-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.compose-discard-ask span {
+  flex: 1 1 auto;
+}
+
+.compose-discard-ask .button {
+  height: 32px;
+  padding: 0 14px;
+}
+
+.compose-discard-ask .button.danger {
+  color: #fff;
+  background: #a3322a;
+  border-color: #a3322a;
+}
+
 /* A reply's composer, as the Farcaster app's (components/compose.rs,
    `ReplyParent`): what it answers above the text box, the author's picture
    on the left, and a 2 px line from it down to the reader's, beside the
@@ -5191,13 +5389,46 @@ p.jumbo .emoji img {
     padding-bottom: max(12px, calc(12px + env(safe-area-inset-bottom) - var(--keyboard, 0px)));
   }
 
-  /* A head 56 px tall: Cancel, and the post button from the bar; the
-     title still names the dialog for screen readers. */
+  /* A head with Cancel and the post button from the bar on its first row,
+     and the tabs on a row of their own under them, since the post button
+     can be as wide as "Post in Farcaster"; the title still names the
+     dialog for screen readers. */
   .compose-head {
+    flex-wrap: wrap;
     justify-content: flex-start;
+    row-gap: 2px;
     box-sizing: border-box;
     min-height: 56px;
-    padding: 10px 14px;
+    padding: 10px 14px 0;
+  }
+
+  .compose-tabs {
+    order: 3;
+    flex-basis: 100%;
+    gap: 20px;
+  }
+
+  /* A tap as tall as the bar's tools take, here and below. */
+  .compose-tab,
+  .compose-discard,
+  .compose-discard-ask .button {
+    height: 40px;
+  }
+
+  /* Discard's question on a line of its own, Keep and Discard together
+     under it, at its end. */
+  .compose-discard-ask {
+    justify-content: flex-end;
+  }
+
+  .compose-discard-ask span {
+    flex-basis: 100%;
+  }
+
+  .draft-delete {
+    width: 40px;
+    height: 40px;
+    margin-top: 4px;
   }
 
   .compose-head h2 {

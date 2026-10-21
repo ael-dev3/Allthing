@@ -50,6 +50,7 @@ use allthing_core::compose::{
     Draft, Gif, GifKey, GifPage, Length, ParentMediaKind, ParentPreview, Quoted, Rendition, SEARCH_PLACEHOLDER,
     gif_key_path, gifs_url, keyboard_inset, length, length_note, replying_to,
 };
+use allthing_core::drafts::{DRAFTS_KEY, Drafts, KeptDraft, key_of};
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
 use allthing_core::message::{MAX_CAST_BYTES, Sent};
@@ -57,7 +58,7 @@ use allthing_core::model::{Cast, UserSummary};
 use allthing_core::params::{fid_username, username_from_param};
 use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, SavedMedia, ScheduledCast};
 use allthing_core::text::mention_names;
-use allthing_core::text::truncate_title;
+use allthing_core::text::{text_start, truncate_title};
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -112,6 +113,33 @@ thread_local! {
     static NEXT_FILE: Cell<u64> = const { Cell::new(1) };
     /// Whether this visit has fetched the composer's code ahead of a Reply.
     static WARMED: Cell<bool> = const { Cell::new(false) };
+    /// The draft's keeping in the browser, waiting for typing to pause.
+    static KEEPING: RefCell<Option<TimeoutHandle>> = const { RefCell::new(None) };
+    /// The drafts this browser keeps, as the composer's part read them
+    /// (`composer_read_drafts`), and as kept since: `None` until it has.
+    static KEPT: RefCell<Option<Drafts>> = const { RefCell::new(None) };
+    /// The app's composer, for `warm`, which runs outside its components.
+    static THE_COMPOSER: Cell<Option<Composer>> = const { Cell::new(None) };
+}
+
+/// How long typing pauses before the draft is kept in the browser.
+const KEEP_AFTER: Duration = Duration::from_millis(400);
+
+/// What `read` makes of the drafts this browser keeps, once the composer's
+/// part has read them (`composer_read_drafts`). Their JSON is read and
+/// written there, not in the app's first part, which holds them as read.
+fn kept<T>(read: impl FnOnce(&Drafts) -> T) -> Option<T> {
+    KEPT.with_borrow(|kept| kept.as_ref().map(read))
+}
+
+/// A GIF or sticker as a draft keeps it, to show and post again.
+fn gif_of(gif: &SavedGif) -> Gif {
+    Gif {
+        slug: String::new(),
+        title: gif.title.clone(),
+        tile: Rendition { url: gif.tile.clone(), width: gif.width, height: gif.height },
+        embed: Rendition { url: gif.embed.clone(), width: gif.width, height: gif.height },
+    }
 }
 
 /// An image or a video the draft carries, and how its upload goes.
@@ -271,6 +299,14 @@ impl Other {
     }
 }
 
+/// What the composer shows under its tabs: the draft, or the drafts this
+/// browser keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pane {
+    Compose,
+    Drafts,
+}
+
 /// The picker open under the draft, if one is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Picker {
@@ -337,6 +373,12 @@ pub struct Composer {
     pub incoming: RwSignal<u32>,
     /// Files are being dragged over it.
     dragging: RwSignal<bool>,
+    /// The draft, or the drafts kept.
+    pane: RwSignal<Pane>,
+    /// Discard was pressed: whether to, asked once.
+    discarding: RwSignal<bool>,
+    /// How many drafts this browser keeps, for the Drafts tab.
+    kept: RwSignal<usize>,
 }
 
 impl Composer {
@@ -359,24 +401,189 @@ impl Composer {
             note: RwSignal::new(None),
             incoming: RwSignal::new(0),
             dragging: RwSignal::new(false),
+            pane: RwSignal::new(Pane::Compose),
+            discarding: RwSignal::new(false),
+            kept: RwSignal::new(0),
         }
     }
 
-    /// Open the composer for `target`. A draft for something else is set
-    /// aside; one for the same is taken up again, with what the page shows
+    /// Open the composer for `target`. A draft for something else is kept
+    /// in the browser, and the one kept for `target` taken up, so each keeps
+    /// its own; one for the same is taken up again, with what the page shows
     /// of the cast now.
     fn start(self, target: Target) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
         hold_keyboard();
         // A scheduled cast left unsaved isn't taken up as a new one.
         let same = self.target.with_untracked(|t| *t == target) && self.editing.get_untracked().is_none();
+        if !same {
+            self.keep();
+        }
         self.target.set(target);
         if !same {
             self.clear();
         }
+        // Set aside, or kept since before a reload: its draft comes back.
+        if self.blank() {
+            self.take_up();
+        } else if let Some(count) = kept(|drafts| drafts.drafts.len()) {
+            self.kept.set(count);
+        }
+        self.pane.set(Pane::Compose);
+        self.discarding.set(false);
         self.picker.set(Picker::Closed);
         self.error.set(None);
         self.open.set(true);
+    }
+
+    /// Whether the draft holds nothing: no text, no files, no GIF.
+    fn blank(self) -> bool {
+        self.text.with_untracked(|t| t.trim().is_empty())
+            && self.gif.with_untracked(Option::is_none)
+            && self.files.with_untracked(Vec::is_empty)
+    }
+
+    /// The draft as this browser keeps it; none for a scheduled cast being
+    /// changed, which the Worker keeps. Read untracked: an effect that
+    /// closes the composer (a navigation) mustn't come to depend on the
+    /// draft.
+    fn as_kept(self) -> Option<KeptDraft> {
+        if self.editing.get_untracked().is_some() {
+            return None;
+        }
+        let draft = untrack(|| self.saved(&self.draft()));
+        let preview = self.target.with_untracked(|target| match target {
+            Target::Reply(to) => to.preview.as_deref().cloned(),
+            _ => None,
+        });
+        Some(KeptDraft { key: key_of(&draft), draft, preview, updated_at: now() })
+    }
+
+    /// Keep the draft in the browser now, in the place of the one kept for
+    /// the same; emptied, it goes.
+    fn keep(self) {
+        if let Some(waiting) = KEEPING.with(|k| k.borrow_mut().take()) {
+            waiting.clear();
+        }
+        let Some(draft) = self.as_kept() else { return };
+        // Nothing in hand, and what's kept not read yet (its code still
+        // coming): what's kept stays as it is, not let go.
+        if KEPT.with_borrow(Option::is_none) && allthing_core::drafts::is_empty(&draft.draft) {
+            return;
+        }
+        self.change_kept(move |drafts| drafts.put(draft));
+    }
+
+    /// Change the drafts kept: at once, if the composer's part has read
+    /// them, else once it has; then store them, from there.
+    fn change_kept(self, change: impl FnOnce(&mut Drafts) + 'static) {
+        let mut change = Some(change);
+        let mut apply = move || {
+            KEPT.with_borrow_mut(|kept| {
+                let drafts = kept.as_mut()?;
+                (change.take()?)(drafts);
+                Some(drafts.clone())
+            })
+        };
+        let changed = apply();
+        if let Some(drafts) = &changed {
+            self.kept.set(drafts.drafts.len());
+        }
+        spawn_local(async move {
+            let drafts = match changed {
+                Some(drafts) => drafts,
+                None => {
+                    let read = composer_read_drafts(self).await;
+                    let Some(drafts) = read.ok().and_then(|()| apply()) else { return };
+                    self.kept.set(drafts.drafts.len());
+                    drafts
+                }
+            };
+            let _ = composer_store_drafts(drafts).await;
+        });
+    }
+
+    /// The same, once typing pauses.
+    fn keep_soon(self) {
+        let handle = set_timeout_with_handle(move || self.keep(), KEEP_AFTER).ok();
+        if let Some(waiting) = KEEPING.with(|k| k.replace(handle)) {
+            waiting.clear();
+        }
+    }
+
+    /// Take up the draft this browser keeps for what the composer is for,
+    /// if any: its text, its files, its GIF or sticker. Before the
+    /// composer's part has read what's kept (a first open, with its code
+    /// still coming), once it has: if the composer is still open, blank,
+    /// and for the same, it's drawn again with it.
+    fn take_up(self) {
+        let Some(key) = self.as_kept().map(|kept| kept.key) else { return };
+        match kept(|drafts| (drafts.drafts.len(), drafts.get(&key).cloned())) {
+            Some((count, found)) => {
+                self.kept.set(count);
+                if let Some(found) = found {
+                    self.fill(&found);
+                }
+            }
+            None => spawn_local(async move {
+                if composer_read_drafts(self).await.is_err() {
+                    return;
+                }
+                let found = kept(|drafts| drafts.get(&key).cloned()).flatten();
+                let still =
+                    self.open.get_untracked() && self.blank() && self.as_kept().is_some_and(|kept| kept.key == key);
+                if let Some(found) = found.filter(|_| still) {
+                    self.fill(&found);
+                    // Drawn again, so its text box has it.
+                    self.target.update(|_| {});
+                }
+            }),
+        }
+    }
+
+    /// Fill the composer with a draft kept: its text, files, GIF or sticker.
+    fn fill(self, kept: &KeptDraft) {
+        self.text.set(kept.draft.text.clone());
+        self.gif.set(kept.draft.gif.as_ref().map(gif_of));
+        self.files.set(kept.draft.media.iter().filter_map(Attachment::kept).collect());
+    }
+
+    /// Take up a draft from the Drafts tab, keeping the one in hand: for a
+    /// reply, with what it showed of the cast it answers.
+    fn resume(self, kept: &KeptDraft) {
+        self.keep();
+        let target = match (&kept.draft.reply, &kept.draft.quote) {
+            (Some(to), _) => {
+                Target::Reply(Other { preview: kept.preview.clone().map(Arc::new), ..Other::from_saved(to) })
+            }
+            (None, Some(of)) => Target::Quote(Other::from_saved(of)),
+            (None, None) => Target::Cast(kept.draft.channel.clone()),
+        };
+        self.clear();
+        self.target.set(target);
+        self.channel_url.set(kept.draft.channel_url.clone());
+        self.take_up();
+        self.discarding.set(false);
+        self.pane.set(Pane::Compose);
+    }
+
+    /// Let the draft in hand go, here and in the browser.
+    fn discard(self) {
+        self.clear();
+        self.keep();
+        self.discarding.set(false);
+    }
+
+    /// Let the draft kept for `key` go from the browser, and from the
+    /// composer if it holds it.
+    fn forget(self, key: &str) {
+        if self.as_kept().is_some_and(|kept| kept.key == key) {
+            self.clear();
+        }
+        let key = key.to_owned();
+        self.change_kept(move |drafts| {
+            drafts.remove(&key);
+        });
     }
 
     fn clear(self) {
@@ -412,17 +619,14 @@ impl Composer {
         };
         self.target.set(target);
         self.text.set(saved.text.clone());
-        self.gif.set(saved.gif.as_ref().map(|gif| Gif {
-            slug: String::new(),
-            title: gif.title.clone(),
-            tile: Rendition { url: gif.tile.clone(), width: gif.width, height: gif.height },
-            embed: Rendition { url: gif.embed.clone(), width: gif.width, height: gif.height },
-        }));
+        self.gif.set(saved.gif.as_ref().map(gif_of));
         self.files.set(saved.media.iter().filter_map(Attachment::kept).collect());
         self.channel_url.set(saved.channel_url.clone());
         let at = if cast.at >= now() + MIN_AHEAD { cast.at } else { later(now()) };
         self.when.set(Some(local_input(at)));
         self.editing.set(Some(cast.id));
+        self.pane.set(Pane::Compose);
+        self.discarding.set(false);
         self.picker.set(Picker::Closed);
         self.error.set(None);
         self.open.set(true);
@@ -480,9 +684,11 @@ impl Composer {
         saved
     }
 
-    /// Close, keeping the draft, and return focus to where it was. Files
-    /// dropped that weren't taken yet are let go.
+    /// Close, keeping the draft (in the browser too, at once), and return
+    /// focus to where it was. Files dropped that weren't taken yet are let
+    /// go.
     fn close(self) {
+        self.keep();
         self.open.set(false);
         self.picker.set(Picker::Closed);
         self.dragging.set(false);
@@ -732,6 +938,7 @@ impl Composer {
                 self.text.set(text.clone());
                 self.gif.set(gif.clone());
                 self.files.set(files.clone());
+                self.keep();
             }
         })
     }
@@ -792,6 +999,10 @@ fn warm() {
     }
     spawn_local(async {
         let _ = preload_composer().await;
+        // What this browser keeps, ready as the composer opens.
+        if let Some(composer) = THE_COMPOSER.get() {
+            let _ = composer_read_drafts(composer).await;
+        }
     });
 }
 
@@ -1149,6 +1360,16 @@ pub fn QuoteButton(cast: Cast) -> impl IntoView {
 #[component]
 pub fn ComposerDialog() -> impl IntoView {
     let composer = use_composer();
+    THE_COMPOSER.set(Some(composer));
+    // A reader with drafts kept: they're read, with the composer's code,
+    // once the browser is idle, so a first open takes its draft up at once.
+    if storage().is_some_and(|storage| storage.get_item(DRAFTS_KEY).ok().flatten().is_some()) {
+        crate::components::cast::idle(move || {
+            spawn_local(async move {
+                let _ = composer_read_drafts(composer).await;
+            })
+        });
+    }
     let session = use_session();
     let location = use_location();
     let dialog = NodeRef::<leptos::html::Div>::new();
@@ -1243,7 +1464,34 @@ pub fn ComposerDialog() -> impl IntoView {
             request_animation_frame(move || set_timeout(fit, Duration::ZERO));
         }
     });
+    // The draft, kept in the browser as it changes, once typing pauses, so
+    // a reload never loses it.
+    Effect::new(move |_| {
+        composer.text.track();
+        composer.gif.track();
+        composer.files.track();
+        if composer.open.get_untracked() {
+            composer.keep_soon();
+        }
+    });
+    // Closed with something in it: it says the draft is kept.
+    let writer = use_writer();
+    Effect::new(move |was_open: Option<bool>| {
+        let open = composer.open.get();
+        if was_open == Some(true)
+            && !open
+            && composer.editing.get_untracked().is_none()
+            && !composer.blank()
+            && let Some(writer) = writer
+        {
+            writer.tell("Draft kept");
+        }
+        open
+    });
     move || {
+        // Drawn again for a draft taken up from the Drafts tab, which may be
+        // for something else.
+        composer.target.track();
         composer.open.get().then(|| {
             // KLIPY's key, once the bar has asked for it (`composer_bar`).
             let gif_key = RwSignal::new(None::<String>);
@@ -1365,7 +1613,16 @@ pub fn ComposerDialog() -> impl IntoView {
                         }
                     }
                 >
-                    <div class="modal compose-modal" role="dialog" aria-modal="true" aria-labelledby="compose-title" node_ref=dialog>
+                    // With the Drafts tab shown, the draft and its bar are
+                    // kept as they are, unseen.
+                    <div
+                        class="modal compose-modal"
+                        class:drafts-shown=move || composer.pane.get() == Pane::Drafts
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="compose-title"
+                        node_ref=dialog
+                    >
                         {move || composer.dragging.get().then(|| view! {
                             <div class="compose-drop" aria-hidden="true"><p>"Drop images or videos to attach them"</p></div>
                         })}
@@ -1373,15 +1630,27 @@ pub fn ComposerDialog() -> impl IntoView {
                         // would be a second banner and contentinfo on the page.
                         // On a phone, Cancel on the left and the post button on the
                         // right, as in the Farcaster app, where the keyboard can't
-                        // cover them (style/allthing.css); × on a computer.
+                        // cover them (style/allthing.css); × on a computer. The
+                        // title names the dialog; the tabs show, as in the
+                        // Farcaster app.
                         <div class="modal-head compose-head">
                             <button type="button" class="compose-cancel" on:click=move |_| composer.close()>"Cancel"</button>
-                            <h2 id="compose-title">{composer.title()}</h2>
+                            <h2 id="compose-title" class="visually-hidden">{composer.title()}</h2>
+                            <ComposeTabs composer/>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
                         </div>
+                        {move || (composer.pane.get() == Pane::Drafts).then(|| view! {
+                            <div class="modal-body drafts-pane" id="drafts-pane" role="tabpanel" aria-labelledby="drafts-tab">
+                                {crate::split::lazy_view(|| view! { <p class="drafts-empty muted">"Loading…"</p> }, composer_drafts(composer))}
+                            </div>
+                        })}
                         // A picker open makes the text smaller, to fit both.
+                        // Kept while the Drafts tab shows, unseen.
                         <div
                             class="modal-body compose-body"
+                            id="compose-pane"
+                            role="tabpanel"
+                            aria-labelledby="compose-tab"
                             class:compose-reply=reply
                             class:picking=move || composer.picker.get() != Picker::Closed
                         >
@@ -1504,6 +1773,176 @@ fn thumb(url: &str, kind: ParentMediaKind) -> AnyView {
         }
         .into_any(),
     }
+}
+
+/// Compose and Drafts, the composer's tabs, as the Farcaster app's: the
+/// draft, or the drafts this browser keeps (with how many). The arrow keys
+/// move between them, as tabs take them.
+#[component]
+fn ComposeTabs(composer: Composer) -> impl IntoView {
+    let show = move |pane: Pane| {
+        if pane == Pane::Drafts {
+            // The draft in hand is in the list too.
+            composer.keep();
+        }
+        composer.discarding.set(false);
+        composer.pane.set(pane);
+    };
+    let arrows = move |ev: ev::KeyboardEvent| {
+        if matches!(ev.key().as_str(), "ArrowLeft" | "ArrowRight" | "Home" | "End") {
+            ev.prevent_default();
+            let next = if composer.pane.get_untracked() == Pane::Compose { Pane::Drafts } else { Pane::Compose };
+            let next = match ev.key().as_str() {
+                "Home" => Pane::Compose,
+                "End" => Pane::Drafts,
+                _ => next,
+            };
+            show(next);
+            focus_soon(if next == Pane::Compose { "#compose-tab" } else { "#drafts-tab" });
+        }
+    };
+    let tab = move |pane: Pane| move || composer.pane.get() == pane;
+    view! {
+        <div class="compose-tabs" role="tablist" aria-label="Composer">
+            <button
+                type="button"
+                role="tab"
+                id="compose-tab"
+                class="compose-tab"
+                aria-selected=move || tab(Pane::Compose)().to_string()
+                aria-controls="compose-pane"
+                tabindex=move || if tab(Pane::Compose)() { "0" } else { "-1" }
+                on:click=move |_| show(Pane::Compose)
+                on:keydown=arrows
+            >
+                "Compose"
+            </button>
+            <button
+                type="button"
+                role="tab"
+                id="drafts-tab"
+                class="compose-tab"
+                aria-selected=move || tab(Pane::Drafts)().to_string()
+                aria-controls="drafts-pane"
+                tabindex=move || if tab(Pane::Drafts)() { "0" } else { "-1" }
+                on:click=move |_| show(Pane::Drafts)
+                on:keydown=arrows
+            >
+                "Drafts"
+                {move || (composer.kept.get() > 0).then(|| view! { <span class="compose-tab-count">{composer.kept.get()}</span> })}
+            </button>
+        </div>
+    }
+}
+
+/// Read the drafts this browser keeps (`allthing_core::drafts`) into
+/// `KEPT`, once, and again whenever another tab changes them. In the
+/// composer's part, as their JSON is. Without storage (a private window
+/// that refuses it), none, and the composer goes on without.
+#[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn composer_read_drafts(composer: Composer) -> Result<(), SplitLoaderError> {
+    read_drafts(composer);
+    Ok(())
+}
+
+/// Store the drafts kept as the browser keeps them.
+#[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn composer_store_drafts(drafts: Drafts) -> Result<(), SplitLoaderError> {
+    if let Some(storage) = storage() {
+        let _ = storage.set_item(DRAFTS_KEY, &drafts.to_json());
+    }
+    Ok(())
+}
+
+fn read_drafts(composer: Composer) {
+    if KEPT.with_borrow(Option::is_some) {
+        return;
+    }
+    reread_drafts(composer);
+    // Another tab's, as it changes them.
+    let heard = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let key =
+            js_sys::Reflect::get(&event, &wasm_bindgen::JsValue::from_str("key")).ok().and_then(|key| key.as_string());
+        if key.as_deref().is_none_or(|key| key == DRAFTS_KEY) {
+            reread_drafts(composer);
+        }
+    });
+    let _ = leptos::prelude::window().add_event_listener_with_callback("storage", heard.as_ref().unchecked_ref());
+    heard.forget();
+}
+
+fn reread_drafts(composer: Composer) {
+    let json = storage().and_then(|storage| storage.get_item(DRAFTS_KEY).ok().flatten());
+    let drafts = json.map(|json| Drafts::parse(&json, now())).unwrap_or_default();
+    composer.kept.set(drafts.drafts.len());
+    KEPT.with_borrow_mut(|kept| *kept = Some(drafts));
+}
+
+fn storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+/// The drafts this browser keeps, newest first, in the composer's Drafts
+/// tab: what each is for ("Reply to @alice"), its first lines and how long
+/// ago it changed. Pressed, one is taken up in the Compose tab, with what a
+/// reply showed of the cast it answers; × lets one go. In the composer's
+/// part, with `composer_bar`.
+#[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn composer_drafts(composer: Composer) -> Result<AnyView, SplitLoaderError> {
+    read_drafts(composer);
+    let list = RwSignal::new(kept(|drafts| drafts.drafts.clone()).unwrap_or_default());
+    Ok((move || {
+        if list.with(Vec::is_empty) {
+            return view! { <p class="drafts-empty muted">"No drafts. What you write and leave is kept here for 14 days."</p> }.into_any();
+        }
+        view! {
+            <ul class="drafts-list">
+                <For
+                    each=move || list.get()
+                    key=|kept| (kept.key.clone(), kept.updated_at)
+                    children=move |kept| {
+                        let label = kept.label();
+                        let snippet = text_start(&kept.draft.text, 240);
+                        let files = kept.draft.media.len() + usize::from(kept.draft.gif.is_some());
+                        let key = kept.key.clone();
+                        let at = kept.updated_at;
+                        let kept = StoredValue::new(kept);
+                        view! {
+                            <li class="draft-item">
+                                <button
+                                    type="button"
+                                    class="draft-open"
+                                    on:click=move |_| {
+                                        kept.with_value(|kept| composer.resume(kept));
+                                        focus_soon(".compose-text");
+                                    }
+                                >
+                                    <span class="draft-label">{label.clone()}" · "<TimeAgo ts=at/></span>
+                                    {(!snippet.is_empty()).then(|| view! { <span class="draft-snippet"><ExcerptText text=snippet/></span> })}
+                                    {(files > 0).then(|| view! {
+                                        <span class="draft-files muted small">{if files == 1 { "1 attachment".to_owned() } else { format!("{files} attachments") }}</span>
+                                    })}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="draft-delete"
+                                    aria-label=format!("Delete the draft: {label}")
+                                    on:click=move |_| {
+                                        composer.forget(&key);
+                                        list.update(|list| list.retain(|kept| kept.key != key));
+                                    }
+                                >
+                                    "×"
+                                </button>
+                            </li>
+                        }
+                    }
+                />
+            </ul>
+        }
+        .into_any()
+    })
+    .into_any())
 }
 
 /// The composer's bar while its code comes, the first time it opens.
@@ -1666,8 +2105,17 @@ fn composer_bar(
     let posts_here = Memo::new(move |_| writer.map_or(Some(false), |w| w.posts_here()));
     // The text's length, in bytes, as a cast counts it.
     let used = Memo::new(move |_| composer.text.with(|t| t.trim().len()));
+    // Something to keep, and so to discard: not a scheduled cast being
+    // changed, which /scheduled cancels.
+    let drafted = Memo::new(move |_| {
+        composer.editing.with(Option::is_none)
+            && !(composer.text.with(|t| t.trim().is_empty())
+                && composer.gif.with(Option::is_none)
+                && composer.files.with(Vec::is_empty))
+    });
     Ok(view! {
         <div class="compose-foot">
+            {move || (composer.discarding.get() && drafted.get()).then(|| view! { <DiscardAsk composer/> })}
             <div class="compose-bar">
                 <AttachButton composer/>
                 <button
@@ -1728,6 +2176,16 @@ fn composer_bar(
                         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
                     </button>
                 })}
+                {move || drafted.get().then(|| view! {
+                    <button
+                        type="button"
+                        class="compose-discard"
+                        aria-expanded=move || composer.discarding.get().to_string()
+                        on:click=move |_| composer.discarding.set(true)
+                    >
+                        "Discard"
+                    </button>
+                })}
                 <LengthRing used/>
                 {move || match (posts_here.get(), writer) {
                     (Some(false), _) | (_, None) => view! { <PostLink composer/> }.into_any(),
@@ -1737,6 +2195,44 @@ fn composer_bar(
         </div>
     }
     .into_any())
+}
+
+/// Discard, asked once: Keep, focused, or Discard, which lets the draft go,
+/// here and in the browser.
+#[component]
+fn DiscardAsk(composer: Composer) -> impl IntoView {
+    let keep = NodeRef::<leptos::html::Button>::new();
+    Effect::new(move |_| {
+        if let Some(keep) = keep.get() {
+            let _ = keep.focus();
+        }
+    });
+    view! {
+        <div class="compose-discard-ask" role="group" aria-labelledby="discard-question">
+            <span id="discard-question">"Discard this draft? It won't be kept."</span>
+            <button
+                type="button"
+                class="button"
+                node_ref=keep
+                on:click=move |_| {
+                    composer.discarding.set(false);
+                    focus_soon(".compose-discard");
+                }
+            >
+                "Keep"
+            </button>
+            <button
+                type="button"
+                class="button danger"
+                on:click=move |_| {
+                    composer.discard();
+                    focus_soon(".compose-text");
+                }
+            >
+                "Discard"
+            </button>
+        </div>
+    }
 }
 
 /// How long the draft's text is, as the Farcaster app shows it
