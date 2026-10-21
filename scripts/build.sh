@@ -58,9 +58,13 @@ fi
 ALLTHING_COMMIT="$(printf '%s' "${WORKERS_CI_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo dev)}" | cut -c1-7)"
 export ALLTHING_COMMIT
 
-# 4. The Worker. worker-build also fetches esbuild and wasm-opt.
+# 4. The Worker. worker-build also fetches esbuild and wasm-opt. The
+# workspace links all its WebAssembly with --emit-relocs, for the app's
+# wasm-split (.cargo/config.toml); the Worker's module needs none of the
+# sections that leaves, which would be more than half the upload.
 log "Building the Worker"
 (cd crates/allthing-worker && worker-build --release)
+cargo xtask strip-worker
 
 # 5. The browser app, optimized with the wasm-opt worker-build fetched.
 if [ -z "${WASM_OPT_BIN:-}" ]; then
