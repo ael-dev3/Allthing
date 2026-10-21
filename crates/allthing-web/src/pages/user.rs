@@ -75,11 +75,12 @@ fn UserPage() -> impl IntoView {
                 // visit knows; its casts once the payload arrives.
                 Some(preview) => {
                     let path = user_href(&preview.user.username);
+                    // The casts' placeholders only if they're slow to come.
                     view! {
                         <Columns class="profile-columns">
                             <ProfileHeader user=preview.user has_card=preview.has_card joined=preview.joined/>
                             <ProfileTabs path replies_tab sort/>
-                            <CastSkeletons count=3/>
+                            <div class="later"><CastSkeletons count=3/></div>
                         </Columns>
                     }
                     .into_any()

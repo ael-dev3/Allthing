@@ -335,6 +335,37 @@ pub fn ready<T: DeserializeOwned>(path: &str) -> Option<Fetched<T>> {
     cached::<T>(path, js_sys::Date::now()).and_then(Result::ok)
 }
 
+/// Whether a fresh answer for `path` is kept, so a page that reads it shows
+/// it in the frame it's drawn in.
+pub fn kept(path: &str) -> bool {
+    let now = js_sys::Date::now();
+    CACHE.with(|c| c.borrow().get(path).is_some_and(|r| now - r.at < ttl(path) && r.status == 200))
+}
+
+/// Whether a request that brings `path` is on its way.
+pub fn loading(path: &str) -> bool {
+    IN_FLIGHT.with(|f| f.borrow().contains(path)) || COVERED.with(|c| c.borrow().contains(path))
+}
+
+/// Start reading `path` now, for a page about to open: once, as a prefetch
+/// is, but past the cap on prefetches in flight, since the page would ask
+/// for it a moment later anyway (and waits for this answer instead).
+pub fn fetch_ahead(path: &str) {
+    if kept_or_loading(path, js_sys::Date::now()) {
+        return;
+    }
+    IN_FLIGHT.with(|f| f.borrow_mut().insert(path.to_owned()));
+    let path = path.to_owned();
+    wasm_bindgen_futures::spawn_local(async move {
+        let raw = fetch_raw(&path).await.ok();
+        if let Some(raw) = raw {
+            remember(&path, raw, js_sys::Date::now());
+        }
+        IN_FLIGHT.with(|f| f.borrow_mut().remove(&path));
+        pump_cards();
+    });
+}
+
 /// Profile cards' facts (vote, wallets) prefetched per 5 minutes, at most:
 /// with a mouse, and on a touch screen, where each card a reader scrolls
 /// past would otherwise cost two requests.

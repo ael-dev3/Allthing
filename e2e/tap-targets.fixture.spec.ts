@@ -100,6 +100,8 @@ test("at 390 on a touch screen, the small targets take a 44 px tap", async ({ br
   await check("Follow", page.getByRole("button", { name: "Follow @alice" }));
   await check("Favorite", page.getByRole("button", { name: "Favorite" }));
   await check("Casts", page.locator(".tabs a").first());
+  // A page is at least a screen tall, so the footer is a scroll away.
+  await page.locator(".site-footer").scrollIntoViewIfNeeded();
   await check("the footer's Source", page.locator(".site-footer").getByRole("link", { name: "Source on GitHub" }));
   // No wider than the screen for all of it.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

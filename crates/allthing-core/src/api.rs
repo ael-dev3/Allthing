@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::emoji::ReactionReply;
 use crate::latest::Cursor;
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
-use crate::params::{hash_from_param, percent_encode};
+use crate::params::{channel_key_from_param, hash_from_param, percent_decode, percent_encode, username_from_param};
 use crate::profile::UserCard;
 use crate::provenance::{Backend, Origin};
-use crate::ranking::TrendingWindow;
+use crate::ranking::{Sort, TimeRange, TrendingWindow};
 use crate::website::Website;
 
 pub const API_PREFIX: &str = "/api/v1";
@@ -536,6 +536,53 @@ pub fn search_path(query: &str) -> String {
     format!("{API_PREFIX}/search?q={}", percent_encode(query.trim()))
 }
 
+/// What a page of the app reads first: its API path, and, for a post or a
+/// profile, the cast or the account a feed may have shown already.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageRead {
+    pub api: String,
+    /// A post's cast hash.
+    pub cast: Option<String>,
+    /// A profile's username, lowercase.
+    pub user: Option<String>,
+}
+
+/// What the page at `path` (without the static copy's base) and `query`
+/// (with or without its `?`) reads first, as the page itself asks for it:
+/// for a navigation to fetch ahead and wait for. `None` for a page that
+/// reads nothing first, or isn't known.
+pub fn page_read(path: &str, query: &str) -> Option<PageRead> {
+    let param = |name: &str| {
+        query.trim_start_matches('?').split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key == name).then(|| percent_decode(&value.replace('+', " "))).flatten()
+        })
+    };
+    let read = |api: String| Some(PageRead { api, cast: None, user: None });
+    if path.is_empty() || path == "/" {
+        return read(if Sort::parse(param("sort").as_deref(), Sort::Hot) == Sort::New {
+            latest_path()
+        } else {
+            home_page_path(0, TimeRange::parse(param("t").as_deref()).window())
+        });
+    }
+    if let Some(raw) = path.strip_prefix("/p/") {
+        let hash = hash_from_param(&percent_decode(raw)?)?;
+        return Some(PageRead { api: cast_path(&hash), cast: Some(hash), user: None });
+    }
+    if let Some(raw) = path.strip_prefix("/u/") {
+        let name = username_from_param(raw)?;
+        return Some(PageRead { api: user_path(&name), cast: None, user: Some(name) });
+    }
+    if let Some(raw) = path.strip_prefix("/c/") {
+        return read(channel_path(&channel_key_from_param(raw)?));
+    }
+    if path == "/search" {
+        return param("q").filter(|q| !q.trim().is_empty()).and_then(|q| read(search_path(&q)));
+    }
+    None
+}
+
 /// `limit` is a short preview (10) or the full list (100).
 pub fn reactions_path(hash: &str, kind: ReactionKind, limit: u32) -> String {
     format!("{API_PREFIX}/reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
@@ -712,6 +759,28 @@ pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pages_read_what_they_ask_for() {
+        let hash = format!("0x{}", "ab".repeat(20));
+        let post = page_read(&format!("/p/{}", hash.to_uppercase().replace("0X", "0x")), "").unwrap();
+        assert_eq!(post, PageRead { api: cast_path(&hash), cast: Some(hash.clone()), user: None });
+        let profile = page_read("/u/@Dwr", "").unwrap();
+        assert_eq!((profile.api.as_str(), profile.user.as_deref()), ("/api/v1/user?name=dwr", Some("dwr")));
+        assert_eq!(page_read("/u/balajis.eth", "?tab=replies").unwrap().api, "/api/v1/user?name=balajis.eth");
+        assert_eq!(page_read("/c/Books", "").unwrap().api, "/api/v1/channel?id=books");
+        // The front page: hot and top read the trending page of their range; new, the newest casts.
+        assert_eq!(page_read("/", "").unwrap().api, home_page_path(0, TrendingWindow::Day));
+        assert_eq!(page_read("", "?sort=top&t=week").unwrap().api, home_page_path(0, TrendingWindow::Week));
+        assert_eq!(page_read("/", "sort=new&t=week").unwrap().api, latest_path());
+        assert_eq!(page_read("/search", "?q=good+morning").unwrap().api, search_path("good morning"));
+        assert_eq!(page_read("/search", "?q=caf%C3%A9").unwrap().api, search_path("café"));
+        for (path, query) in
+            [("/search", ""), ("/search", "?q=%20"), ("/p/0x12", ""), ("/u/", ""), ("/dau", ""), ("/scheduled", "")]
+        {
+            assert_eq!(page_read(path, query), None, "{path}{query}");
+        }
+    }
 
     fn quoted(hash: &str) -> Cast {
         serde_json::from_value(serde_json::json!({

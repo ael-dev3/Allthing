@@ -63,7 +63,11 @@ pub fn href(path: &str) -> String {
 /// sent the static copy from `/Allthing/...` to `/Allthing/Allthing/...`.
 pub fn use_go() -> impl Fn(&str, NavigateOptions) + Clone + 'static {
     let navigate = use_navigate();
-    move |to: &str, options: NavigateOptions| navigate(to, NavigateOptions { resolve: false, ..options })
+    move |to: &str, options: NavigateOptions| {
+        // Any page the app opens takes over from one still waiting to (nav.rs).
+        crate::nav::cancel();
+        navigate(to, NavigateOptions { resolve: false, ..options })
+    }
 }
 
 /// A query value decoded exactly once. The router's ParamsMap also

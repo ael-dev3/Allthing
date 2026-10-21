@@ -63,6 +63,7 @@ The front page fills the space near the end of the list even when filtering leav
 
 **Prefetching** ([PERFORMANCE.md](PERFORMANCE.md)) spends Worker requests ahead of clicks, within caps:
 - hover or touch on a card: one `/api/v1/cast` request, deduplicated;
+- a link to a post or a channel pressed, touched, focused, or with a mouse resting on it for 100 ms: one request for the page it opens (`/api/v1/cast` or `/api/v1/channel`), deduplicated and reused for 5 minutes; a press asks for the page's own request a moment early, and only a link rested on or focused but not followed costs one more;
 - cards that stay in view: at most 6 a minute;
 - who liked and recasted the cards in view, and their replies, and the next run of them once it is less than a screen below: one `/api/v1/engagement` batch per run of six cards, one at a time, at least 2 s apart, at most 8 per page view, with a mouse or on a touch screen ([PERFORMANCE.md](PERFORMANCE.md#popover-previews));
 - the votes and wallets of the people a preview names, as it opens: up to 2 per person, at most 30 people per 5 minutes ([PERFORMANCE.md](PERFORMANCE.md#popover-previews));

@@ -64,6 +64,9 @@ pub fn CastCard(
     #[cfg(feature = "static-host")]
     let reactions = ();
     let gone = crate::components::deleted(&cast.hash);
+    // Drawn as Back or Forward puts the reader's place back, a card is where
+    // it was: it doesn't rise into place again.
+    let entrance = if crate::nav::restoring() { "; animation: none" } else { "" };
     let node = NodeRef::<leptos::html::Article>::new();
     Effect::new(move |_| {
         if let Some(element) = node.get() {
@@ -87,7 +90,7 @@ pub fn CastCard(
             data-likes=cast.likes
             data-recasts=cast.recasts
             data-replies=cast.replies
-            style=format!("--i: {}", index.min(16))
+            style=format!("--i: {}{entrance}", index.min(16))
             on:click=click
             on:pointerenter=move |_| warm()
             on:touchstart=move |_| warm_touch()

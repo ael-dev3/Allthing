@@ -33,8 +33,8 @@
 </head>
 <body>
 <div id="boot" class="boot" aria-hidden="true">
-  <!-- The app's header, as tall as it is: its search box sets its height, so an unseen one is here too. -->
-  <header class="site-header"><div class="header-inner"><span class="wordmark">Allthing</span><form class="search-box boot-holder"><input type="search" tabindex="-1" disabled></form></div><div class="portal-line"></div></header>
+  <!-- The app's header as it will be, so nothing in it pops in when the app comes: Home, the search box, and the account's place, which boot.js fills (Sign in, the reader's picture, or the static copy's note). Classes of their own (boot-*), styled as the app's, so nothing that looks for the app's finds these. -->
+  <header class="site-header"><div class="header-inner"><span class="wordmark">Allthing</span><nav class="boot-nav"><span>Home</span></nav><form class="boot-search"><svg class="icon" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/></svg><input type="search" placeholder="Search" tabindex="-1" disabled></form><span id="boot-account"></span></div><div class="portal-line"></div></header>
   <div class="boot-glow"></div>
 </div>
 <noscript><p class="noscript">Allthing is built in Rust and runs as WebAssembly, so it needs JavaScript enabled.</p></noscript>
