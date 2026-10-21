@@ -48,7 +48,7 @@ use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
 use allthing_core::compose::{
     Draft, Gif, GifKey, GifPage, Length, ParentMediaKind, ParentPreview, Quoted, Rendition, SEARCH_PLACEHOLDER,
-    gif_key_path, gifs_url, length, length_note, replying_to,
+    gif_key_path, gifs_url, keyboard_inset, length, length_note, replying_to,
 };
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
@@ -367,6 +367,7 @@ impl Composer {
     /// of the cast now.
     fn start(self, target: Target) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
+        hold_keyboard();
         // A scheduled cast left unsaved isn't taken up as a new one.
         let same = self.target.with_untracked(|t| *t == target) && self.editing.get_untracked().is_none();
         self.target.set(target);
@@ -395,6 +396,7 @@ impl Composer {
     /// has passed (one that didn't go out) is given a new one.
     pub fn edit(self, cast: &ScheduledCast) {
         RETURN_FOCUS.with(|r| *r.borrow_mut() = document().active_element().and_then(|el| el.dyn_into().ok()));
+        hold_keyboard();
         self.clear();
         let saved = SavedDraft::parse(&cast.draft);
         let target = match (&saved.reply, &saved.quote) {
@@ -798,6 +800,99 @@ fn warm_when_idle() {
     }
 }
 
+/// The text field that holds a phone's keyboard up (`hold_keyboard`).
+const KEYBOARD_PROXY: &str = "keyboard-proxy";
+
+/// On iOS, give focus, inside the tap that opens the composer, to a text
+/// field that is always there, out of sight: iOS's WebKit brings up its
+/// keyboard only for focus given in the tap itself, and the composer's text
+/// box is drawn a moment after it. The box takes focus from the field as
+/// it's drawn, and the keyboard stays up. Elsewhere (Chrome on Android), the
+/// box's own focus, a moment after the tap, brings the keyboard up, so the
+/// tap does no more: a focus costs it a few milliseconds on a slow phone.
+fn hold_keyboard() {
+    if !ios() {
+        return;
+    }
+    let document = document();
+    let field = document.get_element_by_id(KEYBOARD_PROXY).or_else(|| {
+        let field = document.create_element("input").ok()?;
+        field.set_id(KEYBOARD_PROXY);
+        for (name, value) in [
+            ("class", "keyboard-proxy"),
+            ("type", "text"),
+            ("tabindex", "-1"),
+            ("aria-hidden", "true"),
+            ("autocomplete", "off"),
+        ] {
+            let _ = field.set_attribute(name, value);
+        }
+        document.body()?.append_child(&field).ok()?;
+        Some(field)
+    });
+    if let Some(field) = field {
+        // Where it is: not scrolled to, which would lay the page out in the tap.
+        let options = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &options,
+            &wasm_bindgen::JsValue::from_str("preventScroll"),
+            &wasm_bindgen::JsValue::TRUE,
+        );
+        let focus = js_sys::Reflect::get(&field, &wasm_bindgen::JsValue::from_str("focus")).ok();
+        if let Some(focus) = focus.and_then(|focus| focus.dyn_into::<js_sys::Function>().ok()) {
+            let _ = focus.call1(&field, &options);
+        }
+    }
+}
+
+/// Whether this is iOS's WebKit: Safari, or any browser on an iPhone or an
+/// iPad (whose Safari says it's a Mac, one with a touch screen).
+fn ios() -> bool {
+    let navigator = leptos::prelude::window().navigator();
+    let agent = navigator.user_agent().unwrap_or_default();
+    ["iPhone", "iPad", "iPod"].iter().any(|device| agent.contains(device))
+        || (agent.contains("Macintosh") && navigator.max_touch_points() > 1)
+}
+
+/// The browser's visual viewport (what is in view, above a phone's
+/// keyboard), where there is one.
+fn visual_viewport() -> Option<web_sys::EventTarget> {
+    js_sys::Reflect::get(&leptos::prelude::window(), &wasm_bindgen::JsValue::from_str("visualViewport"))
+        .ok()?
+        .dyn_into()
+        .ok()
+}
+
+/// Sit the composer's sheet on a phone's keyboard: its foot, with the
+/// tools, right above it (`--keyboard`), and no taller than what's in view
+/// (`--sheet-max`), so its head, with Cancel and Reply, stays in view too
+/// (`style/allthing.css`). They're set on the sheet itself, so only it is
+/// styled again (on the page's root, every element on the page would be),
+/// only while something covers the page's foot or the page has scrolled
+/// under what's in view, and only when they change: without a keyboard,
+/// nothing is set, and the sheet sits at the screen's foot as drawn.
+fn fit_to_keyboard(sheet: &HtmlElement) {
+    let fit = visual_viewport().and_then(|viewport| {
+        let number = |key: &str| js_sys::Reflect::get(&viewport, &wasm_bindgen::JsValue::from_str(key)).ok()?.as_f64();
+        let (height, top) = (number("height")?, number("offsetTop")?);
+        let layout = leptos::prelude::window().inner_height().ok()?.as_f64()?;
+        let keyboard = keyboard_inset(layout, height, top);
+        (keyboard > 0.0 || top >= 1.0)
+            .then(|| [format!("{keyboard}px"), format!("{}px", (height - 24.0).max(160.0).round())])
+    });
+    let style = sheet.style();
+    for (name, value) in ["--keyboard", "--sheet-max"].into_iter().zip(fit.unwrap_or_default()) {
+        if style.get_property_value(name).unwrap_or_default() == value {
+            continue;
+        }
+        if value.is_empty() {
+            let _ = style.remove_property(name);
+        } else {
+            let _ = style.set_property(name, &value);
+        }
+    }
+}
+
 /// Press the composer's Cast, Reply or Quote, as Cmd or Ctrl and Enter in
 /// its text box does: only while it can be pressed.
 fn press_post() {
@@ -1068,6 +1163,44 @@ pub fn ComposerDialog() -> impl IntoView {
         }
     });
     on_cleanup(move || keys.remove());
+    // While it's open, the sheet follows a phone's keyboard as it comes,
+    // goes and the page scrolls under it (`fit_to_keyboard`).
+    let follow = StoredValue::new_local(None::<wasm_bindgen::closure::Closure<dyn FnMut()>>);
+    let stop_following = move || {
+        if let (Some(viewport), Some(Some(listener))) = (visual_viewport(), follow.try_update_value(Option::take)) {
+            for kind in ["resize", "scroll"] {
+                let _ = viewport.remove_event_listener_with_callback(kind, listener.as_ref().unchecked_ref());
+            }
+        }
+    };
+    let fit = move || {
+        if let Some(sheet) = dialog.get_untracked() {
+            fit_to_keyboard(&sheet);
+        }
+    };
+    Effect::new(move |_| {
+        let open = composer.open.get();
+        if open && follow.with_value(Option::is_none) {
+            if let Some(viewport) = visual_viewport() {
+                let listener = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(fit);
+                for kind in ["resize", "scroll"] {
+                    let _ = viewport.add_event_listener_with_callback(kind, listener.as_ref().unchecked_ref());
+                }
+                follow.set_value(Some(listener));
+            }
+        } else if !open {
+            stop_following();
+        }
+    });
+    on_cleanup(stop_following);
+    // A keyboard up already as the sheet comes (focus was in another field):
+    // it's fitted once the sheet's first frame is on screen, when what's in
+    // view can be read without laying the page out in the tap.
+    Effect::new(move |_| {
+        if dialog.get().is_some() && !can_hover() {
+            request_animation_frame(move || set_timeout(fit, Duration::ZERO));
+        }
+    });
     move || {
         composer.open.get().then(|| {
             // KLIPY's key, once the bar has asked for it (`composer_bar`).
@@ -1196,7 +1329,11 @@ pub fn ComposerDialog() -> impl IntoView {
                         })}
                         // Not a <header>, nor the bar a <footer>: in a dialog they
                         // would be a second banner and contentinfo on the page.
-                        <div class="modal-head">
+                        // On a phone, Cancel on the left and the post button on the
+                        // right, as in the Farcaster app, where the keyboard can't
+                        // cover them (style/allthing.css); × on a computer.
+                        <div class="modal-head compose-head">
+                            <button type="button" class="compose-cancel" on:click=move |_| composer.close()>"Cancel"</button>
                             <h2 id="compose-title">{composer.title()}</h2>
                             <button type="button" class="modal-close" aria-label="Close" on:click=move |_| composer.close()>"×"</button>
                         </div>

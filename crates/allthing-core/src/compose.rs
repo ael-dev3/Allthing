@@ -125,6 +125,15 @@ pub fn length_note(bytes: usize) -> Option<&'static str> {
     }
 }
 
+/// How much of a screen's foot the keyboard covers, in CSS pixels, from its
+/// layout viewport's height (`innerHeight`) and its visual viewport's
+/// height and top (`visualViewport`): what lies below the visual viewport.
+/// Under a pixel, nothing.
+pub fn keyboard_inset(layout_height: f64, visual_height: f64, visual_top: f64) -> f64 {
+    let covered = layout_height - visual_height - visual_top;
+    if covered >= 1.0 { covered.round() } else { 0.0 }
+}
+
 /// How much of its text a reply's composer keeps of the cast it answers:
 /// more than the lines it shows hold.
 pub const PARENT_TEXT_CHARS: usize = 600;
@@ -773,6 +782,20 @@ mod tests {
         plain.author.display_name.clear();
         let preview = ParentPreview::of(&plain);
         assert_eq!((preview.name.as_str(), preview.text.as_str(), preview.media.len()), ("alice", "two\nlines", 0));
+    }
+
+    #[test]
+    fn the_keyboard_covers_what_lies_below_the_visual_viewport() {
+        // No keyboard: the two viewports are one.
+        assert_eq!(keyboard_inset(844.0, 844.0, 0.0), 0.0);
+        // A keyboard 336 px tall, the page not scrolled under it.
+        assert_eq!(keyboard_inset(844.0, 508.0, 0.0), 336.0);
+        // Scrolled 120 px by the browser to show the focused field.
+        assert_eq!(keyboard_inset(844.0, 508.0, 120.0), 216.0);
+        // Rounding, and zoom's fractions, never a negative.
+        assert_eq!(keyboard_inset(844.0, 843.6, 0.0), 0.0);
+        assert_eq!(keyboard_inset(844.0, 507.4, 0.0), 337.0);
+        assert_eq!(keyboard_inset(844.0, 600.0, 300.0), 0.0);
     }
 
     #[test]
