@@ -12,6 +12,7 @@
 
 use std::collections::HashSet;
 
+use allthing_core::embeds::{MediaKind, classify_url};
 use allthing_core::message::Sent;
 use leptos::prelude::*;
 
@@ -116,7 +117,11 @@ fn OutgoingCard(cast: Outgoing, user: allthing_core::model::UserSummary) -> impl
             </header>
             {cast.replying_to.map(|name| view! { <p class="replying-to">"replying to @"{name}</p> })}
             {(!cast.text.is_empty()).then(|| view! { <div class="cast-text"><CastText text=cast.text mentions=Vec::new()/></div> })}
-            {cast.image.map(|src| view! { <img class="outgoing-image" src=src alt="" loading="lazy"/> })}
+            {cast.image.map(|src| if classify_url(&src, None) == MediaKind::Video {
+                view! { <video class="outgoing-image" src=format!("{src}#t=0.1") muted=true prop:muted=true playsinline=true preload="metadata"></video> }.into_any()
+            } else {
+                view! { <img class="outgoing-image" src=src alt="" loading="lazy"/> }.into_any()
+            })}
             {cast.quoting.map(|name| view! { <p class="outgoing-quote">"quoting @"{name}</p> })}
         </article>
     }

@@ -137,7 +137,63 @@ impl MediaType {
     pub fn from_extension(extension: &str) -> Option<MediaType> {
         MediaType::ALL.into_iter().find(|t| t.extension() == extension)
     }
+
+    /// The type of a file the reader picked: the type the browser gives it,
+    /// or, when it gives none (as some systems do for a video), the type
+    /// its name's extension stands for, in any case, `.jpeg` as `.jpg`.
+    pub fn of_file(name: &str, mime: &str) -> Option<MediaType> {
+        if !mime.trim().is_empty() {
+            return MediaType::from_content_type(mime);
+        }
+        let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
+        MediaType::from_extension(if extension == "jpeg" { "jpg" } else { &extension })
+    }
 }
+
+/// The types the composer's file picker offers, which on a phone opens its
+/// photos.
+pub fn accepted() -> String {
+    MediaType::ALL.map(MediaType::mime).join(",")
+}
+
+/// Whether a file the reader picked can go with a cast, by its type and size
+/// against the limits this server gave (`GET` [`MEDIA_PATH`]): its type,
+/// or why not, naming it.
+pub fn check_file(name: &str, mime: &str, size: u64, limits: &MediaLimits) -> Result<MediaType, String> {
+    let Some(media) = MediaType::of_file(name, mime) else {
+        return Err(format!(
+            "{name} can't go with a cast: attach PNG, JPEG, GIF or WebP images, or MP4, MOV or WebM videos."
+        ));
+    };
+    let (most, kind) =
+        if media.is_video() { (limits.max_video_bytes, "videos") } else { (limits.max_image_bytes, "images") };
+    if size == 0 {
+        return Err(format!("{name} is empty."));
+    }
+    if size > most {
+        return Err(format!("{name} is too large: {kind} can be up to {}.", size_label(most)));
+    }
+    Ok(media)
+}
+
+/// A size as a reader reads it: "10 MB", "2.5 MB", "300 KB".
+pub fn size_label(bytes: u64) -> String {
+    if bytes >= MIB {
+        let mb = (bytes as f64 / MIB as f64 * 10.0).floor() / 10.0;
+        format!("{mb} MB")
+    } else {
+        format!("{} KB", (bytes as f64 / 1024.0).round().max(1.0))
+    }
+}
+
+/// How many more embeds a draft takes: a cast carries [`MAX_EMBEDS`],
+/// counting its files, its GIF or sticker, and the cast it quotes.
+pub fn embeds_left(files: usize, gif: bool, quote: bool) -> usize {
+    (MAX_EMBEDS as usize).saturating_sub(files + usize::from(gif) + usize::from(quote))
+}
+
+/// What the composer says when a draft has no room for another embed.
+pub const EMBEDS_FULL: &str = "A cast takes two embeds: remove one to add another.";
 
 /// The type a file is served as: the one kept with it, if it is one of
 /// ours, and otherwise bytes that nothing renders.
@@ -756,6 +812,56 @@ mod tests {
         assert_eq!(limiter.allow(u64::MAX, 30_000.0), Ok(()));
         assert_eq!(limiter.buckets.len(), 2);
         assert!(limiter.buckets.contains_key(&1));
+    }
+
+    #[test]
+    fn a_picked_file_is_checked_before_it_is_uploaded() {
+        let limits = LIMITS;
+        assert_eq!(check_file("shot.png", "image/png", 2_000, &limits), Ok(MediaType::Png));
+        assert_eq!(check_file("clip.mov", "video/quicktime", 50 * MIB, &limits), Ok(MediaType::Mov));
+        // Without a type from the browser, by its extension.
+        assert_eq!(check_file("IMG_0042.MOV", "", 1_000, &limits), Ok(MediaType::Mov));
+        assert_eq!(check_file("photo.JPEG", "", 1_000, &limits), Ok(MediaType::Jpeg));
+        assert_eq!(
+            check_file("noext", "", 1_000, &limits).unwrap_err(),
+            "noext can't go with a cast: attach PNG, JPEG, GIF or WebP images, or MP4, MOV or WebM videos."
+        );
+        // A type the browser gives wins over the name.
+        assert_eq!(MediaType::of_file("photo.png", "image/heic"), None);
+        assert_eq!(
+            check_file("IMG_0042.HEIC", "image/heic", 1_000, &limits).unwrap_err(),
+            "IMG_0042.HEIC can't go with a cast: attach PNG, JPEG, GIF or WebP images, or MP4, MOV or WebM videos."
+        );
+        assert_eq!(
+            check_file("big.jpg", "image/jpeg", 10 * MIB + 1, &limits).unwrap_err(),
+            "big.jpg is too large: images can be up to 10 MB."
+        );
+        assert_eq!(
+            check_file("long.mp4", "video/mp4", 60 * MIB, &limits).unwrap_err(),
+            "long.mp4 is too large: videos can be up to 50 MB."
+        );
+        assert_eq!(check_file("none.gif", "image/gif", 0, &limits).unwrap_err(), "none.gif is empty.");
+        // The server's limits, whatever they are.
+        let small = MediaLimits { max_image_bytes: 1_000, max_video_bytes: 3 * MIB, max_embeds: 2 };
+        assert!(check_file("a.webp", "image/webp", 1_001, &small).unwrap_err().ends_with("images can be up to 1 KB."));
+        assert!(
+            check_file("a.webm", "video/webm", 3 * MIB + 1, &small).unwrap_err().ends_with("videos can be up to 3 MB.")
+        );
+        assert_eq!(
+            (size_label(10 * MIB), size_label(5 * MIB / 2), size_label(300 * 1024), size_label(10)),
+            ("10 MB".into(), "2.5 MB".into(), "300 KB".into(), "1 KB".into())
+        );
+        assert_eq!(accepted(), "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,video/webm");
+    }
+
+    #[test]
+    fn a_cast_takes_two_embeds_with_its_gif_and_its_quote() {
+        assert_eq!(embeds_left(0, false, false), 2);
+        assert_eq!(embeds_left(1, false, false), 1);
+        assert_eq!(embeds_left(1, true, false), 0);
+        assert_eq!(embeds_left(0, true, true), 0);
+        assert_eq!(embeds_left(1, false, true), 0);
+        assert_eq!(embeds_left(2, true, true), 0, "never below none");
     }
 
     #[test]

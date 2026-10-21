@@ -933,6 +933,18 @@ mod tests {
         );
         let raw: RawEmbed = serde_json::from_str(r#"{"url":"https://imagedelivery.net/a/b/original"}"#).unwrap();
         assert!(matches!(embed(&raw), Some(Embed::Image { .. })));
+        // A reader's files, as Allthing keeps them: a picture, and a video
+        // the browser plays as it is.
+        let kept = |ext: &str| {
+            let raw: RawEmbed = serde_json::from_str(&format!(
+                r#"{{"url":"https://allthing.social/m/1234/0123456789abcdef0123456789abcdef.{ext}"}}"#
+            ))
+            .unwrap();
+            embed(&raw)
+        };
+        assert!(matches!(kept("png"), Some(Embed::Image { .. })));
+        assert!(matches!(kept("mp4"), Some(Embed::Video { url }) if !crate::embeds::is_hls(&url)));
+        assert!(matches!(kept("mov"), Some(Embed::Video { .. })));
         let raw: RawEmbed = serde_json::from_str(r#"{"url":"https://example.com","metadata":{"html":{"ogTitle":"Hi","ogImage":[{"url":"https://example.com/og.png"}]}}}"#).unwrap();
         assert_eq!(
             embed(&raw),

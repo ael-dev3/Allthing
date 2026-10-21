@@ -22,15 +22,17 @@ use crate::util::{document, href, prefers_reduced_motion};
 /// The box, for the draft `text`. `caret` keeps where the selection was when
 /// the box lost focus (a tap elsewhere can move it), and focus brings it
 /// back. Typing changes the draft as it goes, and a shortcode just completed
-/// shows its emoji; Enter is a newline; a paste is its plain text; a copy or
-/// a cut is the draft's text, shortcodes and all; undo and redo go by the
-/// draft (the box is drawn again, which a browser's own undo can't follow).
+/// shows its emoji; Enter is a newline; a paste is its plain text, unless
+/// `files` takes what is pasted as files (a screenshot); a copy or a cut is
+/// the draft's text, shortcodes and all; undo and redo go by the draft (the
+/// box is drawn again, which a browser's own undo can't follow).
 #[component]
 pub fn ComposeText(
     node_ref: NodeRef<Div>,
     text: RwSignal<String>,
     caret: StoredValue<Option<(usize, usize)>>,
     label: &'static str,
+    #[prop(optional)] files: Option<Callback<web_sys::DataTransfer, bool>>,
 ) -> impl IntoView {
     let edits = StoredValue::new(Edits::default());
     // Where the caret was after the last change: where undoing it goes.
@@ -171,12 +173,18 @@ pub fn ComposeText(
             }
             on:paste=move |ev: web_sys::ClipboardEvent| {
                 ev.prevent_default();
+                if let (Some(files), Some(data)) = (files, ev.clipboard_data())
+                    && files.run(data)
+                {
+                    return;
+                }
                 let pasted = ev.clipboard_data().and_then(|data| data.get_data("text/plain").ok()).unwrap_or_default();
                 put(&pasted.replace("\r\n", "\n").replace('\r', "\n"));
             }
             on:copy=move |ev| copy(ev, false)
             on:cut=move |ev| copy(ev, true)
-            // Dropped text would bring its markup along.
+            // Dropped text would bring its markup along. Dropped files go on
+            // to the composer around the box, which attaches them.
             on:drop=move |ev: web_sys::DragEvent| ev.prevent_default()
             on:focus=move |_| {
                 if let Some(root) = node_ref.get_untracked()

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reusable view pieces.
 
+#[cfg(not(feature = "static-host"))]
+pub mod attach;
 pub mod cast;
 pub mod chips;
 pub mod clients;

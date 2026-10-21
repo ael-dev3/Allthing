@@ -50,7 +50,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | After posting a cast, a reply or a quote, or deleting one | 1 to refresh its pages (`/api/v1/refresh`) and 1 to read each again past the browser's cache: the reader's profile, and for a reply its cast and that cast's replies, the post page it was written on, and for a cast in a channel the channel. A page that doesn't have it yet is refreshed and read again after 4 and 10 s: 2 to 5 requests, 15 at most | none |
 | A profile, for a reader who can follow | **0** more: the browser asks Hypersnap whether the reader follows the account (`/v1/linkById`, one request per profile view) | none |
 | Following, unfollowing, or deleting one's own cast | **0**: signed and handed to Hypersnap by the browser, like a like | none |
-| Attaching an image or a video to a cast | 1 per file (`POST /api/v1/media`: D1 1–2 and R2 1, no upstream call), and 1 when the composer asks whether it may attach (`/api/v1/media`: no subrequest, kept 5 minutes by the browser) ([§12](#12-attachments-r2)) | none |
+| Attaching an image or a video to a cast | 1 per file (`POST /api/v1/media`: D1 1–2 and R2 1, no upstream call), and 1 as the composer opens for a reader signed in, to ask whether it may attach (`GET /api/v1/media`: no subrequest, kept 5 minutes by the app and the browser; none for a reader signed out) ([§12](#12-attachments-r2)) | none |
 | Showing a reader's attachment, here or in any other app | 1 per file a browser doesn't have (`/m/…`, an R2 read; each kept a year, as immutable); a video as many as the ranges its player asks for, usually 1 to 3 | none |
 | Revisit within `max-age` | **0** | none: browser HTTP cache (30 s to 1 h per endpoint) |
 

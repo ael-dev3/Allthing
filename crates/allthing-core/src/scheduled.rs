@@ -122,6 +122,11 @@ pub struct SavedDraft {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gif: Option<SavedGif>,
+    /// The images and videos it carries, uploaded, in order: their URLs,
+    /// which the cast embeds, and their types (`allthing_core::media`).
+    /// Drafts kept before attachments have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<SavedMedia>,
     /// The cast it replies to, or quotes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply: Option<SavedCast>,
@@ -145,6 +150,14 @@ pub struct SavedGif {
     pub width: u32,
     #[serde(default)]
     pub height: u32,
+}
+
+/// An image or a video a draft carries, uploaded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedMedia {
+    pub url: String,
+    #[serde(rename = "type")]
+    pub media_type: String,
 }
 
 /// The cast a draft replies to or quotes.
@@ -319,6 +332,21 @@ mod tests {
         assert_eq!(quote.context().as_deref(), Some("Quoting @bob"));
         let channel = SavedDraft { channel: Some("farcaster".into()), ..SavedDraft::default() };
         assert_eq!(channel.context().as_deref(), Some("In /farcaster"));
+        // Its images and videos, in order; a draft kept before them has none.
+        let attached = SavedDraft {
+            text: "two".into(),
+            media: vec![
+                SavedMedia { url: "https://allthing.social/m/1/a.png".into(), media_type: "image/png".into() },
+                SavedMedia { url: "https://allthing.social/m/1/b.mp4".into(), media_type: "video/mp4".into() },
+            ],
+            ..SavedDraft::default()
+        };
+        assert_eq!(
+            attached.to_json(),
+            r#"{"text":"two","media":[{"url":"https://allthing.social/m/1/a.png","type":"image/png"},{"url":"https://allthing.social/m/1/b.mp4","type":"video/mp4"}]}"#
+        );
+        assert_eq!(SavedDraft::parse(&attached.to_json()), attached);
+        assert_eq!(SavedDraft::parse(r#"{"text":"before","gif":null}"#).media, Vec::<SavedMedia>::new());
         // Empty fields are left out, and anything unreadable reads as empty.
         assert_eq!(SavedDraft { text: "x".into(), ..SavedDraft::default() }.to_json(), r#"{"text":"x"}"#);
         assert_eq!(SavedDraft::parse("not json"), SavedDraft::default());

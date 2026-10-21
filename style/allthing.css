@@ -755,7 +755,8 @@ code {
   font-weight: 600;
 }
 
-/* The GIF of a cast on its way: as big as a GIF in a card (.tile.gif). */
+/* The first picture, video or GIF of a cast on its way: as big as a GIF in
+   a card (.tile.gif). */
 .outgoing-image {
   display: block;
   max-width: min(100%, 300px);
@@ -4242,6 +4243,7 @@ p.jumbo .emoji img {
 
 /* The composer. */
 .compose-modal {
+  position: relative;
   width: min(560px, 100%);
 }
 
@@ -4355,6 +4357,181 @@ p.jumbo .emoji img {
   cursor: pointer;
 }
 
+/* Images and videos with the draft (components/attach.rs): a tile each,
+   in order, with its upload's progress and Remove. */
+.compose-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compose-tile {
+  position: relative;
+  width: 148px;
+  height: 148px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.compose-tile img,
+.compose-tile video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.compose-tile.sending img,
+.compose-tile.sending video {
+  opacity: 0.72;
+}
+
+.compose-tile.failed {
+  border-color: #a3322a;
+}
+
+.compose-tile.failed img,
+.compose-tile.failed video {
+  opacity: 0.45;
+}
+
+.compose-tile-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+  color: #fff;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(20, 24, 38, 0.66);
+  cursor: pointer;
+}
+
+.compose-tile-video {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 3px 6px;
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.03em;
+  color: #fff;
+  border-radius: 5px;
+  background: rgba(20, 24, 38, 0.66);
+}
+
+/* How far its upload has gone. */
+.compose-progress {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(20, 24, 38, 0.45);
+}
+
+.compose-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #fff;
+  transition: width 0.2s ease;
+}
+
+/* One that didn't go: why is said under the tiles. */
+.compose-tile-failed {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  font: 700 17px/1 var(--font-ui);
+  color: #fff;
+  border-radius: 50%;
+  background: #a3322a;
+  transform: translate(-50%, -50%);
+}
+
+.compose-media-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  color: #a3322a;
+  font-size: 14px;
+}
+
+.compose-media-error span {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compose-media-error .link-button {
+  display: inline;
+  margin: 0;
+  font-size: 14px;
+}
+
+/* A word about what was just asked: a file refused, no room for more.
+   Empty, it takes no place, but stays there to be heard when it speaks. */
+.attach-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.attach-note:empty {
+  position: absolute;
+}
+
+/* Files dragged over the composer: where they go. */
+.compose-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  border: 2px dashed var(--accent);
+  border-radius: inherit;
+  background: rgba(246, 244, 238, 0.92);
+  pointer-events: none;
+}
+
+.compose-drop p {
+  margin: 0;
+  font: 600 16px/1.35 var(--font-ui);
+  color: var(--accent);
+}
+
+/* The file picker behind the attach button: never seen, but there, so a
+   phone opens its photos from it. */
+.attach-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* The GIF button and Post, under what scrolls. */
 .compose-foot {
   display: grid;
@@ -4404,8 +4581,9 @@ p.jumbo .emoji img {
   background: var(--accent-soft);
 }
 
-/* The emoji button, one of the pack, as on Discord, and the sticker
-   button, a sticker peeling, as on Telegram. */
+/* The emoji button, one of the pack, as on Discord, the sticker button, a
+   sticker peeling, as on Telegram, and the attach button, a picture. */
+.attach-button,
 .emoji-button,
 .sticker-button {
   display: inline-grid;
@@ -4424,6 +4602,7 @@ p.jumbo .emoji img {
   height: 22px;
 }
 
+.attach-button .icon,
 .sticker-button .icon {
   display: block;
   width: 22px;
@@ -4435,11 +4614,43 @@ p.jumbo .emoji img {
   stroke-linejoin: round;
 }
 
+.attach-button:hover,
 .emoji-button:hover,
 .emoji-button[aria-expanded="true"],
 .sticker-button:hover,
 .sticker-button[aria-expanded="true"] {
   background: var(--accent-soft);
+}
+
+/* No room for another embed: the button says why when pressed. */
+.attach-button[aria-disabled="true"],
+.sticker-button[aria-disabled="true"],
+.gif-button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attach-button[aria-disabled="true"]:hover,
+.sticker-button[aria-disabled="true"]:hover,
+.gif-button[aria-disabled="true"]:hover {
+  background: var(--card);
+}
+
+/* On a touch screen, the attach button takes a tap 44 px square. */
+@media (pointer: coarse) {
+  .attach-button {
+    position: relative;
+  }
+
+  .attach-button::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 /* The clock: schedule the draft for later. */
@@ -5086,6 +5297,28 @@ p.jumbo .emoji img {
 
   .compose-foot {
     padding: 10px 14px 12px;
+  }
+
+  .compose-tile {
+    width: 128px;
+    height: 128px;
+  }
+
+  /* The bar's five buttons and Post, "Uploading…" or "Post in Farcaster"
+     on one line. */
+  .compose-bar {
+    gap: 6px;
+  }
+
+  .attach-button,
+  .emoji-button,
+  .sticker-button,
+  .schedule-button {
+    padding: 3px 5px;
+  }
+
+  .gif-button {
+    padding: 8px;
   }
 
   .gif-grid {
@@ -6537,6 +6770,23 @@ p.jumbo .emoji img {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.5;
+}
+
+/* A scheduled cast's images and videos, small, in order. */
+.scheduled-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scheduled-media img,
+.scheduled-media video {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--paper);
 }
 
 .scheduled-gif {
