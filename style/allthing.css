@@ -2110,12 +2110,68 @@ p.jumbo .emoji img {
 }
 
 .leaning-buttons {
+  position: relative;
   flex: none;
   align-self: flex-start;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* What each does, under the pair: on hover (after a moment) or keyboard
+   focus, and for a few seconds after a press, as a phone can't hover. In
+   Allthing's style, where a native tooltip would show late in the system's,
+   and never on a phone. Placed against the pair, not the button, so it
+   stays inside the card whatever the buttons' widths. */
+.leaning {
+  display: inline-flex;
+}
+
+.leaning-hint {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 6;
+  width: max-content;
+  max-width: 230px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 16px 40px -20px rgba(27, 34, 51, 0.45);
+  font: 500 12.5px/1.45 var(--font-ui);
+  color: var(--ink-2);
+  text-align: left;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), visibility 0.15s;
+}
+
+.leaning:has(:focus-visible) .leaning-hint,
+.leaning-hint.shown {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Only where a pointer hovers: a phone keeps :hover on the button last
+   tapped, so one just turned off would still look on. */
+@media (hover: hover) and (pointer: fine) {
+  .leaning:hover .leaning-hint {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0.4s;
+  }
+
+  .favorite-button:hover {
+    border-color: rgba(185, 130, 42, 0.55);
+  }
+
+  .show-less-button:hover {
+    color: var(--ink-2);
+    border-color: rgba(27, 34, 51, 0.3);
+  }
 }
 
 /* Favorite: kept in this browser. Its star fills when on. */
@@ -2140,10 +2196,6 @@ p.jumbo .emoji img {
   stroke: currentColor;
   stroke-width: 1.4;
   stroke-linejoin: round;
-}
-
-.favorite-button:hover {
-  border-color: rgba(185, 130, 42, 0.55);
 }
 
 .favorite-button.on {
@@ -2207,11 +2259,6 @@ p.jumbo .emoji img {
   stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.show-less-button:hover {
-  color: var(--ink-2);
-  border-color: rgba(27, 34, 51, 0.3);
 }
 
 .show-less-button.on {
@@ -5300,6 +5347,11 @@ p.jumbo .emoji img {
   /* On a phone, a row of their own under the picture and name. */
   .leaning-buttons {
     flex-basis: 100%;
+  }
+
+  .leaning-hint {
+    right: auto;
+    left: 0;
   }
 
   .profile .avatar {
