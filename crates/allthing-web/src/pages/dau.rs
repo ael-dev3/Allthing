@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Farcaster's daily active accounts, as the cron counts them
 //! (`allthing_core::activity`), laid out after SnapMeter's dashboard
-//! (github.com/ael-dev3/SnapMeter): the past 24 hours against the 24
-//! before, the UTC days of the past month, what the accounts did, which
-//! apps they used, and how and since when they were counted.
+//! (github.com/ael-dev3/SnapMeter): its meter (the past 24 hours against
+//! the 24 before, today so far, readouts of yesterday, the past 30 days and
+//! the 7-day average, and today against a typical day), the history over
+//! 48 hours, 7 or 30 days, what the accounts did, which apps they used, and
+//! its definitions: how and since when they were counted.
 
-use allthing_core::activity::{ActivityPayload, AppsWindow, DayCount, Family, day, day_name};
+use allthing_core::activity::{ActivityPayload, AppsWindow, DayCount, Family, day, day_name, median_day, weeks};
 use allthing_core::api::ACTIVITY_PATH;
 use allthing_core::clients::{client_name, client_profile};
-use allthing_core::format::{full_number, plural};
+use allthing_core::format::{axis, full_number, plural, tick};
 use allthing_core::model::UserSummary;
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
@@ -29,9 +31,14 @@ fn date(day: i64, year: bool) -> String {
     if year { format!("{short} {y}") } else { short }
 }
 
+/// "14:05".
+fn hm(at: i64) -> String {
+    format!("{:02}:{:02}", at.div_euclid(3_600).rem_euclid(24), at.div_euclid(60).rem_euclid(60))
+}
+
 /// "14:05 UTC".
 fn clock(at: i64) -> String {
-    format!("{:02}:{:02} UTC", at.div_euclid(3_600).rem_euclid(24), at.div_euclid(60).rem_euclid(60))
+    format!("{} UTC", hm(at))
 }
 
 /// "14:05 UTC", with the date when it isn't today.
@@ -78,6 +85,38 @@ fn percent(part: u64, whole: u64) -> String {
         Some(tenths) if tenths < 100 => format!("{}.{}%", tenths / 10, tenths % 10),
         Some(tenths) => format!("{}%", (tenths + 5) / 10),
     }
+}
+
+/// " account" or " accounts", after a count.
+fn accounts(n: u64) -> &'static str {
+    if n == 1 { " account" } else { " accounts" }
+}
+
+/// How a count compares with an earlier one: its direction (a class), an
+/// arrow, and the change as a count and as a percent, signed.
+struct Change {
+    class: &'static str,
+    arrow: &'static str,
+    count: String,
+    pct: String,
+}
+
+fn change(now: u64, before: u64) -> Option<Change> {
+    (before > 0).then(|| {
+        let delta = now.abs_diff(before);
+        let pct = format!("{:.1}%", delta as f64 / before as f64 * 100.0);
+        match now.cmp(&before) {
+            std::cmp::Ordering::Greater => {
+                Change { class: "up", arrow: "↑", count: format!("+{}", full_number(delta)), pct: format!("+{pct}") }
+            }
+            std::cmp::Ordering::Less => {
+                Change {
+                    class: "down", arrow: "↓", count: format!("−{}", full_number(delta)), pct: format!("−{pct}")
+                }
+            }
+            std::cmp::Ordering::Equal => Change { class: "flat", arrow: "→", count: "0".into(), pct: "0.0%".into() },
+        }
+    })
 }
 
 #[component]
@@ -141,17 +180,12 @@ fn dashboard(counted: ActivityPayload) -> Result<AnyView, SplitLoaderError> {
 
 #[component]
 fn Dashboard(counted: ActivityPayload) -> impl IntoView {
-    let reached = counted.reached;
     // Today and yesterday by the clock, not by how far reading has got:
     // after a deploy or an outage the cron reads past days, faster than
     // events come, until it has caught up.
     let today = day(now());
-    let read = |on: i64| counted.days.iter().find(|d| d.day == on && reached.is_some_and(|at| day(at) >= on)).cloned();
-    let (so_far, before) = (read(today), read(today - 1));
-    let behind = reached.filter(|at| now() - at > BEHIND);
-    let month = counted.active_30d;
+    let behind = counted.reached.filter(|at| now() - at > BEHIND);
     let apps = counted.apps_24h.clone().map(|apps| (apps, counted.app_accounts.clone()));
-    let begun_today = counted.since.is_some_and(|since| day(since) >= today);
     view! {
         {behind.map(|at| view! {
             <p class="dau-behind" role="status">
@@ -159,105 +193,207 @@ fn Dashboard(counted: ActivityPayload) -> impl IntoView {
                 " so far, and reads them faster than they come until it is current. The counts below go to then."
             </p>
         })}
-        <Meter counted=counted.clone()/>
-        <div class="dau-tiles">
-            <Tile label="Today so far" count=so_far.as_ref().map(|d| d.active)>
-                {match (&so_far, reached) {
-                    (Some(_), Some(at)) => format!("from 00:00 to {}", clock(at)),
-                    _ => "not read yet".to_owned(),
-                }}
-            </Tile>
-            <Tile label="Yesterday" count=before.as_ref().map(|d| d.active)>
-                {match &before {
-                    Some(d) => day_note(d, reached),
-                    None if begun_today => "before counting began".to_owned(),
-                    None => "not read yet".to_owned(),
-                }}
-            </Tile>
-            <Tile label="Past 30 days" count=month.map(|w| w.active)>
-                {match month {
-                    Some(w) => {
-                        let to = format!("to the end of {}", date(w.day, false));
-                        if w.complete { to } else { format!("{to}, since counting began") }
-                    }
-                    None => "once a whole day has been read".to_owned(),
-                }}
-            </Tile>
-        </div>
-        <Chart days=counted.days.clone() today reached/>
+        <Meter counted=counted.clone() today/>
+        <History counted=counted.clone() today/>
         <Mix counted=counted.clone()/>
         {apps.map(|(apps, accounts)| view! { <Apps apps accounts/> })}
         <Method counted/>
     }
 }
 
-/// The past 24 hours against the 24 before: SnapMeter's meter.
+/// SnapMeter's meter: the past 24 hours against the 24 before, with today
+/// so far beside them; then yesterday, the past 30 days and the 7-day
+/// average; and today so far against a typical day.
 #[component]
-fn Meter(counted: ActivityPayload) -> impl IntoView {
-    let Some(to) = counted.rolling_to else {
-        return view! { <section class="dau-card dau-meter"><p class="dau-what">"Counting has just begun."</p></section> }
-            .into_any();
+fn Meter(counted: ActivityPayload, today: i64) -> impl IntoView {
+    let reached = counted.reached;
+    let read = |on: i64| counted.days.iter().find(|d| d.day == on && reached.is_some_and(|at| day(at) >= on)).cloned();
+    let (so_far, before) = (read(today), read(today - 1));
+    let begun_today = counted.since.is_some_and(|since| day(since) >= today);
+    // How far the counts go: the dot is a status, its words say which.
+    let status = reached.map(|at| {
+        if now() - at <= BEHIND {
+            ("dau-status", format!("Up to date · {}", clock(at)))
+        } else {
+            ("dau-status behind", format!("Catching up · {}", moment(at)))
+        }
+    });
+    let window = match counted.rolling_to {
+        Some(to) => format!("Unique accounts active in the 24 hours to {}", moment(to)),
+        None => "Unique accounts active in a rolling 24 hours".to_owned(),
     };
-    let Some(active) = counted.rolling_24h else {
-        // The first window ends 24 hours after counting began, on the hour.
-        let first = counted.since.map(|since| (since + 86_400 + 3_599).div_euclid(3_600) * 3_600);
-        let when = match first {
+    // The count and how it compares, or when it comes: the first window
+    // ends 24 hours after counting began, on the hour.
+    let active = counted.rolling_to.and(counted.rolling_24h);
+    let pending = match (counted.rolling_to, active) {
+        (_, Some(_)) => None,
+        (Some(_), None) => Some(match counted.since.map(|since| (since + 86_400 + 3_599).div_euclid(3_600) * 3_600) {
             Some(at) => format!(
                 "The first 24-hour count comes once the 24 hours to {}, {} have been read.",
                 date(day(at), false),
                 clock(at)
             ),
             None => "The first 24-hour count comes once a whole day has been read.".to_owned(),
-        };
-        return view! {
-            <section class="dau-card dau-meter">
-                <p class="dau-what">{when}</p>
-            </section>
-        }
-        .into_any();
+        }),
+        (None, None) => Some("Counting has just begun.".to_owned()),
     };
-    let change = counted.previous_24h.filter(|p| *p > 0).map(|previous| {
-        let delta = active as f64 / previous as f64 - 1.0;
-        let (class, arrow) = if delta >= 0.0 { ("dau-change up", "↑") } else { ("dau-change down", "↓") };
-        let text = format!("{arrow} {:.1}% on the 24 hours before ({})", delta.abs() * 100.0, full_number(previous));
-        view! { <p class=class>{text}</p> }
+    let versus = active.zip(counted.previous_24h).and_then(|(now, previous)| Some((change(now, previous)?, previous)));
+    let month = counted.active_30d;
+    let week = weeks(&counted.days);
+    let trend = week.and_then(|w| change(w.average, w.before));
+    let week_note = match week {
+        Some(_) if trend.is_some() => " on the 7 days before".to_owned(),
+        Some(w) => format!("to the end of {}", date(w.to, false)),
+        None => "once 14 days have been read whole".to_owned(),
+    };
+    // Today so far against the median of the month's days read whole, as
+    // SnapMeter measures today against its 30-day median.
+    let baseline = so_far.as_ref().zip(median_day(&counted.days).filter(|m| *m > 0)).map(|(d, median)| {
+        let pct = (d.active * 100 + median / 2) / median;
+        view! {
+            <div class="dau-baseline">
+                <p class="dau-baseline-label">
+                    "Today so far, against the month's median day ("{full_number(median)}")"
+                </p>
+                <span class="dau-baseline-track" aria-hidden="true">
+                    <span style=format!("width: {}%", pct.min(100))></span>
+                </span>
+                <strong class="dau-baseline-pct">{format!("{pct}%")}</strong>
+            </div>
+        }
     });
     view! {
         <section class="dau-card dau-meter" aria-labelledby="dau-24h">
-            <p class="dau-big" id="dau-24h">
-                <strong>{full_number(active)}</strong>
-                <span class="dau-what">" accounts active in the 24 hours to "{moment(to)}</span>
-            </p>
-            {change}
+            <header class="dau-meter-head">
+                <div>
+                    <h2 id="dau-24h">"Past 24 hours"</h2>
+                    <p class="dau-window">{window}</p>
+                </div>
+                {status.map(|(class, text)| view! { <p class=class><span class="dau-dot" aria-hidden="true"></span>{text}</p> })}
+            </header>
+            <div class="dau-primary">
+                <div class="dau-headline">
+                    <p class="dau-big" class:pending=active.is_none() aria-hidden=active.is_none().then_some("true")>
+                        {active.map_or_else(|| "—".to_owned(), full_number)}
+                    </p>
+                    {pending.map(|text| view! { <p class="dau-what">{text}</p> })}
+                    {versus.map(|(c, previous)| view! {
+                        <p class=format!("dau-change {}", c.class)>
+                            <span aria-hidden="true">{c.arrow}</span>" "<strong>{c.count}</strong>" · "{c.pct}
+                            " on the 24 hours before ("{full_number(previous)}")"
+                        </p>
+                    })}
+                </div>
+                <Tile label="Today so far" count=so_far.as_ref().map(|d| d.active) kind="dau-today">
+                    {match (&so_far, reached) {
+                        (Some(_), Some(at)) => format!("00:00 to {}", clock(at)),
+                        _ => "not read yet".to_owned(),
+                    }}
+                </Tile>
+            </div>
+            <div class="dau-readouts">
+                <Tile label="Yesterday" count=before.as_ref().map(|d| d.active)>
+                    {match &before {
+                        Some(d) => day_note(d, reached),
+                        None if begun_today => "before counting began".to_owned(),
+                        None => "not read yet".to_owned(),
+                    }}
+                </Tile>
+                <Tile label="Past 30 days" count=month.map(|w| w.active)>
+                    {match month {
+                        Some(w) => {
+                            let to = format!("to the end of {}", date(w.day, false));
+                            if w.complete { to } else { format!("{to}, since counting began") }
+                        }
+                        None => "once a whole day has been read".to_owned(),
+                    }}
+                </Tile>
+                <Tile label="7-day average" count=week.map(|w| w.average)>
+                    {trend.map(|c| view! {
+                        <span class=format!("dau-trend {}", c.class)><span aria-hidden="true">{c.arrow}</span>" "{c.pct}</span>
+                    })}
+                    {week_note}
+                </Tile>
+            </div>
+            {baseline}
         </section>
     }
-    .into_any()
 }
 
 #[component]
-fn Tile(label: &'static str, count: Option<u64>, #[prop(optional)] children: Option<Children>) -> impl IntoView {
+fn Tile(
+    label: &'static str,
+    count: Option<u64>,
+    #[prop(optional)] kind: &'static str,
+    #[prop(optional)] children: Option<Children>,
+) -> impl IntoView {
     view! {
-        <section class="dau-card dau-tile">
-            <h2 class="dau-tile-label">{label}</h2>
+        <div class=format!("dau-tile {kind}")>
+            <h3 class="dau-tile-label">{label}</h3>
             <p class="dau-tile-count">{count.map_or_else(|| "—".to_owned(), full_number)}</p>
             <p class="dau-tile-note">{children.map(|c| c())}</p>
-        </section>
+        </div>
     }
 }
 
-/// The past month's UTC days as bars, with a table of them for screen
-/// readers and anyone who wants the numbers. The bars stretch to the width;
-/// their labels are text, so they stay readable on a phone.
-#[component]
-fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView {
-    if days.is_empty() {
-        return ().into_any();
-    }
-    let n = days.len();
-    let max = days.iter().map(|d| d.active).max().unwrap_or(0).max(1);
-    let reading = reached.map(day);
-    // A day's class, and what its bar and its row say: the day being read is
-    // today's so far, or, while catching up, a past day read partly so far.
+/// What the history chart can show, SnapMeter's ranges, by index: a `u32`,
+/// whose signal's code the app already has.
+const RANGES: [&str; 3] = ["48 hours", "7 days", "30 days"];
+const MONTH: u32 = 2;
+
+/// One bar: its slot, its count, how it's drawn ("", or lighter: "partial",
+/// "today", "before"), and what its readout says after the count, and when.
+struct Bar {
+    slot: usize,
+    active: u64,
+    class: &'static str,
+    said: String,
+    when: String,
+}
+
+/// A label under the bars, `at` a fraction of the width.
+struct Tick {
+    at: f64,
+    text: String,
+    strong: bool,
+    /// Left out on a narrow screen.
+    minor: bool,
+}
+
+/// A range's bars, `slots` wide, and what they show, read out.
+struct Chart {
+    slots: usize,
+    bars: Vec<Bar>,
+    ticks: Vec<Tick>,
+    label: String,
+    keys: &'static str,
+}
+
+/// A range's chart, what it covers, its legend, a sentence on it, and its
+/// table.
+struct Plot {
+    sub: String,
+    chart: Chart,
+    legend: Vec<(&'static str, String)>,
+    summary: String,
+    /// "days" or "hours".
+    unit: &'static str,
+    head: Vec<&'static str>,
+    rows: Vec<(String, Vec<String>)>,
+}
+
+/// The UTC days of the `span` to today (or to the newest day read, should
+/// reading be past it), a slot a day, so a short history keeps the room of
+/// a whole range and today's slot is empty until it is read.
+fn by_day(counted: &ActivityPayload, today: i64, span: i64) -> Option<Plot> {
+    let reading = counted.reached.map(day);
+    let end = today.max(counted.days.last()?.day);
+    let start = end - span + 1;
+    let days: Vec<&DayCount> = counted.days.iter().filter(|d| (start..=end).contains(&d.day)).collect();
+    let newest = days.last()?.day;
+    // A day's class, and what its readout and its row say: the day being
+    // read is today's so far, or, while catching up, a past day read partly
+    // so far.
     let note = |d: &DayCount| {
         if Some(d.day) == reading && d.day == today {
             ("today", " so far", " (so far)")
@@ -269,68 +405,259 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
             ("partial", " (partly counted)", " (partly)")
         }
     };
-    let summary = format!(
+    let bars: Vec<Bar> = days
+        .iter()
+        .map(|d| {
+            let (class, said, _) = note(d);
+            let slot = usize::try_from(d.day - start).unwrap_or(0);
+            Bar {
+                slot,
+                active: d.active,
+                class,
+                said: format!("{}{said}", accounts(d.active)),
+                when: date(d.day, true),
+            }
+        })
+        .collect();
+    let max = days.iter().map(|d| d.active).max().unwrap_or(0);
+    let busiest = days.iter().find(|d| d.active == max).map_or(newest, |d| d.day);
+    let label = format!(
         "Active accounts each UTC day from {} to {}: most {} on {}",
         date(days[0].day, false),
-        date(days[n - 1].day, false),
+        date(newest, false),
         full_number(max),
-        days.iter().find(|d| d.active == max).map_or_else(String::new, |d| date(d.day, false)),
+        date(busiest, false)
     );
-    // Ten units a day, the bars 88 high at most under a line at the top.
-    // A slot a day up to today's, read or not, and room for a month however
-    // many days there are, so a first day isn't one wide bar.
-    let first = days[0].day;
-    let end = today.max(days[n - 1].day);
-    let span = usize::try_from(end - first + 1).unwrap_or(n);
-    let slots = span.max(30);
-    let slot = |on: i64| slots - span + usize::try_from(on - first).unwrap_or(0);
-    // The day pointed at, focused or tapped: its count and date show above
-    // its bar (the table has them all). No native tooltip: it shows late,
-    // in the system's style, and never on a touch screen.
+    // A label a week (a day, over a week), counted back from the newest day
+    // with a bar (today's, once reading has got to it), so every label
+    // names a bar above it. A slot left empty while reading catches up has
+    // no label of its own.
+    let every = if span > 7 { 7 } else { 1 };
+    let mut ticks: Vec<Tick> = (0..)
+        .map(|k| newest - every * k)
+        .take_while(|on| *on >= start)
+        .map(|on| Tick {
+            at: ((on - start) as f64 + 0.5) / span as f64,
+            text: date(on, false),
+            strong: on == newest,
+            minor: false,
+        })
+        .collect();
+    ticks.reverse();
+    let whole: Vec<u64> = days.iter().filter(|d| d.complete).map(|d| d.active).collect();
+    let summary = match whole.len() as u64 {
+        0 => "No day here has been read whole yet.".to_owned(),
+        n => format!(
+            "On average {} a day over the {} read whole; the most, {}, on {}.",
+            full_number((whole.iter().sum::<u64>() + n / 2) / n),
+            plural(n, "day", "days"),
+            full_number(max),
+            date(busiest, false)
+        ),
+    };
+    let mut legend = vec![("", "a whole UTC day".to_owned())];
+    if days.iter().any(|d| !note(d).0.is_empty()) {
+        legend.push(("light", "today so far, or a day partly counted".to_owned()));
+    }
+    let rows = days
+        .iter()
+        .rev()
+        .map(|d| {
+            let messages: u64 = d.actions.values().sum();
+            (format!("{}{}", date(d.day, true), note(d).2), vec![full_number(d.active), full_number(messages)])
+        })
+        .collect();
+    let slots = usize::try_from(span).unwrap_or(30);
+    Some(Plot {
+        sub: format!("Unique accounts each UTC day, the {span} days to {}", date(end, false)),
+        chart: Chart { slots, bars, ticks, label, keys: "Left and right arrows read each day." },
+        legend,
+        summary,
+        unit: "days",
+        head: vec!["Day (UTC)", "Active accounts", "Messages"],
+        rows,
+    })
+}
+
+/// The 48 hours to the end of the 24-hour windows, an hour a slot: the 24
+/// the meter counts, and the 24 before them, lighter.
+fn by_hour(counted: &ActivityPayload) -> Option<Plot> {
+    let to = counted.rolling_to?;
+    let n = counted.hourly.len();
+    let first = to - n as i64 * 3_600;
+    let name = |i: usize| {
+        let from = first + i as i64 * 3_600;
+        format!("{}, {}–{}", date(day(from), false), hm(from), clock(from + 3_600))
+    };
+    let bars: Vec<Bar> = (counted.hourly.iter().enumerate())
+        .filter_map(|(i, active)| {
+            let active = (*active)?;
+            let class = if i + 24 >= n { "" } else { "before" };
+            Some(Bar { slot: i, active, class, said: accounts(active).to_owned(), when: name(i) })
+        })
+        .collect();
+    let max = bars.iter().map(|b| b.active).max()?;
+    let busiest = bars.iter().find(|b| b.active == max).map_or(0, |b| b.slot);
+    let label = format!(
+        "Active accounts each UTC hour of the {n} to {}: most {} in {}",
+        moment(to),
+        full_number(max),
+        name(busiest)
+    );
+    // A label every 6 hours, on the hours' boundaries inside the chart: the
+    // date at midnight, and on a narrow screen every 12 hours.
+    let ticks = (1..n)
+        .filter_map(|i| {
+            let at = first + i as i64 * 3_600;
+            let h = at.div_euclid(3_600).rem_euclid(24);
+            (h % 6 == 0).then(|| Tick {
+                at: i as f64 / n as f64,
+                text: if h == 0 { date(day(at), false) } else { hm(at) },
+                strong: false,
+                minor: h % 12 != 0,
+            })
+        })
+        .collect();
+    let summary = format!(
+        "The busiest hour: {}, {}. An account active in several hours counts in each.",
+        plural(max, "account", "accounts"),
+        name(busiest)
+    );
+    let legend = vec![("", format!("the 24 hours to {}", moment(to))), ("light", "the 24 before".to_owned())];
+    let rows = bars.iter().rev().map(|b| (b.when.clone(), vec![full_number(b.active)])).collect();
+    Some(Plot {
+        sub: format!("Unique accounts each UTC hour, the {n} hours to {}", moment(to)),
+        chart: Chart { slots: n, bars, ticks, label, keys: "Left and right arrows read each hour." },
+        legend,
+        summary,
+        unit: "hours",
+        head: vec!["Hour (UTC)", "Active accounts"],
+        rows,
+    })
+}
+
+/// The history: by hour over the past 48 hours, or by UTC day over 7 or 30
+/// days, with a table of what it shows. Each range is drawn once; the
+/// buttons show one.
+#[component]
+fn History(counted: ActivityPayload, today: i64) -> impl IntoView {
+    let plots: Vec<(u32, Plot)> = [by_hour(&counted), by_day(&counted, today, 7), by_day(&counted, today, 30)]
+        .into_iter()
+        .zip(0..)
+        .filter_map(|(plot, range)| Some((range, plot?)))
+        .collect();
+    if !plots.iter().any(|(range, _)| *range == MONTH) {
+        return ().into_any();
+    }
+    let range = RwSignal::new(MONTH);
+    let buttons = (plots.iter().map(|(r, _)| *r))
+        .map(|r| {
+            view! {
+                <button type="button" aria-pressed=move || (range.get() == r).to_string() on:click=move |_| range.set(r)>
+                    {RANGES[r as usize]}
+                </button>
+            }
+        })
+        .collect_view();
+    let shown = plots
+        .into_iter()
+        .map(|(r, Plot { sub, chart, legend, summary, unit, head, rows })| {
+            view! {
+                <div class="dau-history" hidden=move || range.get() != r>
+                    <p class="dau-sub">{sub}</p>
+                    <Bars chart/>
+                    <p class="dau-legend">
+                        {legend.into_iter().map(|(class, text)| view! {
+                            <span><span class=format!("dau-key {class}")></span>{text}</span>
+                        }).collect_view()}
+                    </p>
+                    <p class="dau-summary">{summary}</p>
+                    <details class="dau-table">
+                        <summary>{format!("The {unit} as a table")}</summary>
+                        <table>
+                            <thead><tr>{head.into_iter().map(|h| view! { <th scope="col">{h}</th> }).collect_view()}</tr></thead>
+                            <tbody>
+                                {rows.into_iter().map(|(name, cells)| view! {
+                                    <tr>
+                                        <th scope="row">{name}</th>
+                                        {cells.into_iter().map(|c| view! { <td>{c}</td> }).collect_view()}
+                                    </tr>
+                                }).collect_view()}
+                            </tbody>
+                        </table>
+                    </details>
+                </div>
+            }
+        })
+        .collect_view();
+    view! {
+        <section class="dau-card dau-chart" aria-labelledby="dau-history">
+            <header class="dau-chart-head">
+                <h2 id="dau-history">"Active accounts"</h2>
+                <div class="dau-range" role="group" aria-label="Range">{buttons}</div>
+            </header>
+            {shown}
+        </section>
+    }
+    .into_any()
+}
+
+/// A chart's bars on a value axis of round steps. A bar pointed at, tapped
+/// or reached with the arrow keys shows its count and when by it (above a
+/// short bar, beside a tall one's top, so it stays on the plot); the others
+/// dim. No native tooltip: it shows late, in the system's style, and never
+/// on a touch screen.
+#[component]
+fn Bars(chart: Chart) -> impl IntoView {
+    let Chart { slots, bars, ticks, label, keys } = chart;
+    let n = bars.len();
+    let (step, top) = axis(bars.iter().map(|b| b.active).max().unwrap_or(0));
+    let height = move |v: u64| v as f64 / top as f64 * 100.0;
+    let width = 100.0 / slots.max(1) as f64;
     let picked = RwSignal::new(None::<usize>);
-    let height = |d: &DayCount| (d.active as f64 / max as f64 * 88.0).max(1.0);
+    let grid = (0..=top / step)
+        .map(|k| {
+            let style = format!("bottom: {:.2}%", height(k * step));
+            view! { <span class="dau-gridline" class:base={k == 0} style=style><span>{tick(k * step)}</span></span> }
+        })
+        .collect_view();
     let tips = StoredValue::new(
-        days.iter()
-            .map(|d| {
-                let (_, said, _) = note(d);
-                let accounts = if d.active == 1 { " account" } else { " accounts" };
-                (slot(d.day), height(d), full_number(d.active), format!("{accounts}{said}"), date(d.day, true))
+        bars.iter()
+            .map(|b| {
+                ((b.slot as f64 + 0.5) * width, height(b.active), full_number(b.active), b.said.clone(), b.when.clone())
             })
             .collect::<Vec<_>>(),
     );
-    let bars = days
-        .iter()
+    // Each bar's whole column is what the pointer and a tap hit: a target
+    // easier to hit than a short bar.
+    let columns = bars
+        .into_iter()
         .enumerate()
-        .map(|(i, d)| {
-            let h = height(d);
-            let (kind, _, _) = note(d);
-            let class = if kind.is_empty() { "dau-bar".to_owned() } else { format!("dau-bar {kind}") };
-            let x = slot(d.day) * 10;
-            // The bar, and over it its whole column, a target easier to hit
-            // than a short bar.
+        .map(|(i, b)| {
+            let column = format!("left: {:.3}%; width: {width:.3}%", b.slot as f64 * width);
+            let bar = format!("height: {:.2}%", height(b.active).max(0.5));
             view! {
-                <rect class=class class:on=move || picked.get() == Some(i) x=x + 1 y=100.0 - h width="8" height=h/>
-                <rect
-                    class="dau-hit"
-                    x=x
-                    y="0"
-                    width="10"
-                    height="100"
+                <span
+                    class="dau-col"
+                    style=column
                     on:pointerenter=move |_| picked.set(Some(i))
                     on:click=move |ev| {
                         ev.stop_propagation();
                         picked.set(Some(i));
                     }
-                />
+                >
+                    <span class=format!("dau-bar {}", b.class) class:on=move || picked.get() == Some(i) style=bar></span>
+                </span>
             }
         })
         .collect_view();
-    // Keyboard: the chart takes focus once, and the arrows go from day to day.
-    let keys = move |ev: leptos::ev::KeyboardEvent| {
+    // Keyboard: the chart takes focus once, and the arrows go from bar to bar.
+    let keydown = move |ev: leptos::ev::KeyboardEvent| {
+        let last = n.saturating_sub(1);
         let next = match (ev.key().as_str(), picked.get_untracked()) {
             ("ArrowLeft", Some(i)) => Some(i.saturating_sub(1)),
-            ("ArrowRight", Some(i)) => Some((i + 1).min(n - 1)),
-            ("ArrowLeft" | "ArrowRight" | "End", None) | ("End", _) => Some(n - 1),
+            ("ArrowRight", Some(i)) => Some((i + 1).min(last)),
+            ("ArrowLeft" | "ArrowRight" | "End", None) | ("End", _) => Some(last),
             ("Home", _) => Some(0),
             ("Escape", _) => None,
             _ => return,
@@ -338,51 +665,45 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
         ev.prevent_default();
         picked.set(next);
     };
-    let tip = move || picked.get().and_then(|i| tips.with_value(|t| t.get(i).cloned()));
-    // Above the bar's top: the plot is 170 px tall under 4 px of padding. By
-    // the chart's edges it hangs inward, so it stays on the card.
-    let tip_style = move || {
-        tip().map_or_else(String::new, |(at, h, ..)| {
-            let center = (at as f64 + 0.5) / slots as f64 * 100.0;
-            format!("left: {center:.2}%; top: {:.1}px", 4.0 + (100.0 - h) * 1.7)
+    // The readout: above a short bar, hanging inward by the chart's edges;
+    // beside the top of a bar taller than `TALL`, toward the middle, where
+    // one above it would reach the range buttons over the chart.
+    const TALL: f64 = 55.0;
+    let readout = move || {
+        let (x, h, count, said, when) = picked.get().and_then(|i| tips.with_value(|t| t.get(i).cloned()))?;
+        let (class, style) = match (h > TALL, x) {
+            (true, x) if x < 50.0 => ("dau-tip right", format!("left: calc({x:.2}% + 10px); bottom: {h:.2}%")),
+            (true, x) => ("dau-tip left", format!("left: calc({x:.2}% - 10px); bottom: {h:.2}%")),
+            (false, x) if x < 15.0 => ("dau-tip start", format!("left: {x:.2}%; bottom: calc({h:.2}% + 8px)")),
+            (false, x) if x > 85.0 => ("dau-tip end", format!("left: {x:.2}%; bottom: calc({h:.2}% + 8px)")),
+            (false, x) => ("dau-tip", format!("left: {x:.2}%; bottom: calc({h:.2}% + 8px)")),
+        };
+        Some(view! {
+            <div class=class style=style>
+                <strong>{count}</strong>
+                {said}
+                <span class="dau-tip-day">{when}</span>
+            </div>
         })
     };
-    let tip_side = move || {
-        tip().map_or("", |(at, ..)| match (at as f64 + 0.5) / slots as f64 {
-            x if x < 0.15 => "dau-tip start",
-            x if x > 0.85 => "dau-tip end",
-            _ => "dau-tip",
-        })
-    };
-    // A label a week, counted back from the newest day with a bar (today's,
-    // once reading has got to it), so every label names a bar above it. A
-    // slot left empty while reading catches up has no label of its own.
-    let newest = days[n - 1].day;
-    let ticks = (0..)
-        .map(|week| newest - 7 * week)
-        .take_while(|on| *on >= first)
-        .map(|on| {
-            let left = format!("left: {:.2}%", (slot(on) as f64 + 0.5) / slots as f64 * 100.0);
-            view! { <span style=left>{date(on, false)}</span> }
-        })
-        .collect::<Vec<_>>()
+    let ticks = ticks
         .into_iter()
-        .rev()
+        .map(|t| {
+            view! { <span class:strong=t.strong class:minor=t.minor style=format!("left: {:.2}%", t.at * 100.0)>{t.text}</span> }
+        })
         .collect_view();
     view! {
-        <section class="dau-card dau-chart">
-            <h2>"The past month"</h2>
-            <div class="dau-plot">
-                <span class="dau-max" aria-hidden="true">{full_number(max)}</span>
-                <svg
-                    viewBox=format!("0 0 {} 100", slots * 10)
+        <div class="dau-plot">
+            <div class="dau-area">
+                <div class="dau-grid" aria-hidden="true">{grid}</div>
+                <div
+                    class="dau-cols"
                     role="img"
-                    aria-label=summary
-                    aria-description="Left and right arrows read each day."
-                    preserveAspectRatio="none"
+                    aria-label=label
+                    aria-description=keys
                     tabindex="0"
-                    on:keydown=keys
-                    on:focus=move |_| picked.update(|p| *p = p.or(Some(n - 1)))
+                    on:keydown=keydown
+                    on:focus=move |_| picked.update(|p| *p = p.or(n.checked_sub(1)))
                     on:blur=move |_| picked.set(None)
                     on:click=move |_| picked.set(None)
                     on:pointerleave=move |ev| {
@@ -391,54 +712,17 @@ fn Chart(days: Vec<DayCount>, today: i64, reached: Option<i64>) -> impl IntoView
                         }
                     }
                 >
-                    <line class="dau-grid" x1="0" x2=slots * 10 y1="12" y2="12" vector-effect="non-scaling-stroke"/>
-                    {bars}
-                </svg>
-                <div class=tip_side style=tip_style role="status" hidden=move || tip().is_none()>
-                    {move || {
-                        tip()
-                            .map(|(_, _, count, accounts, when)| {
-                                view! {
-                                    <strong>{count}</strong>
-                                    {accounts}
-                                    <span class="dau-tip-day">{when}</span>
-                                }
-                            })
-                    }}
+                    {columns}
                 </div>
-                <div class="dau-ticks" aria-hidden="true">{ticks}</div>
+                <div class="dau-tip-layer" role="status">{readout}</div>
             </div>
-            <p class="dau-legend">
-                <span><span class="dau-key"></span>"a day read whole"</span>
-                <span><span class="dau-key partial"></span>"partly counted"</span>
-                <span><span class="dau-key today"></span>"today so far"</span>
-            </p>
-            <details class="dau-table">
-                <summary>"The days as a table"</summary>
-                <table>
-                    <thead><tr><th scope="col">"Day (UTC)"</th><th scope="col">"Active accounts"</th><th scope="col">"Messages"</th></tr></thead>
-                    <tbody>
-                        {days.iter().rev().map(|d| {
-                            let messages: u64 = d.actions.values().sum();
-                            let (_, _, note) = note(d);
-                            view! {
-                                <tr>
-                                    <th scope="row">{date(d.day, true)}{note}</th>
-                                    <td>{full_number(d.active)}</td>
-                                    <td>{full_number(messages)}</td>
-                                </tr>
-                            }
-                        }).collect_view()}
-                    </tbody>
-                </table>
-            </details>
-        </section>
+            <div class="dau-ticks" aria-hidden="true">{ticks}</div>
+        </div>
     }
-    .into_any()
 }
 
 /// What the accounts did on the last day read whole; before one, on the
-/// day being read.
+/// day being read: SnapMeter's mix, a bar a kind.
 #[component]
 fn Mix(counted: ActivityPayload) -> impl IntoView {
     let reading = counted.reached.map(day);
@@ -451,8 +735,15 @@ fn Mix(counted: ActivityPayload) -> impl IntoView {
     if total == 0 {
         return ().into_any();
     }
-    let mut families: Vec<(Family, u64)> = shown.actions.iter().map(|(f, n)| (*f, *n)).collect();
-    families.sort_by(|a, b| b.1.cmp(&a.1).then(family_name(a.0).cmp(family_name(b.0))));
+    // Most first, then by name: ten kinds at most, so each goes in its place
+    // (a sort would bring the standard library's, 4 KB of it).
+    let mut families: Vec<(&str, u64)> = Vec::new();
+    for (family, n) in &shown.actions {
+        let name = family_name(*family);
+        let at = families.iter().position(|(m, k)| k < n || (k == n && *m > name)).unwrap_or(families.len());
+        families.insert(at, (name, *n));
+    }
+    let most = families.first().map_or(1, |f| f.1).max(1);
     let when = if reading == Some(shown.day) && shown.day == day(now()) {
         "today so far".to_owned()
     } else {
@@ -461,22 +752,19 @@ fn Mix(counted: ActivityPayload) -> impl IntoView {
     view! {
         <section class="dau-card dau-mix">
             <h2>"What they did"</h2>
-            <p class="muted">{format!("{} merged {when}, by kind.", plural(total, "message", "messages"))}</p>
-            <div class="dau-mix-bar" aria-hidden="true">
-                {families.iter().enumerate().map(|(i, (_, n))| view! {
-                    <span class=format!("dau-mix-seg mix-{}", i.min(5)) style=format!("flex-grow: {n}")></span>
-                }).collect_view()}
-            </div>
-            <ul class="dau-mix-list">
-                {families.into_iter().enumerate().map(|(i, (family, n))| view! {
+            <p class="dau-sub">{format!("{} merged {when}, by kind.", plural(total, "message", "messages"))}</p>
+            <ol class="dau-rows dau-mix-list">
+                {families.into_iter().map(|(name, n)| view! {
                     <li>
-                        <span class=format!("swatch mix-{}", i.min(5)) aria-hidden="true"></span>
-                        <span class="dau-mix-name">{family_name(family)}</span>
-                        <strong>{full_number(n)}</strong>
-                        <span class="muted">{percent(n, total)}</span>
+                        <span class="dau-mix-name">{name}</span>
+                        <span class="dau-row-bar" aria-hidden="true">
+                            <span style=format!("width: {:.1}%", n as f64 / most as f64 * 100.0)></span>
+                        </span>
+                        <strong class="dau-row-count">{full_number(n)}</strong>
+                        <span class="dau-row-share">{percent(n, total)}</span>
                     </li>
                 }).collect_view()}
-            </ul>
+            </ol>
         </section>
     }
     .into_any()
@@ -492,14 +780,14 @@ fn Apps(apps: AppsWindow, accounts: Vec<UserSummary>) -> impl IntoView {
     view! {
         <section class="dau-card dau-apps">
             <h2>"By app"</h2>
-            <p class="muted">
+            <p class="dau-sub">
                 {format!("Accounts active through each app in the 24 hours to {}. ", moment(apps.to))}
                 "An account's app is the one that requested the key it signed with, so an account that used two apps counts for each."
             </p>
             {(known < 100).then(|| view! {
                 <p class="dau-note">{format!("Apps are known for {known}% of active accounts so far: the counts below are floors while the rest are looked up.")}</p>
             })}
-            <ol class="dau-app-list">
+            <ol class="dau-rows dau-app-list">
                 {shown.into_iter().map(|a| {
                     let account = accounts.iter().find(|u| u.fid == a.app);
                     let name = account.map_or_else(|| format!("app fid {}", a.app), |u| client_name(u).to_owned());
@@ -518,14 +806,14 @@ fn Apps(apps: AppsWindow, accounts: Vec<UserSummary>) -> impl IntoView {
                                     None => view! { <span>{name}</span> }.into_any(),
                                 }}
                             </span>
-                            <span class="dau-app-bar" aria-hidden="true"><span style=width></span></span>
-                            <strong class="dau-app-count">{full_number(a.active)}</strong>
-                            <span class="dau-app-share muted">{percent(a.active, apps.active)}</span>
+                            <span class="dau-row-bar" aria-hidden="true"><span style=width></span></span>
+                            <strong class="dau-row-count dau-app-count">{full_number(a.active)}</strong>
+                            <span class="dau-row-share dau-app-share">{percent(a.active, apps.active)}</span>
                         </li>
                     }
                 }).collect_view()}
             </ol>
-            <p class="muted dau-apps-foot">
+            <p class="dau-sub dau-apps-foot">
                 {(rest > 0).then(|| format!("{rest} more {} with fewer accounts. ", if rest == 1 { "app" } else { "apps" }))}
                 {(apps.none > 0).then(|| format!("{} signed with keys no app requested. ", plural(apps.none, "account", "accounts")))}
                 {(apps.unknown > 0).then(|| format!("{} with keys whose app isn't known yet.", plural(apps.unknown, "account", "accounts")))}
@@ -534,46 +822,65 @@ fn Apps(apps: AppsWindow, accounts: Vec<UserSummary>) -> impl IntoView {
     }
 }
 
-/// How the counts are made, and what they cover: SnapMeter's labels.
+/// How the counts are made, and what they cover: SnapMeter's definitions.
 #[component]
 fn Method(counted: ActivityPayload) -> impl IntoView {
-    let gaps = counted.gaps.clone();
+    let gaps = if counted.gaps.is_empty() {
+        "None: every block since counting began has been read.".to_owned()
+    } else {
+        let spans: Vec<String> =
+            counted.gaps.iter().map(|(a, b)| format!("{} to {}", moment(*a), moment(*b))).collect();
+        format!(
+            "Not read: {}. Windows and days that touch a gap are left out or marked partly counted.",
+            spans.join("; ")
+        )
+    };
+    let from = format!(
+        "The event stream of Hypersnap's public node, read every 2 minutes by Allthing's Worker{}{}. A message's time is that of the block that confirmed it.",
+        counted.since.map(|since| format!(", since {}", moment(since))).unwrap_or_default(),
+        counted.reached.map(|at| format!("; read to {}", moment(at))).unwrap_or_default(),
+    );
+    let mut terms: Vec<(&str, String)> = vec![
+        (
+            "Active",
+            "At least one message merged into Farcaster: a cast, reaction, follow, profile change, verification, username proof, frame action, storage lending, key or channel message, or the removal of one. That is SnapMeter's closed list for Snapchain, message types 1–8 and 11–21. Pruned, revoked and failed messages, and onchain events, don't count. Each account counts once in a window, however many messages it sent, on whichever shard.".to_owned(),
+        ),
+        (
+            "Past 24 hours",
+            "SnapMeter's rolling window, (t − 24 h, t], to the start of the hour in progress, against the 24 hours before it.".to_owned(),
+        ),
+        (
+            "Today, a day",
+            "A UTC calendar day from 00:00, today's so far. A day is read whole when counting had begun by its start and no gap touches it; the others are partly counted.".to_owned(),
+        ),
+        ("Past 30 days", "The 30 UTC days to the end of yesterday, each account once: not the days added up.".to_owned()),
+        ("7-day average", "The mean of the last 7 days read whole, against the 7 days before them.".to_owned()),
+        (
+            "By app",
+            "The app that requested the key a message was signed with, so an account that used two apps counts for each.".to_owned(),
+        ),
+        ("From", from),
+        ("Gaps", gaps),
+        (
+            "Exact",
+            "Every account is kept, as a compact set per hour and per day, so a window counts each one once. Nothing is sampled or estimated.".to_owned(),
+        ),
+    ];
+    if counted.hourly.iter().any(Option::is_some) {
+        terms.insert(
+            5,
+            (
+                "By hour",
+                "Each UTC hour's accounts, an hour ending on its last second. An account active in several hours counts in each.".to_owned(),
+            ),
+        );
+    }
     view! {
-        <section class="dau-card dau-method">
-            <h2>"How they're counted"</h2>
-            <ul>
-                <li>
-                    <strong>"Active"</strong>
-                    " means at least one message merged into Farcaster: a cast, reaction, follow, profile change, verification, username proof, frame action, storage lending, key or channel message, or the removal of one. That is SnapMeter's closed list for Snapchain, message types 1–8 and 11–21. Pruned, revoked and failed messages, and onchain events, don't count."
-                </li>
-                <li><strong>"Once"</strong>" per window for each account, however many messages it sent, on whichever shard."</li>
-                <li>
-                    <strong>"When"</strong>
-                    " is the time of the block that confirmed the message. The 24-hour windows are SnapMeter's "
-                    <code>"(t − 24 h, t]"</code>
-                    ", ending on the hour; days are UTC calendar days."
-                </li>
-                <li>
-                    <strong>"From"</strong>
-                    " the event stream of Hypersnap's public node, read every 2 minutes by Allthing's Worker"
-                    {counted.since.map(|since| format!(", since {}", moment(since)))}
-                    {counted.reached.map(|at| format!("; read to {}", moment(at)))}
-                    "."
-                </li>
-                <li>
-                    <strong>"Gaps: "</strong>
-                    {if gaps.is_empty() {
-                        "none. Every block since counting began has been read.".to_owned()
-                    } else {
-                        let spans: Vec<String> = gaps.iter().map(|(a, b)| format!("{} to {}", moment(*a), moment(*b))).collect();
-                        format!("not read: {}. Windows and days that touch a gap are left out or marked partly counted.", spans.join("; "))
-                    }}
-                </li>
-                <li>
-                    <strong>"Exact"</strong>
-                    " because every account is kept, as a compact set per hour and per day, so a window counts each one once. Nothing is sampled or estimated."
-                </li>
-            </ul>
+        <section class="dau-card dau-method" aria-labelledby="dau-how">
+            <h2 id="dau-how">"How they're counted"</h2>
+            <dl class="dau-terms">
+                {terms.into_iter().map(|(term, text)| view! { <div><dt>{term}</dt><dd>{text}</dd></div> }).collect_view()}
+            </dl>
             <p class="dau-links">
                 <a href="https://github.com/ael-dev3/SnapMeter/blob/main/docs/metrics.md" target="_blank" rel="noopener noreferrer">"SnapMeter's definitions"</a>
                 " · "

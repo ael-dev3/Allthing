@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The share of casts each app posted, from the casts' provenance, and,
 //! once the cron has counted them by app, each app's active accounts on
-//! hovering it.
+//! hovering it, with how they're counted.
 
 use allthing_core::activity::{AppsWindow, day, day_name};
 use allthing_core::clients::{client_name, client_shares, other_clients};
@@ -104,6 +104,12 @@ fn ClientCard(
                 </a>
             </p>
             <p class="client-card-window">"in the 24 hours to "{window_end(counted.to)}</p>
+            // How they're counted, as the cron counts them
+            // (`allthing_core::activity`), in a line; /dau says more.
+            <p class="client-card-method">
+                "Any message (a cast, reaction, follow…) signed with a key this app requested counts its account once, from Hypersnap's events. "
+                <a href=dau_href()>"How it's counted"</a>
+            </p>
             <p class="client-card-share">{share}" of "{period}" trending casts"</p>
             {(known < 100).then(|| view! {
                 <p class="client-card-note">{format!("Apps are known for {known}% of active accounts so far.")}</p>

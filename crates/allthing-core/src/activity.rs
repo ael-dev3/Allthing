@@ -880,6 +880,12 @@ pub struct ActivityPayload {
     /// The latest 30 UTC days, oldest first; the last is in progress.
     #[serde(default)]
     pub days: Vec<DayCount>,
+    /// Accounts active in each of the `HOURLY` hours to `rolling_to`,
+    /// oldest first, each hour `(h − 1 h, h]` as `bucket` keeps it: an
+    /// account active in several hours counts in each. `None` for an hour
+    /// not read whole; empty before any was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hourly: Vec<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -901,6 +907,56 @@ pub fn rolling_to(reached: i64) -> i64 {
     hour(reached) * 3_600
 }
 
+/// Hours counted one by one in the payload: the two 24-hour windows.
+pub const HOURLY: i64 = 48;
+
+/// Accounts active in each of the `HOURLY` hours to `to` (on the hour),
+/// oldest first: `None` for an hour not read whole, and nothing at all
+/// before one was. `hours` holds their sets (see `bucket`); an hour read
+/// whole with no set had no activity.
+pub fn hourly(follow: &Follow, hours: &HashMap<i64, Fids>, to: i64) -> Vec<Option<u64>> {
+    let last = hour(to) - 1;
+    let counts: Vec<Option<u64>> = ((last - HOURLY + 1)..=last)
+        .map(|h| follow.covered(h * 3_600, (h + 1) * 3_600).then(|| hours.get(&h).map_or(0, |set| set.len() as u64)))
+        .collect();
+    if counts.iter().any(Option::is_some) { counts } else { Vec::new() }
+}
+
+/// The average active accounts a day over the 7 UTC days to the end of the
+/// newest day read whole, and over the 7 before them: SnapMeter's 7-day
+/// trend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Weeks {
+    /// The newer week's last day.
+    pub to: i64,
+    pub average: u64,
+    pub before: u64,
+}
+
+/// The two weeks' averages, rounded, if all 14 days were read whole.
+pub fn weeks(days: &[DayCount]) -> Option<Weeks> {
+    let to = days.iter().rev().find(|d| d.complete)?.day;
+    let average = |last: i64| {
+        let week = ((last - 6)..=last)
+            .map(|on| days.iter().find(|d| d.day == on && d.complete).map(|d| d.active))
+            .collect::<Option<Vec<u64>>>()?;
+        Some((week.iter().sum::<u64>() + 3) / 7)
+    };
+    Some(Weeks { to, average: average(to)?, before: average(to - 7)? })
+}
+
+/// The median count of the days read whole, once a week of them has been:
+/// a typical day, for today's count so far to be measured against.
+pub fn median_day(days: &[DayCount]) -> Option<u64> {
+    let mut counts: Vec<u64> = days.iter().filter(|d| d.complete).map(|d| d.active).collect();
+    if counts.len() < 7 {
+        return None;
+    }
+    counts.sort_unstable();
+    let mid = counts.len() / 2;
+    Some(if counts.len().is_multiple_of(2) { (counts[mid - 1] + counts[mid]).div_ceil(2) } else { counts[mid] })
+}
+
 /// The payload for `follow`'s counts, with the sets of the 48 hours before
 /// the hour in progress.
 pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Meta) -> ActivityPayload {
@@ -915,6 +971,7 @@ pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Me
         apps_24h: follow.apps_24h.clone(),
         app_accounts: follow.app_accounts.clone(),
         days: follow.days.iter().rev().take(KEEP_DAYS as usize).rev().cloned().collect(),
+        hourly: to.map(|t| hourly(follow, hours, t)).unwrap_or_default(),
         since: follow.since,
         gaps: follow.gaps.clone(),
         meta,
@@ -1150,10 +1207,20 @@ mod tests {
         assert_eq!(rolling(&late, &hours, to - 86_400), None);
         // A window not read to its end.
         assert_eq!(rolling(&f, &hours, to + 3_600), None);
+        // Each of the 48 hours, oldest first; the hour in progress isn't one.
+        let each = hourly(&f, &hours, to);
+        assert_eq!(each.len(), 48);
+        assert_eq!((each[0], each[23], each[24], each[46], each[47]), (Some(2), Some(1), Some(2), Some(0), Some(2)));
+        // Hours before counting began weren't read whole; with none read
+        // whole, there are none.
+        let each = hourly(&late, &hours, to);
+        assert_eq!((each.iter().position(Option::is_some), each[47]), (Some(18), Some(2)));
+        assert!(hourly(&follow(to, reached), &hours, to).is_empty());
         let meta = crate::api::Meta::default();
         let payload = summary(&f, &hours, meta);
         assert_eq!((payload.rolling_24h, payload.previous_24h, payload.reached), (Some(3), Some(2), Some(reached)));
         assert_eq!(payload.rolling_to, Some(to));
+        assert_eq!(payload.hourly, hourly(&f, &hours, to));
         let json = serde_json::to_string(&payload).unwrap();
         assert_eq!(serde_json::from_str::<ActivityPayload>(&json).unwrap(), payload);
     }
@@ -1259,6 +1326,41 @@ mod tests {
         f.apps_24h = Some(AppsWindow::of(to, to + 600, 1_000, [(Some(9152), 900), (None, 100)]));
         assert!(!f.apps_due(to, to + 1_100));
         assert!(f.apps_due(to, to + 1_200));
+    }
+
+    #[test]
+    fn weeks_and_a_typical_day_are_of_days_read_whole() {
+        let day0 = 20_000;
+        // 20 days, the first begun mid-day and the last in progress: 100 a
+        // day, then 200 a day for the 7 before the one in progress.
+        let days: Vec<DayCount> = (0..20)
+            .map(|i| DayCount {
+                day: day0 + i,
+                active: if i == 0 {
+                    5
+                } else if i >= 12 {
+                    200
+                } else {
+                    100 + u64::from(i == 5) * 3
+                },
+                complete: i > 0 && i < 19,
+                ..DayCount::default()
+            })
+            .collect();
+        // The newer week ends on the last day read whole, day 18: days 12 to
+        // 18; the week before, days 5 to 11 (703 / 7 rounds to 100).
+        assert_eq!(weeks(&days), Some(Weeks { to: day0 + 18, average: 200, before: 100 }));
+        // Not 14 days read whole: no trend.
+        assert_eq!(weeks(&days[6..]), None);
+        let mut gap = days.clone();
+        gap[8].complete = false;
+        assert_eq!(weeks(&gap), None);
+        // The median of the 18 days read whole: 11 of 100 (one 103), 7 of 200.
+        assert_eq!(median_day(&days), Some(100));
+        assert_eq!(median_day(&days[10..]), Some(200));
+        // An even count takes the mean of the middle two, rounded up.
+        assert_eq!(median_day(&days[8..16]), Some(150));
+        assert_eq!(median_day(&days[..7]), None);
     }
 
     #[test]
