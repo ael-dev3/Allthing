@@ -84,7 +84,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     </button>
                     <UserChip user=cast.author.clone() card=notes.users.get(&cast.author.fid).cloned()/>
                     {(cast.author.fid == op_fid).then(|| view! { <span class="op-mark" aria-description="Original poster">"OP"</span> })}
-                    <a class="when" href=href.clone()><TimeAgo ts=cast.ts/></a>
+                    <a class="when" href=href.clone()><span class="visually-hidden">"Open reply, "</span><TimeAgo ts=cast.ts/></a>
                 </span>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
                 <Show when=move || collapsed.get()>
@@ -104,8 +104,7 @@ fn Comment(node: ThreadNode, notes: Notes, op_fid: u64) -> AnyView {
                     <VideoLinks cast=cast.clone()/>
                     <LinkCards cast=cast.clone()/>
                     <div class="comment-foot">
-                        <Engagement cast=cast.clone()/>
-                        <a class="permalink" href=href.clone()>"permalink"</a>
+                        <Engagement cast=cast.clone() tight=true/>
                         {reply_button(&cast, "reply")}
                     </div>
                     <ReactionChips cast=cast.clone() reacted=reactions(node.children.iter().map(|n| &n.cast))/>

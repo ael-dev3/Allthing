@@ -918,7 +918,7 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
             }
         >
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
-            "Reply"
+            <span class="button-label">"Reply"</span>
         </button>
     }
 }
@@ -939,7 +939,7 @@ pub fn QuoteButton(cast: Cast) -> impl IntoView {
             on:click=move |_| composer.start(Target::Quote(of.clone()))
         >
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=QUOTE/></svg>
-            "Quote"
+            <span class="button-label">"Quote"</span>
         </button>
     }
 }

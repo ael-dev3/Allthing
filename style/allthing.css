@@ -1168,7 +1168,6 @@ p.jumbo .emoji img {
   .engagement .act,
   .engagement .popover-trigger,
   .reply-button,
-  .permalink,
   .follow-button,
   .favorite-button,
   .show-less-button,
@@ -1190,7 +1189,6 @@ p.jumbo .emoji img {
   .engagement .act::after,
   .engagement .popover-trigger::after,
   .reply-button::after,
-  .permalink::after,
   .follow-button::after,
   .favorite-button::after,
   .show-less-button::after,
@@ -2225,13 +2223,17 @@ p.jumbo .emoji img {
   margin: 7px 0 4px;
 }
 
-.permalink,
-.continue {
-  font-size: 12.5px;
-  color: var(--ink-3);
+/* Under a reply, the counts are their icons and numbers, without "likes",
+   "recasts" and "replies" (screen readers still hear them: the counts'
+   names and the row's summary say them), so its row of counts and buttons
+   keeps to one line, five levels of replies down. The post's row keeps the
+   words. */
+.comment-foot .engagement .label {
+  display: none;
 }
 
 .continue {
+  font-size: 12.5px;
   display: inline-block;
   margin: 6px 0 4px 26px;
   color: var(--accent);
@@ -6109,16 +6111,34 @@ p.jumbo .emoji img {
   margin-left: 0;
 }
 
-/* On a phone, React is its icon and a post's buttons sit closer, so the
-   post's row of counts and buttons fits on one line; React's name stays for
-   screen readers. */
+/* On a phone, Reply, Quote and React are their icons and a post's buttons
+   sit closer, so a post's or a reply's row of counts and buttons fits on
+   one line; their names stay for screen readers. */
 @media (max-width: 520px) {
-  .react-button .react-label {
+  .react-button .react-label,
+  .reply-button .button-label {
     display: none;
   }
 
   .post .cast-foot {
     column-gap: 8px;
+  }
+
+  /* Under a reply, its counts (shown as the Farcaster app shows them,
+     1.2k) and its icons sit closer still, so its row keeps to one line
+     four levels of replies down with counts such as a reply's, three with
+     a thousand likes, with room to spare. Each still takes its own tap,
+     24 px wide or more. */
+  .comment-foot {
+    column-gap: 6px;
+  }
+
+  .comment-foot .engagement {
+    column-gap: 10px;
+  }
+
+  .comment-foot .reply-button {
+    padding-inline: 4px;
   }
 }
 

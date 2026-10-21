@@ -13,7 +13,6 @@ use allthing_core::params::hash_from_param;
 use allthing_core::quotes::single_images;
 use allthing_core::ranking::{CommentSort, sort_thread};
 use allthing_core::text::truncate_title;
-use allthing_core::thread::count_nodes;
 use allthing_core::time::format_date_time;
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
@@ -136,14 +135,18 @@ fn PostPage() -> impl IntoView {
                 let payload: Arc<CastPayload> = data;
                 let notes: Notes = Arc::new(payload.notes.clone());
                 api::remember_cards(&notes.users);
-                let cast = payload.thread.cast.clone();
+                let mut cast = payload.thread.cast.clone();
                 let mut replies = payload.thread.children.clone();
                 sort_thread(&mut replies, sort.get());
-                let shown = count_nodes(&replies);
+                // One count of the replies, in the post's row and over them:
+                // its direct replies, as its card in the feeds says, and never
+                // fewer than are listed (the data source's count can lag). The
+                // replies to those replies are under them, not in the count.
+                cast.replies = cast.replies.max(replies.len() as u64);
                 let path = cast_href(&hash);
                 let mut in_thread = std::collections::HashSet::from([cast.hash.to_ascii_lowercase()]);
                 thread_hashes(&replies, &mut in_thread);
-                let (count, _) = crate::components::chips::replies_shown(&cast.hash, cast.replies.max(shown as u64));
+                let (count, _) = crate::components::chips::replies_shown(&cast.hash, cast.replies);
                 view! {
                     <Columns>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}

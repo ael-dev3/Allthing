@@ -35,7 +35,7 @@ async function serve(page: Page) {
 /** For the screenshots only: each tap band, outlined. */
 const outlined = [
   ".main-nav a", ".sign-in-button", ".sort-tabs a", ".tabs a", ".engagement .act", ".engagement .popover-trigger",
-  ".reply-button", ".permalink", ".follow-button", ".favorite-button", ".show-less-button", ".site-footer a",
+  ".reply-button", ".follow-button", ".favorite-button", ".show-less-button", ".site-footer a",
 ].map((target) => `${target}::after`).join(", ") + " { outline: 1px dashed #d6247a; outline-offset: -1px; }";
 
 /** The tap band of `target`: its ::after, as laid out. */
@@ -95,7 +95,6 @@ test("at 390 on a touch screen, the small targets take a 44 px tap", async ({ br
   await check("Reply", page.locator(".post").getByRole("button", { name: "Reply to @alice" }));
   await check("Quote", page.locator(".post").getByRole("button", { name: "Quote @alice's cast" }));
   await check("a reply's Reply", page.locator(".comment").getByRole("button", { name: "Reply to @bob" }));
-  await check("permalink", page.locator(".comment .permalink"));
 
   await page.goto("/u/alice");
   await check("Follow", page.getByRole("button", { name: "Follow @alice" }));
