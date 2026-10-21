@@ -200,7 +200,7 @@ async fn notifications(inv: &Rc<Invocation>, req: &Request, env: &Env, url: &Url
         let cursor = cursor.clone();
         async move { pages::notifications(inv, fid, cursor, previous).await }.boxed_local()
     });
-    answer(inv, cache_key(url, &name), build, false, true).await
+    answer(inv, cache_key(url, &name), build, false, false, true).await
 }
 
 /// The cron trigger in wrangler.toml that stores the newest casts. It fires
@@ -346,7 +346,7 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
         let endpoint = endpoint.clone();
         async move { endpoint.build(inv, previous).await }.boxed_local()
     });
-    answer(inv, key, build, wallets, false).await
+    answer(inv, key, build, wallets, engagement, false).await
 }
 
 /// A payload from the edge cache, built with `build` when it must be. A
@@ -357,6 +357,7 @@ async fn answer(
     key: String,
     build: cache::Builder,
     wallets: bool,
+    engagement: bool,
     private: bool,
 ) -> Result<Response> {
     let started = inv.now();
