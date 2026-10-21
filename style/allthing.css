@@ -4119,6 +4119,40 @@ p.jumbo .emoji img {
   margin: 10px 0 0;
 }
 
+/* Favorite and Show less in a profile card, as on the profile: one row of
+   two small buttons between its counts and its facts, each 28 px tall
+   whatever the font, so the card keeps its size. */
+.profile-card-leaning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 10px 0 0;
+}
+
+.profile-card-leaning .favorite-button,
+.profile-card-leaning .show-less-button {
+  height: 28px;
+  padding: 0 11px 0 9px;
+  gap: 5px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.profile-card-leaning .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* On a touch screen their taps are 36 px tall, not 44, clear of the "?"
+   beside the vote just under them. */
+@media (pointer: coarse) {
+  .profile-card-leaning .favorite-button::after,
+  .profile-card-leaning .show-less-button::after {
+    height: max(100%, 36px);
+  }
+}
+
 .profile-card .facts {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
@@ -6353,14 +6387,23 @@ p.jumbo .emoji img {
 }
 
 /* A profile card opened beside a who-list: a transform on an ancestor (a
-   hovered card lifts, a page's content animates in) would make that ancestor
-   the card's containing block, clipping it to the list and to the card.
-   Those transforms are off while such a card is open. */
+   hovered card lifts, a page's content animates in, the list itself pops
+   in) would make that ancestor the card's containing block, clipping it to
+   the list and to the card, or, opened by a key as the list popped in,
+   leave it placed over the list once the pop-in ended. Those transforms
+   are off while such a card is open. */
 .cast-card:has(.popover-panel.beside),
 .columns:has(.popover-panel.beside),
-.page > *:has(.popover-panel.beside) {
+.page > *:has(.popover-panel.beside),
+.popover-panel:has(.popover-panel.beside) {
   transition: none;
   transform: none !important;
+}
+
+/* The list's pop-in too: while it runs, it holds the card, overridden or
+   not, and the card is placed against it. */
+.popover-panel:has(.popover-panel.beside) {
+  animation: none;
 }
 
 .popover-panel.beside {

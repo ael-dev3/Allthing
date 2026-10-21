@@ -112,7 +112,13 @@ fn ChannelPage() -> impl IntoView {
                 let pinned_hash = pinned.as_ref().map(|c| c.hash.clone());
                 let pool: Vec<Cast> =
                     top_level(&payload.pool).into_iter().filter(|c| Some(&c.hash) != pinned_hash.as_ref()).collect();
-                let casts = Signal::derive(move || sorted_for(&pool, sort.get(), &leaning.leanings()));
+                // A favorite made, or Show less, in a profile card over the
+                // list waits for the next sort or load (`Leaning::for_list`).
+                let sorted_by = StoredValue::new(None);
+                let casts = Signal::derive(move || {
+                    let order = sort.get();
+                    sorted_for(&pool, order, &leaning.for_list(sorted_by, order))
+                });
                 // The count of accounts that have cast here, when the header
                 // shows the Farcaster app's member and follower counts instead.
                 let casters =

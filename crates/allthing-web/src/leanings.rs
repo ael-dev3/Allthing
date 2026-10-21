@@ -84,16 +84,24 @@ impl Kept {
 pub struct Leaning {
     favorites: Kept,
     less: Kept,
+    /// How many times the reader's other tabs changed them while this one
+    /// ran: a list on screen follows those (`for_list`).
+    elsewhere: RwSignal<u32>,
 }
 
 impl Leaning {
     pub fn new() -> Leaning {
-        let leaning = Leaning { favorites: Kept::new("allthing.favorites"), less: Kept::new("allthing.show-less") };
+        let leaning = Leaning {
+            favorites: Kept::new("allthing.favorites"),
+            less: Kept::new("allthing.show-less"),
+            elsewhere: RwSignal::new(0),
+        };
         // For as long as the app runs: another tab changed them.
         let _ = window_event_listener(leptos::ev::storage, move |ev| {
             for kept in [leaning.favorites, leaning.less] {
                 if ev.key().as_deref() == Some(kept.key) {
                     kept.reload();
+                    leaning.elsewhere.update(|n| *n = n.wrapping_add(1));
                 }
             }
         });
@@ -103,6 +111,27 @@ impl Leaning {
     /// The reader's leanings, for sorting a feed.
     pub fn leanings(self) -> Leanings {
         Leanings { favorites: self.favorites.fids(), less: self.less.fids() }
+    }
+
+    /// The leanings to sort a list on screen by, under `key` (its order, its
+    /// filter): those it was last sorted by while the key is the same, and
+    /// the reader's own when it changes, or when another tab changes them.
+    /// So a favorite made, or Show less, in a profile card over the list
+    /// leaves its cards where they are, under the pointer, until the list is
+    /// next loaded, sorted or filtered; another tab's re-sorts it in place.
+    pub fn for_list<K>(self, sorted_by: StoredValue<Option<(K, u32, Leanings)>>, key: K) -> Leanings
+    where
+        K: Clone + PartialEq + Send + Sync + 'static,
+    {
+        let elsewhere = self.elsewhere.get();
+        match sorted_by.get_value() {
+            Some((was, at, leanings)) if was == key && at == elsewhere => leanings,
+            _ => {
+                let now = untrack(|| self.leanings());
+                sorted_by.set_value(Some((key, elsewhere, now.clone())));
+                now
+            }
+        }
     }
 
     pub fn is_favorite(self, fid: u64) -> bool {

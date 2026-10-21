@@ -89,7 +89,15 @@ const firstFrame = (page: Page) => page.evaluate(() => new Promise<{ complete: b
 
 /** Every animation that ends has ended: the card has finished coming in. */
 const settled = (page: Page) =>
-  page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished)));
+  page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        // One cut short (a list's pop-in, as a card opens beside it) has settled too.
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
 
 const box = async (l: Locator) => (await l.boundingBox())!;
 const overlap = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>

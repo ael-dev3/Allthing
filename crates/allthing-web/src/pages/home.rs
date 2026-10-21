@@ -115,8 +115,11 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 Some(fid) => from_client(pool, &notes, fid),
                 None => pool,
             };
-            // Seeing less of an account reorders the list in place.
-            let casts = Memo::new(move |_| sorted_for(&pool, Sort::New, &leaning.leanings()));
+            // Seeing less of an account, in a profile card over the list,
+            // leaves its cards where they are until it's next loaded
+            // (`Leaning::for_list`).
+            let sorted_by = StoredValue::new(None);
+            let casts = Memo::new(move |_| sorted_for(&pool, Sort::New, &leaning.for_list(sorted_by, ())));
             view! {
                 <Columns>
                     <Heading sort range/>
@@ -276,11 +279,15 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                 let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
                 let query = use_query_map();
                 let client = Memo::new(move |_| client_param(&query.read()));
-                // Re-sorting, or a favorite made, reorders the list in place
-                // instead of rebuilding the page.
+                // Re-sorting reorders the list in place instead of rebuilding
+                // the page. A favorite made, or Show less, in a profile card
+                // over the list waits for the next sort, filter or load
+                // (`Leaning::for_list`): its cards stay under the pointer.
+                let sorted_by = StoredValue::new(None);
                 let casts = Memo::new(move |_| {
                     let order = listed.get();
-                    let leanings = leaning.leanings();
+                    let filter = client.get();
+                    let leanings = leaning.for_list(sorted_by, (order, filter));
                     let mut all = sorted_for(&pool, order, &leanings);
                     more.with(|pages| {
                         for page in pages {
@@ -291,7 +298,7 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                             );
                         }
                     });
-                    match client.get() {
+                    match filter {
                         Some(fid) => from_client(all, &notes.get(), fid),
                         None => all,
                     }

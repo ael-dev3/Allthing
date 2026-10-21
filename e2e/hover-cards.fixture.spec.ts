@@ -207,7 +207,8 @@ test("keyboard focus resting on a name opens the card, Tab goes through it and o
   await expect(handle).toBeFocused();
   await expect(profile).toBeVisible();
   const when = feedCard(page).locator("a.when");
-  for (let i = 0; i < 6 && !(await when.evaluate((el) => el === document.activeElement)); i++) {
+  // Through the card: its name, Favorite, Show less, the facts' links and View profile.
+  for (let i = 0; i < 10 && !(await when.evaluate((el) => el === document.activeElement)); i++) {
     await page.keyboard.press("Tab");
   }
   await expect(when).toBeFocused();
