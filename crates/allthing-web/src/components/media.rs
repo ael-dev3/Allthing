@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use allthing_core::embeds::{ImageSize, embed_domain, resized_image_url};
+use allthing_core::embeds::{ImageSize, embed_domain, is_gif, resized_image_url};
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::model::{Cast, Embed};
 use allthing_core::text::truncate_title;
@@ -213,7 +213,10 @@ fn sticker_view(sticker: &'static Sticker) -> impl IntoView {
 
 /// A cast's images and videos. In listings, images link to the post; on the
 /// post page (`open_on_click`), they open the lightbox. Allthing's stickers
-/// show apart, as stickers.
+/// show apart, as stickers. A GIF's tile is marked `gif` (`embeds::is_gif`;
+/// payloads carry no content type), so a GIF alone shows at about the size
+/// chat apps give one, not a photo's (style/allthing.css). web/paint.js
+/// marks the front page's first cards' tiles the same way.
 #[component]
 pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl IntoView {
     let viewer = use_viewer();
@@ -234,11 +237,14 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                 let gallery = gallery.clone();
                 move || viewer.open(Gallery { index: i, ..gallery.clone() })
             };
+            let gif = is_gif(&item.url, None);
             match item.kind {
                 MediaKind::Video => {
                     let expand = open_on_click.then(|| Callback::new(move |()| open()));
+                    // A GIF can come as a video, as Tenor's MP4s do.
+                    let class = if gif { "tile tile-video gif" } else { "tile tile-video" };
                     view! {
-                        <div class="tile tile-video">
+                        <div class=class>
                             <HlsVideo url=item.url.clone() alt=item.alt.clone() on_expand=expand/>
                         </div>
                     }
@@ -264,11 +270,12 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                             referrerpolicy="no-referrer"
                         />
                     };
+                    let class = if gif { "tile tile-image gif" } else { "tile tile-image" };
                     if open_on_click {
                         let label = format!("Open {} in the media viewer", item.alt);
                         view! {
                             <button
-                                class="tile tile-image"
+                                class=class
                                 type="button"
                                 aria-label=label
                                 style=style
@@ -282,7 +289,7 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
                         .into_any()
                     } else {
                         view! {
-                            <a class="tile tile-image" href=href.clone() style=style data-sized=sized data-portrait=portrait>
+                            <a class=class href=href.clone() style=style data-sized=sized data-portrait=portrait>
                                 {img}
                             </a>
                         }

@@ -58,7 +58,8 @@ const pair = {
   likes: 5,
   recasts: 0,
   replies: 0,
-  embeds: [{ kind: "image", url: "https://media.example/one.svg" }, { kind: "image", url: "https://media.example/two.svg" }],
+  // GIFs, one by its path and one by its host: their tiles are marked as the app's are.
+  embeds: [{ kind: "image", url: "https://media.example/one.gif" }, { kind: "image", url: "https://media.tenor.com/fixtureAAAAe/two.webp" }],
 };
 const quoting = { hash: hex(5), author: ann, text: "Quoting", ts: now - 3.5 * HOUR, likes: 4, recasts: 0, replies: 0, embeds: [{ kind: "cast", fid: 2, hash: favorite.hash }] };
 const later = { hash: hex(6), author: cat, text: "Later on", ts: now - 4.5 * HOUR, likes: 3, recasts: 0, replies: 0 };
@@ -83,7 +84,7 @@ async function serve(page: Page, body: object = payload, headers: Record<string,
   page.on("request", (request: Request) => {
     const url = request.url();
     if (url.endsWith("format=json")) probes.push(url);
-    else if (/^https:\/\/(imagedelivery\.net|media\.example)\//.test(url) || url.includes("/assets/emoji/")) images.push(url);
+    else if (/^https:\/\/(imagedelivery\.net|media\.example|media\.tenor\.com)\//.test(url) || url.includes("/assets/emoji/")) images.push(url);
   });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   for (const path of ["**/api/v1/home**", "**/api/v1/latest**", "**/api/v1/channel?*", "**/api/v1/user?*"]) {
@@ -97,7 +98,7 @@ async function serve(page: Page, body: object = payload, headers: Record<string,
     const size = url.includes("/fit=scale-down,") ? svg(720, 360) : url.includes("w=140") ? svg(140, 140) : svg(64, 64);
     return route.fulfill({ body: size, contentType: "image/svg+xml", headers: cors });
   });
-  await page.route("https://media.example/**", (route) => route.fulfill({ body: svg(600, 600), contentType: "image/svg+xml" }));
+  await page.route(/^https:\/\/(media\.example|media\.tenor\.com)\//, (route) => route.fulfill({ body: svg(600, 600), contentType: "image/svg+xml" }));
   return { images, probes };
 }
 
@@ -197,6 +198,8 @@ for (const width of [1280, 390]) {
     // of it, and no image is asked for while the module is on its way.
     const tile = boot.locator(`.cast-card[data-hash="${rich.hash}"] .tile-image`);
     await expect(tile).toHaveAttribute("data-sized", "");
+    await expect(tile).not.toHaveClass(/(^| )gif( |$)/);
+    await expect(boot.locator(`.cast-card[data-hash="${pair.hash}"] .tile-image.gif`)).toHaveCount(2);
     expect(probes).toEqual(["https://imagedelivery.net/fixture/wide/fit=scale-down,w=720,format=json"]);
     await expect(boot.locator('img:not([src^="data:"]), source[srcset]')).toHaveCount(0);
     expect(images).toEqual([]);

@@ -755,12 +755,19 @@ code {
   font-weight: 600;
 }
 
+/* The GIF of a cast on its way: as big as a GIF in a card (.tile.gif). */
 .outgoing-image {
   display: block;
-  max-width: min(100%, 240px);
-  max-height: 240px;
+  max-width: min(100%, 300px);
+  max-height: 300px;
   margin: 8px 0 2px;
   border-radius: var(--radius-sm);
+}
+
+@media (max-width: 640px) {
+  .outgoing-image {
+    max-width: min(70%, 300px);
+  }
 }
 
 .outgoing-quote {
@@ -1304,6 +1311,31 @@ p.jumbo .emoji img {
 .media-grid:not(.n1) .tile-video .video {
   aspect-ratio: 1 / 1;
   height: 100%;
+}
+
+/* A GIF alone (Tenor's, KLIPY's or GIPHY's, or an image whose path is a
+   .gif: allthing_core::embeds::is_gif) shows at about the size Discord
+   gives one, not a photo's: its own shape, at most 300 px wide and 300 px
+   tall (the height cap is --max-h, which a sized tile's width follows),
+   from the card's left edge, with the tile's rounded corners. On a phone,
+   at most 70% of the card's width. One that comes as a video (Tenor's MP4)
+   is sized the same; among other media, a GIF is a tile like theirs. */
+.media-grid.n1 .tile-image.gif,
+.cast-card .quote .media-grid.n1 .tile-image.gif,
+.media-grid.n1 .tile-video.gif .video {
+  --max-h: 300px;
+}
+
+.media-grid.n1 .tile-image.gif,
+.media-grid.n1 .tile-video.gif .video {
+  max-width: min(100%, 300px);
+}
+
+@media (max-width: 640px) {
+  .media-grid.n1 .tile-image.gif,
+  .media-grid.n1 .tile-video.gif .video {
+    max-width: min(70%, 300px);
+  }
 }
 
 .video video {
