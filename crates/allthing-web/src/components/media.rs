@@ -37,9 +37,16 @@ pub struct MediaItem {
 pub struct Gallery {
     pub items: Vec<MediaItem>,
     pub index: usize,
-    /// The cast's text, shown under the media.
+    /// Who posted the cast, by username: the caption's first words.
+    pub author: String,
+    /// The cast's words, cut short: the rest of the caption. Each item's
+    /// alt text stays on the item, for screen readers.
     pub caption: String,
 }
+
+/// How much of a cast's words the media viewer's caption shows, at most:
+/// about two lines on a phone (style/allthing.css cuts it there).
+const CAPTION_CHARS: usize = 140;
 
 /// Shared state of the lightbox.
 #[derive(Clone, Copy)]
@@ -226,7 +233,12 @@ pub fn MediaGrid(cast: Cast, #[prop(optional)] open_on_click: bool) -> impl Into
     if items.is_empty() {
         return stickers.into_any();
     }
-    let gallery = Gallery { items: items.clone(), index: 0, caption: truncate_title(&cast.text, 280) };
+    let gallery = Gallery {
+        items: items.clone(),
+        index: 0,
+        author: cast.author.username.clone(),
+        caption: truncate_title(&cast.text, CAPTION_CHARS),
+    };
     let href = cast_href(&cast.hash);
     let count = items.len();
     let tiles = items
@@ -470,8 +482,17 @@ pub fn Lightbox() -> impl IntoView {
                 <div class="lb-backdrop" on:click=move |_| viewer.close()></div>
                 <figure class="lb-figure">
                     <div class="lb-stage" data-index=gallery.index>{stage}</div>
+                    // Who posted it, and the cast's words: the item's alt text
+                    // ("Image 1 of 2 posted by…") is on the item itself, and the
+                    // counter beside says which of them this is.
                     <figcaption class="lb-caption">
-                        <span class="lb-alt"><ExcerptText text=item.alt.clone()/></span>
+                        <span class="lb-text">
+                            <span class="lb-author">"@"{gallery.author.clone()}</span>
+                            {(!gallery.caption.is_empty()).then(|| view! {
+                                <span class="lb-sep" aria-hidden="true">" · "</span>
+                                <ExcerptText text=gallery.caption.clone()/>
+                            })}
+                        </span>
                         {counter.map(|c| view! { <span class="lb-counter" aria-live="polite">{c}</span> })}
                     </figcaption>
                 </figure>

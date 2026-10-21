@@ -163,7 +163,7 @@ test("the media viewer's caption shows the cast's emoji", async ({ page }, testI
   await page.goto(`/p/${post.hash}`);
   await page.locator(".post .tile-image").click();
   const viewer = page.getByRole("dialog", { name: "Media viewer", exact: true });
-  expect(await shows(viewer.locator(".lb-alt"))).toEqual({ emoji: one(":pepe_gm:"), text: "Image posted by @alice: Who's up? ", links: 0 });
+  expect(await shows(viewer.locator(".lb-text"))).toEqual({ emoji: one(":pepe_gm:"), text: "@alice · Who's up? ", links: 0 });
   await page.screenshot({ path: testInfo.outputPath("media-viewer.png") });
 });
 
