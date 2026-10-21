@@ -3958,8 +3958,14 @@ p.jumbo .emoji img {
   min-width: 0;
 }
 
+/* The picture, the name and the handle, on one line. Short of room, the
+   name and the handle share it evenly, each cut short with an ellipsis,
+   and one that needs less than its half shows whole and leaves the rest to
+   the other. */
 .who-link {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(0, max-content) minmax(0, max-content);
+  justify-content: start;
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -3968,11 +3974,15 @@ p.jumbo .emoji img {
   text-decoration: none;
 }
 
-.who-name {
-  font-weight: 600;
+.who-name,
+.who-handle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.who-name {
+  font-weight: 600;
 }
 
 .reply-items > li {
@@ -4043,12 +4053,17 @@ p.jumbo .emoji img {
   background: var(--paper-2);
 }
 
-/* Full who-list dialog. */
+/* Dialogs: the full who-list, signing in, approving Allthing, hand-offs and
+   the composer. The backdrop's one column is the screen less its margins,
+   whatever a dialog holds: a column sized to its content grew with a long
+   name in the list of who liked a cast, and the dialog, 100% of it, ran
+   past a phone's edge, its × with it. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 80;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 20px;
   background: rgba(20, 24, 38, 0.36);
