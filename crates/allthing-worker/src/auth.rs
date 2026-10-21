@@ -13,11 +13,20 @@
 //! `SESSION_SECRET` Worker secret, then keeps the person signed in;
 //! `signout` clears it.
 //!
+//! Where the Worker endorses keys (`ALLTHING_CUSTODY_KEY`), signing in is
+//! one step instead: the browser makes its key and has `signer` endorse it,
+//! the reader approves Allthing's request in their Farcaster app (which
+//! also lets them write from here), and `key` checks that the browser holds
+//! that key: its Ed25519 signature of the sign-in's nonce, and Hypersnap's
+//! word that the key is the account's, added by its approval of Allthing's
+//! request (`ALLTHING_FID`). `start` says which (`Started::keys`).
+//!
 //! Sessions are stateless: changing `SESSION_SECRET` signs everyone out.
 //! Nothing here posts anything; signing in only says who is reading. A
 //! session also gets the GIF picker's key (`gif_key`), and the Worker's
 //! endorsement of an app key its browser made (`signer`, see
-//! `crate::app_key`), which the reader then approves in their Farcaster app.
+//! `crate::app_key`), which the reader then approves in their Farcaster app;
+//! so does a browser in the middle of a sign-in.
 
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -27,8 +36,9 @@ use allthing_core::compose::{GifKey, is_handoff_link};
 use allthing_core::model::UserSummary;
 use allthing_core::normalize;
 use allthing_core::siwf::{
-    Expected, PENDING_COOKIE, Proof, QrCode, QrRequest, SESSION_COOKIE, SESSION_TTL, SIGN_IN_TTL, SignInMessage,
-    SignedIn, Started, USER_COOKIE, cookie, is_app_link, is_nonce, user_cookie_value,
+    Expected, KEY_UNKNOWN, KeySignIn, PENDING_COOKIE, Proof, QrCode, QrRequest, SESSION_COOKIE, SESSION_TTL,
+    SIGN_IN_LAPSED, SIGN_IN_TTL, SignInMessage, SignedIn, Started, USER_COOKIE, cookie, is_app_link, is_nonce,
+    key_sign_in_message, user_cookie_value,
 };
 use allthing_core::time::iso_utc;
 use allthing_data::{Invocation, chain, hypersnap};
@@ -76,7 +86,8 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
             _ => error(400, "Expected {\"url\": a Farcaster sign-in, key request or farcaster.xyz link}", None),
         },
         "signer" => {
-            if signed_in_fid(&req, env, now)?.is_none() {
+            // A reader signed in, or signing in by approving the key.
+            if signed_in_fid(&req, env, now)?.is_none() && !signing_in(&req, env, now)? {
                 return error(401, "Sign in to like and recast from Allthing", None);
             }
             let Some(app) = app_key::app(env) else { return error(404, WRITES_UNSET, None) };
@@ -86,16 +97,19 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
             }
         }
         "signout" => json(&serde_json::json!({}), &[&clear(SESSION_COOKIE), &clear(USER_COOKIE)]),
-        "start" | "verify" => {
+        "start" | "verify" | "key" => {
             let Some(secret) = session_secret(env) else {
                 return error(503, "Sign-in isn't set up on this server yet", None);
             };
-            if name == "start" {
-                let Some(nonce) = random_hex(16) else { return error(500, "No randomness for a nonce", None) };
-                let (started, pending) = start(&url, secret.as_bytes(), &nonce, now);
-                json(&started, &[&pending])
-            } else {
-                verify(&mut req, &url, secret.as_bytes(), &inv, now).await
+            match name {
+                "start" => {
+                    let Some(nonce) = random_hex(16) else { return error(500, "No randomness for a nonce", None) };
+                    let (mut started, pending) = start(&url, secret.as_bytes(), &nonce, now);
+                    started.keys = app_key::app(env).is_some();
+                    json(&started, &[&pending])
+                }
+                "verify" => verify(&mut req, &url, secret.as_bytes(), &inv, now).await,
+                _ => key_sign_in(&mut req, &url, secret.as_bytes(), env, &inv, now).await,
             }
         }
         _ => error(404, "Unknown endpoint", None),
@@ -126,6 +140,7 @@ fn start(url: &Url, secret: &[u8], nonce: &str, now: i64) -> (Started, String) {
         domain: domain(url),
         uri: url.origin().ascii_serialization(),
         expiration_time: Some(iso_utc(now + SIGN_IN_TTL)),
+        keys: false,
     };
     (started, set_cookie(PENDING_COOKIE, &pending, SIGN_IN_TTL, true, "Strict"))
 }
@@ -136,6 +151,15 @@ fn pending_nonce(secret: &[u8], value: &str, now: i64) -> Option<String> {
     let (nonce, expires) = open(secret, PENDING, value)?.split_once('.')?;
     let fresh = expires.parse::<i64>().ok().is_some_and(|at| now < at);
     (fresh && is_nonce(nonce)).then(|| nonce.to_owned())
+}
+
+/// Whether the request's browser is in the middle of a sign-in it started
+/// here (its nonce cookie is ours and current).
+fn signing_in(req: &Request, env: &Env, now: i64) -> Result<bool> {
+    let cookies = req.headers().get("cookie")?.unwrap_or_default();
+    Ok(session_secret(env).is_some_and(|secret| {
+        cookie(&cookies, PENDING_COOKIE).and_then(|value| pending_nonce(secret.as_bytes(), value, now)).is_some()
+    }))
 }
 
 /// The account a session cookie signs in, if it is ours and current.
@@ -221,7 +245,7 @@ async fn verify(req: &mut Request, url: &Url, secret: &[u8], inv: &Rc<Invocation
     let refuse = |message: &str| error(401, message, None);
     let cookies = req.headers().get("cookie")?.unwrap_or_default();
     let Some(nonce) = cookie(&cookies, PENDING_COOKIE).and_then(|value| pending_nonce(secret, value, now)) else {
-        return refuse("This sign-in expired; start again");
+        return refuse(SIGN_IN_LAPSED);
     };
     let Some(proof) = read_json::<Proof>(req).await else {
         return error(400, "Expected {\"message\", \"signature\"}", None);
@@ -244,6 +268,79 @@ async fn verify(req: &mut Request, url: &Url, secret: &[u8], inv: &Rc<Invocation
         Ok(false) => return refuse("That address can't sign in as this Farcaster account"),
         Err(_) => return error(503, "Couldn't check the account on Optimism; try again", Some(5)),
     }
+    signed_in(secret, inv, fid, now).await
+}
+
+/// `key`: a sign-in by the approval of Allthing's key request. The browser
+/// that started it (its nonce cookie) shows it holds the key the account
+/// approved: the key's signature of the sign-in's message, which names the
+/// site and the nonce, and Hypersnap's word that the key is one of the
+/// account's, added by its approval of a request from Allthing's account.
+async fn key_sign_in(
+    req: &mut Request,
+    url: &Url,
+    secret: &[u8],
+    env: &Env,
+    inv: &Rc<Invocation>,
+    now: i64,
+) -> Result<Response> {
+    let refuse = |message: &str| error(401, message, None);
+    let cookies = req.headers().get("cookie")?.unwrap_or_default();
+    let Some(nonce) = cookie(&cookies, PENDING_COOKIE).and_then(|value| pending_nonce(secret, value, now)) else {
+        return refuse(SIGN_IN_LAPSED);
+    };
+    let Some(app) = app_key::app(env) else { return error(404, WRITES_UNSET, None) };
+    let asked = read_json::<KeySignIn>(req).await;
+    let parsed = asked.as_ref().and_then(|asked| {
+        let key = parse_public_key(&asked.key)?;
+        let signature = unhex(asked.signature.strip_prefix("0x")?).filter(|s| s.len() == 64)?;
+        Some((asked.fid, key, signature))
+    });
+    let Some((fid, key, signature)) = parsed.filter(|(fid, ..)| *fid > 0) else {
+        return error(400, "Expected {\"fid\", \"key\": 0x and 64 hex digits, \"signature\": 0x and 128}", None);
+    };
+    let message = key_sign_in_message(&domain(url), &nonce);
+    match ed25519_verify(&key, message.as_bytes(), &signature).await {
+        Some(true) => {}
+        Some(false) => return refuse("The signature doesn't match this sign-in"),
+        None => return error(503, "Couldn't check the signature just now; try again", Some(5)),
+    }
+    // The account's keys, as Hypersnap has them: this one must be there,
+    // requested by Allthing's account.
+    let key_hex = format!("0x{}", hex(&key));
+    match hypersnap::active_signers(inv, fid).await {
+        Ok(signers) if signers.get(&key_hex) == Some(&Some(app.fid)) => {}
+        Ok(_) => return refuse(KEY_UNKNOWN),
+        Err(_) => return error(503, "Couldn't check the account's keys just now; try again", Some(5)),
+    }
+    signed_in(secret, inv, fid, now).await
+}
+
+/// `signature` checked against `key` and `message` by the runtime's
+/// WebCrypto (Ed25519), so no byte of it is worked in WebAssembly: whether
+/// it is the key's, or `None` when it couldn't say.
+async fn ed25519_verify(key: &[u8; 32], message: &[u8], signature: &[u8]) -> Option<bool> {
+    use worker::js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array, global};
+    use worker::wasm_bindgen::{JsCast, JsValue};
+    use worker::wasm_bindgen_futures::JsFuture;
+    let subtle = Reflect::get(&Reflect::get(&global(), &"crypto".into()).ok()?, &"subtle".into()).ok()?;
+    let call = |name: &str, args: Array| {
+        let method = Reflect::get(&subtle, &name.into()).ok()?.dyn_into::<Function>().ok()?;
+        Reflect::apply(&method, &subtle, &args).ok()?.dyn_into::<Promise>().ok()
+    };
+    let algorithm = Object::new();
+    Reflect::set(&algorithm, &"name".into(), &"Ed25519".into()).ok()?;
+    let usages = Array::of1(&"verify".into());
+    let raw = Uint8Array::from(&key[..]);
+    let import = call("importKey", Array::of5(&"raw".into(), &raw, &algorithm, &JsValue::FALSE, &usages))?;
+    let key = JsFuture::from(import).await.ok()?;
+    let verify =
+        call("verify", Array::of4(&algorithm, &key, &Uint8Array::from(signature), &Uint8Array::from(message)))?;
+    JsFuture::from(verify).await.ok()?.as_bool()
+}
+
+/// Signed in as `fid`: the session cookie, and who it is for the header.
+async fn signed_in(secret: &[u8], inv: &Rc<Invocation>, fid: u64, now: i64) -> Result<Response> {
     // Who signed in, for the header. The session doesn't depend on it.
     let user = hypersnap::users_bulk(inv, &[fid])
         .await
