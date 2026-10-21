@@ -48,10 +48,14 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
         let _ = headers.set("range", &format!("bytes=0-{}", max.saturating_sub(1)));
     }
     let _ = headers.set("user-agent", &format!("allthing/{} (+https://allthing.social)", crate::VERSION));
+    for (name, value) in &request.headers {
+        let _ = headers.set(name, value);
+    }
     let mut init = RequestInit::new();
     let method = match request.method {
         HttpMethod::Get => Method::Get,
         HttpMethod::Post => Method::Post,
+        HttpMethod::Put => Method::Put,
     };
     init.with_method(method).with_headers(headers);
     if let Some(body) = request.body {

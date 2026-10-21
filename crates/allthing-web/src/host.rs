@@ -71,9 +71,13 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     init.set_method(match request.method {
         HttpMethod::Get => "GET",
         HttpMethod::Post => "POST",
+        HttpMethod::Put => "PUT",
     });
     let headers = web_sys::Headers::new().map_err(failed)?;
     let _ = headers.set("accept", request.accept);
+    for (name, value) in &request.headers {
+        let _ = headers.set(name, value);
+    }
     if let Some(body) = &request.body {
         let _ = headers.set("content-type", "application/json");
         init.set_body(&JsValue::from_str(body));

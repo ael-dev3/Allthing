@@ -38,9 +38,9 @@ pub enum Backend {
 pub enum Failure {
     /// The API refused it, and says why (its status, and its message).
     Refused(Refusal, Option<String>),
-    /// The relay refused it itself (no session, too many calls), with its
-    /// message.
-    Relay(String),
+    /// The relay refused it itself (turned off, no session, too many
+    /// calls): its status, and its message.
+    Relay(u16, String),
     /// No answer, or none this page may read (CORS).
     Unreachable,
     /// An answer that isn't what the API sends.
@@ -53,7 +53,7 @@ impl Failure {
     pub fn message(&self, to: Option<&str>) -> String {
         match self {
             Failure::Refused(refusal, _) => refusal.message(to),
-            Failure::Relay(why) => why.clone(),
+            Failure::Relay(_, why) => why.clone(),
             Failure::Unreachable => "Couldn't reach Farcaster's API. Check the connection and try again.".into(),
             Failure::Unreadable => "Farcaster's API answered in a way Allthing doesn't understand.".into(),
         }
@@ -97,7 +97,8 @@ async fn find(key: &str) -> Result<Backend, Failure> {
         Ok(_) => Ok(Backend::Relay),
         Err(failure) if failure.key_refused() => Err(failure),
         // Turned off meanwhile.
-        Err(Failure::Relay(_)) => Ok(Backend::None),
+        Err(Failure::Relay(404, _)) => Ok(Backend::None),
+        // On, but refusing or failing just now: it reads, and says why.
         Err(_) => Ok(Backend::Relay),
     }
 }
@@ -129,7 +130,10 @@ pub async fn call<T: DeserializeOwned>(
         .map_err(|_| Failure::Unreachable)?;
     if backend == Backend::Relay && !upstream && !(200..300).contains(&status) {
         let why = serde_json::from_str::<allthing_core::api::ApiError>(&text).map(|e| e.error);
-        return Err(Failure::Relay(why.unwrap_or_else(|_| format!("Allthing's relay answered HTTP {status}."))));
+        return Err(Failure::Relay(
+            status,
+            why.unwrap_or_else(|_| format!("Allthing's relay answered HTTP {status}.")),
+        ));
     }
     read(status, &text)
 }
