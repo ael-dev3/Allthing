@@ -1085,9 +1085,11 @@ test.describe("threads and navigation", () => {
 
   test("unknown things say so", async ({ page }) => {
     await page.goto(at("/u/no-such-user-zz9-plural-z-alpha"));
-    await expect(page.locator(".error-panel")).toContainText("Nothing here");
+    await expect(page.locator(".error-panel")).toContainText("No such account");
+    await expect(page).toHaveTitle("Account not found · Allthing");
     await page.goto(at("/p/0x0000000000000000000000000000000000000000"));
-    await expect(page.locator(".error-panel")).toContainText("Nothing here");
+    await expect(page.locator(".error-panel")).toContainText("No such cast");
+    await expect(page).toHaveTitle("Cast not found · Allthing");
     await page.goto(at("/definitely/not/a/page"));
     await expect(page.locator(".error-panel")).toContainText("Page not found");
   });

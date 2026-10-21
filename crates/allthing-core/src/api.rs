@@ -466,6 +466,14 @@ impl EngagementPayload {
     }
 }
 
+/// The API's "no such thing" answers (404), and the one for a search too
+/// long to run (400). The app tells the reader what they mean in its own
+/// words (`ErrorPanel`), picked by these.
+pub const NO_SUCH_CAST: &str = "No such cast";
+pub const NO_SUCH_USER: &str = "No such user";
+pub const NO_SUCH_CHANNEL: &str = "No such channel";
+pub const SEARCH_TOO_LONG: &str = "Search query too long";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
     pub error: String,

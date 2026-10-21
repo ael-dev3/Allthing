@@ -32,11 +32,14 @@ pub enum Failure {
         message: String,
         retry_after: Option<u32>,
     },
+    /// The request itself was turned down (HTTP 4xx other than 404 and
+    /// 429), such as a search too long to run: asking again won't help.
+    Refused(String),
     Failed(String),
 }
 
 /// What a request that never reached the API fails with.
-const UNREACHABLE: &str = "Network error: could not reach Allthing's API";
+pub(crate) const UNREACHABLE: &str = "Network error: could not reach Allthing's API";
 
 impl Failure {
     /// The server or the network may answer next time: busy, or not
@@ -47,13 +50,19 @@ impl Failure {
         match self {
             Failure::Busy { .. } => true,
             Failure::Failed(message) => message == UNREACHABLE,
-            Failure::NotFound(_) => false,
+            Failure::NotFound(_) | Failure::Refused(_) => false,
         }
+    }
+
+    /// The request never reached the API: the reader is offline, or the
+    /// network failed on the way.
+    pub fn unreachable(&self) -> bool {
+        matches!(self, Failure::Failed(message) if message == UNREACHABLE)
     }
 
     pub fn message(&self) -> String {
         match self {
-            Failure::NotFound(m) | Failure::Failed(m) => m.clone(),
+            Failure::NotFound(m) | Failure::Refused(m) | Failure::Failed(m) => m.clone(),
             Failure::Busy { message, retry_after } => match retry_after {
                 Some(s) => format!("{message} (try again in {s}s)"),
                 None => message.clone(),
@@ -539,6 +548,7 @@ fn decode<T: DeserializeOwned>(raw: &Raw) -> Result<Fetched<T>, Failure> {
             .map_err(|e| Failure::Failed(format!("Unexpected data from the API: {e}"))),
         404 => Err(Failure::NotFound(error_message())),
         429 | 503 => Err(Failure::Busy { message: error_message(), retry_after: raw.retry_after }),
+        400..=499 => Err(Failure::Refused(error_message())),
         _ => Err(Failure::Failed(error_message())),
     }
 }
@@ -566,7 +576,7 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
     });
     // A prefetch can validate JSON syntax without knowing its payload type.
     // Discard structurally invalid data so the next visit can recover.
-    if matches!(result, Some(Err(Failure::Failed(_) | Failure::Busy { .. }))) {
+    if matches!(result, Some(Err(Failure::Failed(_) | Failure::Refused(_) | Failure::Busy { .. }))) {
         CACHE.with(|c| c.borrow_mut().remove(path));
         None
     } else {
@@ -674,6 +684,28 @@ mod tests {
         }
         remember("/test/garbled", response(200, "<html>"), 1000.0);
         assert!(cached::<serde_json::Value>("/test/garbled", 2000.0).is_none());
+    }
+
+    #[test]
+    fn answers_are_told_apart_by_what_trying_again_can_do() {
+        let decoded = |status, body| decode::<serde_json::Value>(&response(status, body)).err();
+        assert_eq!(decoded(404, r#"{"error":"No such cast"}"#), Some(Failure::NotFound("No such cast".into())));
+        assert_eq!(
+            decoded(400, r#"{"error":"Search query too long"}"#),
+            Some(Failure::Refused("Search query too long".into()))
+        );
+        assert_eq!(decoded(403, "{}"), Some(Failure::Refused("HTTP 403".into())));
+        assert_eq!(
+            decoded(429, r#"{"error":"slow down"}"#),
+            Some(Failure::Busy { message: "slow down".into(), retry_after: Some(5) })
+        );
+        assert_eq!(
+            decoded(502, r#"{"error":"upstream timed out"}"#),
+            Some(Failure::Failed("upstream timed out".into()))
+        );
+        assert!(!Failure::Refused("Search query too long".into()).is_transient());
+        assert!(Failure::Failed(UNREACHABLE.into()).unreachable());
+        assert!(!Failure::Failed("upstream timed out".into()).unreachable());
     }
 
     #[test]
