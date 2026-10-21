@@ -13,6 +13,7 @@ mod leanings;
 mod nav;
 mod pages;
 mod preload;
+mod press;
 mod split;
 mod util;
 mod video;
@@ -53,6 +54,7 @@ pub fn start() {
     console_error_panic_hook::set_once();
     let Some(root) = util::element_by_id::<web_sys::HtmlElement>("app") else { return };
     leptos::mount::mount_to(root, App).forget();
+    press::install();
     split::preload_pages();
     boot::mounted();
     let _ = util::document().document_element().map(|e| e.class_list().add_1("ready"));

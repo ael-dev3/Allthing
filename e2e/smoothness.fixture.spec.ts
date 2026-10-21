@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type CDPSession, type Locator, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
+import { cpus, loadavg } from "node:os";
 import { appCame } from "./helpers/app";
 import { approvedKey, signIn } from "./helpers/farcaster";
 
@@ -17,7 +18,8 @@ import { approvedKey, signIn } from "./helpers/farcaster";
  *   - opens a cast from the feed, and a profile, at three depths, and goes Back;
  *   - goes Back to the feed's second server page;
  *   - scrolls the feed;
- *   - presses nine controls, letting go elsewhere.
+ *   - presses 22 controls on the front page, the composer, a post and a
+ *     profile, letting go elsewhere.
  *
  * Each interaction runs three times, and twice more when the median is
  * within a fifth of a timed budget (so five runs, not one noisy one, decide
@@ -38,11 +40,18 @@ import { approvedKey, signIn } from "./helpers/farcaster";
  * run (`TOO_CLOSE`), each with what was measured; a change that meets one
  * takes its line out.
  *
+ * The timed budgets hold on a machine whose CPU the run has to itself, as a
+ * CI runner's is. Between interactions the spec times how much of a CPU a
+ * busy thread gets: away from CI, below `QUIET_SHARE` every number is
+ * inflated by the machine, not the app, so those budgets are skipped, saying
+ * why (the numbers are still reported).
+ *
  *   E2E_PORT=8815 npx playwright test e2e/smoothness.fixture.spec.ts
  *   SMOOTH_OUT=numbers.json …    # every run's numbers, by profile
  *   SMOOTH_TRACE=trace.zip …     # a Playwright trace of the phone's run
  *   SMOOTH_CPU=4 …               # another slowdown for the phone
  *   SMOOTH_ONLY=390 …            # one profile
+ *   SMOOTH_STRICT=1 …            # judge the timed budgets on a busy machine too
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract and sign-in");
@@ -56,6 +65,17 @@ const INP_BUDGET = 100;
 const LONG_TASK = 50;
 const SHIFT_BUDGET = 0.01;
 const RESTORE_BUDGET_PX = 2;
+
+/**
+ * The least of a CPU a busy thread may get, in the median of the run's
+ * samples, for the timed budgets to be judged: below it the browser's main
+ * thread waits its turn a tenth of its time or more, and every latency
+ * grows by as much, enough to take the slowest interaction that meets its
+ * budget (88 ms, docs/PERFORMANCE.md#smoothness) over it. In CI, or with
+ * SMOOTH_STRICT, they're judged however busy the machine is.
+ */
+const QUIET_SHARE = 0.9;
+const STRICT = Boolean(process.env.CI || process.env.SMOOTH_STRICT);
 
 type Profile = { name: string; width: number; height: number; touch: boolean; cpu: number };
 const PHONE: Profile = { name: "390", width: 390, height: 844, touch: true, cpu: PHONE_CPU };
@@ -474,7 +494,8 @@ function measure(sample: Sample, back?: { top: number; path: string }): Measured
 
 type Scenario = { runs: Measured[]; median: Measured };
 type Press = { control: string; changed: boolean; frameMs: number; moved: boolean; before: string; after: string };
-type Results = { profile: Profile; scenarios: Record<string, Scenario>; presses: Press[]; scroll: ScrollRun[] };
+type Machine = { share: number; shares: number[]; load: number; cpus: number };
+type Results = { profile: Profile; scenarios: Record<string, Scenario>; presses: Press[]; scroll: ScrollRun[]; machine: Machine };
 type ScrollRun = { intervals: number[]; p95: number; max: number; dropped: number; longTask: number; loaf: number };
 
 function summarize(runs: Measured[]): Scenario {
@@ -500,6 +521,21 @@ async function repeat<T>(once: (i: number) => Promise<T>, judged: (run: T) => Me
 }
 
 const itself = (m: Measured) => m;
+
+/**
+ * How much of a CPU a busy thread gets on this machine now: the CPU time a
+ * 300 ms spin gets over its wall time. Near 1 when the run has a CPU to
+ * itself; on a machine busy with other work, the browser's main thread gets
+ * as little.
+ */
+function cpuShare(ms = 300) {
+  const from = process.cpuUsage();
+  const start = performance.now();
+  let x = 0;
+  while (performance.now() - start < ms) x += Math.sqrt(x + 1);
+  const used = process.cpuUsage(from);
+  return (used.user + used.system) / 1000 / (performance.now() - start);
+}
 
 // ---------------------------------------------------------------- drivers
 
@@ -787,7 +823,8 @@ async function scrollFeed(page: Page, profile: Profile, cdp: CDPSession) {
 /** Controls a reader presses, and whether each answers in the first frame. */
 async function presses(page: Page, profile: Profile, cdp: CDPSession) {
   const out: Press[] = [];
-  const probe = async (control: string, target: Locator) => {
+  /** Press `target`, and let go over `away`: off it, so nothing is opened, and inside any dialog it's in, which a click on its backdrop would close. */
+  const probe = async (control: string, target: Locator, away?: Locator) => {
     if (!(await target.count())) return;
     const el = target.first();
     await el.scrollIntoViewIfNeeded();
@@ -804,16 +841,17 @@ async function presses(page: Page, profile: Profile, cdp: CDPSession) {
     else await page.mouse.down();
     await expect.poll(() => page.evaluate(() => (window as any).__smooth.press)).not.toBeNull();
     const result = await page.evaluate(() => (window as any).__smooth.press);
-    // Let go away from it, so nothing is opened.
     if (profile.touch) await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
     else {
-      await page.mouse.move(2, profile.height - 2);
+      const off = away ? (await away.boundingBox())! : { x: 2, y: profile.height - 3, width: 0, height: 0 };
+      await page.mouse.move(off.x + 1, off.y + off.height / 2);
       await page.mouse.up();
     }
     out.push({ control, ...result, frameMs: round(result.frameMs, 1) });
     await page.waitForTimeout(150);
   };
   const first = cards(page).first();
+  // The front page's.
   await probe("sort tab", page.locator("#app .sort-tabs a:not(.selected)"));
   await probe("time range", page.locator("#app .time-filter select"));
   await probe(profile.touch ? "Cast (round button)" : "Cast (pill)", page.locator(profile.touch ? ".cast-fab" : ".cast-pill"));
@@ -823,6 +861,35 @@ async function presses(page: Page, profile: Profile, cdp: CDPSession) {
   await probe("replies count", first.locator(".stat-replies"));
   await probe("account picture", page.locator(".account-button"));
   await probe("author name", first.locator(".cast-meta .display-name"));
+  await probe("link card", cards(page).locator("a.link-card").first());
+  // The composer's.
+  await page.locator(profile.touch ? ".cast-fab" : ".cast-pill").click();
+  const composer = page.getByRole("dialog", { name: "New cast" });
+  await expect(composer.locator(".compose-loading")).toHaveCount(0);
+  const title = composer.locator("#compose-title");
+  await probe("emoji (composer)", composer.getByRole("button", { name: "Add an emoji" }), title);
+  await probe("sticker (composer)", composer.getByRole("button", { name: "Add a sticker" }), title);
+  await probe("schedule (composer)", composer.getByRole("button", { name: "Schedule for later" }), title);
+  await probe("close (composer)", composer.getByRole("button", { name: "Close" }), title);
+  await page.keyboard.press("Escape");
+  await expect(composer).toHaveCount(0);
+  // A post's.
+  await first.locator("a.when").click();
+  await expect(page.locator("#app .post .post-text")).toBeVisible();
+  await expect(page.locator("#app .replies .comments")).toBeVisible();
+  const post = page.locator("#app .post");
+  await probe("reply", post.locator(".reply-button").first());
+  await probe("quote", post.locator(".quote-button"));
+  await probe("react", post.locator(".react-button"));
+  await probe("replies' sort tab", page.locator("#app .replies-head .sort-tabs a:not(.selected)"));
+  // A profile's.
+  await page.goto("/u/writer1");
+  await expect(page.locator("#app .profile .profile-name")).toBeVisible();
+  await expect(page.locator("#app .follow-button")).toBeVisible();
+  await probe("profile tab", page.locator("#app .tabs a:not(.selected)"));
+  await probe("Favorite", page.locator("#app .favorite-button"));
+  await probe("Show less", page.locator("#app .show-less-button"));
+  await probe("Follow", page.locator("#app .follow-button"));
   return out;
 }
 
@@ -836,21 +903,28 @@ async function run(browser: Browser, profile: Profile): Promise<Results> {
   // Its screencast, actions and network; DOM snapshots would slow it more.
   if (tracing) await context.tracing.start({ screenshots: true, snapshots: false });
   try {
+    // How busy the machine is, before each interaction.
+    const shares: number[] = [];
+    const timed = <T>(work: () => Promise<T>) => {
+      shares.push(cpuShare());
+      return work();
+    };
     const scenarios: Record<string, Scenario> = {};
-    scenarios["sort tab"] = await sortTabs(page, profile);
-    scenarios["likes popover"] = await likesPopover(page, profile);
-    scenarios["like"] = await like(page, profile, calls);
-    scenarios["composer"] = await composer(page, profile);
-    const castNav = await openAndBack(page, profile, "cast");
+    scenarios["sort tab"] = await timed(() => sortTabs(page, profile));
+    scenarios["likes popover"] = await timed(() => likesPopover(page, profile));
+    scenarios["like"] = await timed(() => like(page, profile, calls));
+    scenarios["composer"] = await timed(() => composer(page, profile));
+    const castNav = await timed(() => openAndBack(page, profile, "cast"));
     scenarios["open cast"] = castNav.open;
     scenarios["back from cast"] = castNav.back;
-    const profileNav = await openAndBack(page, profile, "profile");
+    const profileNav = await timed(() => openAndBack(page, profile, "profile"));
     scenarios["open profile"] = profileNav.open;
     scenarios["back from profile"] = profileNav.back;
-    scenarios["back deep in the feed"] = await deepBack(page, profile);
-    const scroll = await scrollFeed(page, profile, cdp);
-    const pressed = await presses(page, profile, cdp);
-    return { profile, scenarios, presses: pressed, scroll };
+    scenarios["back deep in the feed"] = await timed(() => deepBack(page, profile));
+    const scroll = await timed(() => scrollFeed(page, profile, cdp));
+    const pressed = await timed(() => presses(page, profile, cdp));
+    const machine = { share: round(median(shares), 2), shares: shares.map((s) => round(s, 2)), load: round(loadavg()[0], 1), cpus: cpus().length };
+    return { profile, scenarios, presses: pressed, scroll, machine };
   } catch (error) {
     // Where it stopped, for the report CI uploads.
     await page.screenshot({ path: test.info().outputPath(`stopped-${profile.name}.png`) }).catch(() => {});
@@ -882,6 +956,8 @@ function report(r: Results) {
   const answered = r.presses.filter((p) => p.changed && !p.moved).map((p) => p.control);
   const not = r.presses.filter((p) => !p.changed || p.moved).map((p) => `${p.control}${p.moved ? " (moves)" : ""}`);
   lines.push(`  presses answered in their first frame: ${answered.join(", ") || "none"}; not: ${not.join(", ") || "none"}`);
+  const m = r.machine;
+  lines.push(`  machine: a busy thread got ${m.share} of a CPU (median of ${m.shares.length}; ${m.shares.join(", ")}), load ${m.load} on ${m.cpus} CPUs`);
   console.log(lines.join("\n"));
 }
 
@@ -917,11 +993,6 @@ const NOT_YET: Record<string, string> = {
   "1280 back from cast blank": "6–7 frames",
   "1280 back from profile blank": "5–7 frames",
   "1280 back deep in the feed blank": "5–7 frames",
-  // No control changes in the frame after it's pressed: a touch screen never
-  // shows :active there, and where a control has a press style it eases in
-  // over 200–300 ms.
-  "390 press": "none of the 9 controls answers in its first frame",
-  "1280 press": "none of the 9 controls answers in its first frame",
 };
 
 /**
@@ -941,11 +1012,20 @@ const TOO_CLOSE: Record<string, string> = {
 /** Whether the profile's run is recorded in a trace, which slows it: its numbers are for reading, not for budgets. */
 const traced = (profile: Profile) => profile.touch && Boolean(process.env.SMOOTH_TRACE);
 
-/** Marks a check the app doesn't meet yet (see `NOT_YET` and `TOO_CLOSE`), or one a trace or another slowdown made moot. */
-function known(profile: Profile, check: string) {
+/**
+ * Marks a check the app doesn't meet yet (see `NOT_YET` and `TOO_CLOSE`),
+ * or one a trace, another slowdown or, for a `timed` one, a busy machine
+ * made moot.
+ */
+function known(profile: Profile, check: string, timed = false) {
   const key = `${profile.name} ${check}`;
   test.skip(traced(profile), "recording a trace slows the run");
   test.skip(profile.cpu !== (profile.touch ? CALIBRATED_CPU : 1), `the budgets hold at a ${CALIBRATED_CPU}× slowdown`);
+  const machine = results[profile.name]?.machine;
+  test.skip(
+    timed && !STRICT && machine !== undefined && machine.share < QUIET_SHARE,
+    `a busy machine: a thread got ${machine?.share} of a CPU (load ${machine?.load} on ${machine?.cpus} CPUs), under the ${QUIET_SHARE} the budgets need; SMOOTH_STRICT=1 judges them anyway`,
+  );
   test.fixme(key in TOO_CLOSE, TOO_CLOSE[key]);
   test.fail(key in NOT_YET, NOT_YET[key]);
 }
@@ -980,11 +1060,11 @@ for (const profile of [PHONE, DESKTOP].filter((p) => !process.env.SMOOTH_ONLY ||
 
     for (const scenario of ANSWERS) {
       test(`${scenario}: answers within ${INP_BUDGET} ms (INP)`, () => {
-        known(profile, `${scenario} INP`);
+        known(profile, `${scenario} INP`, true);
         expect(median(scenario).inp).toBeLessThan(INP_BUDGET);
       });
       test(`${scenario}: no long task overlaps it`, () => {
-        known(profile, `${scenario} long task`);
+        known(profile, `${scenario} long task`, true);
         expect(median(scenario).longTask).toBeLessThan(LONG_TASK);
       });
     }
