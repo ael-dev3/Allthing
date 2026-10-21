@@ -12,10 +12,10 @@ import { expect, test } from "@playwright/test";
  * reader uploads an image and a video, the Worker keeps each in R2 without
  * reading it and records it in D1, and anyone gets it back from /m/, byte
  * for byte, in ranges, and only ever as the type it was declared as. This
- * spec runs a Worker of its own, from wrangler.toml with its commented
- * R2 binding uncommented (a config in a temporary folder), with an empty
- * local R2 and D1 and a session secret; the Worker Playwright starts has no
- * binding, as allthing.social hasn't until R2 is set up there.
+ * spec runs a Worker of its own, from wrangler.toml and its R2 binding (a
+ * config in a temporary folder), with an empty local R2 and D1 and a
+ * session secret; and one more from wrangler.toml without the binding, as
+ * a server that keeps no attachments has it.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker");
@@ -39,7 +39,7 @@ function session(fid: number) {
   return `__Host-allthing-session=${value}.${tag}`;
 }
 
-/** wrangler.toml with its R2 block uncommented, and its paths made absolute. */
+/** wrangler.toml with its R2 block (uncommented, if it is commented out), and its paths made absolute. */
 function withBucket(toml: string) {
   const lines = toml.split("\n");
   const start = lines.indexOf("# [[r2_buckets]]");
@@ -48,8 +48,19 @@ function withBucket(toml: string) {
   } else {
     for (let at = start; at === start || /^# \w+ = /.test(lines[at] ?? ""); at += 1) lines[at] = lines[at].slice(2);
   }
-  return lines
-    .join("\n")
+  return absolute(lines.join("\n"));
+}
+
+/** wrangler.toml without its R2 block, as a server that keeps no attachments has it. */
+function withoutBucket(toml: string) {
+  const bare = toml.replace(/^(?:# )?\[\[r2_buckets\]\]\n(?:(?:# )?\w+ = .*\n)+/m, "");
+  if (/r2_buckets/.test(bare.replace(/^#.*$/gm, ""))) throw new Error("wrangler.toml's R2 block wasn't removed");
+  return absolute(bare);
+}
+
+/** `toml`'s paths, made absolute for a config written elsewhere. */
+function absolute(toml: string) {
+  return toml
     .replace(/^main = "(.+)"$/m, (_, file) => `main = ${JSON.stringify(path.join(ROOT, file))}`)
     .replace(/^directory = "(.+)"$/m, (_, dir) => `directory = ${JSON.stringify(path.join(ROOT, dir))}`)
     .replace(/^migrations_dir = "(.+)"$/m, (_, dir) => `migrations_dir = ${JSON.stringify(path.join(ROOT, dir))}`);
@@ -323,16 +334,32 @@ test("quotas: 60 files a reader a day, 2,000 uploads a day in all, and 9 GiB sto
   d1(`UPDATE media_total SET bytes = ${bytes} WHERE name = 'all'`);
 });
 
-test("without the R2 binding, as on allthing.social until it is set up, uploads and /m/ answer 404", async ({ request, baseURL }) => {
-  const status = await (await request.get("/api/v1/status")).json();
-  test.skip(status.media?.ready === true, "this Worker's wrangler.toml binds MEDIA");
-  expect(status.media).toEqual({ ready: false });
-  const origin = new URL(baseURL!).origin;
-  const sent = await request.post("/api/v1/media", { data: png(2), headers: { origin, "content-type": "image/png", cookie: session(1234) } });
-  expect(sent.status()).toBe(404);
-  expect((await sent.json()).error).toBe("Attachments aren't set up on this server");
-  expect((await request.get("/api/v1/media")).status()).toBe(404);
-  const file = await request.get(`/m/1234/${"0".repeat(32)}.png`);
-  expect(file.status()).toBe(404);
-  expect(file.headers()["content-type"]).toMatch(/^application\/json/);
+test("without the R2 binding, uploads and /m/ answer 404", async () => {
+  test.setTimeout(150_000);
+  // A Worker of its own, from wrangler.toml without its R2 block.
+  const bare = Number(process.env.E2E_MEDIA_BARE_PORT ?? 8799);
+  const origin = `http://127.0.0.1:${bare}`;
+  const toml = path.join(folder, "bare.toml");
+  writeFileSync(toml, withoutBucket(readFileSync(path.join(ROOT, "wrangler.toml"), "utf8")));
+  const server = spawn(
+    "npx",
+    ["wrangler", "dev", "--config", toml, "--port", String(bare), "--ip", "127.0.0.1", "--persist-to", path.join(folder, "bare-state"), "--var", `SESSION_SECRET:${SECRET}`],
+    { cwd: ROOT, stdio: "ignore", detached: true },
+  );
+  try {
+    await expect
+      .poll(async () => (await fetch(`${origin}/api/v1/status`).catch(() => null))?.status ?? 0, { timeout: 120_000, intervals: [1_000] })
+      .toBe(200);
+    const status = await (await fetch(`${origin}/api/v1/status`)).json();
+    expect(status.media).toEqual({ ready: false });
+    const sent = await fetch(`${origin}/api/v1/media`, { method: "POST", headers: { origin, "content-type": "image/png", cookie: session(1234) }, body: png(2) });
+    expect(sent.status).toBe(404);
+    expect((await sent.json()).error).toBe("Attachments aren't set up on this server");
+    expect((await fetch(`${origin}/api/v1/media`)).status).toBe(404);
+    const file = await fetch(`${origin}/m/1234/${"0".repeat(32)}.png`);
+    expect(file.status).toBe(404);
+    expect(file.headers.get("content-type")).toMatch(/^application\/json/);
+  } finally {
+    if (server.pid) process.kill(-server.pid, "SIGTERM");
+  }
 });
