@@ -376,7 +376,12 @@ impl Composer {
         }
         self.picker.set(Picker::Closed);
         self.error.set(None);
-        self.open.set(true);
+        // The press shows first, in the frame after it, and the composer
+        // opens in the next: drawn in the press's own task, it held a tap
+        // on a slow phone for 40 to 100 ms (docs/PERFORMANCE.md).
+        crate::components::cast::after_paint(move || {
+            let _ = self.open.try_set(true);
+        });
     }
 
     fn clear(self) {

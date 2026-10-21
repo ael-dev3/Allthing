@@ -22,10 +22,10 @@ How the app answers a reader's taps, clicks and scrolls: `e2e/smoothness.fixture
 - taps the sort tabs: new, top, hot;
 - opens a likes count (a tap previews who liked; a click opens the whole list);
 - likes a cast, unlikes it and likes it again;
-- opens the composer;
+- opens the composer, then in it the emoji picker and the sticker picker, and types a key at the end of a draft a line long;
 - opens a cast from the feed, and a profile, from three places in the feed, and goes Back each time (on the phone a tap on a name opens the profile card, and its "View profile" the profile);
 - goes Back to a cast deep in the feed, in its second server page;
-- scrolls the feed 3,000 px;
+- scrolls the feed 6,000 px, past the cards drawn first, so the list draws more as it goes;
 - presses 22 controls and lets go away from them: on the front page a sort tab, the time range, Cast, a like, a recast, a likes count, a replies count, the account's picture, an author's name and a link card; in the composer its emoji, sticker, schedule and close buttons; on a post Reply, Quote, React and a replies sort tab; on a profile a tab, Favorite, Show less and Follow.
 
 A finger stays down 80 ms, and the mouse rests on its target for 250 ms and holds its button down 80 ms as it clicks, as readers' do. Each interaction runs three times, with the garbage of what came before collected first, and twice more when the median is within a fifth of a timed budget (INP, long tasks), so that five runs, not one noisy one, decide a close call. The budgets hold for the median:
@@ -38,8 +38,9 @@ A finger stays down 80 ms, and the mouse rests on its target for 250 ms and hold
 | Blank frames | none | each frame of a navigation, sampled by `requestAnimationFrame`: whether any of 15 points on the page's main content shows something readable (at least half opaque) or a placeholder, or something over it, and whether the page is white |
 | Back | the reader's card within 2 px | the card at the line `nav.rs` reads the reader's place at, before and after |
 | Press feedback | shown in the first frame, nothing moved | the computed transform, scale and opacity of the control and what it holds, in the first frame after `pointerdown`, and its laid-out box; pressed once it has stayed put for 200 ms with the images on screen loaded, as a reader presses what they see, since a scroll to it can bring photos above it into view that take their shape a moment later and move it |
+| Scrolling | 95th percentile frame ≤ 20 ms, ≤ 5% of frames dropped | the intervals between `requestAnimationFrame` callbacks through a 6,000 px scroll at 2,500 px/s (a finger's on the phone, the wheel's on the computer), the median of three scrolls; a frame dropped is a 16.7 ms interval missed |
 
-It also reports, with no budget yet: when a navigation first shows the next page, the longest task and frame in the second after an interaction, frames that show placeholders, and the scroll's frame intervals. `SMOOTH_OUT=numbers.json` writes every run's numbers, and `SMOOTH_TRACE=trace.zip` records a Playwright trace of the phone's run.
+It also reports, with no budget yet: when a navigation first shows the next page, the longest task and frame in the second after an interaction, and frames that show placeholders. `SMOOTH_OUT=numbers.json` writes every run's numbers, and `SMOOTH_TRACE=trace.zip` records a Playwright trace of the phone's run.
 
 A budget the app doesn't meet yet runs as an expected failure (`NOT_YET` in the spec, with what it measured), so CI stays green and the change that meets it takes its line out. One it misses or only just meets, by less than a busy machine's noise, would pass now and then as an expected failure and fail CI, so it doesn't run until a change meets it with room to spare (`TOO_CLOSE`).
 
@@ -183,6 +184,7 @@ Who liked and who recasted a feed card, and its replies, show the moment their p
 - **The press first, the page after.** A link or a card opens its page once the press has painted, not in the press's own task (`nav::go`; `InstantLinks` takes every click on a link the router would follow to another page, and leaves it one to the same page with another query, as a sort tab is, which it answers in the same task). Drawing a post or a profile, and tearing the feed down, took 93 to 206 ms of the tap's task on the phone profile, so opening one answered in 136 to 232 ms (INP); now the link or card shows pressed in the next frame (`data-press="held"`, a card tinted) and the page follows.
   - A page with something to show opens then: its data kept, or a post or a person a page has shown ([above](#1-reuse-what-the-page-already-has)). One with nothing yet (a channel, or a profile only linked to) waits for its data, which the press asked for (`api::fetch_ahead`, past the prefetch cap), with the page left on screen and the press held, so it opens complete; after 250 ms it opens anyway, with its placeholders. A page whose code is its own waits for that too, which the press also asks for (`split::page_came`): a channel's data that came first opened it on its code's placeholder for 1 to 6 frames. Another press, Back or Forward cancels one still waiting.
   - The part of a page still to come (a post's replies, a profile's casts) shows its placeholders only after 250 ms (`.later`), so a part that comes sooner just appears.
+  - A post's replies come a frame after the post (`pages/post.rs`): drawn with it, they held the frame that showed it for 82 to 151 ms on the phone profile. Back draws them with the post, since the reader's place may be among them (`nav::restoring`).
 - **Entrances that never hide the page.** What a page draws anew (a post, a list's cards) rises 8 px into place on a spring-like curve (`--spring`), readable from its first frame. The page faded in from transparent (`.page > *`) and a list's cards rose in from transparent, one after another, so every navigation showed 2 to 8 frames with nothing to read (the smoothness spec's blank frames); now none. There's no view transition between pages: tried with this change (the page left crossfading into the next as it rose into place, 220 ms), it showed the next page 450 to 740 ms after the tap on the smoothness spec's profiles, against 18 to 72 ms without it, both pages captured before it starts. The one card clicks used until 18 October 2026 waited for an animation frame in its update, which doesn't come during a transition, and hung for Chrome's 4 s timeout.
 - **Scroll**: `history.scrollRestoration` is `manual`, and `nav.rs` (`ScrollMemory`) restores each page's place on back and forward.
   - **What it saves**: the card under the line just below the header and where its box is laid out in the viewport (without the card's own transform, so a hovered card's 1 px lift or its entrance doesn't move the place kept), plus the pixel position for pages without cards. It saves on scroll and, in the capture phase, on every click, so that the scrolls a navigation causes don't overwrite it.
@@ -198,11 +200,17 @@ Who liked and who recasted a feed card, and its replies, show the moment their p
   - at 1280 px it went from 56 ms to 32 ms (median of 7);
   - the first cast came 7 ms later (4,003 → 4,010 ms), the time the module's extra 0.7 KB takes.
 
+### The composer and its pickers
+
+- **The press first, the composer after.** Cast, Reply and Quote show pressed in the frame after the press, and the composer opens in the next (`Composer::start`), as a link's page does: drawn in the press's own task, it held a tap on the phone profile for 72 to 136 ms.
+- **The emoji picker a group at a time.** It draws the groups in view as it opens (about 48 emoji) and the rest one a frame after (`draw_rest`), and an emoji's picture loads as it comes into the picker's view, a row or so ahead (`load_in_view`, as the stickers already did). It drew all 219 in the click that opened it, which took 280 to 344 ms on a computer in the polish audit, and loaded all their pictures, 150 to 400 ms of the page's time on the phone profile for emoji mostly never seen. A group not drawn yet that the reader jumps to is drawn at once.
+
 ### Animations that never stop
 
 - An animation that runs all the time moves by `transform` or `opacity`, which the compositor animates without the main thread. The header's line of light slides a strip twice its gradient's width by one gradient (`.portal-line::before`).
 - When it animated `background-position` instead, every frame repainted the header and redid its backdrop blur, and the frame after each tap or keystroke waited behind that work: interactions took 40–64 ms in a headless browser without a GPU, and 16–32 ms after the change.
 - The wordmark's sheen still animates its background, but it holds still for most of its 14 s cycle.
+- Under a dialog both stand still (`html:has(.modal-backdrop)`), out of sight behind its blurred backdrop. Moving, they had the browser blur the whole screen again in every frame: with the composer open in a headless browser without a GPU, that took 540 of every 600 ms of the display compositor's thread, and each key typed waited 60 to 130 ms for its frame. Standing still, 70 to 120 ms of 600, and a key shows in 24 to 56 ms on the phone profile. A phone's GPU blurs faster, but no more often.
 
 ### 4. Edge
 

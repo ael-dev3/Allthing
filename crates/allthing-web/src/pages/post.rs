@@ -20,7 +20,7 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
 use crate::api::{self, Fetched};
-use crate::components::cast::{CastSkeletons, ChannelLink};
+use crate::components::cast::{CastSkeletons, ChannelLink, after_paint};
 use crate::components::chips::{Avatar, Engagement, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{self, LinkCards, MediaGrid, VideoLinks};
@@ -179,12 +179,25 @@ fn PostPage() -> impl IntoView {
                                 view! { <p class="empty">"No replies yet."</p> }.into_any()
                             } else {
                                 let (notes, op_fid) = (notes.clone(), cast.author.fid);
+                                // The replies a paint after the post, so the
+                                // post shows sooner (drawn together, they held
+                                // the tap's page for 82 to 151 ms on a slow
+                                // phone); at once where Back is putting the
+                                // reader's place back, which may be among them.
+                                let drawn = RwSignal::new(crate::nav::restoring());
+                                if !drawn.get_untracked() {
+                                    after_paint(move || {
+                                        let _ = drawn.try_set(true);
+                                    });
+                                }
                                 view! {
                                     <div class="comments">
                                         {move || {
-                                            let mut replies = children.clone();
-                                            sort_thread(&mut replies, sort.get());
-                                            view! { <CommentTree nodes=replies notes=notes.clone() op_fid/> }
+                                            drawn.get().then(|| {
+                                                let mut replies = children.clone();
+                                                sort_thread(&mut replies, sort.get());
+                                                view! { <CommentTree nodes=replies notes=notes.clone() op_fid/> }
+                                            })
                                         }}
                                     </div>
                                 }
