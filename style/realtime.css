@@ -1,0 +1,254 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Chat and Encrypted on /messages, and the encryption explainer
+   (crates/allthing-web/src/pages/messages/realtime, components/encryption.rs).
+   Not in allthing.css: the realtime part adds these when it first draws,
+   so no other page downloads them. */
+.rt-room,
+.rt-e2e {
+  display: grid;
+  gap: 10px;
+}
+
+.rt-room-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.rt-room-head h2 {
+  margin: 0;
+  font: 600 18px/1.3 var(--font-ui);
+}
+
+.rt-room-note {
+  flex: 1 1 260px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.rt-online {
+  font-size: 13px;
+}
+
+.rt-status {
+  margin: 0;
+  font-size: 14px;
+}
+
+.rt-unverified {
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink-2);
+}
+
+.rt-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.rt-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: clamp(300px, calc(100vh - 400px), 600px);
+  overflow-y: auto;
+}
+
+.rt-typing {
+  padding: 0 16px;
+}
+
+.rt-msg {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 4px;
+}
+
+.rt-msg .rt-text {
+  grid-column: 1 / -1;
+  margin: 2px 0 0 32px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rt-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.rt-who:hover .rt-name {
+  text-decoration: underline;
+}
+
+.rt-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-badge {
+  padding: 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.rt-time {
+  justify-self: start;
+  font-size: 12px;
+}
+
+.rt-typing {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: 13px;
+}
+
+.rt-new {
+  margin: 10px;
+}
+
+.rt-thread {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-height: 52px;
+}
+
+.rt-thread[aria-current="page"] {
+  background: var(--accent-soft);
+}
+
+.rt-start {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 20px;
+}
+
+.rt-start p {
+  margin: 0;
+}
+
+.rt-peer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.rt-sealed {
+  font-style: italic;
+}
+
+.rt-nokey {
+  margin: 0;
+}
+
+/* The encryption explainer (components/encryption.rs), reused by every
+   encrypted feature. */
+.e2e-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font: 500 13px/1.2 var(--font-ui);
+  cursor: help;
+}
+
+.e2e-lock:hover,
+.e2e-lock:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.e2e-icon {
+  color: var(--accent);
+}
+
+.popover-panel.e2e-panel {
+  width: min(440px, calc(100vw - 32px));
+  padding: 14px 16px;
+}
+
+.e2e-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.e2e-points {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.e2e-points dt {
+  margin-top: 8px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.e2e-points dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.e2e-copy-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.e2e-copy {
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.e2e-agent {
+  flex: 1 1 180px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .rt-list {
+    height: clamp(260px, calc(100dvh - 380px), 600px);
+    padding: 8px;
+  }
+
+  .rt-msg .rt-text {
+    margin-left: 0;
+  }
+}

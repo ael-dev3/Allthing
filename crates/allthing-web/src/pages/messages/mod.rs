@@ -6,6 +6,14 @@
 //! its own (`crate::split`), fetched as the page opens, or as the account
 //! menu's Messages is pointed at. The static copy has no sign-in, so it
 //! only points to the inbox.
+//!
+//! Its other tabs, Chat (Allthing's general room) and Encrypted (end-to-end
+//! encrypted messages), are on Allthing's SpacetimeDB database
+//! (`realtime`), a part of their own fetched only when one is opened. The
+//! tabs themselves are drawn by the Messages part (`views::inbox`), so the
+//! app's module, which every page loads, is as it was. `?tab=chat` and
+//! `?tab=encrypted` open them; no `tab` is Direct Casts, with its own `c`,
+//! `g` and `new`.
 
 use leptos::prelude::*;
 
@@ -13,6 +21,8 @@ use crate::util::set_title;
 
 #[cfg(not(feature = "static-host"))]
 mod people;
+#[cfg(not(feature = "static-host"))]
+mod realtime;
 #[cfg(not(feature = "static-host"))]
 mod transport;
 #[cfg(not(feature = "static-host"))]
@@ -25,7 +35,7 @@ pub fn MessagesPage() -> impl IntoView {
         <section class="dm">
             <header class="dm-head">
                 <h1 class="page-title">"Messages"</h1>
-                <p class="dm-lede muted">"Your Farcaster Direct Casts."</p>
+                <p class="dm-lede muted">"Your Direct Casts, Allthing's room and encrypted messages."</p>
             </header>
             {inbox()}
         </section>

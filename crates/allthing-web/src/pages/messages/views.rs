@@ -48,7 +48,48 @@ const SEEN_KEPT: usize = 300;
 /// The page: code fetched the first time it's needed (`crate::split`).
 #[wasm_split(messages, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_messages))]
 pub fn inbox() -> Result<AnyView, SplitLoaderError> {
-    Ok(view! { <Inbox/> }.into_any())
+    Ok(view! { <Tabs/> }.into_any())
+}
+
+/// The page's tabs: Direct Casts, and Chat and Encrypted on SpacetimeDB,
+/// whose code (`super::realtime`) is fetched only when one is opened.
+#[component]
+fn Tabs() -> impl IntoView {
+    use super::realtime::{self, Tab};
+    use crate::util::messages_tab_href;
+    let asked = use_query_param("tab");
+    let tab = Memo::new(move |_| match asked.get().as_deref() {
+        Some("chat") => Some(Tab::Chat),
+        Some("encrypted") => Some(Tab::Encrypted),
+        _ => None,
+    });
+    let link = move |label: &'static str, which: Option<Tab>, query: Option<&'static str>| {
+        view! {
+            <a
+                href=messages_tab_href(query)
+                data-noscroll=""
+                class:selected=move || tab.get() == which
+                aria-current=move || (tab.get() == which).then_some("page")
+            >
+                {label}
+            </a>
+        }
+    };
+    view! {
+        <nav class="tabs dm-tabs" aria-label="Messages">
+            {link("Direct Casts", None, None)}
+            {link("Chat", Some(Tab::Chat), Some("chat"))}
+            {link("Encrypted", Some(Tab::Encrypted), Some("encrypted"))}
+        </nav>
+        {move || match tab.get() {
+            None => view! { <Inbox/> }.into_any(),
+            Some(which) => crate::split::lazy_page(
+                || view! { <Waiting text="Loading messages…"/> },
+                realtime::realtime(which),
+            )
+            .into_any(),
+        }}
+    }
 }
 
 /// Whose key this browser keeps, if any.
@@ -1095,7 +1136,7 @@ fn scroll_to_end(scroller: NodeRef<leptos::html::Div>) {
 
 /// A time as a list or a message shows it, in the reader's time zone:
 /// "09:41" today, "21 Oct" this year, "21 Oct 2025" before.
-fn short_time(at: i64) -> String {
+pub(super) fn short_time(at: i64) -> String {
     let date = js_sys::Date::new(&JsValue::from_f64(at as f64 * 1000.0));
     let today = js_sys::Date::new_0();
     let options = js_sys::Object::new();

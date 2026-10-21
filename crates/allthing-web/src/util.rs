@@ -130,6 +130,19 @@ pub fn messages_href() -> String {
     href("/messages")
 }
 
+/// A tab of the Messages page: `chat` (the general room) or `encrypted`;
+/// none for Direct Casts.
+#[cfg(not(feature = "static-host"))]
+pub fn messages_tab_href(tab: Option<&str>) -> String {
+    with_query(&messages_href(), &[("tab", tab.map(str::to_owned))])
+}
+
+/// Encrypted messages, with `fid` open, or none.
+#[cfg(not(feature = "static-host"))]
+pub fn encrypted_href(fid: Option<u64>) -> String {
+    with_query(&messages_href(), &[("tab", Some("encrypted".to_owned())), ("to", fid.map(|f| f.to_string()))])
+}
+
 /// One of the reader's conversations, open on the Messages page.
 #[cfg(not(feature = "static-host"))]
 pub fn conversation_href(conversation_id: &str) -> String {

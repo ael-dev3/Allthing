@@ -167,6 +167,33 @@ fn site(site: &Site) -> Result<()> {
     if site.static_host {
         cargo.args(["--features", "static-host"]);
     }
+    // The SpacetimeDB bridge (web/stdb/bridge.ts, bundled by esbuild), for
+    // Chat and Encrypted on /messages: the app learns its fingerprinted
+    // name at build time. The static copy has no sign-in, so none.
+    let bridge = if site.static_host {
+        cargo.env_remove("ALLTHING_STDB_BRIDGE");
+        None
+    } else {
+        // Without Node or the npm packages (`npm ci`) the app builds
+        // without them: the tabs say so, and the rest of the site is whole.
+        let out = root.join("target/stdb-bridge/bridge.js");
+        let _ = fs::remove_file(&out);
+        let built =
+            run(Command::new(tool("NODE_BIN", "node")).current_dir(&root).arg("scripts/build-stdb.mjs").arg(&out))
+                .and_then(|()| read(&out));
+        match built {
+            Ok(bytes) => {
+                let name = format!("stdb-{}.js", fingerprint(&bytes));
+                cargo.env("ALLTHING_STDB_BRIDGE", format!("/assets/{name}"));
+                Some((name, bytes))
+            }
+            Err(why) => {
+                eprintln!("xtask: no SpacetimeDB bridge ({why}); Chat and Encrypted are left out (run npm ci)");
+                cargo.env_remove("ALLTHING_STDB_BRIDGE");
+                None
+            }
+        }
+    };
     run(&mut cargo)?;
     let split_out = root.join("target/web-split");
     let parts = split(&root.join("target/wasm32-unknown-unknown/release/allthing_web.wasm"), &split_out)?;
@@ -230,6 +257,10 @@ fn site(site: &Site) -> Result<()> {
     write(&assets.join(&loader_name), &loader)?;
     for (name, bytes) in &part_files {
         write(&assets.join(&build).join(name), bytes)?;
+    }
+
+    if let Some((name, bytes)) = &bridge {
+        write(&assets.join(name), bytes)?;
     }
 
     let css = minify_css(&String::from_utf8(read(&root.join("style/allthing.css"))?).map_err(|e| e.to_string())?);

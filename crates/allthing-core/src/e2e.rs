@@ -329,3 +329,138 @@ mod tests {
         assert_eq!(unpad(&invalid), None);
     }
 }
+
+/// What an encrypted feature says about its encryption: a few short points
+/// for its tooltip, and the full technical explanation its Copy button
+/// copies, written to be pasted into an AI agent to walk through and
+/// verify. Each encrypted feature (messages now; private notes and group
+/// chats later) has one, shown by the web app's `EncryptionNote`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explainer {
+    /// The feature, as its heading says it.
+    pub feature: &'static str,
+    /// The tooltip's points: a label and its line.
+    pub points: Vec<(&'static str, &'static str)>,
+    /// The full explanation, as plain text with links.
+    pub full: String,
+}
+
+/// The repository, and the files and references the explanations link.
+pub const REPO_URL: &str = "https://github.com/ael-dev3/Allthing";
+pub const MODULE_SOURCE_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/spacetime/spacetimedb/src/lib.rs";
+pub const CRYPTO_SOURCE_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/crates/allthing-core/src/e2e.rs";
+pub const KEYS_SOURCE_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/crates/allthing-web/src/keys.rs";
+pub const BRIDGE_SOURCE_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/web/stdb/bridge.ts";
+pub const VECTORS_URL: &str = "https://github.com/ael-dev3/Allthing/blob/main/tests/e2e-vectors.test.mjs";
+
+/// The encrypted messages' explainer.
+pub fn messages_explainer() -> Explainer {
+    let points = vec![
+        (
+            "Algorithms",
+            "X25519 key agreement, HKDF-SHA256 for the message key, then XChaCha20-Poly1305 with a random 24-byte nonce; the associated data binds sender, recipient and both key versions.",
+        ),
+        (
+            "Your keys",
+            "Your private key is made by your browser's WebCrypto as unexportable and kept in this browser's IndexedDB. It never leaves it: not to Allthing, not to SpacetimeDB.",
+        ),
+        (
+            "SpacetimeDB stores",
+            "Your public key and its version, and for each message: sender, recipient, time, key versions, nonce and ciphertext. Never the text or a private key.",
+        ),
+        (
+            "Only in your browser",
+            "Your private key, the shared secrets, the message keys and the text you read and write.",
+        ),
+    ];
+    let full = format!(
+        "\
+Allthing encrypted messages: technical explanation (scheme {SCHEME})
+
+Please walk me through this design and verify it against the source code linked below. Check that the code does what this says, and point out any weaknesses.
+
+WHAT IT IS
+Allthing (a Farcaster client, {REPO_URL}) sends one-to-one messages through a SpacetimeDB database (`allthing` on maincloud.spacetimedb.com). The messages are end-to-end encrypted: only the two browsers can read them. Nothing is written to Farcaster or Snapchain.
+
+IDENTITIES
+- Each browser connects to SpacetimeDB with its own identity (a 256-bit id, as 64 hex digits). SpacetimeDB issues a token for it, which the browser keeps in IndexedDB.
+- After Sign In With Farcaster, Allthing's server (a Cloudflare Worker) signs an attestation: Ed25519 over \"allthing-spacetimedb-fid-v1|<identity hex>|<fid>|<expiry>\", with a key used only for this (the ATTEST_KEY secret), valid for 10 minutes.
+- The module's verify_fid reducer checks the attestation against the public key pinned in the module (ed25519-dalek, verify_strict), and against the caller's own identity. It then marks the identity verified for that FID.
+- Once a key is pinned, only verified identities can publish keys or send messages. The server never holds a reader's key.
+
+KEYS
+- Each browser makes an X25519 key pair with WebCrypto (generateKey, extractable: false) and stores the CryptoKey objects in IndexedDB. The private key can't be exported as bytes, even by the page.
+- Only the 32-byte public key is sent, through the set_public_key reducer, which stores it in the public user_key table with a key version (1, then +1 on every change).
+
+ENCRYPTING A MESSAGE (sender S, recipient R)
+1. shared = X25519(S private, R public), from WebCrypto deriveBits. An all-zero result (low-order point) is refused.
+2. key = HKDF-SHA256(ikm = shared, salt = \"{SCHEME}\", info = \"{SCHEME}|key|<A>|<B>\", 32 bytes). A and B are the two parties as \"<identity hex>:<key version>:<public key hex>\", the lower identity first, so both sides derive the same key.
+3. The text (UTF-8, 1 to {MAX_TEXT} bytes) goes in an envelope: a version byte 0x01, its length as 2 bytes big-endian, the text, then zeros to a multiple of {PAD_TO} bytes, which hides the exact length.
+4. ciphertext = XChaCha20-Poly1305(key, nonce = 24 random bytes from crypto.getRandomValues, plaintext = envelope, associated data = \"{SCHEME}|from|<S>|to|<R>\"). The 16-byte tag is appended.
+5. The send_dm reducer stores: sender, recipient, sender key version, recipient key version, nonce, ciphertext and the time.
+The reader decrypts with the same steps. The sender can read their own copy, because the key is the same both ways.
+
+WHAT SPACETIMEDB STORES (and its operator could see)
+- Public: each identity's claimed FID, whether it's verified, online status and last-seen time; X25519 public keys and their versions.
+- Private (dm_message, readable only by its two parties through the my_dm_inbox and my_dm_outbox views): sender identity, recipient identity, key versions, nonce, ciphertext and timestamp. That is, who talks to whom, when, and roughly how much, but not what.
+- The general chat room is not encrypted: its messages are public.
+
+WHAT STAYS IN THE BROWSER
+The X25519 private key (unexportable, in IndexedDB), the shared secrets, the message keys, and the text of every message.
+
+KNOWN LIMITS
+- No forward secrecy: the keys are static (no ratchet). Anyone who can later use a party's private key, for example by controlling their browser, can decrypt that party's past messages.
+- One key per browser. Messages go to the recipient's most recent key (verified first) and can be read only in that browser and the sender's.
+- Trust in identities rests on Allthing's attestation key. Whoever holds ATTEST_KEY could vouch for a false identity, and so could read new messages sent to it. Users can compare public keys out of band.
+- Metadata (who, when, size class) is visible to SpacetimeDB.
+- The web page's code is served by Allthing. Someone who changed that code could change all of the above.
+
+SOURCE AND REFERENCES
+- Repository: {REPO_URL}
+- SpacetimeDB module (tables, reducers, verify_fid): {MODULE_SOURCE_URL}
+- Encryption (HKDF, XChaCha20-Poly1305, envelope, associated data; with tests and pinned vectors): {CRYPTO_SOURCE_URL}
+- Key storage in the browser (WebCrypto and IndexedDB): {KEYS_SOURCE_URL}
+- Database bridge (the official SpacetimeDB TypeScript SDK): {BRIDGE_SOURCE_URL}
+- Independent recomputation of the vectors with Node's crypto: {VECTORS_URL}
+- RFC 7748, X25519: https://www.rfc-editor.org/rfc/rfc7748
+- RFC 5869, HKDF: https://www.rfc-editor.org/rfc/rfc5869
+- XChaCha20-Poly1305 (draft-irtf-cfrg-xchacha): https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha
+- RFC 8439, ChaCha20-Poly1305: https://www.rfc-editor.org/rfc/rfc8439
+- RFC 8032, Ed25519: https://www.rfc-editor.org/rfc/rfc8032
+- WebCrypto X25519: https://w3c.github.io/webcrypto/#x25519
+- SpacetimeDB: https://spacetimedb.com/docs
+"
+    );
+    Explainer { feature: "Encrypted messages", points, full }
+}
+
+#[cfg(test)]
+mod explainer_tests {
+    use super::*;
+
+    #[test]
+    fn the_explainer_names_what_it_must() {
+        let e = messages_explainer();
+        let tip = e.points.iter().map(|(a, b)| format!("{a} {b}")).collect::<Vec<_>>().join(" ");
+        for needed in ["X25519", "HKDF-SHA256", "XChaCha20-Poly1305", "IndexedDB", "SpacetimeDB stores", "ciphertext"] {
+            assert!(tip.contains(needed), "tooltip lacks {needed}");
+        }
+        for needed in [
+            REPO_URL,
+            MODULE_SOURCE_URL,
+            CRYPTO_SOURCE_URL,
+            "rfc7748",
+            "rfc5869",
+            "xchacha",
+            "verify_fid",
+            "No forward secrecy",
+            SCHEME,
+            "walk me through",
+        ] {
+            assert!(e.full.contains(needed), "explanation lacks {needed}");
+        }
+        // It describes the scheme as the code does it.
+        assert!(e.full.contains(&format!("multiple of {PAD_TO} bytes")));
+        assert!(e.full.contains(&format!("1 to {MAX_TEXT} bytes")));
+    }
+}
