@@ -74,7 +74,7 @@ const profileOf = (page: Page, name: string, username: string) =>
 const feedCard = (page: Page) => page.locator(`.cast-card[data-hash="${cast.hash}"]`);
 // The chip's own links, not the ones in its card once that opens.
 const chipLink = (card: Locator, which: "user-link" | "display-name" | "author") =>
-  card.locator(`header.cast-meta > .user-chip > .${which}`);
+  card.locator(`header.cast-meta > .byline > .user-chip > .${which}`);
 
 // Hovering needs a mouse; touch screens open cards with a tap (tested below).
 test.beforeEach(({}, testInfo) => {
@@ -217,7 +217,7 @@ test("keyboard focus resting on a name opens the card, Tab goes through it and o
 test("cards on the post page reach past a nested reply and over the replies", async ({ page }) => {
   await serve(page);
   await page.goto(`/p/${cast.hash}`);
-  const nestedPicture = page.locator(".children .comment-head > .user-chip > .user-link");
+  const nestedPicture = page.locator(".children .comment-head > .byline > .user-chip > .user-link");
   await expect(nestedPicture).toBeVisible();
   await nestedPicture.hover();
   const carolCard = profileOf(page, "Carol", "carol");

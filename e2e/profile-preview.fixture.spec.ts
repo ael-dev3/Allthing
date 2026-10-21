@@ -57,7 +57,7 @@ const open = async (page: Page, username: string) => {
   await appCame(page);
   // The handle's link, followed as the router follows it (a tap on touch
   // screens would show the profile card first).
-  await page.locator(`.cast-card header.cast-meta > .user-chip > a.author[href="/u/${username}"]`).dispatchEvent("click");
+  await page.locator(`.cast-card header.cast-meta > .byline > .user-chip > a.author[href="/u/${username}"]`).dispatchEvent("click");
   await expect(page).toHaveURL(new RegExp(`/u/${username}$`));
 };
 

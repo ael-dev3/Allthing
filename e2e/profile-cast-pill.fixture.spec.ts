@@ -283,7 +283,7 @@ test("Cast comes with the header, from the feed's preview to the profile and on 
   await appCame(page);
   // The reader's name on their cast opens their profile: its header at once,
   // from the feed, while its payload waits.
-  await page.locator(`.cast-card header.cast-meta > .user-chip > a.author[href="/u/${me.username}"]`).dispatchEvent("click");
+  await page.locator(`.cast-card header.cast-meta > .byline > .user-chip > a.author[href="/u/${me.username}"]`).dispatchEvent("click");
   await expect(page).toHaveURL(/\/u\/reader$/);
   const header = page.locator("section.profile");
   const name = header.locator(".profile-name");

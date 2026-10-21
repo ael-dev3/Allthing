@@ -93,13 +93,16 @@ pub fn CastCard(
         >
             <p class="deleted-note">"You deleted this cast."</p>
             <header class="cast-meta">
-                <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
-                <FavoriteMark fid=cast.author.fid/>
-                <span class="sep" aria-hidden="true">"·"</span>
-                // The post's own link: for keyboards and screen readers (the
-                // card's text is plain so it can be selected; a click on it
-                // opens the post through `card_click`).
-                <a class="when" href=href.clone()><span class="visually-hidden">"Open post, "</span><TimeAgo ts=cast.ts/></a>
+                // Who and when, on one line, where a long name gives way to
+                // the time; the channel and the app follow it.
+                <span class="byline">
+                    <UserChip user=cast.author.clone() show_name=true card=notes.users.get(&cast.author.fid).cloned()/>
+                    <FavoriteMark fid=cast.author.fid/>
+                    // The post's own link: for keyboards and screen readers
+                    // (the card's text is plain so it can be selected; a
+                    // click on it opens the post through `card_click`).
+                    <a class="when" href=href.clone()><span class="visually-hidden">"Open post, "</span><TimeAgo ts=cast.ts/></a>
+                </span>
                 <ChannelLink cast=cast.clone()/>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
             </header>

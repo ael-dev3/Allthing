@@ -152,7 +152,9 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                         <h1 class="profile-name">{user.name().to_owned()}</h1>
                         {follow_button(user.fid, &user.username)}
                     </div>
-                    <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" · fid {}", user.fid)}</span></p>
+                    // "· fid 99" keeps together: a long handle can wrap, but
+                    // not the dot from the fid or the fid from its number.
+                    <p class="handle">"@"{user.username.clone()}<span class="muted">{format!(" ·\u{a0}fid\u{a0}{}", user.fid)}</span></p>
                     {if has_card {
                         view! {
                             <p class="counts">

@@ -672,6 +672,44 @@ code {
   color: var(--line-2);
 }
 
+/* Who wrote a cast and when (and, on a reply, its toggle), on one line:
+   short of room, the name and handle give way, cut short with an ellipsis,
+   and the picture and the time keep theirs. The channel and the app follow
+   it, on the next line if they must. A long name wrapped the handle over
+   three lines, squeezed the picture to an oval, and sent the time to the
+   next line. */
+.byline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.byline > * {
+  flex: none;
+}
+
+.byline > .user-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The dot between them is the time's, so no line can begin with it. */
+.byline > .when::before,
+.byline > .outgoing-state::before {
+  content: "·";
+  content: "·" / "";
+  display: inline-block;
+  margin-right: 7px;
+  color: var(--line-2);
+}
+
+/* "Posted": laid out as its icon and word are, 4 px apart. */
+.byline > .outgoing-state::before {
+  margin-right: 3px;
+}
+
 .cast-text {
   color: var(--ink);
   margin: 7px 0 2px;
@@ -848,6 +886,9 @@ code {
 
 /* Avatars and user chips */
 
+/* A picture is its own size, never squeezed: `img { max-width: 100% }`
+   shrank one with a link around it that gave way to a long name (22 px to
+   an 8 px oval). */
 .avatar {
   display: inline-block;
   border-radius: 50%;
@@ -855,6 +896,7 @@ code {
   background: linear-gradient(135deg, #e9e6f8, #dff3f6);
   vertical-align: middle;
   flex: none;
+  max-width: none;
 }
 
 /* The small copy of a large picture shows until the large one has loaded. */
@@ -864,8 +906,17 @@ code {
   background-position: center;
 }
 
-.user-chip {
-  display: inline-flex;
+/* The picture, then the name and the handle, on one line. Short of room,
+   the name and the handle share it evenly, each cut short with an ellipsis,
+   and one that needs less than its half shows whole and leaves the rest to
+   the other: a grid's columns share it so, where `.popover`'s flex box
+   would take from each in proportion and cut a short name too. */
+.popover.user-chip {
+  display: inline-grid;
+  grid-template-columns: max-content;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, max-content);
+  justify-content: start;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -883,7 +934,9 @@ code {
 
 .user-chip > .author {
   color: var(--ink-2);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-chip > a:hover {
@@ -2165,6 +2218,7 @@ p.jumbo .emoji img {
 .profile .handle {
   margin: 5px 0 0;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 
 /* The profile's name, and Follow beside it for a reader who can. */
@@ -2415,11 +2469,14 @@ p.jumbo .emoji img {
   font-variant-numeric: tabular-nums;
 }
 
+/* A word or a link longer than the line breaks where it must, as in a
+   cast's text, rather than running out of the card. */
 .profile .bio {
   position: relative;
   margin: 16px 0 0;
   font-size: 15.5px;
   max-width: 64ch;
+  overflow-wrap: anywhere;
 }
 
 .facts {
@@ -3823,15 +3880,21 @@ p.jumbo .emoji img {
   text-decoration: none;
 }
 
+/* The name and the handle, a line each, cut short with an ellipsis when
+   long, as in the chips that open the card. */
 .profile-card-name {
   font-size: 15px;
   font-weight: 650;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-card-handle {
   color: var(--ink-3);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-card-id:hover .profile-card-name {
