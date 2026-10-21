@@ -4909,6 +4909,21 @@ p.jumbo .emoji img {
   text-overflow: ellipsis;
 }
 
+/* The shortcode keeps to one line; who made the one pointed at gives way
+   first when the row is short. */
+.emoji-preview code {
+  flex: none;
+  white-space: nowrap;
+}
+
+.emoji-maker {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
 .emoji-credits {
   margin-left: auto;
   font-size: 11.5px;

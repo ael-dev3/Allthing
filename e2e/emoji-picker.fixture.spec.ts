@@ -89,6 +89,8 @@ test("a search, Enter, a click, Shift for another, and the recently used first",
   await expect(nopers.locator("img")).toHaveAttribute("src", /pepe_nopers\.webp$/);
   await expect(foot).toContainText(":pepe_nopers:");
   await expect(foot.locator(".emoji-preview img")).toHaveAttribute("src", /pepe_nopers\.webp$/);
+  // With who made it, as its credit says.
+  await expect(foot.locator(".emoji-maker")).toHaveText("by a_duck_king");
   // A search, whose count is read out; Enter picks the first match and closes.
   await search.fill("heart");
   await expect(picker.getByRole("heading", { name: "3 emoji for “heart”" })).toBeVisible();
@@ -274,6 +276,19 @@ test("at 390, the picker fits, and a tap leaves it open for another", async ({ b
   await bar.getByRole("button", { name: "Hi and bye" }).tap();
   await expect.poll(() => headingTop(picker, "Hi and bye")).toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // A tapped one's maker, however long the name, keeps to the foot's row,
+  // with Credits beside it.
+  await picker.getByRole("button", { name: "Pepe gives a side-eye", exact: true }).tap();
+  const foot = picker.locator(".emoji-foot");
+  await expect(foot.locator(".emoji-maker")).toHaveText("by da_infamous_dre");
+  expect(await foot.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // The shortcode whole, on one line; the name is what's cut short.
+  const code = foot.locator(".emoji-preview code");
+  expect(await code.evaluate((el) => [el.scrollWidth <= el.clientWidth, el.getClientRects().length])).toEqual([true, 1]);
+  expect((await code.boundingBox())!.height).toBeLessThan(24);
+  const [footBox, credits] = await Promise.all([foot.boundingBox(), foot.getByRole("link", { name: "Credits" }).boundingBox()]);
+  expect(credits!.x + credits!.width).toBeLessThanOrEqual(footBox!.x + footBox!.width + 0.5);
+  expect(Math.abs(credits!.y + credits!.height / 2 - (footBox!.y + footBox!.height / 2))).toBeLessThan(2);
   // The draft's post button stays in view, below what scrolls.
   await expect(dialog.getByRole("button", { name: "Post in Farcaster" }).or(dialog.getByRole("link", { name: /Post in Farcaster/ }))).toBeInViewport();
   await context.close();

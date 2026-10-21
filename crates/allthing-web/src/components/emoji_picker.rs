@@ -118,6 +118,14 @@ impl Item {
             Item::Sticker(sticker) => sticker.still(),
         }
     }
+
+    /// Its shortcode: a sticker's is its emoji's, by the same maker.
+    fn code(self) -> &'static str {
+        match self {
+            Item::Emoji(emoji) => emoji.code,
+            Item::Sticker(sticker) => sticker.code,
+        }
+    }
 }
 
 /// The tile an event happened in, and what it is.
@@ -600,6 +608,9 @@ pub fn EmojiPicker(
                                 Item::Emoji(emoji) => view! { <code>":"{emoji.code}":"</code> }.into_any(),
                                 Item::Sticker(sticker) => view! { <span>{sticker.label()}</span> }.into_any(),
                             }}
+                            // Whose it is, as its credit says; Credits has
+                            // where it came from.
+                            {emoji::maker(item.code()).map(|by| view! { <span class="emoji-maker">"by "{by}</span> })}
                         </span>
                     }
                     .into_any(),
