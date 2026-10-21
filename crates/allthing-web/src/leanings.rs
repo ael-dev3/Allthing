@@ -2,9 +2,11 @@
 //! The reader's leanings about accounts (`allthing_core::ranking::Leanings`):
 //! their favorites and those they see less of, kept in this browser's
 //! localStorage (`allthing.favorites`, `allthing.show-less`) and sent nowhere.
-//! A favorite's casts rise in the reader's hot and top feeds, and carry a star
-//! there; the casts of an account they see less of sit a little lower, with no
-//! mark, and nothing is hidden. An account is one or the other, or neither.
+//! A favorite's casts rise well up the reader's hot and top feeds, and carry
+//! a star there; the casts of an account they see less of drop well down hot
+//! and top, and lower in new, with no mark, and nothing is hidden
+//! (`allthing_core::ranking::sorted_for`). An account is one or the other,
+//! or neither.
 //! The reader's other tabs follow a change (the `storage` event). The static
 //! copy has them too.
 

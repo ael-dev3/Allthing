@@ -24,8 +24,8 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-const FAVORITE = "Their casts rise in your hot and top feeds. Kept in this browser only.";
-const LESS = "Their casts sit a little lower in your hot and top feeds. Nothing is hidden. Kept in this browser only.";
+const FAVORITE = "Considerably boosts their casts in your hot and top feeds. Kept in this browser only.";
+const LESS = "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.";
 
 /** The hint is on screen, inside the profile's card, under its button. */
 async function under(page: Page, hint: Locator, button: Locator, width: number) {
@@ -54,6 +54,7 @@ test("at 1280, a hint says what each does on hover or keyboard focus, with no na
   await expect(lessHint).toBeHidden();
   await less.hover();
   await under(page, lessHint, less, 1280);
+  await expect(lessHint).toHaveText(LESS);
   await expect(favoriteHint).toBeHidden();
   await page.mouse.move(5, 600);
   await expect(lessHint).toBeHidden();
@@ -78,6 +79,7 @@ test("at 390, a tap says what it did for a few seconds, on screen, and leaves no
   await favorite.tap();
   await expect(favorite).toHaveAttribute("aria-pressed", "true");
   await under(page, hint, favorite, 390);
+  await expect(hint).toHaveText(FAVORITE);
   // Gone a few seconds later.
   await expect(hint).toBeHidden({ timeout: 6000 });
   // Tapped again, it's off, and looks it once the tap's :hover lands.
@@ -87,9 +89,11 @@ test("at 390, a tap says what it did for a few seconds, on screen, and leaves no
   // Once its colours have eased back (0.2 s): with the hover look, the
   // border would stay gold.
   await expect.poll(() => look(favorite)).toEqual(resting);
-  // Show less's hint, from the second button, is on screen too.
+  // Show less's hint, from the second button, is on screen too, longer as
+  // it is.
   await less.tap();
   await under(page, page.locator("#show-less-what"), less, 390);
+  await expect(page.locator("#show-less-what")).toHaveText(LESS);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await context.close();
 });

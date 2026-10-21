@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Favorites (`crate::leanings`): the star on a profile that makes the
 //! account one of the reader's favorites, in this browser, and the small
-//! star their casts carry in the reader's feeds, where they rise.
+//! star their casts carry in the reader's feeds, where they rise well up hot
+//! and top (`allthing_core::ranking::sorted_for`).
 
 use std::time::Duration;
 
@@ -79,7 +80,7 @@ pub fn FavoriteButton(fid: u64, username: String) -> impl IntoView {
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=STAR/></svg>
                 "Favorite"
             </button>
-            {hint.view("favorite-what", "Their casts rise in your hot and top feeds. Kept in this browser only.")}
+            {hint.view("favorite-what", "Considerably boosts their casts in your hot and top feeds. Kept in this browser only.")}
         </span>
     }
 }
