@@ -622,9 +622,28 @@ impl Reacted {
 pub fn reactions<'a>(replies: impl IntoIterator<Item = &'a Cast>) -> Vec<Reacted> {
     let mut replies: Vec<&Cast> = replies.into_iter().collect();
     replies.sort_by_key(|c| c.ts);
+    gather(replies.into_iter().filter_map(|cast| Some((reaction(cast)?, cast.author.clone(), cast.hash.clone()))))
+}
+
+/// A cast's emoji reactions as a listing carries them (`ReactionReply`,
+/// kept by the cron), gathered as [`reactions`] gathers replies. A listing
+/// has no names for them: each account comes by its fid alone.
+pub fn reactions_kept(kept: &[ReactionReply]) -> Vec<Reacted> {
+    let mut kept: Vec<&ReactionReply> = kept.iter().collect();
+    kept.sort_by_key(|r| r.ts);
+    gather(kept.into_iter().filter_map(|reply| {
+        let account =
+            UserSummary { fid: reply.fid, username: String::new(), display_name: String::new(), pfp_url: None };
+        Some((find(&reply.emoji)?, account, reply.hash.clone()))
+    }))
+}
+
+/// Reactions in the order they came, as `(emoji, whose, reply hash)`: each
+/// emoji with whom it came from, an account counted once for each emoji,
+/// most first, then the earliest first.
+fn gather(replies: impl Iterator<Item = (&'static Emoji, UserSummary, String)>) -> Vec<Reacted> {
     let mut out: Vec<Reacted> = Vec::new();
-    for cast in replies {
-        let Some(emoji) = reaction(cast) else { continue };
+    for (emoji, account, hash) in replies {
         let at = match out.iter().position(|r| r.emoji == emoji) {
             Some(at) => at,
             None => {
@@ -632,14 +651,49 @@ pub fn reactions<'a>(replies: impl IntoIterator<Item = &'a Cast>) -> Vec<Reacted
                 out.len() - 1
             }
         };
-        if !out[at].by.iter().any(|u| u.fid == cast.author.fid) {
-            out[at].by.push(cast.author.clone());
+        out[at].replies.push((account.fid, hash));
+        if !out[at].by.iter().any(|u| u.fid == account.fid) {
+            out[at].by.push(account);
         }
-        out[at].replies.push((cast.author.fid, cast.hash.clone()));
     }
     // Stable: equal counts keep the order they first came in.
     out.sort_by_key(|r| std::cmp::Reverse(r.by.len()));
     out
+}
+
+/// Who reacted, for a chip's label: up to three accounts by name, then how
+/// many others ("@alice, @bob and 3 others"). The reader is "you": first
+/// when their reaction is from this visit (`yours_now`), and in place of a
+/// name a listing doesn't carry. Accounts with no name count among the
+/// others, or alone ("2 accounts").
+pub fn who_reacted(by: &[UserSummary], reader: Option<u64>, yours_now: bool) -> String {
+    let mut named: Vec<String> = Vec::new();
+    let mut unnamed = 0;
+    for account in by {
+        if !account.username.is_empty() {
+            named.push(format!("@{}", account.username));
+        } else if Some(account.fid) == reader {
+            named.insert(0, "you".into());
+        } else {
+            unnamed += 1;
+        }
+    }
+    let shown: Vec<&str> = named.iter().take(3).map(String::as_str).collect();
+    let others = named.len() - shown.len() + unnamed;
+    let list = match (shown.is_empty(), others) {
+        (true, 0) => String::new(),
+        (true, 1) => "1 account".into(),
+        (true, n) => format!("{n} accounts"),
+        (false, 0) => shown.join(", "),
+        (false, 1) => format!("{} and 1 other", shown.join(", ")),
+        (false, n) => format!("{} and {n} others", shown.join(", ")),
+    };
+    match (yours_now, list.is_empty()) {
+        (true, true) => "you".into(),
+        (true, false) if shown.is_empty() => format!("you and {}", list.replace("account", "other")),
+        (true, false) => format!("you, {list}"),
+        (false, _) => list,
+    }
 }
 
 /// The byte offset in `text` of the UTF-16 offset `at`, at a character's
@@ -721,6 +775,54 @@ mod tests {
         assert_eq!(heart.replies_of(3), [format!("0x{:040x}", 12)]);
         assert!(heart.replies_of(9).is_empty());
         assert!(reactions(std::iter::empty()).is_empty());
+    }
+
+    #[test]
+    fn kept_reactions_gather_as_replies_do_with_no_names() {
+        let kept = |hash: &str, emoji: &str, fid: u64, ts: i64| ReactionReply {
+            hash: hash.into(),
+            emoji: emoji.into(),
+            fid,
+            ts,
+        };
+        // Out of order, an account twice, and an emoji no longer in the pack.
+        let found = reactions_kept(&[
+            kept("0x3", "pepe_heart_hug", 2, 12),
+            kept("0x1", "pepe_no", 1, 10),
+            kept("0x2", "pepe_heart_hug", 3, 11),
+            kept("0x4", "pepe_heart_hug", 2, 13),
+            kept("0x5", "pepe_gone_from_the_pack", 4, 14),
+        ]);
+        let summary: Vec<(&str, Vec<u64>, usize)> =
+            found.iter().map(|r| (r.emoji.code, r.by.iter().map(|u| u.fid).collect(), r.replies.len())).collect();
+        assert_eq!(summary, [("pepe_heart_hug", vec![3, 2], 3), ("pepe_no", vec![1], 1)]);
+        assert!(found.iter().flat_map(|r| &r.by).all(|u| u.username.is_empty()));
+        assert_eq!(found[0].replies_of(2), ["0x3", "0x4"]);
+        assert!(reactions_kept(&[]).is_empty());
+    }
+
+    #[test]
+    fn who_reacted_names_up_to_three_and_counts_the_rest() {
+        let named = |fid: u64, name: &str| UserSummary {
+            fid,
+            username: name.into(),
+            display_name: String::new(),
+            pfp_url: None,
+        };
+        let unnamed = |fid: u64| named(fid, "");
+        // A post page names everyone, the reader too.
+        let four = [named(1, "ann"), named(2, "bob"), named(3, "cat"), named(4, "dan")];
+        assert_eq!(who_reacted(&four[..2], Some(2), false), "@ann, @bob");
+        assert_eq!(who_reacted(&four, None, false), "@ann, @bob, @cat and 1 other");
+        assert_eq!(who_reacted(&four[..1], None, true), "you, @ann");
+        assert_eq!(who_reacted(&[], None, true), "you");
+        // A listing names no one: the reader is "you", the rest are counted.
+        assert_eq!(who_reacted(&[unnamed(7)], None, false), "1 account");
+        assert_eq!(who_reacted(&[unnamed(7), unnamed(8)], None, false), "2 accounts");
+        assert_eq!(who_reacted(&[unnamed(7), unnamed(8)], Some(8), false), "you and 1 other");
+        assert_eq!(who_reacted(&[unnamed(7)], Some(7), false), "you");
+        assert_eq!(who_reacted(&[unnamed(7), unnamed(8)], None, true), "you and 2 others");
+        assert_eq!(who_reacted(&[unnamed(7)], None, true), "you and 1 other");
     }
 
     #[test]

@@ -148,6 +148,19 @@ where
     })
 }
 
+/// Something a card does without when it must (its emoji reactions), its
+/// code fetched on first use: `pending` until it has come, then the view;
+/// if it can't come, nothing, as on a card that has none.
+#[cfg(not(feature = "static-host"))]
+pub fn lazy_extra<P, V, F>(pending: P, view: F) -> impl IntoView
+where
+    P: Fn() -> V + Send + Sync + 'static,
+    V: IntoView + 'static,
+    F: Future<Output = Result<AnyView, SplitLoaderError>> + 'static,
+{
+    lazy(pending, view, false, || ().into_any())
+}
+
 fn lazy<P, V, F>(pending: P, view: F, reload: bool, unloaded: fn() -> AnyView) -> impl IntoView
 where
     P: Fn() -> V + Send + Sync + 'static,

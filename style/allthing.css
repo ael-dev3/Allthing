@@ -5515,6 +5515,17 @@ p.jumbo .emoji img {
   margin-top: 6px;
 }
 
+/* A chip is its row's height (an inline box would add the line's descent
+   below it), so a card's empty row, while their code comes, is the same:
+   the cards below don't move when they show. */
+.reaction-chips > li {
+  display: flex;
+}
+
+.reaction-chips.coming {
+  height: 28px;
+}
+
 .reaction-chip {
   display: inline-flex;
   align-items: center;
