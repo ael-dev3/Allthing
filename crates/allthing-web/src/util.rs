@@ -4,7 +4,8 @@
 use allthing_core::channels::is_channel_id;
 use allthing_core::params::percent_encode;
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::{use_location, use_navigate};
 use wasm_bindgen::JsCast;
 
 /// Unix seconds, from the browser clock.
@@ -55,6 +56,14 @@ pub const BASE: &str = match option_env!("ALLTHING_BASE_PATH") {
 /// A site path, such as `/channels`, under [`BASE`].
 pub fn href(path: &str) -> String {
     format!("{BASE}{path}")
+}
+
+/// Goes to a path built with [`href`], as a click on a link to it does. The
+/// router's own `navigate` puts its base before a path it resolves, which
+/// sent the static copy from `/Allthing/...` to `/Allthing/Allthing/...`.
+pub fn use_go() -> impl Fn(&str, NavigateOptions) + Clone + 'static {
+    let navigate = use_navigate();
+    move |to: &str, options: NavigateOptions| navigate(to, NavigateOptions { resolve: false, ..options })
 }
 
 /// A query value decoded exactly once. The router's ParamsMap also

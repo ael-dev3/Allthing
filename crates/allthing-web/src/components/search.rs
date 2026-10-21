@@ -8,11 +8,11 @@ use allthing_core::api::{SearchPayload, cast_path, channel_path, search_path, us
 use allthing_core::text::truncate_title;
 use leptos::ev;
 use leptos::prelude::*;
-use leptos_router::hooks::{use_location, use_navigate};
+use leptos_router::hooks::use_location;
 
 use crate::api;
 use crate::components::chips::Avatar;
-use crate::util::{cast_href, channel_href, href, use_query_param, user_href, with_query};
+use crate::util::{cast_href, channel_href, href, use_go, use_query_param, user_href, with_query};
 
 /// Typing pauses this long before suggestions are looked up.
 const DEBOUNCE: Duration = Duration::from_millis(250);
@@ -96,7 +96,7 @@ pub fn SearchBox() -> impl IntoView {
     let query = use_query_param("q");
     let location = use_location();
     let input = NodeRef::<leptos::html::Input>::new();
-    let navigate = use_navigate();
+    let navigate = use_go();
     // Show the current query while on the results page.
     let current =
         move || location.pathname.get().ends_with("/search").then(|| query.get()).flatten().unwrap_or_default();

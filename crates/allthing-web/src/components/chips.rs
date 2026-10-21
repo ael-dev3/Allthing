@@ -14,9 +14,8 @@ use leptos::prelude::*;
 use crate::components::popover::Popover;
 use crate::components::profile_card::ProfileHover;
 use crate::components::who::{RepliesPreview, WhoList, WhoPreview, use_who_list};
-use crate::util::{cast_href, now, user_href};
+use crate::util::{cast_href, now, use_go, user_href};
 use allthing_core::api::ReactionKind;
-use leptos_router::hooks::use_navigate;
 
 #[component]
 pub fn TimeAgo(ts: i64) -> impl IntoView {
@@ -110,7 +109,7 @@ const BUBBLE: &str = "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z";
 #[component]
 pub fn Engagement(cast: Cast, #[prop(optional)] reply_href: Option<String>) -> impl IntoView {
     let who = use_who_list();
-    let navigate = use_navigate();
+    let navigate = use_go();
     let pts = points(&cast);
     let title = format!(
         "{} likes, {} recasts, {} replies. Ranked by engagement points: likes + 2 × recasts + replies = {}.",
