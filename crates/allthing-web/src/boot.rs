@@ -50,7 +50,8 @@ pub fn hand_over() {
                 let _ = entered.style().set_property("animation-name", "none");
             }
         }
-        crate::components::media::size_tiles(&app);
+        // Its tiles take the sizes the boot screen's images have shown since.
+        crate::components::media::sizes_changed();
     }
     boot.remove();
 }

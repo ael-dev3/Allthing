@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use crate::embeds::single_image;
 use crate::model::Cast;
 
 /// Levels of quotes carried and displayed inline. A deeper quote stays a link.
@@ -59,6 +60,21 @@ pub fn as_quote(mut cast: Cast) -> Cast {
         cast.strip_hidden();
     }
     cast
+}
+
+/// The images a listing's card shows alone, each at its own shape
+/// ([`crate::embeds::single_image`]): the cast's, and those of the casts it
+/// shows as quote cards, within [`QUOTE_DEPTH`] (a hidden quote shows none,
+/// nor its own quotes).
+pub fn single_images<'a>(cast: &'a Cast, quotes: &'a BTreeMap<String, Cast>) -> Vec<&'a str> {
+    let mut images: Vec<&str> = single_image(cast).into_iter().collect();
+    let mut level = vec![cast];
+    for _ in 0..QUOTE_DEPTH {
+        level =
+            level.iter().flat_map(|c| c.quoted()).filter_map(|hash| quotes.get(hash)).filter(|q| !q.hidden()).collect();
+        images.extend(level.iter().filter_map(|quote| single_image(quote)));
+    }
+    images
 }
 
 #[cfg(test)]
@@ -147,5 +163,59 @@ mod tests {
 
         let shown = cast("0xq3", &["0xq9"]);
         assert_eq!(as_quote(shown.clone()), shown);
+    }
+
+    fn with(mut cast: Cast, embeds: &[Embed]) -> Cast {
+        cast.embeds.extend(embeds.iter().cloned());
+        cast
+    }
+
+    fn image(url: &str) -> Embed {
+        Embed::Image { url: url.into() }
+    }
+
+    #[test]
+    fn a_single_image_is_the_only_medium_and_an_image() {
+        let photo = image("https://imagedelivery.net/a/photo/original");
+        let video = Embed::Video { url: "https://stream.farcaster.xyz/v/manifest/video.m3u8".into() };
+        let link = Embed::Link { url: "https://example.com".into(), image_url: None, title: None };
+        let sticker = image("https://allthing.social/assets/stickers/v1/pepe_jam.gif");
+        assert_eq!(
+            single_image(&with(cast("0x1", &[]), std::slice::from_ref(&photo))),
+            Some("https://imagedelivery.net/a/photo/original")
+        );
+        // A link, a quote or a sticker beside it doesn't count; another image or a video does.
+        assert!(single_image(&with(cast("0x2", &["0xq"]), &[link.clone(), photo.clone(), sticker.clone()])).is_some());
+        assert_eq!(single_image(&with(cast("0x3", &[]), &[photo.clone(), image("https://i.imgur.com/b.png")])), None);
+        assert_eq!(single_image(&with(cast("0x4", &[]), &[photo.clone(), video.clone()])), None);
+        assert_eq!(single_image(&with(cast("0x5", &[]), &[video])), None);
+        assert_eq!(single_image(&with(cast("0x6", &[]), &[sticker, link])), None);
+        assert_eq!(single_image(&cast("0x7", &[])), None);
+    }
+
+    #[test]
+    fn a_card_waits_for_its_own_single_image_and_its_shown_quotes() {
+        let a = |name: &str| image(&format!("https://imagedelivery.net/a/{name}/original"));
+        let mut hidden = with(cast("0xhidden", &["0xbelow"]), &[a("hidden")]);
+        hidden.spam = true;
+        let quotes = BTreeMap::from([
+            ("0xq1".to_owned(), with(cast("0xq1", &["0xq2", "0xhidden"]), &[a("q1")])),
+            ("0xq2".to_owned(), with(cast("0xq2", &["0xq3"]), &[a("q2a"), a("q2b")])),
+            ("0xq3".to_owned(), with(cast("0xq3", &["0xq4"]), &[a("q3")])),
+            // A fourth level is a link, not a card.
+            ("0xq4".to_owned(), with(cast("0xq4", &[]), &[a("q4")])),
+            ("0xhidden".to_owned(), hidden),
+            ("0xbelow".to_owned(), with(cast("0xbelow", &[]), &[a("below")])),
+        ]);
+        let card = with(cast("0xcard", &["0xq1", "0xunknown"]), &[a("own")]);
+        assert_eq!(
+            single_images(&card, &quotes),
+            [
+                "https://imagedelivery.net/a/own/original",
+                "https://imagedelivery.net/a/q1/original",
+                "https://imagedelivery.net/a/q3/original"
+            ]
+        );
+        assert!(single_images(&cast("0xplain", &[]), &quotes).is_empty());
     }
 }
