@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use leptos::ev;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 use wasm_bindgen::{JsCast, JsValue};
+
+use crate::util::use_go;
 
 thread_local! {
     /// Last scroll position of each visited page (pathname + query).
@@ -203,7 +204,7 @@ const INTERACTIVE: &str =
 /// a card (a quoted cast) opens its own post, and the enclosing card's
 /// handler, which runs next, leaves it alone.
 pub fn card_click(href: String) -> impl Fn(ev::MouseEvent) + Clone + 'static {
-    let navigate = use_navigate();
+    let navigate = use_go();
     move |ev: ev::MouseEvent| {
         if ev.default_prevented() || ev.button() != 0 {
             return;

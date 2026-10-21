@@ -5,11 +5,11 @@
 use allthing_core::ranking::{Sort, TimeRange};
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_location, use_navigate};
+use leptos_router::hooks::use_location;
 
 use crate::api::Failure;
 use crate::components::search::SearchBox;
-use crate::util::{BASE, GITHUB_MARK, SOURCE_URL, href, with_query};
+use crate::util::{BASE, GITHUB_MARK, SOURCE_URL, href, use_go, with_query};
 
 #[component]
 pub fn Wordmark() -> impl IntoView {
@@ -153,7 +153,7 @@ fn offered(range: TimeRange) -> bool {
 /// URL as `t` next to the sort.
 #[component]
 pub fn TimeFilter(path: String, sort: Sort, current: TimeRange) -> impl IntoView {
-    let navigate = use_navigate();
+    let navigate = use_go();
     let change = move |ev: leptos::ev::Event| {
         let range = TimeRange::parse(Some(&event_target_value(&ev)));
         let href = with_query(
