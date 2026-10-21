@@ -1,16 +1,17 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Allthing SpacetimeDB module — handoff
 
-Module: `/workspace/allthing-spacetime/spacetimedb` (Rust, spacetimedb 2.13). Builds with `spacetime build`.
+Module: `spacetime/spacetimedb` in this repository (Rust, spacetimedb 2.13). Builds with `spacetime build`; `sh spacetime/check.sh` runs its checks (CI's `SpacetimeDB module` job).
 Target DB name: **`allthing`** (fall back to `allthing-chat` if the name is taken) on maincloud.
 URL once published: `https://maincloud.spacetimedb.com` / ws, database `allthing`. Dashboard: https://spacetimedb.com/allthing
-STATUS: NOT yet published to maincloud. The CLI on the box was not logged in (only a browser session existed).
-It was tested on a temporary local server, which has since been stopped.
+STATUS: published to maincloud as `allthing` (checked 21 October 2026: `GET /v1/database/allthing` answers, and its schema has
+these tables and reducers, with `general` seeded as room 1).
 
 ## Publish
 ```
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
 spacetime login            # interactive, as ael
-cd /workspace/allthing-spacetime && spacetime publish -s maincloud allthing -y
+cd spacetime && spacetime publish -s maincloud allthing -y
 spacetime generate --lang typescript --out-dir <allthing-web>/src/module_bindings --module-path spacetimedb
 ```
 
