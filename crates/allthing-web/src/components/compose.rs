@@ -2,8 +2,9 @@
 //! Writing a cast, a reply or a quote, with a GIF or emoji, for any reader.
 //! Cast, at the top right of the front page's feed or a channel's (a round
 //! button over the feed on a phone), starts a cast, in the channel on a
-//! channel page; Reply and Quote under a post or a reply start a reply to it
-//! or a cast that quotes it.
+//! channel page, and so does the same pill on the reader's own profile;
+//! Reply and Quote under a post or a reply start a reply to it or a cast
+//! that quotes it.
 //!
 //! Where the reader can like and recast here (`components::writer`), the
 //! draft is posted with their key: "@name"s become mentions, and the cast
@@ -555,7 +556,8 @@ fn start_cast() -> impl Fn() + Copy + 'static {
 }
 
 /// Cast, at the top right of a feed: a pill in Allthing's accent, lettered
-/// in its serif. On a phone, `CastFab` instead.
+/// in its serif. On a phone, `CastFab` instead. The reader's own profile has
+/// it too, at its header's top right (`pages::user`), on a phone as well.
 #[component]
 pub fn CastPill() -> impl IntoView {
     let start = start_cast();

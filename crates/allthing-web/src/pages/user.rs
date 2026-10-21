@@ -166,7 +166,7 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
                         view! { <p class="counts"><span class="sk sk-meta"></span></p> }.into_any()
                     }}
                 </div>
-                {leaning_buttons(user.fid, &user.username)}
+                {corner_buttons(user.fid, &user.username)}
             </div>
             {if !has_card {
                 view! { <div class="bio"><span class="sk sk-title"></span></div> }.into_any()
@@ -195,30 +195,37 @@ fn follow_button(_: u64, _: &str) -> AnyView {
     ().into_any()
 }
 
-/// Favorite and Show less, on anyone's profile but the reader's own: at
-/// the header's top right, or in a row of their own under it on a phone.
+/// At the header's top right, or in a row of their own under it on a
+/// phone: Favorite and Show less on anyone's profile but the reader's own,
+/// and on their own (signed in, the same fid) Cast, the feeds' pill, which
+/// starts a cast.
 #[cfg(not(feature = "static-host"))]
-fn leaning_buttons(fid: u64, username: &str) -> AnyView {
+fn corner_buttons(fid: u64, username: &str) -> AnyView {
     let session = crate::components::signin::use_session();
     let username = username.to_owned();
+    // Redrawn only when signing in or out makes it the reader's own or not,
+    // so the Cast the composer gives focus back to stays.
+    let mine = Memo::new(move |_| session.user.with(|u| u.as_ref().is_some_and(|u| u.fid == fid)));
     (move || {
-        let mine = session.user.with(|u| u.as_ref().is_some_and(|u| u.fid == fid));
-        (!mine).then(|| {
+        if mine.get() {
+            view! { <span class="profile-cast"><crate::components::compose::CastPill/></span> }.into_any()
+        } else {
             view! {
                 <span class="leaning-buttons">
                     <FavoriteButton fid username=username.clone()/>
                     <ShowLessButton fid username=username.clone()/>
                 </span>
             }
-        })
+            .into_any()
+        }
     })
     .into_any()
 }
 
-/// The static copy has no one signed in: Favorite and Show less on every
-/// profile.
+/// The static copy has no one signed in, and no composer: Favorite and
+/// Show less on every profile.
 #[cfg(feature = "static-host")]
-fn leaning_buttons(fid: u64, username: &str) -> AnyView {
+fn corner_buttons(fid: u64, username: &str) -> AnyView {
     view! {
         <span class="leaning-buttons">
             <FavoriteButton fid username=username.to_owned()/>
