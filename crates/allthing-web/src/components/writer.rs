@@ -30,7 +30,7 @@ use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, R
 use allthing_core::model::UserSummary;
 use allthing_core::params::hash_from_param;
 use allthing_core::provenance::{base64_encode, hex_encode};
-use allthing_core::scheduled::{SCHEDULED_PATH, Schedule, ScheduledCast};
+use allthing_core::scheduled::{Known, SCHEDULED_PATH, Schedule, ScheduledCast};
 use allthing_core::siwf::{self, KeySignIn, QrCode, QrRequest, SignedIn, Started};
 use leptos::ev;
 use leptos::prelude::*;
@@ -573,6 +573,7 @@ impl Writer {
         let kept = api::post::<_, ScheduledCast>(SCHEDULED_PATH, &Schedule { message, draft, replaces })
             .await
             .map_err(|failure| failure.message())?;
+        note_scheduled(|known| known.kept(stored.fid, &kept, replaces));
         let text = if replaces.is_some() { "Changed: it goes out" } else { "Scheduled: it goes out" };
         self.notify(Notice {
             text: format!("{text} {}.", local_time(kept.at)),
@@ -1331,7 +1332,9 @@ impl Writer {
         });
     }
 
-    fn say(self, message: String) {
+    /// Say `message` in the notice at the foot of the screen, a polite live
+    /// region, for a few seconds.
+    pub fn say(self, message: String) {
         self.notify(Notice { text: message, link: None });
     }
 
@@ -2104,13 +2107,48 @@ pub fn WriterDialog() -> impl IntoView {
     .into_any()
 }
 
+/// Where this browser keeps what it knows of the reader's casts waiting
+/// (`allthing_core::scheduled::Known`), for the account menu's count.
+const KNOWN_KEY: &str = "allthing.scheduled";
+
+fn known() -> Known {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item(KNOWN_KEY).ok().flatten())
+        .map_or_else(Known::default, |text| Known::parse(&text))
+}
+
+/// Change what this browser knows of the reader's casts waiting: their
+/// list as read, or one scheduled, changed or cancelled here.
+pub fn note_scheduled(change: impl FnOnce(&mut Known)) {
+    let mut kept = known();
+    change(&mut kept);
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(KNOWN_KEY, &kept.to_json());
+    }
+}
+
 /// The account menu's link to the reader's scheduled casts, wherever they
-/// can write from here.
+/// can write from here, with how many are waiting, as far as this browser
+/// knows: no request is made for it.
 #[component]
 pub fn ScheduledMenuItem() -> impl IntoView {
     let Some(writer) = use_writer() else { return ().into_any() };
-    (move || writer.can_write().then(|| view! { <a class="account-link" href=scheduled_href()>"Scheduled casts"</a> }))
-        .into_any()
+    (move || {
+        writer.can_write().then(|| {
+            // Read again after the reader schedules, changes or cancels one.
+            let _ = writer.scheduled_version();
+            let waiting = writer.fid().map_or(0, |fid| known().count(fid, crate::util::now()));
+            let label = (waiting > 0).then(|| format!("Scheduled casts, {waiting} waiting"));
+            view! {
+                <a class="account-link" href=scheduled_href() aria-label=label>
+                    "Scheduled casts"
+                    {(waiting > 0).then(|| view! { <span class="account-count" aria-hidden="true">{waiting}</span> })}
+                </a>
+            }
+        })
+    })
+    .into_any()
 }
 
 /// The account menu's line about likes and recasts: on in this browser,

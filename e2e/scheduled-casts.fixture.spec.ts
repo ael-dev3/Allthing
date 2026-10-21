@@ -69,7 +69,7 @@ async function serve(page: Page, list: Kept[] = [], refuse?: [number, string]) {
     const { id } = route.request().postDataJSON();
     calls.cancelled.push(id);
     list.splice(list.findIndex((k) => k.id === id), 1);
-    return route.fulfill({ json: {} });
+    return route.fulfill({ json: { outcome: "cancelled" } });
   });
   return calls;
 }

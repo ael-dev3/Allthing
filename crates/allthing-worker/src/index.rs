@@ -14,10 +14,10 @@ use std::rc::Rc;
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
 use allthing_core::media::{Usage, WINDOW, day_row};
-use allthing_core::scheduled::{Checked, ScheduledCast, State};
+use allthing_core::scheduled::{self, Cancelled, Checked, ScheduledCast, State};
 use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
-use allthing_data::scheduled::{Due, Outcome, ScheduledStore, Settled, kept_since};
+use allthing_data::scheduled::{Due, Outcome, ScheduledStore, Settled, held_since, kept_since};
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde::Deserialize;
 use worker::wasm_bindgen::JsValue;
@@ -93,10 +93,10 @@ const OLD_REACTIONS: &str = "DELETE FROM reactions WHERE ts < ?1";
 /// The reactions to the casts given as one JSON array, oldest first.
 const REACTIONS: &str = "SELECT parent, hash, emoji, fid, ts FROM reactions \
     WHERE parent IN (SELECT value FROM json_each(?1)) ORDER BY ts, hash LIMIT 2000";
-/// A reader's (?1) scheduled casts: waiting, and finished since ?2, soonest
-/// first.
+/// A reader's (?1) scheduled casts: waiting (or being given to the node,
+/// which to them is waiting), and finished since ?2, soonest first.
 const SCHEDULED: &str = "SELECT id, at, hash, state, error, draft FROM scheduled \
-    WHERE fid = ?1 AND (state = 'waiting' OR done_at >= ?2) ORDER BY at, id";
+    WHERE fid = ?1 AND (state IN ('waiting', 'sending') OR done_at >= ?2) ORDER BY at, id";
 /// Schedule a cast, unless its reader has ?6 waiting already: its id.
 const SCHEDULE: &str = "INSERT INTO scheduled (fid, at, hash, message, draft) \
     SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT COUNT(*) FROM scheduled WHERE fid = ?1 AND state = 'waiting') < ?6 \
@@ -108,19 +108,32 @@ const RESCHEDULE: &str = "UPDATE scheduled SET at = ?3, hash = ?4, message = ?5,
     WHERE id = ?1 AND fid = ?2 AND (state = 'waiting' OR (state = 'failed' AND \
       (SELECT COUNT(*) FROM scheduled WHERE fid = ?2 AND state = 'waiting') < ?7)) \
     RETURNING id";
-/// Take one of the reader's casts off the list: one waiting (cancelled), or
-/// one that failed.
-const CANCEL: &str = "DELETE FROM scheduled WHERE id = ?1 AND fid = ?2 AND state <> 'posted' RETURNING id";
-/// Casts due at ?1, at most ?2, the earliest first.
-const DUE: &str = "SELECT id, hash, message, tries FROM scheduled \
-    WHERE state = 'waiting' AND at <= ?1 ORDER BY at, id LIMIT ?2";
+/// The cast a cancel names (?1), as it stands: whose it is, where, and its
+/// hash.
+const KEPT: &str = "SELECT fid, state, hash FROM scheduled WHERE id = ?1";
+/// Take one of the reader's (?2) casts off the list: one waiting
+/// (cancelled), or one that failed; not one that went out, or that the node
+/// is being given (`allthing_core::scheduled::cancelled`).
+const CANCEL: &str = "DELETE FROM scheduled WHERE id = ?1 AND fid = ?2 AND state NOT IN ('posted', 'sending')";
+/// Take the casts due at ?1 for a run to give the node, at most ?2, the
+/// earliest first: those waiting whose time has come, and any a run took
+/// before ?3 and never settled. Each is `sending` from ?1 (`done_at` holds
+/// when it was taken) until the run settles it.
+const CLAIM_DUE: &str = "UPDATE scheduled SET state = 'sending', done_at = ?1 WHERE id IN (\
+      SELECT id FROM scheduled WHERE (state = 'waiting' AND at <= ?1) OR (state = 'sending' AND done_at < ?3) \
+      ORDER BY at, id LIMIT ?2) \
+    RETURNING id, at, hash, message, tries";
 /// What became of a due cast, if the reader hasn't put another in its
 /// place since (?2, its hash).
 const POSTED: &str = "UPDATE scheduled SET state = 'posted', error = NULL, done_at = ?3 WHERE id = ?1 AND hash = ?2";
 const FAILED: &str = "UPDATE scheduled SET state = 'failed', error = ?3, done_at = ?4 WHERE id = ?1 AND hash = ?2";
-const AGAIN: &str = "UPDATE scheduled SET tries = tries + 1 WHERE id = ?1 AND hash = ?2";
+/// Waiting again, for the next minute, with a try counted.
+const AGAIN: &str = "UPDATE scheduled SET state = 'waiting', tries = tries + 1, done_at = NULL \
+    WHERE id = ?1 AND hash = ?2";
+/// Not given to the node this run: waiting again, as it was.
+const UNSENT: &str = "UPDATE scheduled SET state = 'waiting', done_at = NULL WHERE id = ?1 AND hash = ?2";
 /// Drop casts that went out, or didn't, before ?1.
-const DROP_DONE: &str = "DELETE FROM scheduled WHERE state <> 'waiting' AND done_at < ?1";
+const DROP_DONE: &str = "DELETE FROM scheduled WHERE state IN ('posted', 'failed') AND done_at < ?1";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
 /// What reader ?1 has uploaded since ?2 (Unix seconds): how many files, how
 /// many bytes and when the oldest came; everyone's uploads on the UTC day
@@ -201,9 +214,17 @@ struct ScheduledRow {
 #[derive(Deserialize)]
 struct DueRow {
     id: f64,
+    at: f64,
     hash: String,
     message: String,
     tries: f64,
+}
+
+#[derive(Deserialize)]
+struct KeptRow {
+    fid: f64,
+    state: String,
+    hash: String,
 }
 
 #[derive(Deserialize)]
@@ -490,7 +511,7 @@ impl D1Index {
                     id: row.id as i64,
                     at: row.at as i64,
                     hash: row.hash,
-                    state: State::parse(&row.state)?,
+                    state: State::listed(&row.state)?,
                     error: row.error,
                     draft: row.draft,
                 })
@@ -523,12 +544,19 @@ impl D1Index {
     }
 
     /// Cancel one of the reader's casts that hasn't gone out, or take one
-    /// that failed off the list: whether there was one.
-    pub async fn cancel(&self, fid: u64, id: i64) -> Result<bool, IndexError> {
+    /// that failed off the list: what became of it, or `None` when it is
+    /// someone else's. What it reads and what it deletes are one batch, a
+    /// transaction, so the answer is what the delete found.
+    pub async fn cancel(&self, fid: u64, id: i64) -> Result<Option<Cancelled>, IndexError> {
         ensure_schema(&self.db).await?;
-        let statement = self.db.prepare(CANCEL).bind(&[number(id as f64), number(fid as f64)]).map_err(failed)?;
-        let row: Option<IdRow> = statement.first(None).await.map_err(failed)?;
-        Ok(row.is_some())
+        let read = self.db.prepare(KEPT).bind(&[number(id as f64)]).map_err(failed)?;
+        let delete = self.db.prepare(CANCEL).bind(&[number(id as f64), number(fid as f64)]).map_err(failed)?;
+        let results = self.db.batch(vec![read, delete]).await.map_err(failed)?;
+        let kept = match results.into_iter().next() {
+            Some(result) => result.results::<KeptRow>().map_err(failed)?.into_iter().next(),
+            None => None,
+        };
+        Ok(scheduled::cancelled(fid, kept.as_ref().map(|row| (row.fid as u64, row.state.as_str(), row.hash.as_str()))))
     }
 }
 
@@ -564,12 +592,15 @@ impl D1Index {
 }
 
 impl ScheduledStore for D1Index {
-    fn due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
+    fn claim_due(&self, now: i64, limit: u32) -> LocalBoxFuture<'static, Result<Vec<Due>, IndexError>> {
         let db = self.db.clone();
         async move {
             ensure_schema(&db).await?;
-            let statement = db.prepare(DUE).bind(&[number(now as f64), number(f64::from(limit))]).map_err(failed)?;
-            let rows = statement.all().await.map_err(failed)?.results::<DueRow>().map_err(failed)?;
+            let args = [number(now as f64), number(f64::from(limit)), number(held_since(now) as f64)];
+            let statement = db.prepare(CLAIM_DUE).bind(&args).map_err(failed)?;
+            let mut rows = statement.all().await.map_err(failed)?.results::<DueRow>().map_err(failed)?;
+            // RETURNING keeps no order: the earliest first, as they were picked.
+            rows.sort_by(|a, b| a.at.total_cmp(&b.at).then(a.id.total_cmp(&b.id)));
             Ok(rows
                 .into_iter()
                 .map(|row| Due { id: row.id as i64, hash: row.hash, message: row.message, tries: row.tries as u32 })
@@ -588,6 +619,7 @@ impl ScheduledStore for D1Index {
                     Outcome::Posted => db.prepare(POSTED).bind(&[id, hash, number(now as f64)]),
                     Outcome::Failed(why) => db.prepare(FAILED).bind(&[id, hash, why.into(), number(now as f64)]),
                     Outcome::Again => db.prepare(AGAIN).bind(&[id, hash]),
+                    Outcome::Unsent => db.prepare(UNSENT).bind(&[id, hash]),
                 };
                 statements.push(statement.map_err(failed)?);
             }

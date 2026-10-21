@@ -393,6 +393,16 @@ impl Composer {
         self.open.set(true);
     }
 
+    /// Start a cast to schedule, from the reader's list of scheduled casts:
+    /// the composer with its clock on, an hour or so from now to begin
+    /// with (or the time the draft had).
+    pub fn start_scheduled(self) {
+        self.start(Target::Cast(None));
+        if self.when.get_untracked().is_none() {
+            self.when.set(Some(local_input(later(now()))));
+        }
+    }
+
     /// Schedule the draft for later, an hour or so from now to begin with,
     /// or post it now after all.
     fn toggle_when(self) {

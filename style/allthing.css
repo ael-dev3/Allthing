@@ -370,6 +370,20 @@ code {
   color: var(--ink);
 }
 
+/* How many of the reader's casts are waiting, as this browser knows. */
+.account-count {
+  display: inline-block;
+  min-width: 20px;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 600 12px/1.2 var(--font-ui);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The picture answers a tap with its ring, not the browser's tap colour. */
 .account-button {
   -webkit-tap-highlight-color: transparent;
@@ -1138,13 +1152,14 @@ p.jumbo .emoji img {
 }
 
 /* On a touch screen, a fingertip's height for the small targets of the
-   header, the feeds, the posts, the profiles and the footer: each takes a
-   tap in a band 44 px tall, as wide as it is and centred on it, leaving
-   the layout as it is. Only taller, not wider: a count's band would cover
-   the heart beside it, as the later of the two. The sign-in button, on its
-   own, is 44 px wide as well, as the picture is above. A reply's toggle,
-   the "?" beside a fact and the front page's apps under their bar take
-   one too, with room made so that no two bands meet (below). */
+   header, the feeds, the posts, the profiles, the scheduled casts and the
+   footer: each takes a tap in a band 44 px tall, as wide as it is and
+   centred on it, leaving the layout as it is. Only taller, not wider: a
+   count's band would cover the heart beside it, as the later of the two.
+   The sign-in button, on its own, is 44 px wide as well, as the picture is
+   above. A reply's toggle, the "?" beside a fact and the front page's apps
+   under their bar take one too, with room made so that no two bands meet
+   (below). */
 @media (pointer: coarse) {
   .main-nav a,
   .sign-in-button,
@@ -1162,6 +1177,8 @@ p.jumbo .emoji img {
   .fact-help,
   .client-legend a,
   .client-other,
+  .scheduled-actions .button,
+  .scheduled-view,
   .site-footer a {
     position: relative;
   }
@@ -1182,6 +1199,8 @@ p.jumbo .emoji img {
   .fact-help::after,
   .client-legend a::after,
   .client-other::after,
+  .scheduled-actions .button::after,
+  .scheduled-view::after,
   .site-footer a::after {
     content: "";
     position: absolute;
@@ -6959,6 +6978,10 @@ p.jumbo .emoji img {
   line-height: 1.5;
 }
 
+.scheduled-empty p {
+  margin: 0;
+}
+
 .scheduled-group h2 {
   font: 600 13px/1.2 var(--font-ui);
   letter-spacing: 0.06em;
@@ -6967,11 +6990,14 @@ p.jumbo .emoji img {
   margin: 0 0 10px;
 }
 
+/* A column of flex items, so that a cast folding away can give back the
+   gap after it too. */
 .scheduled-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
@@ -6984,6 +7010,35 @@ p.jumbo .emoji img {
   background: var(--card);
   box-shadow: var(--shadow);
   min-width: 0;
+}
+
+/* Focus moves to a cast when the one before it is taken off. */
+.scheduled-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Taken off the list (pages/scheduled.rs): it folds away at once, from its
+   own height (--h), while the Worker is asked; with reduced motion, it just
+   goes. */
+.scheduled-item.leaving {
+  overflow: hidden;
+  pointer-events: none;
+  animation: scheduled-leave 0.18s var(--ease) forwards;
+}
+
+@keyframes scheduled-leave {
+  from {
+    height: var(--h);
+  }
+  to {
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+    margin-bottom: -10px;
+    opacity: 0;
+  }
 }
 
 .scheduled-item.failed {
@@ -7044,6 +7099,13 @@ p.jumbo .emoji img {
   font-size: 14px;
 }
 
+/* A cast that went out before its cancel came. */
+.scheduled-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
 .scheduled-actions {
   display: flex;
   flex-wrap: wrap;
@@ -7076,6 +7138,15 @@ p.jumbo .emoji img {
 
 .scheduled-view {
   font-weight: 600;
+}
+
+/* On a phone, the question has a row of its own: its words, then both
+   answers side by side. */
+@media (max-width: 640px) {
+  .scheduled-confirm,
+  .scheduled-confirm > .muted {
+    flex-basis: 100%;
+  }
 }
 
 /* The reader's Direct Casts (pages/messages): the conversations beside the

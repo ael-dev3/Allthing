@@ -113,7 +113,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Any cache hit | 1 (cache read) |
 | home | cache read 1 + trending casts 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + cache write 1 |
 | home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
-| the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1; first, [scheduled casts](#11-scheduled-casts) due: D1 1 (what is due) + submits ≤5 + D1 1 (what became of them, only when some were due) (≤ 11) |
+| the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1; first, [scheduled casts](#11-scheduled-casts) due: D1 1 (takes what is due, and reads it) + submits ≤5 + D1 1 (what became of them, only when some were due) (≤ 11) |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
 | activity | cache read 1 + the cron's stored payload 1 (a D1 read) + cache write 1 (≤ 3); no upstream calls |
@@ -131,7 +131,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | sign-in `verify` | one batched OP Mainnet `eth_call` pair 1 (custody and auth address; + 1 fallback RPC) + the account's name and picture (`user/bulk`) 1 (≤ 3); never cached |
 | sign-in `key` | the account's keys (`signersByFid`) 1 + the account's name and picture (`user/bulk`) 1 (2); never cached. The Ed25519 signature is checked by the runtime's WebCrypto, not in WebAssembly |
 | sign-in `start`, `qr`, `signout`; a key's endorsement (`auth/signer`) and `/api/v1/signer` | 0 |
-| scheduled casts: the list, scheduling, cancelling | D1 1 (+ the schema once per isolate); no upstream calls; never cached |
+| scheduled casts: the list, scheduling, cancelling | D1 1 (a cancel's is one batch: what it finds, and its delete) (+ the schema once per isolate); no upstream calls; never cached |
 | refresh (after a reader's write) | per page (≤ 5): cache read 1 + cache write 1, of an entry there is (≤ 10); no upstream calls; never cached |
 | an attachment's upload (`POST /api/v1/media`) | D1 1 (the reader's day, the day's uploads and the total) + the schema once per isolate + R2 put 1 + D1 1 (the file, the total and the day's count, in one batch) + R2 delete 1, only for a file that can't be recorded (≤ 5); no upstream calls; never cached |
 | an attachment (`/m/…`) | R2 1 (a read of all or a range, or of its metadata for `HEAD` and `If-None-Match`; a range past the end 2) |
@@ -268,9 +268,9 @@ A reader's scheduled casts ([ARCHITECTURE.md](ARCHITECTURE.md#scheduled-casts)) 
 |---|---|---|
 | Worker requests | 100,000/day | The cron's runs, already counted; the list page is one request a view, and scheduling, changing or cancelling one each |
 | CPU time | 10 ms per invocation | A run decodes at most 5 stored messages from base64 (2 KB each at most) before the indexer's page; checking a cast to keep it reads its few protobuf fields and hashes its data once (BLAKE3, under 1 KB) |
-| Subrequests | 50 per invocation | Each run: one D1 read of what is due, then, only if some are, a Hypersnap `submitMessage` each (5 at most) and one D1 batch for what became of them, leaving the indexer its 4 |
-| D1 rows written | 100,000/day | A cast scheduled, changed or cancelled: 1 row, plus its index entries; what became of one: 1 |
-| D1 rows read | 5,000,000/day | What is due is read through its index (`state, at`): no rows when nothing is, 1,440 queries a day. A reader's list reads their own rows (25 waiting at most, and a week of finished ones) |
+| Subrequests | 50 per invocation | Each run: one D1 statement that takes what is due and reads it, then, only if some are, a Hypersnap `submitMessage` each (5 at most) and one D1 batch for what became of them, those it didn't try too, leaving the indexer its 4 |
+| D1 rows written | 100,000/day | A cast scheduled, changed or cancelled: 1 row, plus its index entries; one going out: 2, as it is taken and as what became of it is kept |
+| D1 rows read | 5,000,000/day | What is due is read through its index (`state, at`): no rows when nothing is, 1,440 queries a day. A reader's list reads their own rows (25 waiting at most, and a week of finished ones); a cancel, the one row it names |
 | D1 storage | 5 GB | Under 9 KB a cast (its message, 2 KB at most, and its draft, 6 KB at most); finished ones are dropped after a week |
 
 **Load on Hypersnap**: one `submitMessage` per scheduled cast, through the same token bucket and breaker as page builds, and while the node is busy or down, one again each minute, 30 times at most. A run whose breaker is open, or whose bucket is empty, leaves its casts for the next minute without counting a try.
