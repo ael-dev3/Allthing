@@ -391,6 +391,12 @@ impl Composer {
         self.note.set(None);
     }
 
+    /// Open the composer to reply to `cast`, with what it shows of it.
+    fn reply_to(self, cast: &Cast) {
+        self.replies.set(cast.replies);
+        self.start(Target::Reply(Other::answered(cast)));
+    }
+
     /// Open one of the reader's scheduled casts, to change it or its time:
     /// what goes out instead is signed again, in its place. A cast whose time
     /// has passed (one that didn't go out) is given a new one.
@@ -1055,7 +1061,6 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
     if use_session().user.with_untracked(Option::is_some) {
         warm_when_idle();
     }
-    let replies = cast.replies;
     let label = format!("Reply to @{}", cast.author.username);
     // What the composer shows of the cast is taken as it opens.
     let cast = StoredValue::new(cast);
@@ -1068,14 +1073,47 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
             on:pointerenter=move |_| warm()
             on:pointerdown=move |_| warm()
             on:focus=move |_| warm()
-            on:click=move |_| {
-                composer.replies.set(replies);
-                composer.start(Target::Reply(cast.with_value(Other::answered)));
-            }
+            on:click=move |_| cast.with_value(|cast| composer.reply_to(cast))
         >
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=REPLY/></svg>
             <span class="button-label">"Reply"</span>
         </button>
+    }
+}
+
+/// Under a post, for a reader signed in, as the Farcaster app has under a
+/// cast in a conversation: their picture, a faint "Cast your reply" and a
+/// dimmed Reply, in a row 52 px tall. A press (a click, a tap, Enter or
+/// Space) opens Reply, as Reply does. It is there in the page's first frame
+/// for a reader signed in (the session is known from its cookie at once), so
+/// nothing moves when it comes; signed out, or once the reader has deleted
+/// the cast, there is none.
+#[component]
+pub fn ReplyPrompt(cast: Cast) -> impl IntoView {
+    let composer = use_composer();
+    let session = use_session();
+    let gone = crate::components::deleted(&cast.hash);
+    let cast = StoredValue::new(cast);
+    move || {
+        let picture = session.user.with(|user| user.as_ref().map(|user| user.pfp_url.clone()))?;
+        (!gone.get()).then(|| {
+            view! {
+                <button
+                    type="button"
+                    class="reply-prompt"
+                    aria-label="Cast your reply"
+                    aria-haspopup="dialog"
+                    on:pointerenter=move |_| warm()
+                    on:pointerdown=move |_| warm()
+                    on:focus=move |_| warm()
+                    on:click=move |_| cast.with_value(|cast| composer.reply_to(cast))
+                >
+                    {reply_avatar(picture)}
+                    <span class="reply-prompt-text" aria-hidden="true">"Cast your reply"</span>
+                    <span class="reply-prompt-pill" aria-hidden="true">"Reply"</span>
+                </button>
+            }
+        })
     }
 }
 

@@ -2259,6 +2259,69 @@ p.jumbo .emoji img {
   margin-top: 2px;
 }
 
+/* Under a post, for a reader signed in (components/compose.rs,
+   `ReplyPrompt`): their picture, a faint "Cast your reply" and a dimmed
+   Reply, as in the Farcaster app; a press opens Reply. Its sizes are set,
+   not taken from a font's line, so no font moves what's below it. */
+.reply-prompt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 52px;
+  margin-top: 12px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink-3);
+  font: 400 15px/1 var(--font-ui);
+  text-align: left;
+  cursor: text;
+  animation: rise 0.3s var(--ease) backwards;
+}
+
+.reply-prompt .avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.reply-prompt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-prompt-pill {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 600 13.5px/1 var(--font-ui);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.reply-prompt:hover {
+  border-color: rgba(79, 67, 212, 0.35);
+}
+
+.reply-prompt:hover .reply-prompt-pill {
+  background: var(--accent);
+  color: #fff;
+}
+
+.reply-prompt:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .replies {
   margin-top: 22px;
 }
