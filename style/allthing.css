@@ -4305,10 +4305,58 @@ p.jumbo .emoji img {
   vertical-align: -0.3em;
 }
 
-/* Two lines while a picker is open below it. */
+/* Two lines while a picker is open below it, kept at the top of what
+   scrolls: on a screen too short for both, the picker scrolls under the
+   draft, which never goes out of view under the header. */
 .compose-body.picking .compose-text {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   min-height: 0;
   height: 72px;
+}
+
+/* The composer opens near the top of the window, and grows down as a
+   picker opens under the text: its top, and the draft, stay where they
+   are. */
+.compose-modal {
+  align-self: start;
+  margin-top: min(8vh, 64px);
+  max-height: min(640px, calc(100vh - 40px - min(8vh, 64px)));
+}
+
+/* On a phone, a sheet from the bottom of the screen, as wide as it, with
+   its bar and Post in the thumb's reach; it grows up as a picker opens. */
+@media (max-width: 640px) {
+  .compose-modal {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    margin: 0;
+    max-height: calc(100% - 24px);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -24px 60px -28px rgba(27, 34, 51, 0.5);
+    animation: sheet-up 0.22s var(--ease) backwards;
+  }
+
+  .compose-modal .compose-foot {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Three GIFs to a row in the wider sheet, as in the card it replaced,
+     each a comfortable tap. */
+  .compose-modal .gif-grid {
+    --gif-row: 84px;
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(48px);
+  }
 }
 
 .compose-text:focus,
