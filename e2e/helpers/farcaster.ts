@@ -100,10 +100,16 @@ export function cast(e: Envelope) {
   };
 }
 
-/** Signed in as `user`, as the Worker's user cookie says. */
+/**
+ * Signed in as `user`, as the Worker's user cookie says, and already asked
+ * once to approve Allthing's key (as a reader signed in before Allthing
+ * could write for them is, on their first visit after).
+ */
 export async function signIn(page: Page, user: object) {
   await page.addInitScript((user) => {
     document.cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify(user))}; Path=/; Secure; SameSite=Lax`;
+    const fid = (user as { fid?: number }).fid;
+    if (fid !== undefined) localStorage.setItem("allthing-asked-to-approve", String(fid));
   }, user);
 }
 

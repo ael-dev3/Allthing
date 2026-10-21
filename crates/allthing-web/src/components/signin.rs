@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Sign In With Farcaster, by QR code: the header's "Sign in" button, or the
-//! signed-in account's picture and its menu, and the dialog that shows the
-//! code. The Farcaster app on the person's phone approves the sign-in; the
-//! dialog polls Farcaster's relay until it has, and the Worker checks what
-//! the app signed and sets the session cookie (`allthing_core::siwf`).
-//! Not in the static copy, which has no Worker.
+//! Signing in with Farcaster: the header's "Sign in" button, or the
+//! signed-in account's picture and its menu, and the dialog. Where the
+//! Worker endorses keys, the reader signs in by approving Allthing's key in
+//! the Farcaster app, which lets them write from here too: a QR code for
+//! their phone on a computer, a link to the app on a phone (`writer`'s
+//! `signing_in`). Elsewhere, by Sign In With Farcaster: the dialog shows a
+//! QR code, polls Farcaster's relay until the app has approved, and the
+//! Worker checks what the app signed and sets the session cookie
+//! (`allthing_core::siwf`). Not in the static copy, which has no Worker.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 
 use allthing_core::model::UserSummary;
 use allthing_core::siwf::{self, Proof, QrCode, QrRequest, RELAY, SignedIn, Started, USER_COOKIE};
@@ -27,6 +31,7 @@ use web_sys::HtmlElement;
 use crate::api;
 use crate::components::chips::Avatar;
 use crate::components::popover::Popover;
+use crate::components::writer::{Approving, signing_in};
 use crate::util::{GITHUB_MARK, SOURCE_URL, document, trap_tab, user_href};
 
 /// How often the dialog asks the relay whether the app has answered, and
@@ -57,6 +62,16 @@ enum Step {
     Waiting {
         code: QrCode,
     },
+    /// Signing in by approving Allthing's key, which lets the reader write
+    /// from here too: the link is up, drawn as a code where a phone has to
+    /// scan it.
+    Approving {
+        code: Option<QrCode>,
+        link: String,
+    },
+    /// The key is approved: the Farcaster app adds it, then the Worker
+    /// checks it.
+    Adding,
     /// The app approved, as `who`; the Worker is checking what it signed.
     Checking {
         who: Option<Approver>,
@@ -340,6 +355,10 @@ struct Status {
 async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> {
     let failed = |failure: api::Failure| failure.message();
     let started: Started = api::post(&siwf::start_path(), &Nothing {}).await.map_err(failed)?;
+    // Where the Worker endorses keys, approving Allthing's key signs in.
+    if started.keys {
+        return by_key(run, step).await;
+    }
     let request = ChannelRequest {
         siwe_uri: &started.uri,
         domain: &started.domain,
@@ -364,6 +383,23 @@ async fn sign_in(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> 
         return Err(String::new());
     }
     check(run, step, proof, who).await
+}
+
+/// A sign-in by approving Allthing's key, in writing's own code (`writer`),
+/// which the dialog follows.
+async fn by_key(run: u64, step: RwSignal<Step>) -> Result<UserSummary, String> {
+    let progress = Callback::new(move |approving: Approving| {
+        if current(run) {
+            step.set(match approving {
+                Approving::Waiting { code, link } => Step::Approving { code, link },
+                Approving::Adding => Step::Adding,
+            });
+        }
+    });
+    match signing_in(Rc::new(move || current(run)), progress).await {
+        Ok(flow) => flow.await,
+        Err(_) => Err(UNLOADED.to_owned()),
+    }
 }
 
 /// The Worker's check of what the app signed. When it can't check just now
@@ -517,8 +553,9 @@ pub fn Account() -> impl IntoView {
     }
 }
 
-/// The sign-in dialog: the QR code to scan with the phone's camera, and how
-/// it's going. A QR code only: there is no link to the Farcaster app.
+/// The sign-in dialog: the QR code to scan with the phone's camera, or, to
+/// approve Allthing's key on a phone, the link to the Farcaster app; and
+/// how it's going.
 #[component]
 pub fn SignInDialog() -> impl IntoView {
     let session = use_session();
@@ -573,13 +610,25 @@ pub fn SignInDialog() -> impl IntoView {
     });
     let status = move || match session.step.get() {
         Step::Starting => "Getting a sign-in code…".to_owned(),
-        Step::Waiting { .. } => "Waiting for you to approve in Farcaster…".to_owned(),
+        Step::Waiting { .. } | Step::Approving { .. } => "Waiting for you to approve in Farcaster…".to_owned(),
+        Step::Adding => "Approved. Signing you in…".to_owned(),
         Step::Checking { who: Some(who) } => format!("@{} approved. Signing you in…", who.username),
         Step::Checking { who: None } => "Approved. Signing you in…".to_owned(),
         Step::Unconfirmed { .. } => UNCONFIRMED.to_owned(),
         Step::Failed(message) => message,
     };
     let stuck = move || matches!(session.step.get(), Step::Failed(_) | Step::Unconfirmed { .. });
+    // Approving Allthing's key signs in where the Worker endorses keys: on
+    // a phone, by the link to the Farcaster app, as it can't scan its own
+    // screen.
+    let keyed = move || matches!(session.step.get(), Step::Approving { .. } | Step::Adding);
+    let intro = move || match session.step.get() {
+        Step::Approving { code: None, .. } => "Approve Allthing in the Farcaster app, then come back here.",
+        Step::Approving { .. } | Step::Adding => {
+            "Scan the code with your phone's camera, then approve Allthing in the Farcaster app."
+        }
+        _ => "Scan the code with your phone's camera, then approve in the Farcaster app.",
+    };
     move || {
         session.open.get().then(|| {
             let close_button = NodeRef::<leptos::html::Button>::new();
@@ -600,15 +649,24 @@ pub fn SignInDialog() -> impl IntoView {
                             <button type="button" class="modal-close" aria-label="Close" node_ref=close_button on:click=move |_| session.close()>"×"</button>
                         </header>
                         <div class="modal-body signin-body">
-                            <p class="signin-intro">"Scan the code with your phone's camera, then approve in the Farcaster app."</p>
-                            <div class="qr-frame" class:failed=stuck>
+                            <p class="signin-intro">{intro}</p>
+                            <div
+                                class="qr-frame"
+                                class:failed=stuck
+                                class:as-link=move || matches!(session.step.get(), Step::Approving { code: None, .. })
+                            >
                                 {move || match session.step.get() {
-                                    Step::Waiting { code } => view! {
+                                    Step::Waiting { code } | Step::Approving { code: Some(code), .. } => view! {
                                         <svg class="qr" viewBox=format!("0 0 {0} {0}", code.size) role="img" aria-label="Sign-in QR code" shape-rendering="crispEdges">
                                             <path d=code.path/>
                                         </svg>
                                     }
                                     .into_any(),
+                                    Step::Approving { code: None, link } => view! {
+                                        <a class="button key-approve" href=link>"Approve in Farcaster"</a>
+                                    }
+                                    .into_any(),
+                                    Step::Adding => view! { <span class="qr-check" aria-hidden="true">"✓"</span> }.into_any(),
                                     // Who approved, while the Worker checks it.
                                     Step::Checking { who: Some(who) } => view! {
                                         <span class="qr-approver" aria-hidden="true">
@@ -635,7 +693,13 @@ pub fn SignInDialog() -> impl IntoView {
                             <p class="signin-status" class:error=stuck role="status">
                                 {status}
                             </p>
-                            <p class="signin-note muted small">"Signing in tells Allthing who you are, nothing more."</p>
+                            <p class="signin-note muted small">
+                                {move || if keyed() {
+                                    "One approval signs you in and lets you post, like and recast from here, shown \u{201c}via Allthing\u{201d}. Allthing's key acts only when you press a button. It stays in this browser, and Allthing's servers never see it. Signing out deletes it."
+                                } else {
+                                    "Signing in tells Allthing who you are, nothing more."
+                                }}
+                            </p>
                         </div>
                     </div>
                 </div>

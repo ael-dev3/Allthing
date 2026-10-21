@@ -17,6 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 
 use allthing_core::api::{REFRESH_PATH, ReactionKind, ReactionsPayload, Wrote};
 use allthing_core::app_key::{
@@ -26,10 +27,11 @@ use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
 use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Sent, Submitted};
+use allthing_core::model::UserSummary;
 use allthing_core::params::hash_from_param;
 use allthing_core::provenance::{base64_encode, hex_encode};
 use allthing_core::scheduled::{SCHEDULED_PATH, Schedule, ScheduledCast};
-use allthing_core::siwf::{self, QrCode, QrRequest};
+use allthing_core::siwf::{self, KeySignIn, QrCode, QrRequest, SignedIn, Started};
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -87,6 +89,9 @@ const KEPT_FOR_MS: f64 = 600_000.0;
 /// refreshed again while one doesn't have it yet, as the node's indexes
 /// catch up.
 const REFRESH_MS: [i32; 3] = [1500, 4000, 10_000];
+/// The accounts asked, in this browser, to approve Allthing's key once
+/// signed in (`localStorage`, their fids).
+const ASKED: &str = "allthing-asked-to-approve";
 
 const EXPIRED: &str = "This code has expired. Get a new one to approve Allthing.";
 const FARCASTER_DOWN: &str = "Couldn't reach the Farcaster app's API. Check your connection and try again.";
@@ -124,6 +129,18 @@ enum Step {
     /// Approved: the Farcaster app is adding the key to the account.
     Adding,
     Failed(String),
+}
+
+/// Where a sign-in by approving Allthing's key stands, for the sign-in
+/// dialog (`signin`).
+#[derive(Clone, PartialEq)]
+pub enum Approving {
+    /// The link is up, drawn as a code where a phone has to scan it; the
+    /// Farcaster app hasn't answered yet.
+    Waiting { code: Option<QrCode>, link: String },
+    /// Approved: the Farcaster app is adding the key, then the Worker
+    /// checks it.
+    Adding,
 }
 
 /// What the reader liked and recasted, by cast hash and kind.
@@ -358,8 +375,9 @@ impl Writer {
             let fid = session.user.with(|u| u.as_ref().map(|u| u.fid));
             if before.as_ref() != Some(&fid) {
                 match fid {
+                    // Signed in when the page loaded, or just now.
                     Some(fid) => {
-                        writer.check(fid);
+                        writer.check(fid, before.is_none());
                         writer.restore(fid);
                     }
                     None => writer.signed_out(before.flatten()),
@@ -1190,7 +1208,8 @@ impl Writer {
 
     /// Find out whether `fid` can like and recast here: whether the Worker
     /// endorses keys, and whether this browser keeps an approved one.
-    fn check(self, fid: u64) {
+    /// `at_load`: the reader was signed in when the page loaded.
+    fn check(self, fid: u64, at_load: bool) {
         let check = CHECK.with(|c| {
             c.set(c.get() + 1);
             c.get()
@@ -1223,9 +1242,13 @@ impl Writer {
             if matches!(can, Can::Yes | Can::No) {
                 self.load_mine(fid);
             }
-            // A write that came before the answer.
-            if let Some((then, ask, expect)) = PENDING.with(|p| p.borrow_mut().take()) {
-                self.when_ready(then, ask, expect);
+            // A write that came before the answer. Without one, a reader
+            // who was signed in when the page loaded, with no key here, is
+            // asked once, in this browser, to approve one.
+            match PENDING.with(|p| p.borrow_mut().take()) {
+                Some((then, ask, expect)) => self.when_ready(then, ask, expect),
+                None if at_load && can == Can::Approve && !modal_open() && ask_once(fid) => self.connect(),
+                None => {}
             }
         });
     }
@@ -1386,7 +1409,7 @@ impl Writer {
         let heard = Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |_: web_sys::MessageEvent| {
             if let Some(fid) = self.fid() {
                 KEY.with(|k| k.borrow_mut().take());
-                self.check(fid);
+                self.check(fid, false);
             }
         });
         channel.set_onmessage(Some(heard.as_ref().unchecked_ref()));
@@ -1531,6 +1554,23 @@ fn remember_reacted(fid: u64, key: &(String, Reaction), on: bool, made: u64) {
     });
 }
 
+/// Whether `fid` hasn't yet been asked, in this browser, to approve
+/// Allthing's key since signing in; it has been now.
+fn ask_once(fid: u64) -> bool {
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else { return false };
+    let asked = storage.get_item(ASKED).ok().flatten().unwrap_or_default();
+    if asked.split(',').any(|f| f == fid.to_string()) {
+        return false;
+    }
+    let asked = if asked.is_empty() { fid.to_string() } else { format!("{asked},{fid}") };
+    storage.set_item(ASKED, &asked).is_ok()
+}
+
+/// Whether a dialog is open: the reader is in the middle of something.
+fn modal_open() -> bool {
+    document().query_selector("[aria-modal='true']").ok().flatten().is_some()
+}
+
 fn current(run: u64) -> bool {
     RUN.with(|r| r.get() == run)
 }
@@ -1572,16 +1612,85 @@ async fn kept_key(fid: u64) -> Can {
 /// the code, then polls until the reader has approved in the Farcaster app,
 /// the key is added, and the node knows it.
 async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, String> {
+    let still = move || current(run);
     let stored = match keys::load(fid).await {
         Ok(Some(stored)) if stored.approved_at.is_some() => return Ok(stored),
-        // A request still waiting: the same code, not another key.
-        Ok(Some(stored)) if stored.request.as_ref().is_some_and(|r| r.deadline > now_secs() + 120.0) => stored,
-        Ok(_) => request(fid).await?,
+        Ok(kept) => waiting_or_new(kept, fid).await?,
         Err(error) => return Err(key_message(error)),
     };
+    let (code, request) = link_of(&stored).await?;
+    if !still() {
+        return Err(String::new());
+    }
+    step.set(Step::Waiting { code, link: request.link.clone() });
+    approval(&still, &stored, &request, Some(fid), &|| step.set(Step::Adding)).await?;
+    step.set(Step::Adding);
+    listed(&still, fid, &stored.key).await?;
+    let stored = stored.approved();
+    keys::save(&stored).await.map_err(key_message)?;
+    Ok(stored)
+}
+
+/// A sign-in by approving Allthing's key, for the sign-in dialog: this
+/// browser's key for it, kept as `keys::SIGNING_IN` until the account that
+/// approves it is known, and its request (or the one still waiting); the
+/// code; the approval; then a fresh nonce from the Worker, signed with the
+/// key, which the Worker checks against the account's keys. The key is
+/// then the account's, approved, so the reader can write from here at once.
+async fn sign_in_by_key(still: Rc<dyn Fn() -> bool>, progress: Callback<Approving>) -> Result<UserSummary, String> {
+    let kept = keys::load(keys::SIGNING_IN).await.map_err(key_message)?;
+    let stored = waiting_or_new(kept, keys::SIGNING_IN).await?;
+    let (code, request) = link_of(&stored).await?;
+    if !still() {
+        return Err(String::new());
+    }
+    progress.run(Approving::Waiting { code, link: request.link.clone() });
+    let fid = approval(&*still, &stored, &request, None, &|| progress.run(Approving::Adding)).await?;
+    progress.run(Approving::Adding);
+    listed(&*still, fid, &stored.key).await?;
+    // The nonce the dialog started with may have lapsed while the reader
+    // approved: the signature is of a fresh one.
+    let started: Started = api::post(&siwf::start_path(), &serde_json::json!({})).await.map_err(|f| f.message())?;
+    let message = siwf::key_sign_in_message(&started.domain, &started.nonce);
+    let signature = keys::sign(&stored, message.as_bytes()).await.map_err(key_message)?;
+    let asked = KeySignIn { fid, key: stored.key.clone(), signature: hex_encode(&signature) };
+    let mut wait = RETRY_MS;
+    let mut tried = 0;
+    let user = loop {
+        match api::post::<_, SignedIn>(&siwf::key_path(), &asked).await {
+            Ok(signed) => break signed.user,
+            // The Worker busy, or its node a moment behind the app's.
+            Err(failure) if tried < RETRIES && (failure.is_transient() || failure.message() == siwf::KEY_UNKNOWN) => {
+                tried += 1;
+                crate::video::sleep(wait).await;
+                wait *= 2;
+            }
+            Err(failure) => return Err(failure.message()),
+        }
+        if !still() {
+            return Err(String::new());
+        }
+    };
+    let stored = stored.for_account(fid).approved();
+    keys::save(&stored).await.map_err(key_message)?;
+    let _ = keys::remove(keys::SIGNING_IN).await;
+    tell_tabs();
+    Ok(user)
+}
+
+/// The key kept while its request still waits (the same code, not another
+/// key), or a new key and request for `fid`.
+async fn waiting_or_new(kept: Option<Stored>, fid: u64) -> Result<Stored, String> {
+    match kept {
+        Some(stored) if stored.request.as_ref().is_some_and(|r| r.deadline > now_secs() + 120.0) => Ok(stored),
+        _ => request(fid).await,
+    }
+}
+
+/// The key's request, and its link drawn as a code where a computer shows
+/// it for the reader's phone; a phone opens the link in the Farcaster app.
+async fn link_of(stored: &Stored) -> Result<(Option<QrCode>, keys::Request), String> {
     let Some(request) = stored.request.clone() else { return Err(EXPIRED.into()) };
-    // A computer shows the link as a code for the reader's phone; a phone
-    // opens it in the Farcaster app.
     let code = match can_hover() {
         true => Some(
             api::post::<_, QrCode>(&siwf::qr_path(), &QrRequest { url: request.link.clone() })
@@ -1590,17 +1699,27 @@ async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, Str
         ),
         false => None,
     };
-    if !current(run) {
-        return Err(String::new());
-    }
-    step.set(Step::Waiting { code, link: request.link });
+    Ok((code, request))
+}
+
+/// Polls `request` until the reader has approved it in the Farcaster app
+/// and the app has added the key: the account that approved, which must be
+/// `account` when one is signed in. `approved` hears once they have, while
+/// the key is added.
+async fn approval(
+    still: &dyn Fn() -> bool,
+    stored: &Stored,
+    request: &keys::Request,
+    account: Option<u64>,
+    approved: &dyn Fn(),
+) -> Result<u64, String> {
     loop {
         pause(POLL_MS).await;
-        if !current(run) {
+        if !still() {
             return Err(String::new());
         }
         if now_secs() > request.deadline {
-            let _ = keys::remove(fid).await;
+            let _ = keys::remove(stored.fid).await;
             return Err(EXPIRED.into());
         }
         if document().hidden() {
@@ -1608,38 +1727,42 @@ async fn approve(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Stored, Str
         }
         let Ok((status, body)) = fetch("GET", &key_request_url(&request.token), None).await else { continue };
         if matches!(status, 404 | 410) {
-            let _ = keys::remove(fid).await;
+            let _ = keys::remove(stored.fid).await;
             return Err(EXPIRED.into());
         }
         let Some(requested) = parse_requested(&body).filter(|r| r.key == stored.key) else { continue };
-        if let Some(other) = requested.user_fid.filter(|approver| *approver != fid) {
-            let _ = keys::remove(fid).await;
+        if let Some(other) = requested.user_fid.filter(|approver| account.is_some_and(|fid| fid != *approver)) {
+            let _ = keys::remove(stored.fid).await;
             return Err(format!(
                 "That was approved from another Farcaster account (fid {other}). Approve from the account you're signed in with."
             ));
         }
         match requested.state {
             KeyState::Pending => {}
-            KeyState::Approved => step.set(Step::Adding),
-            KeyState::Completed => break,
+            KeyState::Approved => approved(),
+            KeyState::Completed => match requested.user_fid.or(account) {
+                Some(fid) => return Ok(fid),
+                None => approved(),
+            },
         }
     }
-    step.set(Step::Adding);
-    // The node may take a moment to see the new key.
+}
+
+/// Waits, 30 s at most, until the node lists `key` among `fid`'s keys: the
+/// Farcaster app has added it, and the node may take a moment to see it.
+async fn listed(still: &dyn Fn() -> bool, fid: u64, key: &str) -> Result<(), String> {
     for _ in 0..NODE_CHECKS {
         if let Ok((200, body)) = fetch("GET", &message::signers_url(fid), None).await
-            && message::lists_key(&body, &stored.key) == Some(true)
+            && message::lists_key(&body, key) == Some(true)
         {
-            break;
+            return Ok(());
         }
         pause(POLL_MS).await;
-        if !current(run) {
+        if !still() {
             return Err(String::new());
         }
     }
-    let stored = stored.approved();
-    keys::save(&stored).await.map_err(key_message)?;
-    Ok(stored)
+    Ok(())
 }
 
 /// A new key, endorsed by the Worker, and its request in the Farcaster app,
@@ -1740,6 +1863,17 @@ fn approving(run: u64, step: RwSignal<Step>, fid: u64) -> Result<Later<Result<St
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
 fn keeping(fid: u64) -> Result<Later<Can>, SplitLoaderError> {
     Ok(Box::pin(kept_key(fid)))
+}
+
+/// A sign-in by approving Allthing's key, from the sign-in dialog: who
+/// signed in. `still` says whether the dialog still wants it; `progress`
+/// hears where it stands.
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+pub fn signing_in(
+    still: Rc<dyn Fn() -> bool>,
+    progress: Callback<Approving>,
+) -> Result<Later<Result<UserSummary, String>>, SplitLoaderError> {
+    Ok(Box::pin(sign_in_by_key(still, progress)))
 }
 
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
