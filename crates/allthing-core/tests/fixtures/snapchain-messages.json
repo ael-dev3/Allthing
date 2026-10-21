@@ -1,0 +1,131 @@
+{
+  "about": "Messages on Snapchain mainnet, verbatim as Hypersnap's node served them on 21 October 2026 (each at its source URL), for crates/allthing-core/src/message.rs's protocol test vectors.",
+  "messages": [
+    {
+      "what": "A like (ReactionAdd)",
+      "source": "https://haatz.quilibrium.com/v1/reactionById?fid=3&reaction_type=Like&target_fid=218957&target_hash=0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045",
+      "message": {
+        "data": {
+          "type": "MESSAGE_TYPE_REACTION_ADD",
+          "fid": 3,
+          "timestamp": 182871013,
+          "network": "FARCASTER_NETWORK_MAINNET",
+          "reactionBody": {
+            "type": "REACTION_TYPE_LIKE",
+            "targetCastId": {
+              "fid": 218957,
+              "hash": "0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045"
+            }
+          }
+        },
+        "hash": "0xbede949bb7f37473d430b7cfd1186fe30d52f9df",
+        "hashScheme": "HASH_SCHEME_BLAKE3",
+        "signature": "R+EucLbZ7JUmllBPSQLAdRD8dJbrcOHWDhJwiBtfRkmRNLr406p4WKpHL51Fg54/Bq0yeXJls/6HC2AbEAhTBw==",
+        "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+        "signer": "0xc887f5bf385a4718eaee166481f1832198938cf33e98a82dc81a0b4b81ffe33d"
+      }
+    },
+    {
+      "what": "A recast (ReactionAdd)",
+      "source": "https://haatz.quilibrium.com/v1/reactionById?fid=3&reaction_type=Recast&target_fid=218957&target_hash=0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045",
+      "message": {
+        "data": {
+          "type": "MESSAGE_TYPE_REACTION_ADD",
+          "fid": 3,
+          "timestamp": 182871015,
+          "network": "FARCASTER_NETWORK_MAINNET",
+          "reactionBody": {
+            "type": "REACTION_TYPE_RECAST",
+            "targetCastId": {
+              "fid": 218957,
+              "hash": "0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045"
+            }
+          }
+        },
+        "hash": "0x5460fe74eaa3d36eb1133a7b0d18562bda4a2ead",
+        "hashScheme": "HASH_SCHEME_BLAKE3",
+        "signature": "r15mjdeoJ35oKJj+VTcQjQTgHcQ1f3cX7JyM5ehCxwESiOOvremhyI6t+HskvgEC4m/EKMF/W5eIZAxFq5WkAQ==",
+        "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+        "signer": "0xc887f5bf385a4718eaee166481f1832198938cf33e98a82dc81a0b4b81ffe33d"
+      }
+    },
+    {
+      "what": "An unlike (ReactionRemove)",
+      "source": "https://haatz.quilibrium.com/v1/eventById?event_id=801981726725&shard_index=1",
+      "message": {
+        "data": {
+          "type": "MESSAGE_TYPE_REACTION_REMOVE",
+          "fid": 2802,
+          "timestamp": 182826165,
+          "network": "FARCASTER_NETWORK_MAINNET",
+          "reactionBody": {
+            "type": "REACTION_TYPE_LIKE",
+            "targetCastId": {
+              "fid": 270415,
+              "hash": "0x156867a75a27b82ce644b266eb38f69f114dff15"
+            }
+          }
+        },
+        "hash": "0x3bc775cd9b7bc4e95dea223bfc6c6f0da993d88c",
+        "hashScheme": "HASH_SCHEME_BLAKE3",
+        "signature": "qeGX5yBPEV+lf26i+RVsRtsGgLkrXKOnfSLPYiJ2Rq3VuPE2Hm9HlKBnmxBMc3gHHB8FgLuhqe4bam804E6BBA==",
+        "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+        "signer": "0x3e64d0bc6e5f265ce71e1e6333696dd61b8a29f961fa68e5fba6cceb936165f5"
+      }
+    },
+    {
+      "what": "A quote: a cast embedding another's id (CastAdd)",
+      "source": "https://haatz.quilibrium.com/v1/castById?fid=4877&hash=0x0dc209f71ad2c77281e09f14cd21f5c4895d93a3",
+      "message": {
+        "data": {
+          "type": "MESSAGE_TYPE_CAST_ADD",
+          "fid": 4877,
+          "timestamp": 182832333,
+          "network": "FARCASTER_NETWORK_MAINNET",
+          "castAddBody": {
+            "embedsDeprecated": [],
+            "mentions": [],
+            "parentCastId": null,
+            "parentUrl": null,
+            "text": "Zoo!",
+            "embeds": [
+              {
+                "castId": {
+                  "fid": 10215,
+                  "hash": "0x74366a3c2bf0345cc14b1e4c099bccb381e37172"
+                }
+              }
+            ],
+            "mentionsPositions": [],
+            "type": "CAST"
+          }
+        },
+        "hash": "0x0dc209f71ad2c77281e09f14cd21f5c4895d93a3",
+        "hashScheme": "HASH_SCHEME_BLAKE3",
+        "signature": "Im3tuavZVbxcJgygaBnNBnDv5M9NAyo3878u9dmvZCT4hQt9/4fEukJnFpK4YpUHTLmLZbUAlTzGBFBcbplfBg==",
+        "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+        "signer": "0xd7c23d846fc5050a948ee31a81258fd10ab25da760ed360328cd02310f50ecea"
+      }
+    },
+    {
+      "what": "A deleted cast (CastRemove)",
+      "source": "https://haatz.quilibrium.com/v1/eventById?event_id=801955790849&shard_index=1",
+      "message": {
+        "data": {
+          "type": "MESSAGE_TYPE_CAST_REMOVE",
+          "fid": 501732,
+          "timestamp": 182824557,
+          "network": "FARCASTER_NETWORK_MAINNET",
+          "castRemoveBody": {
+            "targetHash": "uylNxs6L11TQ88nQ7KabakEBnhk="
+          }
+        },
+        "hash": "0xda62c8a3c5b691390eb100e0b38eaaad8c327bea",
+        "hashScheme": "HASH_SCHEME_BLAKE3",
+        "signature": "TirFyqpU/kfdAIccLIerEDiX0oDxWDzLfLw5HvbczAgyyv4Ywh5+pboJFW0lNsiJ4AdLg6zAOhmd5SRqTTjWDg==",
+        "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+        "signer": "0x262b215cab1de842dd4cd6547183ded5fc86fac4af3f9431be9291a3c1915039"
+      }
+    }
+  ]
+}
