@@ -2298,12 +2298,6 @@ p.jumbo .emoji img {
   gap: 8px;
 }
 
-.profile-cast {
-  flex: none;
-  align-self: flex-start;
-  display: flex;
-}
-
 /* What each does, under the pair: on hover (after a moment) or keyboard
    focus, and for a few seconds after a press, as a phone can't hover. In
    Allthing's style, where a native tooltip would show late in the system's,
@@ -4302,11 +4296,12 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
-/* Cast, at the top right of the front page's feed and a channel's, and of
-   the reader's own profile (components/compose.rs): a pill in Allthing's
-   indigo accent, turning to the portal cyan as the wordmark's sheen does,
-   lettered in the wordmark's serif. On a phone, a round button over the
-   feed instead; a profile keeps its pill. */
+/* Cast, on the front page's feed, a channel's and the reader's own profile
+   (components/compose.rs): in the site header on a computer, before the
+   account, so it stays in view as the page scrolls; a round button floating
+   at the bottom right on a phone. A pill in Allthing's indigo accent,
+   turning to the portal cyan as the wordmark's sheen does, lettered in the
+   wordmark's serif. */
 .cast-pill,
 .cast-fab {
   align-items: center;
@@ -4317,7 +4312,28 @@ p.jumbo .emoji img {
   background: var(--accent) linear-gradient(115deg, var(--accent) 0%, var(--accent) 38%, #3260bd 72%, #0b7c91 100%);
   box-shadow: 0 1px 2px rgba(27, 34, 51, 0.12), 0 10px 24px -12px rgba(79, 67, 212, 0.7);
   -webkit-tap-highlight-color: transparent;
-  transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease);
+  transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+
+/* The header's Cast: as tall as the search box, so the header is as tall
+   with it as without. On a page without Cast its place is kept, unseen and
+   out of reach, so the search box doesn't move from page to page. */
+.header-cast {
+  display: flex;
+  flex: none;
+}
+
+.header-cast:not(.here) {
+  visibility: hidden;
+}
+
+/* Exactly the search box's height, whatever the display face's metrics:
+   its line box rounds a pixel taller on some systems, which made the
+   header a pixel taller with Cast than without. */
+.header-cast .cast-pill {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .cast-pill {
@@ -4341,16 +4357,19 @@ p.jumbo .emoji img {
   outline-offset: 3px;
 }
 
+/* 48 px, a comfortable tap, as near the corner as a thumb finds it: 10 px
+   from the edge, it covers 2 px of the page's margin and a card's last 46,
+   with a shadow that stays close to it. */
 .cast-fab {
   display: none;
   position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  right: max(10px, env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom));
   z-index: 35;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(27, 34, 51, 0.16), 0 14px 30px -10px rgba(79, 67, 212, 0.75);
+  box-shadow: 0 1px 3px rgba(27, 34, 51, 0.18), 0 6px 14px -6px rgba(79, 67, 212, 0.55);
 }
 
 .cast-pill .icon,
@@ -5467,9 +5486,9 @@ p.jumbo .emoji img {
     gap: 8px;
   }
 
-  /* Cast floats over the feed, in reach of a thumb, and notices sit above
-     it. */
-  .cast-pill {
+  /* Cast floats at the bottom right, in reach of a thumb, and notices sit
+     above it. */
+  .header-cast {
     display: none;
   }
 
@@ -5478,13 +5497,31 @@ p.jumbo .emoji img {
   }
 
   .cast-fab .icon {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     stroke-width: 1.6;
   }
 
   .toast {
-    bottom: calc(88px + env(safe-area-inset-bottom));
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  /* Room after the footer for the round Cast: the last card's actions and
+     the footer's links scroll clear of it, above it. */
+  body:has(.cast-fab) .site-footer {
+    padding-bottom: calc(32px + 60px + env(safe-area-inset-bottom));
+  }
+
+  /* Out of the way while a dialog, the lightbox or a popover is open, or
+     the keyboard is up for a text box (`away`, components/compose.rs).
+     Still focusable meanwhile, so a dialog it opened can give it focus back
+     as it closes, and seen again when the keyboard's Tab reaches it. */
+  :is(.compose-open, .who-open, .handoff-open, .key-open, .signin-open, .lightbox-open) .cast-fab:not(:focus-visible),
+  body:has(.popover-panel) .cast-fab:not(:focus-visible),
+  .cast-fab.away {
+    opacity: 0;
+    transform: scale(0.85);
+    pointer-events: none;
   }
 
   .compose-body {
@@ -5912,15 +5949,8 @@ p.jumbo .emoji img {
   }
 
   /* On a phone, a row of their own under the picture and name. */
-  .leaning-buttons,
-  .profile-cast {
+  .leaning-buttons {
     flex-basis: 100%;
-  }
-
-  /* No round Cast floats over a profile: the reader's own keeps its pill,
-     in that row. */
-  .profile-cast .cast-pill {
-    display: inline-flex;
   }
 
   .leaning-hint {

@@ -198,19 +198,18 @@ fn follow_button(_: u64, _: &str) -> AnyView {
 }
 
 /// At the header's top right, or in a row of their own under it on a
-/// phone: Favorite and Show less on anyone's profile but the reader's own,
-/// and on their own (signed in, the same fid) Cast, the feeds' pill, which
-/// starts a cast.
+/// phone: Favorite and Show less on anyone's profile but the reader's own.
+/// Their own (signed in, the same fid) has Cast in the site header instead,
+/// or floating at the bottom right on a phone (`components::compose`).
 #[cfg(not(feature = "static-host"))]
 fn corner_buttons(fid: u64, username: &str) -> AnyView {
     let session = crate::components::signin::use_session();
     let username = username.to_owned();
-    // Redrawn only when signing in or out makes it the reader's own or not,
-    // so the Cast the composer gives focus back to stays.
+    // Redrawn only when signing in or out makes it the reader's own or not.
     let mine = Memo::new(move |_| session.user.with(|u| u.as_ref().is_some_and(|u| u.fid == fid)));
     (move || {
         if mine.get() {
-            view! { <span class="profile-cast"><crate::components::compose::CastPill/></span> }.into_any()
+            ().into_any()
         } else {
             view! {
                 <span class="leaning-buttons">

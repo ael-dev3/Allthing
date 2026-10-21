@@ -187,7 +187,6 @@ fn ChannelHeader(channel: Channel, notes: Notes) -> impl IntoView {
                     <div class="channel-names">
                         <div class="channel-title-row">
                             <h1 class="page-title">{title}</h1>
-                            {crate::components::layout::cast_pill()}
                         </div>
                         {subtitle.map(|s| view! { <p class="channel-handle">{s}</p> })}
                     </div>

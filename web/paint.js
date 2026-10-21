@@ -32,7 +32,6 @@ const HEART = "M8 13.5S2.5 10 2.5 6.2A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.2C13
 const RECAST = "M4 5.5h7l-1.8-1.8M12 10.5H5l1.8 1.8M4 5.5v3M12 10.5v-3";
 const BUBBLE = "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z";
 const STAR = "M8 1.9l1.85 3.8 4.15.6-3 2.95.7 4.15L8 11.45 4.3 13.4l.7-4.15-3-2.95 4.15-.6z";
-const PEN = "M10.5 3.2l2.3 2.3M3 13l.6-2.9 7.5-7.5a1.2 1.2 0 0 1 1.7 0l.6.6a1.2 1.2 0 0 1 0 1.7l-7.5 7.5z";
 const RANGES = [["all", "All time"], ["year", "Past year"], ["month", "Past month"], ["week", "Past week"], ["day", "Today"], ["hour", "Past hour"]];
 const PERIODS = { hour: "the past hour's", day: "today's", week: "the past week's" };
 const VIDEO_HOSTS = /^(?:www\.)?(?:m\.)?(?:youtube\.com|music\.youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com|loom\.com|streamable\.com)$/;
@@ -212,7 +211,6 @@ function listingHead(sort, range) {
       el("nav", { class: "sort-tabs", "aria-label": "Sort" }, tab("hot", "engagement, decaying with age"), tab("new", "newest first"), tab("top", "most engagement")),
       el("label", { class: "time-filter" }, el("span", { class: "visually-hidden" }, "Time range"), select),
     ),
-    el("button", { class: "cast-pill", type: "button", "aria-label": "Write a cast" }, icon(PEN), "Cast"),
   );
 }
 
