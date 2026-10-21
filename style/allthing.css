@@ -4276,6 +4276,15 @@ p.jumbo .emoji img {
   visibility: hidden;
 }
 
+/* Exactly the search box's height, whatever the display face's metrics:
+   its line box rounds a pixel taller on some systems, which made the
+   header a pixel taller with Cast than without. */
+.header-cast .cast-pill {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .cast-pill {
   display: inline-flex;
   flex: none;
