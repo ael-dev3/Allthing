@@ -489,6 +489,11 @@ impl Fids {
         self.0.is_empty()
     }
 
+    /// Whether `fid` is in the set: a binary search, with no allocation.
+    pub fn contains(&self, fid: u64) -> bool {
+        u32::try_from(fid).is_ok_and(|fid| self.0.binary_search(&fid).is_ok())
+    }
+
     /// Add `other`'s fids.
     pub fn extend(&mut self, other: &Fids) {
         self.0 = merge(&self.0, &other.0);
@@ -622,6 +627,33 @@ pub fn hour_set(hour: i64) -> String {
 
 pub fn day_set(day: i64) -> String {
     format!("d{day}")
+}
+
+/// Days of the union the cron keeps once a day for a list to ask who of
+/// its people was active this week (`week_set`).
+pub const WEEK_DAYS: i64 = 7;
+
+/// The name the union of the `WEEK_DAYS` days to the end of `day` is
+/// stored under: `w<day>`. The cron writes it only once those days were
+/// read in full (`Follow::covered`).
+pub fn week_set(day: i64) -> String {
+    format!("w{day}")
+}
+
+/// Which of some accounts were active in the `WEEK_DAYS` days to the end of
+/// `day`, a UTC day, read in full.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveWeek {
+    pub day: i64,
+    /// Those of the accounts asked about that were, in the order asked.
+    pub active: Vec<u64>,
+}
+
+impl ActiveWeek {
+    /// Which of `fids` are in `week`, the union of the days to `day`.
+    pub fn among(day: i64, week: &Fids, fids: &[u64]) -> ActiveWeek {
+        ActiveWeek { day, active: fids.iter().copied().filter(|&fid| week.contains(fid)).collect() }
+    }
 }
 
 /// The name an hour's set of active keys is stored under: `k<hour>`.
@@ -1123,6 +1155,57 @@ mod tests {
         assert_eq!(Fids::union_len([&a, &Fids::of([7, 8]), &Fids::default()]), 6);
         assert_eq!(Fids::union_len(std::iter::empty()), 0);
         assert_eq!(Fids::union_len([&day, &day]), 6_000);
+    }
+
+    #[test]
+    fn a_set_says_whether_it_holds_an_fid() {
+        let set = Fids::of([1, 7, 42, 3_400_000, u64::from(u32::MAX)]);
+        for fid in [1, 7, 42, 3_400_000, u64::from(u32::MAX)] {
+            assert!(set.contains(fid), "{fid}");
+        }
+        for fid in [0, 2, 41, 43, 3_399_999, u64::from(u32::MAX) + 1, u64::MAX] {
+            assert!(!set.contains(fid), "{fid}");
+        }
+        assert!(!Fids::default().contains(1));
+    }
+
+    #[test]
+    fn a_week_says_who_of_those_asked_was_active_in_the_order_asked() {
+        assert_eq!(week_set(20_385), "w20385");
+        let week = Fids::of([3, 9, 12]);
+        assert_eq!(
+            ActiveWeek::among(20_385, &week, &[12, 4, 3, 3]),
+            ActiveWeek { day: 20_385, active: vec![12, 3, 3] }
+        );
+        assert_eq!(ActiveWeek::among(20_385, &week, &[]).active, Vec::<u64>::new());
+        assert_eq!(ActiveWeek::among(20_385, &Fids::default(), &[3]).active, Vec::<u64>::new());
+    }
+
+    /// A week's union of `n` accounts spread over today's 3.4 million fids,
+    /// as stored: decoded, then asked about a page of 100 people.
+    fn decode_and_ask(n: u64) -> std::time::Duration {
+        let week = Fids::of((0..n).map(|i| 1 + i * (3_400_000 / n)));
+        let stored = week.encode();
+        let page: Vec<u64> = (0..100u64).map(|i| 1 + i * 33_997).collect();
+        let started = std::time::Instant::now();
+        let decoded = Fids::decode(std::hint::black_box(&stored)).unwrap();
+        let active = ActiveWeek::among(1, &decoded, &page);
+        std::hint::black_box(active);
+        started.elapsed()
+    }
+
+    #[test]
+    fn a_week_of_actives_is_read_and_asked_about_within_a_millisecond() {
+        // The fastest of 5, so a busy machine's pauses don't count.
+        let fastest = |n| (0..5).map(|_| decode_and_ask(n)).min().unwrap();
+        let (today, later) = (fastest(6_200), fastest(50_000));
+        println!("decoding a week of 6,200 accounts and 100 lookups: {today:?}; of 50,000: {later:?}");
+        // In a release build (the Worker's), well under a millisecond for
+        // 6,200 (and its 7-day union, a few times that); the tests'
+        // unoptimized build is several times slower.
+        let bound = if cfg!(debug_assertions) { 50 } else { 5 };
+        assert!(today.as_millis() < bound, "6,200: {today:?}");
+        assert!(later.as_millis() < bound * 4, "50,000: {later:?}");
     }
 
     fn follow(since: i64, reached: i64) -> Follow {

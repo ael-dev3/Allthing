@@ -11,8 +11,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use allthing_core::activity::{
-    self, ActivityPayload, AppsWindow, Batch, Fids, Follow, KEEP_DAYS, KEEP_HOURS, Keys, NAMED_APPS, Reached, Window,
-    day, day_set, hour, hour_set, key_pair, key_set,
+    self, ActivityPayload, AppsWindow, Batch, Fids, Follow, KEEP_DAYS, KEEP_HOURS, Keys, NAMED_APPS, Reached,
+    WEEK_DAYS, Window, day, day_set, hour, hour_set, key_pair, key_set, week_set,
 };
 use allthing_core::api::Meta;
 use allthing_core::emoji::ReactionReply;
@@ -312,6 +312,16 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         let complete = follow.covered((today - 30) * 86_400, today * 86_400);
         follow.active_30d = Some(Window { day: today - 1, active: Fids::union_len(&days) as u64, complete });
         report.counted_30d = true;
+        // The week to the end of yesterday as one set, for a list to ask
+        // who of its people was active (`Index::active_week`): once the
+        // week was read in full.
+        if follow.covered((today - WEEK_DAYS) * 86_400, today * 86_400) {
+            let mut week = Fids::default();
+            for set in &days[days.len() - WEEK_DAYS as usize..] {
+                week.extend(set);
+            }
+            writes.push((week_set(today - 1), week.encode()));
+        }
     }
     if due_apps && let Some(active) = activity::rolling(&follow, &hours, to) {
         let mut window = Keys::default();
@@ -496,7 +506,7 @@ mod tests {
             stored.retain(|name, _| {
                 let (kind, n) = name.split_at(1);
                 let n: i64 = n.parse().unwrap();
-                if kind == "d" { n >= saving.keep_from.1 } else { n >= saving.keep_from.0 }
+                if kind == "d" || kind == "w" { n >= saving.keep_from.1 } else { n >= saving.keep_from.0 }
             });
             let mut keys = self.keys.borrow_mut();
             for (pair, app) in saving.keys {
@@ -911,5 +921,46 @@ mod tests {
         assert!(!run_once(&hub, &store).unwrap().counted_30d, "once a day");
         // Sets older than the window are dropped.
         assert!(!store.sets.borrow().contains_key(&day_set(today - 40)));
+        // The week isn't kept until it was read in full.
+        assert!(!store.sets.borrow().keys().any(|name| name.starts_with('w')));
+    }
+
+    #[test]
+    fn the_week_to_yesterday_is_kept_as_one_set_once_a_day_once_read_in_full() {
+        let at = NOW - 60;
+        let today = day(at);
+        let store = Memory::default();
+        // Each of the past 8 days' accounts: the 7 to yesterday, and one before.
+        for d in 1..=8 {
+            store.sets.borrow_mut().insert(day_set(today - d), Fids::of([d as u64, 100 + d as u64, 500]).encode());
+        }
+        store.sets.borrow_mut().insert(week_set(today - 40), Fids::of([9]).encode());
+        let follow = Follow {
+            cursors: vec![Cursor { shard: 1, event_id: START << 14 }, Cursor { shard: 2, event_id: START << 14 }],
+            reached: vec![Reached { shard: 1, at }, Reached { shard: 2, at }],
+            since: Some((today - 7) * 86_400),
+            ..Follow::default()
+        };
+        *store.state.borrow_mut() = Some(serde_json::to_string(&follow).unwrap());
+        let mut hub = Hub::default();
+        let from = ((START << 14) + 1).to_string();
+        hub.events.insert(("1".into(), from.clone()), page(&[]));
+        hub.events.insert(("2".into(), from), page(&[]));
+        let hub = Rc::new(hub);
+        assert!(run_once(&hub, &store).unwrap().counted_30d);
+        let week = Fids::decode(&store.sets.borrow()[&week_set(today - 1)]).unwrap();
+        assert_eq!(week, Fids::of([1, 2, 3, 4, 5, 6, 7, 101, 102, 103, 104, 105, 106, 107, 500]));
+        // Kept as the days are: the old one goes.
+        assert!(!store.sets.borrow().contains_key(&week_set(today - 40)));
+        // Once a day: the next run writes it no more.
+        store.sets.borrow_mut().remove(&week_set(today - 1));
+        assert!(!run_once(&hub, &store).unwrap().counted_30d);
+        assert!(!store.sets.borrow().contains_key(&week_set(today - 1)));
+        // A gap in the week: not read in full, so not kept.
+        let store = Memory::default();
+        let gapped = Follow { gaps: vec![((today - 3) * 86_400, (today - 3) * 86_400 + 60)], ..follow };
+        *store.state.borrow_mut() = Some(serde_json::to_string(&gapped).unwrap());
+        assert!(run_once(&hub, &store).unwrap().counted_30d);
+        assert!(!store.sets.borrow().keys().any(|name| name.starts_with('w')));
     }
 }
