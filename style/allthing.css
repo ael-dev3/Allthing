@@ -2110,6 +2110,7 @@ p.jumbo .emoji img {
 }
 
 .leaning-buttons {
+  position: relative;
   flex: none;
   align-self: flex-start;
   display: flex;
@@ -2118,12 +2119,12 @@ p.jumbo .emoji img {
   gap: 8px;
 }
 
-/* What each does, under it: on hover (after a moment) or keyboard focus,
-   and for a few seconds after a press, as a phone can't hover. In
+/* What each does, under the pair: on hover (after a moment) or keyboard
+   focus, and for a few seconds after a press, as a phone can't hover. In
    Allthing's style, where a native tooltip would show late in the system's,
-   and never on a phone. */
+   and never on a phone. Placed against the pair, not the button, so it
+   stays inside the card whatever the buttons' widths. */
 .leaning {
-  position: relative;
   display: inline-flex;
 }
 
