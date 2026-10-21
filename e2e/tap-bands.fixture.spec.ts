@@ -149,7 +149,8 @@ test("at 390 on a touch screen, a reply's toggle takes a 44 px tap, clear of the
   await expect(toggles).toHaveCount(5);
   for (let i = 0; i < 5; i++) {
     const toggle = toggles.nth(i);
-    await toggle.scrollIntoViewIfNeeded();
+    // In the middle of the screen, so its band, above and below, is on it.
+    await toggle.evaluate((el) => el.scrollIntoView({ block: "center" }));
     const t = await takes(toggle);
     expect(t.band[1], `toggle ${i}: band height`).toBeGreaterThanOrEqual(44);
     expect(t.band[0], `toggle ${i}: band as wide as it is`).toBeGreaterThanOrEqual(20);
@@ -176,7 +177,7 @@ test("at 390 on a touch screen, the \"?\" beside a fact takes a tap 44 px tall a
   await expect(helps).toHaveCount(2);
   for (let i = 0; i < 2; i++) {
     const help = helps.nth(i);
-    await help.scrollIntoViewIfNeeded();
+    await help.evaluate((el) => el.scrollIntoView({ block: "center" }));
     const t = await takes(help, { dx: 15 });
     expect(t.band, `"?" ${i}: its band`).toEqual([36, 44]);
     expect([t.middle, t.above, t.below, t.sides], `"?" ${i}: a tap on it, above, below and beside`).toEqual([true, true, true, true]);
