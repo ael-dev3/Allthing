@@ -1,0 +1,39 @@
+{
+  "_fixture": "Shaped like GET /fc/message-list in the Direct Cast API Reference (Notion, beta, last edited 2025-04-04). Not a captured response.",
+  "result": {
+    "messages": [
+      {
+        "conversationId": "636f6e7669643a31323639352d32",
+        "messageId": "0dd6e7060465817903a40148fb3aa7aa",
+        "senderFid": 1234,
+        "message": "Hello, @dwr.eth",
+        "creationTimestamp": 1709753166,
+        "isDeleted": false,
+        "isProgrammatic": true,
+        "inReplyToMessageId": "0da6e9861234827703a40246bb3aa8bc",
+        "mentions": [{ "fid": 3, "textIndex": 7, "length": 8 }]
+      },
+      {
+        "conversationId": "636f6e7669643a31323639352d32",
+        "messageId": "0da6e9861234827703a40246bb3aa8bc",
+        "senderFid": 1234,
+        "message": "",
+        "creationTimestamp": 1709735231,
+        "isDeleted": true,
+        "isProgrammatic": true,
+        "mentions": []
+      },
+      {
+        "conversationId": "636f6e7669643a31323639352d32",
+        "messageId": "0ca6e9861234827703a40246bb3aa8bc",
+        "senderFid": 4321,
+        "message": "First!",
+        "creationTimestamp": 1709735000,
+        "isDeleted": false,
+        "isProgrammatic": false,
+        "mentions": []
+      }
+    ]
+  },
+  "next": {}
+}
