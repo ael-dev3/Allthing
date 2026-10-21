@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type TestInfo } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -37,6 +38,7 @@ test("at 880 px, a card from the lowest name of a list above its count stays lev
     total: 0, sources: [], fetched_at: Date.now(),
   } }));
   await page.goto("/");
+  await appCame(page);
   const post = page.locator(".cast-card:not(.skeleton)").first();
   const likes = post.locator(".stat-likes");
   await likes.scrollIntoViewIfNeeded();

@@ -30,6 +30,12 @@ The CI `perf` job runs `e2e/perf.spec.ts` against https://allthing.social after 
   - The script is allowed by its hash in the CSP (`web/_headers`), and `scripts/check.sh` fails if the two disagree.
   - Starting the request from `boot.js` was tried first, but a module script has to download before it runs, so the request still began about when the app's own JS arrived (700–990 ms on production).
   - The static copy, served under `/Allthing/`, skips it.
+- **The front page's first cards are drawn from that data before the app has come** (`web/paint.js`). On a slow line the data comes seconds before the WebAssembly (on the speed report's phone, at about 1.0 s against 3.1 s), so a small script draws the cards the app draws first: in the app's order (hot or top, with the reader's favorites and those they see less of), with the app's markup and the usage bar above them, under the boot screen's header. They only show: they're inert and hidden from screen readers. Once mounted, the app is drawn hidden under them, and when its own cards are drawn, in the same boxes, they take their place (`boot.rs`), without their entrance animation again. The [speed report](#speed-report) times both: the first cast on screen, and the app's own first.
+  - Only the front page, for hot and top over the past hour, day or week, and only from a fresh answer (not one the Worker marks stale). At most the first 6 cards, and never past one the app draws otherwise: a quote, a video, a sticker, or a single image it can't size.
+  - A single image's tile has its final box before the image comes. Cloudflare Images describes the variant a feed shows (`…/fit=scale-down,w=720,format=json`, about 110 bytes, sent with `access-control-allow-origin: *`), the tile takes that size, and so does the app's tile for the same image (`media::known_size`). A card with one is drawn once its description has come, a round trip after the data. Nothing on the first screen moves as its images come, there or after the app takes over; without this, a single image grew its card when it loaded, pushing the cards below it down.
+  - Its images (avatars, emoji, link thumbnails and media) wait until the WebAssembly is in, and the app's own cards then find them on their way. Asked for at once, in a trial on the speed report's phone, they shared the slow line with it and the app's first card came 1.4 s later.
+  - If the app can't load, `boot.js`'s panel replaces the cards. Leaving the front page, or its data failing in the app, hands over at once, and the app's cards replace them at most 4 s after the app has mounted, whatever else.
+  - It is 34 KB (10 KB at brotli), and adds no request to the Worker. The static copy doesn't load it.
 
 ### 2. Prefetch, under a strict budget
 
@@ -182,7 +188,7 @@ Interaction latency was 312–1,088 ms before sorting became reactive, because e
 | Desktop | 1280 × 900 | 10 Mbps down, 40 ms RTT | as is |
 | Phone ("slow 4G") | 390 × 844, touch | 1.6 Mbps down, 150 ms RTT | slowed 4× |
 
-It measures time to first byte, when the WebAssembly and the front page's data are in (and how many KB the WebAssembly took on the wire), the first cast card, LCP (the later of the LCP entry and the first card, as the budget counts it), and the slowest of two sort-tab switches (Event Timing). It records the deployed commit before and after its runs, and fails if a deploy landed in between.
+It measures time to first byte, when the WebAssembly and the front page's data are in (and how many KB the WebAssembly took on the wire), the first cast card on screen (drawn early, or by the app), the app's own first card (once the early ones have given way), LCP (the later of the LCP entry and the first card, as the budget counts it), and the slowest of two sort-tab switches (Event Timing) in the app. It records the deployed commit before and after its runs, and fails if a deploy landed in between.
 
 CI runs it on a manual run of the workflow (the `speed report` job, against https://allthing.social); locally:
 
@@ -213,6 +219,22 @@ The phone run before the change overlapped its deploy, so the phone's before and
 | Slowest interaction | 40 ms | 32 ms | 112 ms | 112 ms |
 
 On the phone profile the front page shows its first cast about 0.23 s sooner, the time 47 KB takes at 1.6 Mbps. Production's phone numbers after the change match: first cast 3,052 ms (samples 3,040–3,070), slowest interaction 104 ms.
+
+**The front page's first cards before the app (`web/paint.js`), 21 October 2026.** Main (9f19445) and this change were each served locally over HTTP/2 with TLS, as the Worker serves them (the WebAssembly from its brotli-11 copy, the rest brotli'd). Both got the same front-page payload (production's, 88 casts) and the images it asks for, recorded from their hosts, so the throttled browser timed both builds on the same bytes. Nine alternating rounds under the speed report's profiles; medians:
+
+| | Desktop, main | Desktop, early cards | Phone, main | Phone, early cards |
+|---|---|---|---|---|
+| Data in by | 191 ms | 200 ms | 934 ms | 994 ms |
+| WebAssembly in by | 560 ms | 571 ms | 3,086 ms | 3,169 ms |
+| First cast on screen | 642 ms | 260 ms | 3,444 ms | 1,215 ms (1,206–1,226) |
+| The app's own first card | 642 ms | 643 ms | 3,444 ms | 3,510 ms |
+| LCP, the first screen's images in | 1,156 ms | 940 ms | 6,736 ms | 5,640 ms |
+| Layout shift (CLS) | 0.000 (0 to 0.236) | 0.000 (all 9) | 0.155 (0 to 0.336) | 0.000 (all 9) |
+| Slowest sort switch | 32 ms | 24 ms | 56 ms | 56 ms |
+
+- The first cast shows 2.2 s sooner on the phone and 0.38 s sooner on a computer. The early cards can't be used, and the app's own come as before on a computer and 66 ms later on the phone: the script's 10 KB share the line with the WebAssembly.
+- LCP counts the first screen's images here, and they come sooner: they're asked for once the WebAssembly is in, not once the app has drawn its cards.
+- On main, a single image grows its card as it loads and pushes the cards below it down. The early cards' tiles have their boxes from the start, and the app's take the same boxes.
 
 **Since then, 20 October 2026 (3cc5cd0).** Production, median of 7 on a CI runner (run 39483304275), against 040d095 the day before (run 39251478185), each run's own profile:
 

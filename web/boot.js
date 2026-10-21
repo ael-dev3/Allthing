@@ -12,6 +12,10 @@ if (location.hostname === "www.allthing.social") {
     console.error("Allthing could not load", error);
     const boot = document.getElementById("boot");
     boot?.querySelector(".boot-glow")?.remove();
+    // The front page's first cards, drawn while the app was on its way
+    // (paint.js), go: they can't be used without it.
+    boot?.querySelector("main")?.remove();
+    boot?.removeAttribute("data-painted");
     boot?.removeAttribute("aria-hidden");
 
     const main = document.createElement("main");

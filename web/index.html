@@ -25,11 +25,14 @@
 <link rel="modulepreload" href="{{JS}}">
 <link rel="modulepreload" href="{{SPLIT_JS}}">
 <link rel="stylesheet" href="{{CSS}}">
+<!-- Draws the front page's first cards from the early fetch while the app downloads; the app takes over (not in the static copy). -->
+{{PAINT}}
 <script type="module" src="{{BOOT}}"></script>
 </head>
 <body>
 <div id="boot" class="boot" aria-hidden="true">
-  <header class="site-header"><div class="header-inner"><span class="wordmark">Allthing</span></div><div class="portal-line"></div></header>
+  <!-- The app's header, as tall as it is: its search box sets its height, so an unseen one is here too. -->
+  <header class="site-header"><div class="header-inner"><span class="wordmark">Allthing</span><form class="search-box boot-holder"><input type="search" tabindex="-1" disabled></form></div><div class="portal-line"></div></header>
   <div class="boot-glow"></div>
 </div>
 <noscript><p class="noscript">Allthing is built in Rust and runs as WebAssembly, so it needs JavaScript enabled.</p></noscript>

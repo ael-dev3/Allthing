@@ -54,8 +54,34 @@ thread_local! {
     static IMAGE_SIZES: RefCell<HashMap<String, (u32, u32)>> = RefCell::new(HashMap::new());
 }
 
+/// The size `src` was seen at: here, or by the front page's first cards
+/// drawn before the app came (web/paint.js, `__allthingSizes`).
 fn known_size(src: &str) -> Option<(u32, u32)> {
-    IMAGE_SIZES.with(|sizes| sizes.borrow().get(src).copied())
+    IMAGE_SIZES.with(|sizes| sizes.borrow().get(src).copied()).or_else(|| painted_size(src))
+}
+
+fn painted_size(src: &str) -> Option<(u32, u32)> {
+    use wasm_bindgen::JsValue;
+    let sizes = js_sys::Reflect::get(&window(), &JsValue::from_str("__allthingSizes")).ok()?;
+    let size = js_sys::Reflect::get(&sizes, &JsValue::from_str(src)).ok()?.dyn_into::<js_sys::Array>().ok()?;
+    let (width, height) = (size.get(0).as_f64()? as u32, size.get(1).as_f64()? as u32);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+/// Give the image tiles under `root` that aren't sized yet the boxes their
+/// images were seen at: those drawn before the boot screen's images had
+/// loaded, which have since.
+pub fn size_tiles(root: &web_sys::Element) {
+    let Ok(tiles) = root.query_selector_all(".tile-image:not([data-sized]) > img") else { return };
+    for i in 0..tiles.length() {
+        let Some(img) = tiles.item(i).and_then(|n| n.dyn_into::<web_sys::HtmlImageElement>().ok()) else { continue };
+        let (Some((width, height)), Some(tile)) = (known_size(&img.src()), img.parent_element()) else { continue };
+        let _ = tile.set_attribute("style", &size_style(width, height));
+        let _ = tile.set_attribute("data-sized", "");
+        if height > width {
+            let _ = tile.set_attribute("data-portrait", "");
+        }
+    }
 }
 
 fn remember_size(src: &str, event: &ev::Event) {

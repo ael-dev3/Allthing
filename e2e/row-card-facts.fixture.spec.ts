@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 /*
  * The people of a likes or replies preview have their votes and wallets
@@ -273,6 +274,7 @@ for (const width of [1280, 390]) {
 test("a count the pointer only crosses, too quickly to open its list, preloads nothing", async ({ page }) => {
   const reads = await serve(page);
   await page.goto("/");
+  await appCame(page);
   const count = page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes");
   const box = (await count.boundingBox())!;
   // Across it and away, in less than the 280 ms a preview waits for.
@@ -287,6 +289,7 @@ test("a count the pointer only crosses, too quickly to open its list, preloads n
 test("at most 30 people of opened lists are preloaded per five minutes", async ({ page }) => {
   const reads = await serve(page, { delay: 20 });
   await page.goto("/");
+  await appCame(page);
   for (const i of [0, 1, 2, 3]) {
     const card = page.locator(`.cast-card[data-hash="${casts[i].hash}"]`);
     await card.scrollIntoViewIfNeeded();

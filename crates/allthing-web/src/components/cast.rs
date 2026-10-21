@@ -150,6 +150,13 @@ pub fn CastList(
         SHOWN.with(|s| s.borrow_mut().insert(key.clone(), count));
     });
     let sentinel = NodeRef::<leptos::html::Div>::new();
+    // The front page's first cards, drawn before the app came, give way to
+    // these once they're drawn (`crate::boot`).
+    Effect::new(move |_| {
+        if casts.with(|c| !c.is_empty()) {
+            crate::boot::hand_over();
+        }
+    });
     Effect::new(move |_| {
         let notes = notes.get();
         casts.with(|c| api::remember_casts(c, &notes));

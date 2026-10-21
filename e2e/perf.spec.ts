@@ -22,7 +22,8 @@ const STORED_NEW_BUDGET_S = 150;
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
-/** Records when the first real cast card is in the DOM, from navigation start. */
+/** Records when the first real cast card is in the DOM, from navigation start:
+ * the app's, or one drawn before it came (web/paint.js). */
 const firstCastProbe = () => {
   new MutationObserver((_, observer) => {
     if (document.querySelector(".cast-card:not(.skeleton)")) {
@@ -53,7 +54,7 @@ test.describe("performance budget", () => {
       const page = await context.newPage();
       await page.addInitScript(firstCastProbe);
       await page.goto("/");
-      await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
+      await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible();
       await page.waitForTimeout(300);
       // The page's largest content is the feed: count it from when the first
       // cast appears, even if the browser's LCP entry picked something earlier.
@@ -69,7 +70,7 @@ test.describe("performance budget", () => {
   test("opening a post from the feed takes under 100 ms", async ({ page }) => {
     await page.goto("/");
     // A card with plain text to click (.cast-title: releases before full text).
-    const card = page.locator(".cast-card:not(.skeleton):has(.cast-text, .cast-title):not(:has(.cast-text a))").nth(2);
+    const card = page.locator("#app .cast-card:not(.skeleton):has(.cast-text, .cast-title):not(:has(.cast-text a))").nth(2);
     await expect(card).toBeVisible();
     await card.hover(); // prefetches the post's data
     await page.waitForTimeout(600);
@@ -99,7 +100,7 @@ test.describe("performance budget", () => {
 
   test("interactions respond within 100 ms (Event Timing)", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
+    await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible();
     // Interactions after the page has settled (first images and prefetches).
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForTimeout(1000);
@@ -110,9 +111,9 @@ test.describe("performance budget", () => {
         for (const entry of list.getEntries()) if ((entry as any).interactionId) (window as any).__events.push(entry.duration);
         }).observe({ type: "event", durationThreshold: 16, buffered: false } as PerformanceObserverInit);
     });
-    await page.locator(".sort-tabs a", { hasText: "new" }).click();
-    await page.locator(".sort-tabs a", { hasText: "top" }).click();
-    await page.locator(".cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").first().focus();
+    await page.locator("#app .sort-tabs a", { hasText: "new" }).click();
+    await page.locator("#app .sort-tabs a", { hasText: "top" }).click();
+    await page.locator("#app .cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").first().focus();
     await page.keyboard.press("Escape");
     await page.waitForTimeout(500);
     const worst = await page.evaluate(() => Math.max(0, ...((window as any).__events as number[])));

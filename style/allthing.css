@@ -3271,6 +3271,17 @@ p.jumbo .emoji img {
   }
 }
 
+/* What makes the boot screen's header as tall as the app's, unseen. */
+.boot-holder {
+  visibility: hidden;
+}
+
+/* The front page's first cards, drawn before the app came (web/paint.js):
+   the app is drawn hidden under them until its own take their place. */
+#boot[data-painted] ~ #app {
+  visibility: hidden;
+}
+
 /* Shown by index.html until the WebAssembly app mounts. */
 .boot-glow {
   max-width: var(--page-width);
