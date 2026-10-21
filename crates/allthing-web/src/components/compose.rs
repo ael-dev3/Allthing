@@ -51,7 +51,8 @@ use allthing_core::compose::{
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
 use allthing_core::message::{MAX_CAST_BYTES, Sent};
-use allthing_core::model::Cast;
+use allthing_core::model::{Cast, UserSummary};
+use allthing_core::params::{fid_username, username_from_param};
 use allthing_core::scheduled::{MAX_AHEAD, MIN_AHEAD, SavedCast, SavedDraft, SavedGif, SavedMedia, ScheduledCast};
 use allthing_core::text::mention_names;
 use allthing_core::text::truncate_title;
@@ -59,7 +60,7 @@ use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
-use leptos_router::hooks::use_location;
+use leptos_router::hooks::{use_location, use_query_map};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
@@ -764,6 +765,36 @@ fn on_feed(path: &str) -> bool {
     path.is_empty() || path == "/" || channel_in_view(path).is_some()
 }
 
+/// Whether `path` is `user`'s own profile, the reader's: `/u/<name>`, or
+/// `/u` with `name` its `?name=`, by their username in any case, or
+/// `fid:N`.
+fn own_profile(path: &str, name: Option<&str>, user: &UserSummary) -> bool {
+    let path = path.strip_prefix(BASE).unwrap_or(path).trim_end_matches('/');
+    let named = match path.strip_prefix("/u") {
+        Some("") => name,
+        Some(rest) => rest.strip_prefix('/'),
+        None => None,
+    };
+    named
+        .and_then(username_from_param)
+        .is_some_and(|named| named == user.username.to_lowercase() || fid_username(&named) == Some(user.fid))
+}
+
+/// Whether the page has Cast: the front page's feed, a channel's, and the
+/// reader's own profile.
+fn use_casts_here() -> Memo<bool> {
+    let location = use_location();
+    let query = use_query_map();
+    let session = use_session();
+    Memo::new(move |_| {
+        let path = location.pathname.get();
+        on_feed(&path)
+            || session.user.with(|user| {
+                user.as_ref().is_some_and(|user| own_profile(&path, query.read().get("name").as_deref(), user))
+            })
+    })
+}
+
 /// Start a cast, in the channel being read on a channel page.
 fn start_cast() -> impl Fn() + Copy + 'static {
     let composer = use_composer();
@@ -771,11 +802,9 @@ fn start_cast() -> impl Fn() + Copy + 'static {
     move || composer.start(Target::Cast(channel_in_view(&pathname.get_untracked())))
 }
 
-/// Cast, at the top right of a feed: a pill in Allthing's accent, lettered
-/// in its serif. On a phone, `CastFab` instead. The reader's own profile has
-/// it too, at its header's top right (`pages::user`), on a phone as well.
+/// Cast: a pill in Allthing's accent, lettered in its serif.
 #[component]
-pub fn CastPill() -> impl IntoView {
+fn CastPill() -> impl IntoView {
     let start = start_cast();
     view! {
         <button
@@ -792,19 +821,61 @@ pub fn CastPill() -> impl IntoView {
     }
 }
 
-/// Cast on a phone: a round button floating over the front page's feed or
-/// a channel's, at the bottom right, within the thumb's reach.
+/// Cast on a computer: the pill in the site header, before the account,
+/// always in view as the page scrolls, on the pages that have Cast (the
+/// front page's feed, a channel's, the reader's own profile). On the others
+/// its place is kept, unseen and out of reach, so the header doesn't move
+/// from page to page. On a phone, `CastFab` instead.
+#[component]
+pub fn HeaderCast() -> impl IntoView {
+    let here = use_casts_here();
+    view! {
+        <span class="header-cast" class:here=move || here.get()>
+            <CastPill/>
+        </span>
+    }
+}
+
+/// Whether `element` takes typing, which on a phone brings up the
+/// keyboard: a text field, a text area or editable text.
+fn takes_typing(element: &web_sys::Element) -> bool {
+    match element.tag_name().as_str() {
+        "TEXTAREA" => true,
+        "INPUT" => !matches!(
+            element.get_attribute("type").unwrap_or_default().to_ascii_lowercase().as_str(),
+            "button" | "checkbox" | "color" | "file" | "hidden" | "image" | "radio" | "range" | "reset" | "submit"
+        ),
+        _ => element.dyn_ref::<HtmlElement>().is_some_and(HtmlElement::is_content_editable),
+    }
+}
+
+/// Cast on a phone: a round button floating at the bottom right of the
+/// pages that have Cast, within the thumb's reach. The page leaves room
+/// after its end for it, and it steps out of the way of a dialog, the
+/// lightbox and a popover (`style/allthing.css`), and of the keyboard,
+/// while a text box has focus (`away`).
 #[component]
 pub fn CastFab() -> impl IntoView {
-    let pathname = use_location().pathname;
     let start = start_cast();
-    let shown = Memo::new(move |_| on_feed(&pathname.get()));
+    let shown = use_casts_here();
+    let typing = RwSignal::new(false);
+    // Focus moving in, or out (to where it lands, once it has).
+    let focused = move || typing.set(document().active_element().is_some_and(|el| takes_typing(&el)));
+    let moved_in = window_event_listener(ev::focusin, move |_| focused());
+    let moved_out = window_event_listener(ev::focusout, move |_| {
+        set_timeout(focused, Duration::ZERO);
+    });
+    on_cleanup(move || {
+        moved_in.remove();
+        moved_out.remove();
+    });
     move || {
         shown.get().then(|| {
             view! {
                 <button
                     type="button"
                     class="cast-fab"
+                    class:away=move || typing.get()
                     aria-label="Write a cast"
                     on:pointerdown=move |_| warm()
                     on:focus=move |_| warm()
@@ -1624,6 +1695,39 @@ async fn klipy(url: &str) -> Result<Found, Unread> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cast_is_on_the_feeds_and_the_readers_own_profile() {
+        let reader = UserSummary { fid: 3, username: "reader.eth".into(), display_name: String::new(), pfp_url: None };
+        for path in ["/", "", "/c/dev", "/c/dev/"] {
+            assert!(on_feed(path), "{path}");
+        }
+        for path in ["/p/0x01", "/u/reader.eth", "/search", "/channels", "/scheduled", "/dau"] {
+            assert!(!on_feed(path), "{path}");
+        }
+        for (path, name) in [
+            ("/u/reader.eth", None),
+            ("/u/Reader.ETH/", None),
+            ("/u/%40reader.eth", None),
+            ("/u/fid:3", None),
+            ("/u/fid%3A3", None),
+            ("/u", Some("reader.eth")),
+            ("/u/", Some("fid:3")),
+        ] {
+            assert!(own_profile(path, name, &reader), "{path} {name:?}");
+        }
+        for (path, name) in [
+            ("/u/bob", None),
+            ("/u/fid:4", None),
+            ("/u", Some("bob")),
+            ("/u", None),
+            ("/users/reader.eth", None),
+            ("/p/reader.eth", None),
+            ("/", Some("reader.eth")),
+        ] {
+            assert!(!own_profile(path, name, &reader), "{path} {name:?}");
+        }
+    }
 
     #[test]
     fn a_cast_from_a_channel_page_goes_to_that_channel() {

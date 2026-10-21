@@ -203,20 +203,22 @@ test("without a GIF key there is no GIF button, and a cast still hands off", asy
   expect(calls.klipy).toEqual([]);
 });
 
-test("Cast is a serif pill at the top right of the feed and of a channel, and nowhere else", async ({ page }) => {
+test("Cast is a serif pill in the sticky header, before the account, on the feeds, and nowhere else", async ({ page }) => {
   await serve(page);
   await page.goto("/");
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
-  // Not in the header any more, and only one: the floating one is for phones.
-  await expect(page.locator(".site-header").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+  // In the header, which stays in view, and only one: the feed's head has
+  // none, and the floating one is for phones.
+  const header = page.locator(".site-header");
   await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(1);
-  const head = page.locator(".listing-head");
-  const pill = head.getByRole("button", { name: "Write a cast" });
+  await expect(page.locator(".listing-head").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+  const pill = header.getByRole("button", { name: "Write a cast" });
   await expect(pill).toHaveText("Cast");
-  // At the top right of the feed, level with the sort tabs.
-  const [box, row, tabs] = await Promise.all([pill.boundingBox(), head.boundingBox(), page.locator(".sort-tabs").boundingBox()]);
-  expect(Math.abs(box!.x + box!.width - (row!.x + row!.width))).toBeLessThan(1);
-  expect(Math.abs(box!.y + box!.height / 2 - (tabs!.y + tabs!.height / 2))).toBeLessThan(4);
+  // Just before the account's picture, level with it.
+  const [box, account] = await Promise.all([pill.boundingBox(), header.locator(".account-button").boundingBox()]);
+  expect(account!.x - (box!.x + box!.width)).toBeGreaterThanOrEqual(0);
+  expect(account!.x - (box!.x + box!.width)).toBeLessThan(24);
+  expect(Math.abs(box!.y + box!.height / 2 - (account!.y + account!.height / 2))).toBeLessThan(2);
   // Allthing's serif, and its indigo accent turning to the portal cyan, not
   // Farcaster's purple.
   const look = await pill.evaluate((el) => ({ font: getComputedStyle(el).fontFamily, fill: getComputedStyle(el).backgroundImage }));
@@ -224,15 +226,13 @@ test("Cast is a serif pill at the top right of the feed and of a channel, and no
   expect(look.fill).toContain("rgb(79, 67, 212)");
   expect(look.fill).toContain("rgb(11, 124, 145)");
   expect(look.fill).not.toMatch(/rgb\((124, 101, 193|133, 93, 205|138, 99, 210)\)/);
-  // A channel's: at the top right, beside its name.
+  // A channel's: the header's too, where it was on the front page, and
+  // none beside the channel's name.
   await page.goto("/c/dev");
-  const title = page.locator(".channel-title-row");
-  const channelPill = title.getByRole("button", { name: "Write a cast" });
-  await expect(channelPill).toBeVisible();
-  const [p, h, r] = await Promise.all([channelPill.boundingBox(), title.locator("h1").boundingBox(), title.boundingBox()]);
-  expect(Math.abs(p!.x + p!.width - (r!.x + r!.width))).toBeLessThan(1);
-  expect(Math.abs(p!.y + p!.height / 2 - (h!.y + h!.height / 2))).toBeLessThan(6);
-  expect(p!.x).toBeGreaterThan(h!.x + h!.width);
+  await expect(page.locator(".channel-title-row")).toBeVisible();
+  await expect(page.locator(".channel-title-row").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(1);
+  expect(await pill.boundingBox()).toEqual(box);
   // A post has none: Reply and Quote are there instead.
   await page.goto(`/p/${cast.hash}`);
   await expect(page.locator(".post")).toBeVisible();
@@ -363,13 +363,13 @@ test("on a phone, the composer and its picker fit the screen", async ({ browser 
   const write = page.getByRole("button", { name: "Write a cast" });
   await expect(write).toBeVisible();
   // A round button floating over the feed at the bottom right, in reach of
-  // a thumb; the pill and the header have none.
+  // a thumb; the header has none.
   const fab = (await write.boundingBox())!;
-  expect([Math.round(fab.width), Math.round(fab.height)]).toEqual([56, 56]);
-  expect(Math.abs(fab.x + fab.width - (390 - 16))).toBeLessThan(1);
-  expect(Math.abs(fab.y + fab.height - (844 - 16))).toBeLessThan(1);
+  expect([Math.round(fab.width), Math.round(fab.height)]).toEqual([48, 48]);
+  expect(Math.abs(fab.x + fab.width - (390 - 10))).toBeLessThan(1);
+  expect(Math.abs(fab.y + fab.height - (844 - 12))).toBeLessThan(1);
   expect(await write.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
-  await expect(page.locator(".listing-head .cast-pill")).toBeHidden();
+  await expect(page.locator(".site-header .cast-pill")).toBeHidden();
   await expect(page.locator(".site-header").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
   await write.tap();
   const dialog = page.getByRole("dialog", { name: "New cast" });
