@@ -552,7 +552,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     )
     .await;
     let Some(mut channel) = channel.map_err(Failure::upstream)? else {
-        return Ok(Built::not_found("No such channel"));
+        return Ok(Built::not_found(allthing_core::api::NO_SUCH_CHANNEL));
     };
     // Then, alongside the feed when the guess was wrong, the accounts the
     // app's record names (one `user/bulk`) and its pinned cast. Both are
@@ -605,7 +605,7 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
 
 pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
     let Some(root) = hypersnap::conversation(&inv, &hash, 5).await.map_err(Failure::upstream)? else {
-        return Ok(Built::not_found("No such cast"));
+        return Ok(Built::not_found(allthing_core::api::NO_SUCH_CAST));
     };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
@@ -674,7 +674,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         None => hypersnap::user_by_username(&inv, &username).await.map_err(Failure::upstream)?,
     };
     let Some(raw) = raw else {
-        return Ok(Built::not_found("No such user"));
+        return Ok(Built::not_found(allthing_core::api::NO_SUCH_USER));
     };
     let mut user = normalize::user(&raw);
     let fid = user.fid;
@@ -961,7 +961,7 @@ async fn replies_previews(inv: &Invocation, roots: Vec<(String, RawCast)>) -> Ve
 /// direct replies, without mini apps or spam ([`replies_previews`]).
 pub async fn replies(inv: Rc<Invocation>, hash: String) -> Result<Built, Failure> {
     let Some(root) = hypersnap::conversation(&inv, &hash, 1).await.map_err(Failure::upstream)? else {
-        return Ok(Built::not_found("No such cast"));
+        return Ok(Built::not_found(allthing_core::api::NO_SUCH_CAST));
     };
     let preview = replies_previews(&inv, vec![(hash, root)]).await.pop();
     preview.map_or_else(|| Err(Failure::internal("No replies preview")), |p| Built::json(&p, api::REPLIES_CACHE))
@@ -989,7 +989,7 @@ const MAX_SOLANA_ADDRESSES: usize = 2;
 
 pub async fn wallets(inv: Rc<Invocation>, fid: u64, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
     let Some(raw) = hypersnap::users_bulk(&inv, &[fid]).await.map_err(Failure::upstream)?.into_iter().next() else {
-        return Ok(Built::not_found("No such user"));
+        return Ok(Built::not_found(allthing_core::api::NO_SUCH_USER));
     };
     let user = normalize::user(&raw);
     let addresses = wallet::addresses(

@@ -301,7 +301,7 @@ impl Endpoint {
             "/channels" => {
                 let q = query("q").map(|q| q.trim().to_lowercase()).filter(|q| !q.is_empty());
                 if q.as_ref().is_some_and(|q| q.chars().count() > 64) {
-                    return Err(bad("Search query too long"));
+                    return Err(bad(allthing_core::api::SEARCH_TOO_LONG));
                 }
                 Ok(Endpoint::Channels(q))
             }
@@ -311,7 +311,7 @@ impl Endpoint {
                     .filter(|q| !q.is_empty())
                     .ok_or(bad("Expected ?q=<search>"))?;
                 if q.chars().count() > 100 {
-                    return Err(bad("Search query too long"));
+                    return Err(bad(allthing_core::api::SEARCH_TOO_LONG));
                 }
                 Ok(Endpoint::Search(q))
             }

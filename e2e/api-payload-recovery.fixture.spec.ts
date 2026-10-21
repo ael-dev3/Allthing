@@ -14,7 +14,9 @@ for (const width of [1280, 390]) {
       query: "recovery", users: [], channels: [], casts: [], meta,
     } }));
     await page.goto("/search?q=recovery");
-    await expect(page.getByRole("alert")).toContainText("Unexpected data from the API");
+    // Said in a reader's words, not the API's.
+    await expect(page.getByRole("alert")).toContainText("Something went wrong");
+    await expect(page.getByRole("alert")).not.toContainText("Unexpected data");
     await page.getByRole("link", { name: "Allthing, home", exact: true }).click();
     const box = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
     await box.fill("recovery");
