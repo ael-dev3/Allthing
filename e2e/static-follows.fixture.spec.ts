@@ -73,7 +73,10 @@ test("the static copy lists an account's followers in time order across the node
     await page.waitForTimeout(200);
     const listed = await page.locator(".people-list:not(.waiting)").evaluate((list) =>
       Math.round(list.getBoundingClientRect().height / list.querySelector(".person-row")!.getBoundingClientRect().height));
-    if (listed === all.length && (await rows.last().getAttribute("aria-setsize")) === String(all.length)) break;
+    // Drawn to the end too: a page that came during the wait grew the list
+    // under a scroll that was at the old end.
+    const last = rows.last();
+    if (listed === all.length && (await last.getAttribute("aria-setsize")) === String(all.length) && (await last.getAttribute("aria-posinset")) === String(all.length)) break;
   }
   await expect(rows.last()).toHaveAttribute("aria-setsize", String(all.length));
   await expect(rows.last()).toHaveAttribute("aria-posinset", String(all.length));
