@@ -426,7 +426,9 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
         .into_any(),
         // Signed out meanwhile (the session ran out), or a Worker that
         // doesn't have it yet (while a deploy rolls out): everyone's feed.
-        Some(Err(api::Failure::Refused(_) | api::Failure::NotFound(_))) => view! { <Trending sort listed range/> }.into_any(),
+        Some(Err(api::Failure::Refused(_) | api::Failure::NotFound(_))) => {
+            view! { <Trending sort listed range/> }.into_any()
+        }
         Some(Err(failure)) => {
             crate::boot::hand_over();
             view! { <ErrorPanel failure/> }.into_any()
