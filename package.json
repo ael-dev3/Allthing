@@ -1,6 +1,6 @@
 {
   "name": "allthing",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Allthing: a read-only Farcaster client in Rust, served from a Cloudflare Worker.",
   "license": "AGPL-3.0-or-later",
