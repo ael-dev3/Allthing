@@ -2485,27 +2485,66 @@ p.jumbo .emoji img {
   color: var(--ink-3);
 }
 
-.parent-context {
-  display: block;
-  margin-bottom: 10px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px dashed var(--line-2);
-  color: var(--ink-2);
-  font-size: 13.5px;
-  transition: border-color 0.2s var(--ease), background-color 0.2s;
+/* A reply's chain: the casts it answers, as cards, each avatar joined to the
+   next by a line. The line runs under the reply's avatar centre (--chain-x),
+   and each card above is indented so its own avatar sits on that line: a
+   card's avatar centre is 28 px in on a computer (1 px border, 16 px padding,
+   11 px to the middle of its 22 px avatar), 25 px on a phone (13 px padding);
+   a reply's, 45 px in on a computer and 38 px on a phone. */
+.thread-chain {
+  --chain-x: 45px;
+  display: flex;
+  flex-direction: column;
 }
 
-.parent-context:hover {
-  border-color: rgba(79, 67, 212, 0.35);
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--ink);
+.thread-chain .chain-item {
+  margin-left: calc(var(--chain-x) - 28px);
 }
 
-.parent-excerpt {
-  display: block;
+.chain-link {
+  width: 2px;
+  height: 14px;
+  margin-left: calc(var(--chain-x) - 1px);
+  border-radius: 1px;
+  background: var(--line-2);
+}
+
+.chain-note {
+  margin: 0 0 4px calc(var(--chain-x) - 28px);
   color: var(--ink-3);
-  margin-top: 2px;
+  font-size: 13px;
+}
+
+.chain-more {
+  align-self: flex-start;
+  margin-left: calc(var(--chain-x) + 12px);
+  padding: 4px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chain-more:hover {
+  color: var(--ink);
+  border-color: rgba(79, 67, 212, 0.35);
+}
+
+@media (max-width: 640px) {
+  .thread-chain {
+    --chain-x: 38px;
+  }
+
+  .thread-chain .chain-item {
+    margin-left: calc(var(--chain-x) - 25px);
+  }
+
+  .chain-note {
+    margin-left: calc(var(--chain-x) - 25px);
+  }
 }
 
 /* Under a post, for a reader signed in (components/compose.rs,

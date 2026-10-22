@@ -9,6 +9,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - @mention suggestions in the composer, for casts, replies and quotes: typing "@name" lists matching people under the caret, those you follow first and marked "Following"; arrows move, Enter or Tab picks, Escape closes.
 
+- A reply's page shows the casts it answers as full cards, root first, each avatar joined to the next by a line, in place of the dashed "In reply to" snippet. A chain of more than three folds its middle behind "Show N earlier", which opens in place. The cards keep their media, counts, actions and hover cards, and hidden casts are left out as elsewhere.
+
 ### Fixed
 
 - The composer opens without holding up a phone. Cast, Reply and Quote still open it with the box focused and its bar in the first frame, but what goes under the text (a GIF, the pickers, when it goes out) comes in the next frame when the draft has none, the bar asks for the GIF key and whether files can go once it shows, keeping what it was told last, and the header's line and sheen stand still from the frame after a dialog opens. With the CPU slowed 2×, the tap's work went from 46–59 ms to 36–45 ms, and its frame is under 50 ms again (the smoothness check failed on `main` with 51–56 ms).

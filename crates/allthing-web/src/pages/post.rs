@@ -28,8 +28,8 @@ use crate::components::media::{self, LinkCards, MediaGrid, VideoLinks};
 use crate::components::profile_card::ProfileHover;
 use crate::components::quote::{POST_QUOTE_CHARS, QuoteCard};
 use crate::components::reactions::ReactionChips;
-use crate::components::text::{CastText, ExcerptText};
-use crate::components::thread::Replies;
+use crate::components::text::CastText;
+use crate::components::thread::{Ancestors, Replies};
 use crate::util::{cast_href, set_title, user_href, with_query};
 
 /// The page, whose code is fetched the first time it's needed
@@ -106,7 +106,8 @@ fn PostPage() -> impl IntoView {
                 .collect();
             let payload = Arc::new(CastPayload {
                 thread: allthing_core::model::ThreadNode { cast: cast.clone(), children: Vec::new() },
-                parent: None,
+                ancestors: Vec::new(),
+                earlier: false,
                 quotes,
                 channel: None,
                 notes: notes.clone(),
@@ -119,6 +120,11 @@ fn PostPage() -> impl IntoView {
             // The replies' placeholders only if they're slow to come.
             return view! {
                 <Columns>
+                    // The chain above a reply comes with the rest of the cast; a
+                    // placeholder holds its place until then.
+                    {cast.parent_hash.is_some().then(|| view! {
+                        <div class="thread-chain chain-pending" aria-busy="true"><CastSkeletons count=1/></div>
+                    })}
                     <MainCast cast notes payload/>
                     {prompt}
                     <section class="replies" aria-label="Replies" aria-busy="true">
@@ -187,7 +193,7 @@ fn PostPage() -> impl IntoView {
                 };
                 view! {
                     <Columns>
-                        {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
+                        <Ancestors ancestors=payload.ancestors.clone() earlier=payload.earlier notes=notes.clone()/>
                         <MainCast cast=cast.clone() notes=notes.clone() payload=payload.clone()/>
                         {crate::components::reply_prompt(&cast)}
                         <StaleNotice stale/>
@@ -270,17 +276,6 @@ async fn newer_replies(hash: &str, want: u64) {
         if attempt < 2 {
             crate::video::sleep(2500).await;
         }
-    }
-}
-
-#[component]
-fn ParentContext(parent: Cast) -> impl IntoView {
-    view! {
-        <a class="parent-context" href=cast_href(&parent.hash)>
-            <span class="muted">"In reply to "</span>
-            <strong>"@"{parent.author.username.clone()}</strong>
-            <span class="parent-excerpt"><ExcerptText text=truncate_title(&parent.text, 140)/></span>
-        </a>
     }
 }
 

@@ -4,8 +4,8 @@ import { appCame } from "./helpers/app";
 import { approvedKey, signIn } from "./helpers/farcaster";
 
 /*
- * The pack's emoji in excerpts of a cast. The Replies preview, a post's
- * "In reply to", search suggestions, what the composer shows of the cast a
+ * The pack's emoji in excerpts of a cast. The Replies preview, the casts a
+ * post's reply answers, search suggestions, what the composer shows of the cast a
  * reply answers and the one a quote quotes, the
  * media viewer's caption and the scheduled list show ":pepe_name:" as the
  * emoji, as cast text does, with nothing in them linked; and an excerpt is
@@ -45,7 +45,7 @@ async function serve(page: Page) {
     const reply = replies.find((r) => r.hash === new URL(route.request().url()).searchParams.get("hash"));
     return route.fulfill({
       json: reply
-        ? { thread: { cast: reply, children: [] }, parent: post, notes: {}, meta }
+        ? { thread: { cast: reply, children: [] }, ancestors: [post], notes: {}, meta }
         : { thread: { cast: post, children: replies.map((cast) => ({ cast, children: [] })) }, notes: {}, meta },
     });
   });
@@ -123,11 +123,11 @@ test("the Replies preview shows a reply's emoji, with nothing in it linked, and 
   await page.screenshot({ path: testInfo.outputPath("replies-preview-1280.png") });
 });
 
-test("a post's “In reply to” shows its parent's emoji", async ({ page }, testInfo) => {
+test("the cast a post's reply answers shows its emoji, as a card", async ({ page }, testInfo) => {
   await serve(page);
   await page.goto(`/p/${replies[0].hash}`);
-  expect(await shows(page.locator(".parent-context .parent-excerpt"))).toEqual({ emoji: one(":pepe_gm:"), text: "Who's up? ", links: 0 });
-  await page.screenshot({ path: testInfo.outputPath("in-reply-to.png") });
+  expect((await shows(page.locator(".thread-chain .cast-card .cast-text"))).emoji).toEqual(one(":pepe_gm:"));
+  await page.screenshot({ path: testInfo.outputPath("thread-chain.png") });
 });
 
 test("search suggestions show a post's emoji, and cut a long one between them", async ({ page }, testInfo) => {
@@ -202,7 +202,7 @@ test("at 390, the emoji fit the preview, the reply's context and the composer", 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
   await page.goto(`/p/${replies[0].hash}`);
-  expect((await shows(page.locator(".parent-excerpt"))).emoji).toEqual(one(":pepe_gm:"));
+  expect((await shows(page.locator(".thread-chain .cast-text"))).emoji).toEqual(one(":pepe_gm:"));
   await approvedKey(page, me.fid, 3_600_000);
   await page.reload();
   await page.getByRole("button", { name: "Reply to @bob" }).click();

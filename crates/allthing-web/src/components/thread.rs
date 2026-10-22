@@ -8,11 +8,12 @@ use std::sync::Arc;
 
 use allthing_core::emoji::reactions;
 use allthing_core::format::plural;
-use allthing_core::model::ThreadNode;
-use allthing_core::thread::count_descendants;
+use allthing_core::model::{Cast, ThreadNode};
+use allthing_core::thread::{collapsed_gap, count_descendants};
 use leptos::prelude::*;
 
 use crate::Notes;
+use crate::components::cast::CastCard;
 use crate::components::chips::{Engagement, OriginChip, TimeAgo, UserChip};
 use crate::components::media::{LinkCards, MediaGrid, VideoLinks};
 use crate::components::reactions::ReactionChips;
@@ -73,6 +74,53 @@ pub fn Replies(
     }
     let _ = (parent, notes, op_fid, listed);
     view! { <p class="empty">"No replies yet."</p> }.into_any()
+}
+
+/// The casts a reply answers, root first, as full cards joined by a line
+/// from each avatar to the next, and the reply below them (drawn by its
+/// page). A chain too long for its room folds its middle behind "Show N
+/// earlier", which opens in place; `earlier` says casts above the chain
+/// couldn't be read.
+#[component]
+pub fn Ancestors(ancestors: Vec<Cast>, earlier: bool, notes: Notes) -> impl IntoView {
+    let open = RwSignal::new(false);
+    let (head, folded, tail) = match collapsed_gap(ancestors.len()) {
+        Some(gap) => (ancestors[..gap.start].to_vec(), ancestors[gap.clone()].to_vec(), ancestors[gap.end..].to_vec()),
+        None => (ancestors, Vec::new(), Vec::new()),
+    };
+    let folded_count = folded.len();
+    let (folded_notes, tail_notes) = (notes.clone(), notes.clone());
+    view! {
+        <div class="thread-chain" role="group" aria-label="The casts this replies to">
+            {earlier.then(|| view! {
+                <p class="chain-note">"Earlier casts in this thread aren't loaded."</p>
+                <div class="chain-link" aria-hidden="true"></div>
+            })}
+            {head.into_iter().map(|cast| chain_card(cast, notes.clone())).collect_view()}
+            {(folded_count > 0).then(move || {
+                let folded = folded.clone();
+                let notes = folded_notes.clone();
+                view! {
+                    {move || (!open.get()).then(|| view! {
+                        <button type="button" class="chain-more" aria-expanded="false" on:click=move |_| open.set(true)>
+                            {format!("Show {folded_count} earlier")}
+                        </button>
+                        <div class="chain-link" aria-hidden="true"></div>
+                    })}
+                    {move || open.get().then(|| folded.clone().into_iter().map(|cast| chain_card(cast, notes.clone())).collect_view())}
+                }
+            })}
+            {tail.into_iter().map(|cast| chain_card(cast, tail_notes.clone())).collect_view()}
+        </div>
+    }
+}
+
+/// One card of a chain, and the line down to the next thing in it.
+fn chain_card(cast: Cast, notes: Notes) -> impl IntoView {
+    view! {
+        <div class="chain-item"><CastCard cast notes/></div>
+        <div class="chain-link" aria-hidden="true"></div>
+    }
 }
 
 #[component]

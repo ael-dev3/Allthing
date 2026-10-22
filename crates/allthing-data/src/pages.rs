@@ -26,7 +26,7 @@ use allthing_core::provenance::Backend;
 use allthing_core::quotes::{self, QUOTE_DEPTH};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{
-    flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, reply_preview, without_hidden,
+    chain_in_order, flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, reply_preview, without_hidden,
 };
 use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
@@ -621,6 +621,30 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     Built::json(&ChannelPayload { channel, pool, notes, meta: meta(&inv) }, api::CHANNEL_CACHE)
 }
 
+/// The most casts above a reply that a post page reads: one call each, in
+/// turn, from the reply's parent up.
+const MAX_ANCESTORS: usize = 8;
+
+/// The casts above `start`, nearest first, and whether casts above them
+/// couldn't be read: a call failed or found no cast, or the limit held.
+async fn walk_ancestors(inv: &Invocation, start: Option<String>) -> (Vec<RawCast>, bool) {
+    let mut found = Vec::new();
+    let mut next = start;
+    while let Some(hash) = next.take() {
+        if found.len() == MAX_ANCESTORS {
+            return (found, true);
+        }
+        match hypersnap::cast(inv, &hash).await {
+            Ok(Some(raw)) => {
+                next = normalize::cast(&raw).parent_hash;
+                found.push(raw);
+            }
+            _ => return (found, true),
+        }
+    }
+    (found, false)
+}
+
 pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
     let Some(root) = hypersnap::conversation(&inv, &hash, 5).await.map_err(Failure::upstream)? else {
         return Ok(Built::not_found(allthing_core::api::NO_SUCH_CAST));
@@ -628,19 +652,12 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
     let mut thread = normalize::thread(&root);
-    notes.links = miniapps::check(&inv, flatten(&thread), &known_links).await;
-    mark_mini_apps_in_tree(&mut thread, &notes.links);
-    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_hidden).collect();
-    if thread.cast.hidden() {
-        thread.cast.strip_hidden();
-    }
-    let first = &thread.cast;
-    let quote_hashes: Vec<String> = first.quoted().take(3).map(str::to_owned).collect();
-
+    let parent_hash = thread.cast.parent_hash.clone();
+    let channel_key = thread.cast.channel.as_ref().map(|c| c.id.clone());
     // Context around the cast is best-effort; the thread is what matters.
-    let channel_key = first.channel.as_ref().map(|c| c.id.clone());
-    let parent_hash = first.parent_hash.clone();
-    let (channel, parent, raw_quotes) = join3(
+    // The chain above is read in turn, and the link checks over the thread
+    // and the chain start as it's read, so they take their share first.
+    let (channel, (raw_ancestors, mut above, earlier, links)) = join(
         async {
             match &channel_key {
                 Some(key) => hypersnap::channel(&inv, key).await.ok().flatten(),
@@ -648,16 +665,27 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
             }
         },
         async {
-            match &parent_hash {
-                Some(hash) => hypersnap::cast(&inv, hash).await.ok().flatten().map(|c| normalize::cast(&c)),
-                None => None,
-            }
+            let (raw, earlier) = walk_ancestors(&inv, parent_hash).await;
+            let above: Vec<Cast> = raw.iter().map(normalize::cast).collect();
+            let links = miniapps::check(&inv, flatten(&thread).into_iter().chain(&above), &known_links).await;
+            (raw, above, earlier, links)
         },
-        join_all(quote_hashes.iter().map(|hash| {
-            let inv = &inv;
-            async move { hypersnap::cast(inv, hash).await.ok().flatten() }
-        })),
     )
+    .await;
+    notes.links = links;
+    mark_mini_apps_in_tree(&mut thread, &notes.links);
+    mark_mini_apps(&mut above, &notes.links);
+    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_hidden).collect();
+    if thread.cast.hidden() {
+        thread.cast.strip_hidden();
+    }
+    let ancestors = chain_in_order(above);
+    let first = &thread.cast;
+    let quote_hashes: Vec<String> = first.quoted().take(3).map(str::to_owned).collect();
+    let raw_quotes = join_all(quote_hashes.iter().map(|hash| {
+        let inv = &inv;
+        async move { hypersnap::cast(inv, hash).await.ok().flatten() }
+    }))
     .await;
     let mut quotes: Vec<QuotedCast> = quote_hashes
         .iter()
@@ -669,21 +697,24 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
         .collect();
     notes.links.extend(check_quotes(&inv, quotes.iter_mut().filter_map(|q| q.cast.as_mut()), &known_links).await);
 
-    // Attribute the cast itself first, then its context, then the replies.
+    // Attribute the cast itself first, then the casts above it, then the
+    // quotes and the replies.
     let mut refs: Vec<&Cast> = vec![first];
-    refs.extend(parent.iter());
+    refs.extend(ancestors.iter());
     refs.extend(quotes.iter().filter_map(|q| q.cast.as_ref()));
     refs.extend(flatten(&thread).into_iter().skip(1));
     annotate(&inv, &mut notes, &targets(&refs), ORIGIN_AUTHORS).await;
-    // Cards for the accounts the page names: the thread's and the quotes'
-    // authors (the parent shows as a link, without one).
+    // Cards for the accounts the page names: the thread's, the chain's and
+    // the quotes' authors.
     let named: Vec<u64> = flatten(&thread)
         .into_iter()
+        .chain(ancestors.iter())
         .chain(quotes.iter().filter_map(|q| q.cast.as_ref()))
         .map(|c| c.author.fid)
         .collect();
-    notes.keep_users(normalize::author_cards(std::iter::once(&root).chain(raw_quotes.iter().flatten())), named);
-    Built::json(&CastPayload { thread, parent, quotes, channel, notes, meta: meta(&inv) }, api::CAST_CACHE)
+    let cards = std::iter::once(&root).chain(raw_quotes.iter().flatten()).chain(raw_ancestors.iter());
+    notes.keep_users(normalize::author_cards(cards), named);
+    Built::json(&CastPayload { thread, ancestors, earlier, quotes, channel, notes, meta: meta(&inv) }, api::CAST_CACHE)
 }
 
 pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec<u8>>>) -> Result<Built, Failure> {
