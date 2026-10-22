@@ -16,7 +16,7 @@ node_modules/
 # Screenshots saved by the live end-to-end suite (e2e/allthing.spec.ts). Only
 # the one the README shows is tracked; add a `!` line to track another.
 /docs/screenshots/*
-!/docs/screenshots/home.png
+!/docs/screenshots/*.webp
 
 # Never commit secrets or local settings
 .env

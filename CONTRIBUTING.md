@@ -35,7 +35,7 @@ Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT
 - `npm run test:tools`, if you changed the static test server (`e2e/pages-server.mjs`).
 - For UI changes, attach before-and-after screenshots at both widths to the pull request.
 
-The live-data suite saves screenshots in `docs/screenshots/` (set `E2E_SCREENSHOT_DIR` to save them elsewhere). Only `home.png`, which the README shows, is tracked; commit a new one only when the README should change.
+The live-data suite saves screenshots in `docs/screenshots/` (set `E2E_SCREENSHOT_DIR` to save them elsewhere). Only the WebP images the README shows (`home.webp`, `profile.webp`, `dau.webp`) are tracked; replace one only when the README should change.
 
 Versions follow SemVer from the workspace `Cargo.toml`. How releases are cut, tagged and published is in [docs/RELEASING.md](docs/RELEASING.md).
 
