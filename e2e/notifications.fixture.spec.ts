@@ -144,9 +144,14 @@ test("the bell counts what's new, and the page groups it as Farcaster does and m
   await expect(bell(page)).toHaveAccessibleName("Notifications, 3 unread");
   await expect(bell(page).locator(".bell-badge")).toHaveText("3");
   await expect(bell(page)).toHaveAttribute("href", "/notifications");
-  // Beside the account's picture, in the header.
+  // Beside the account's picture, in the header, after Cast: the pill stays
+  // where it is on every page (e2e/cast-button.fixture.spec.ts).
   const header = page.locator(".header-actions");
-  await expect(header.locator(":scope > *")).toHaveCount(2);
+  await expect(header.locator(":scope > *")).toHaveCount(3);
+  const order = await header.locator(":scope > *").evaluateAll((els) =>
+    els.map((el) => (el.matches(".header-cast") ? "cast" : el.matches(".bell") ? "bell" : el.querySelector(".account-button") ? "account" : el.className)),
+  );
+  expect(order).toEqual(["cast", "bell", "account"]);
   await shot(page.locator(".site-header"), "bell-1280", testInfo);
 
   await page.mouse.move(5, 400);

@@ -216,10 +216,17 @@ test("Cast is a serif pill in the sticky header, before the account, on the feed
   await expect(page.locator(".listing-head").getByRole("button", { name: "Write a cast" })).toHaveCount(0);
   const pill = header.getByRole("button", { name: "Write a cast" });
   await expect(pill).toHaveText("Cast");
-  // Just before the account's picture, level with it.
-  const [box, account] = await Promise.all([pill.boundingBox(), header.locator(".account-button").boundingBox()]);
-  expect(account!.x - (box!.x + box!.width)).toBeGreaterThanOrEqual(0);
-  expect(account!.x - (box!.x + box!.width)).toBeLessThan(24);
+  // Just before the account's picture, with only the notifications' bell
+  // between them, level with it.
+  const [box, bell, account] = await Promise.all([
+    pill.boundingBox(),
+    header.locator(".bell").boundingBox(),
+    header.locator(".account-button").boundingBox(),
+  ]);
+  expect(bell!.x - (box!.x + box!.width)).toBeGreaterThanOrEqual(0);
+  expect(bell!.x - (box!.x + box!.width)).toBeLessThan(24);
+  expect(account!.x - (bell!.x + bell!.width)).toBeGreaterThanOrEqual(0);
+  expect(account!.x - (bell!.x + bell!.width)).toBeLessThan(24);
   expect(Math.abs(box!.y + box!.height / 2 - (account!.y + account!.height / 2))).toBeLessThan(2);
   // Allthing's serif, and its indigo accent turning to the portal cyan, not
   // Farcaster's purple.
