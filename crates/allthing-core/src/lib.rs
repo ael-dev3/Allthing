@@ -20,6 +20,7 @@ pub mod e2e;
 pub mod embeds;
 pub mod emoji;
 pub mod fmp4;
+pub mod following;
 pub mod follows;
 pub mod format;
 pub mod guard;

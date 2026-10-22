@@ -64,6 +64,9 @@ if (plan) {
 function front(path) {
   const query = new URLSearchParams(location.search);
   if (location.pathname !== "/" || query.has("client")) return null;
+  // A signed-in reader's front page is the casts of whom they follow
+  // (/api/v1/following), under a header with a feed menu: the app draws it.
+  if (/(?:^|;\s*)__Host-allthing-user=/.test(document.cookie)) return null;
   const sort = query.get("sort") === "top" ? "top" : query.get("sort") === "new" ? "new" : "hot";
   const range = RANGES.some(([value]) => value === query.get("t")) ? query.get("t") : "day";
   // "new" is the event stream's; the index's ranges say what they were ranked from.

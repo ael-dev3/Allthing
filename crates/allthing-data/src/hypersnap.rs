@@ -53,6 +53,24 @@ pub async fn trending_casts(
     Ok(feed.map(|f| f.casts).unwrap_or_default())
 }
 
+/// A page of the casts of the accounts `fid` follows, newest first (replies
+/// among them), and the cursor of the next, older page. Hypersnap joins the
+/// follows itself, so a follow list of any size is one read; it sends 100 at
+/// most, whatever `limit` asks.
+pub async fn following_feed(
+    inv: &Invocation,
+    fid: u64,
+    cursor: Option<&str>,
+) -> Result<(Vec<RawCast>, Option<String>), UpstreamError> {
+    let fid = fid.to_string();
+    let mut query = vec![("fid", fid.as_str()), ("limit", "100")];
+    if let Some(cursor) = cursor {
+        query.push(("cursor", cursor));
+    }
+    let feed: Option<BackfillPage> = get_json(inv, Upstream::Hypersnap, &v2("feed/following", &query), false).await?;
+    Ok(feed.map(|f| (f.casts, f.next.and_then(|n| n.cursor).filter(|c| !c.is_empty()))).unwrap_or_default())
+}
+
 /// A page of one shard's hub events: the next `page_size` after the event
 /// `after`, or without it the newest `page_size`, newest first.
 pub async fn events(

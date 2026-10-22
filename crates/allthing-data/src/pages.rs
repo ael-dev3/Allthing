@@ -13,6 +13,7 @@ use allthing_core::api::{
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
 use allthing_core::embeds::link_key;
 use allthing_core::emoji::ReactionReply;
+use allthing_core::following::{self, FollowingPayload};
 use allthing_core::follows;
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
@@ -345,6 +346,47 @@ pub async fn home(
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
     Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll }, api::HOME_CACHE)
+}
+
+/// A signed-in reader's front page (`allthing_core::following`): the
+/// top-level casts of the accounts `fid` follows, newest first, for the app to
+/// rank. A first page with few reads Hypersnap's next page too, and one that
+/// still has fewer than `TOP_UP_BELOW` is topped up with trending casts, in
+/// `topped_up`. Mini apps and spam are left out of both.
+pub async fn following(
+    inv: Rc<Invocation>,
+    fid: u64,
+    cursor: Option<String>,
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<Built, Failure> {
+    let first = cursor.is_none();
+    let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
+    let top_level = |raw: &[RawCast]| raw.iter().map(normalize::cast).filter(|c| !c.is_reply()).collect::<Vec<_>>();
+    let (mut raw, mut next) =
+        hypersnap::following_feed(&inv, fid, cursor.as_deref()).await.map_err(Failure::upstream)?;
+    let mut theirs = top_level(&raw);
+    if following::wants_second_page(first, theirs.len(), next.as_deref())
+        && let Ok((more, after)) = hypersnap::following_feed(&inv, fid, next.as_deref()).await
+    {
+        theirs.extend(top_level(&more));
+        raw.extend(more);
+        next = after;
+    }
+    let mut topping = Vec::new();
+    if following::wants_top_up(first, theirs.len())
+        && let Ok(trending) = hypersnap::trending_casts(&inv, POOL_SIZE, 0, TrendingWindow::Day).await
+    {
+        topping = following::top_up(&theirs, trending.iter().map(normalize::cast).collect());
+        raw.extend(trending);
+    }
+    let mine: HashSet<String> = theirs.iter().map(|c| c.hash.clone()).collect();
+    let all = drop_hidden(&inv, theirs.into_iter().chain(topping).collect(), &mut notes, &known_links).await;
+    let quoted = annotate_listing(&inv, &mut notes, &all, ORIGIN_AUTHORS, &known_links).await;
+    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&all, &notes.quotes));
+    let (pool, topped_up): (Vec<Cast>, Vec<Cast>) = all.into_iter().partition(|c| mine.contains(&c.hash));
+    let payload = FollowingPayload { pool, notes, meta: meta(&inv), next, topped_up };
+    Built::json(&payload, following::FOLLOWING_CACHE)
 }
 
 /// How many voted each way in Allthing's poll, so a reader who voted sees
