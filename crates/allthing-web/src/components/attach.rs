@@ -241,7 +241,7 @@ pub fn AttachButton(composer: Composer) -> impl IntoView {
             view! {
                 <button
                     type="button"
-                    class="attach-button"
+                    class="compose-tool attach-button"
                     aria-label="Attach images or videos"
                     aria-disabled=move || full.get().then_some("true")
                     aria-description=move || if full.get() { EMBEDS_FULL.to_owned() } else { hint.clone() }

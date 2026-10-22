@@ -47,8 +47,8 @@ use std::time::Duration;
 use allthing_core::api::{ChannelPayload, channel_path};
 use allthing_core::channels::is_channel_id;
 use allthing_core::compose::{
-    Draft, Gif, GifKey, GifPage, ParentMediaKind, ParentPreview, Quoted, Rendition, SEARCH_PLACEHOLDER, gif_key_path,
-    gifs_url, replying_to,
+    Draft, Gif, GifKey, GifPage, Length, ParentMediaKind, ParentPreview, Quoted, Rendition, SEARCH_PLACEHOLDER,
+    gif_key_path, gifs_url, length, length_note, replying_to,
 };
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaLimits, MediaType, embeds_left};
@@ -93,8 +93,6 @@ const OUT: &str = "M9 3h4v4M13 3L7.5 8.5M11.5 9.5v3h-8v-8h3";
 const QUOTE: &str = "M3.5 4.5h9v6h-5l-2.5 2v-2h-1.5zM6 7.5h4";
 /// A sticker with its corner peeling.
 const STICKER: &str = "M5.5 2h5A3.5 3.5 0 0 1 14 5.5V9l-5 5H5.5A3.5 3.5 0 0 1 2 10.5v-5A3.5 3.5 0 0 1 5.5 2zM14 9h-2.5A2.5 2.5 0 0 0 9 11.5V14M5.8 8.6c.6.7 1.4 1 2.2 1";
-/// The text's length starts showing at this many bytes.
-const COUNT_FROM: usize = 280;
 /// The clock's hands, inside its face: the button that schedules for later.
 const CLOCK: &str = "M8 4.6V8l2.4 1.6";
 
@@ -112,6 +110,8 @@ thread_local! {
     /// (`attach::take_incoming`).
     pub(crate) static INCOMING: RefCell<Vec<web_sys::File>> = const { RefCell::new(Vec::new()) };
     static NEXT_FILE: Cell<u64> = const { Cell::new(1) };
+    /// Whether this visit has fetched the composer's code ahead of a Reply.
+    static WARMED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// An image or a video the draft carries, and how its upload goes.
@@ -783,6 +783,30 @@ fn warm() {
     });
 }
 
+/// Once a visit, for a reader signed in on a page with Reply: `warm` when
+/// the browser is next idle (in Safari, which can't say, 1.5 s on), so the
+/// first Reply opens with its bar, as every one after it does.
+fn warm_when_idle() {
+    if WARMED.with(|warmed| warmed.replace(true)) {
+        return;
+    }
+    let window = leptos::prelude::window();
+    if js_sys::Reflect::has(&window, &wasm_bindgen::JsValue::from_str("requestIdleCallback")).unwrap_or(false) {
+        crate::components::cast::idle(warm);
+    } else {
+        set_timeout(warm, Duration::from_millis(1500));
+    }
+}
+
+/// Press the composer's Cast, Reply or Quote, as Cmd or Ctrl and Enter in
+/// its text box does: only while it can be pressed.
+fn press_post() {
+    let post = document().query_selector(".compose-modal button.compose-post:not([disabled])").ok().flatten();
+    if let Some(post) = post {
+        post.unchecked_into::<HtmlElement>().click();
+    }
+}
+
 /// Focus `selector`'s element once the page has drawn it.
 fn focus_soon(selector: &'static str) {
     request_animation_frame(move || {
@@ -933,6 +957,9 @@ pub fn CastFab() -> impl IntoView {
 #[component]
 pub fn ReplyButton(cast: Cast) -> impl IntoView {
     let composer = use_composer();
+    if use_session().user.with_untracked(Option::is_some) {
+        warm_when_idle();
+    }
     let replies = cast.replies;
     let label = format!("Reply to @{}", cast.author.username);
     // What the composer shows of the cast is taken as it opens.
@@ -942,7 +969,9 @@ pub fn ReplyButton(cast: Cast) -> impl IntoView {
             type="button"
             class="reply-button"
             aria-label=label
+            // A touch has no hover: the press's start warms it.
             on:pointerenter=move |_| warm()
+            on:pointerdown=move |_| warm()
             on:focus=move |_| warm()
             on:click=move |_| {
                 composer.replies.set(replies);
@@ -967,6 +996,7 @@ pub fn QuoteButton(cast: Cast) -> impl IntoView {
             class="reply-button quote-button"
             aria-label=label
             on:pointerenter=move |_| warm()
+            on:pointerdown=move |_| warm()
             on:focus=move |_| warm()
             on:click=move |_| composer.start(Target::Quote(of.clone()))
         >
@@ -1113,6 +1143,8 @@ pub fn ComposerDialog() -> impl IntoView {
             };
             // A paste of files attaches them, where they can go.
             let pasted = Callback::new(move |data: web_sys::DataTransfer| composer.take_files(&data, false));
+            // Cmd or Ctrl and Enter posts, as the Farcaster app's composer does.
+            let submit = Callback::new(move |()| press_post());
             view! {
                 <div
                     class="modal-backdrop"
@@ -1182,11 +1214,11 @@ pub fn ComposerDialog() -> impl IntoView {
                                     // the thread's line comes down to.
                                     <div class="reply-row">
                                         {move || reply_avatar(session.user.with(|u| u.as_ref().and_then(|u| u.pfp_url.clone())))}
-                                        <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted described_by=REPLYING_ID/>
+                                        <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted submit described_by=REPLYING_ID/>
                                     </div>
                                 }
                                 .into_any(),
-                                None => view! { <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted/> }.into_any(),
+                                None => view! { <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted submit/> }.into_any(),
                             }}
                             {crate::split::lazy_view(|| (), extras)}
                         </div>
@@ -1414,9 +1446,10 @@ fn composer_extras(
     .into_any())
 }
 
-/// The composer's bar: the emoji, sticker, GIF and schedule buttons, the
-/// count, and Cast (or Post in Farcaster). In the composer's part, with
-/// `composer_extras`.
+/// The composer's bar, as compact as the Farcaster app's: the attach,
+/// emoji, sticker, GIF and schedule buttons on the left, 32 px icons; on the
+/// right, how long the text is (`LengthRing`) and Cast, Reply or Quote (or
+/// Post in Farcaster). In the composer's part, with `composer_extras`.
 #[wasm_split(composer, wasm_split_path = ::leptos::wasm_split, fallible)]
 fn composer_bar(
     composer: Composer,
@@ -1460,7 +1493,7 @@ fn composer_bar(
                 <AttachButton composer/>
                 <button
                     type="button"
-                    class="emoji-button"
+                    class="compose-tool emoji-button"
                     aria-label="Add an emoji"
                     aria-expanded=move || composer.showing(Tab::Emoji).to_string()
                     aria-controls="emoji-picker"
@@ -1470,7 +1503,7 @@ fn composer_bar(
                 </button>
                 <button
                     type="button"
-                    class="sticker-button"
+                    class="compose-tool sticker-button"
                     aria-label="Add a sticker"
                     aria-expanded=move || composer.showing(Tab::Stickers).to_string()
                     aria-controls="emoji-picker"
@@ -1489,7 +1522,7 @@ fn composer_bar(
                 {move || gif_key.get().map(|_| view! {
                     <button
                         type="button"
-                        class="gif-button"
+                        class="compose-tool gif-button"
                         aria-label="Add a GIF"
                         aria-expanded=move || (composer.picker.get() == Picker::Gifs).to_string()
                         aria-controls="gif-picker"
@@ -1502,12 +1535,12 @@ fn composer_bar(
                                 composer.note.set(Some(EMBEDS_FULL.to_owned()));
                             }
                         }
-                    >"GIF"</button>
+                    ><span class="gif-mark" aria-hidden="true">"GIF"</span></button>
                 })}
                 {move || (posts_here.get() == Some(true)).then(|| view! {
                     <button
                         type="button"
-                        class="schedule-button"
+                        class="compose-tool schedule-button"
                         aria-label="Schedule for later"
                         aria-pressed=move || scheduling.get().to_string()
                         disabled=move || composer.editing.with(Option::is_some)
@@ -1516,11 +1549,7 @@ fn composer_bar(
                         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d=CLOCK/></svg>
                     </button>
                 })}
-                {move || (used.get() > COUNT_FROM).then(|| view! {
-                    <span class="compose-count" class:over=move || { used.get() > MAX_CAST_BYTES }>
-                        {move || format!("{} / {}", used.get(), MAX_CAST_BYTES)}
-                    </span>
-                })}
+                <LengthRing used/>
                 {move || match (posts_here.get(), writer) {
                     (Some(false), _) | (_, None) => view! { <PostLink composer/> }.into_any(),
                     (_, Some(writer)) => view! { <PostButton composer writer/> }.into_any(),
@@ -1529,6 +1558,48 @@ fn composer_bar(
         </div>
     }
     .into_any())
+}
+
+/// How long the draft's text is, as the Farcaster app shows it
+/// (`allthing_core::compose::length`): a ring that fills toward a cast's
+/// 320 bytes, then toward a long cast's 1,024, amber in its last 75; then the
+/// bytes left, as a number, red and below zero past the limit. A screen
+/// reader hears it only as it crosses one of those lines (`length_note`).
+#[component]
+fn LengthRing(used: Memo<usize>) -> impl IntoView {
+    let ring = Memo::new(move |_| match length(used.get()) {
+        Length::Ring { full, alert } => Some((full, alert)),
+        Length::Left(_) => None,
+    });
+    let left = Memo::new(move |_| match length(used.get()) {
+        Length::Left(left) => Some(left),
+        Length::Ring { .. } => None,
+    });
+    let note = Memo::new(move |_| length_note(used.get()));
+    view! {
+        <span class="length">
+            <svg
+                class="length-ring"
+                class:alert=move || ring.get().is_some_and(|(_, alert)| alert)
+                class:gone=move || ring.get().is_none()
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+            >
+                <circle class="length-track" cx="10" cy="10" r="8"/>
+                <circle
+                    class="length-fill"
+                    cx="10"
+                    cy="10"
+                    r="8"
+                    pathLength="100"
+                    transform="rotate(-90 10 10)"
+                    stroke-dasharray=move || format!("{:.1} 100", ring.get().map_or(0.0, |(full, _)| full * 100.0))
+                />
+            </svg>
+            {move || left.get().map(|left| view! { <span class="length-left" class:over={left < 0} aria-hidden="true">{left}</span> })}
+            <span class="visually-hidden" role="status">{move || note.get()}</span>
+        </span>
+    }
 }
 
 /// Cast, Reply or Quote, with the reader's key: their first post opens the
@@ -1554,6 +1625,7 @@ fn PostButton(composer: Composer, writer: Writer) -> impl IntoView {
         }
         match (composer.posting.get(), later, composer.target.get()) {
             (true, true, _) => "Scheduling…",
+            (true, false, Target::Reply(_)) => "Replying…",
             (true, false, _) => "Posting…",
             (false, true, _) if composer.editing.with(Option::is_some) => "Save",
             (false, true, _) => "Schedule",

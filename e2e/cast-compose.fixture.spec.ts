@@ -181,6 +181,41 @@ test("a reply, a quote, and a cast in a channel go where they belong", async ({ 
   expect(castOf(calls.sent[2])).toMatchObject({ text: "Shrike season", parent: { url: CHANNEL_URL } });
 });
 
+test("Ctrl or Cmd and Enter posts a reply, which reads Replying… while it goes; in the GIF search, Enter only searches", async ({ page }) => {
+  const calls = await ready(page, `/p/${post.hash}`);
+  // The node holds the reply until let go, so what Reply says meanwhile shows.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`${NODE}/submitMessage`, async (route) => {
+    if (route.request().method() === "POST") await held;
+    return route.fallback();
+  });
+  await page.getByRole("button", { name: "Reply to @alice" }).click();
+  const dialog = page.getByRole("dialog", { name: "Reply" });
+  const box = dialog.getByRole("textbox", { name: "Cast your reply" });
+  await box.fill("Read Hyperion");
+  await dialog.getByRole("button", { name: "Add a GIF" }).click();
+  const search = dialog.getByRole("searchbox", { name: "Search GIFs" });
+  await search.fill("cats");
+  await search.press("Control+Enter");
+  await expect(dialog.locator(".gif-heading")).toHaveText("GIFs for “cats”");
+  expect(calls.sent).toHaveLength(0);
+  await dialog.getByRole("button", { name: "Add a GIF" }).click();
+  // No newline: the reply goes, as Reply would send it.
+  await box.press("Control+Enter");
+  await expect(dialog.getByRole("button", { name: "Replying…" })).toBeDisabled();
+  await expectDraft(box, "Read Hyperion");
+  release();
+  await expect(dialog).toBeHidden();
+  expect(calls.sent).toHaveLength(1);
+  expect(castOf(calls.sent[0])).toMatchObject({ text: "Read Hyperion", parent: { cast: { fid: alice.fid, hash: post.hash } } });
+  // An empty draft has nothing to post: Cmd and Enter does nothing.
+  await page.getByRole("button", { name: "Reply to @alice" }).click();
+  await box.press("Meta+Enter");
+  await expect(dialog).toBeVisible();
+  expect(calls.sent).toHaveLength(1);
+});
+
 test("long casts, too-long ones, and one the network refuses", async ({ page }) => {
   await signIn(page, me);
   const calls = await serve(page, { submit: (n) => (n === 2 ? [400, { error: "Failed to submit message", error_detail: 'status: InvalidArgument, message: "bad_request.validation_failure/text too long"' }] : [200, {}]) });
@@ -192,16 +227,34 @@ test("long casts, too-long ones, and one the network refuses", async ({ page }) 
   const dialog = page.getByRole("dialog", { name: "New cast" });
   const text = dialog.getByRole("textbox");
   const post = dialog.getByRole("button", { name: "Cast", exact: true });
-  // Over 320 bytes: a long cast, counted as it nears the limit.
+  // The ring fills toward a cast's 320 bytes; over them, a long cast, it
+  // fills again toward 1,024, which a screen reader hears once.
+  const ring = dialog.locator(".length-ring");
+  const fill = ring.locator(".length-fill");
+  const heard = dialog.locator(".length [role=status]");
+  await text.fill("a".repeat(160));
+  await expect(fill).toHaveAttribute("stroke-dasharray", "50.0 100");
+  await expect(heard).toHaveText("");
   await text.fill("a".repeat(400));
-  await expect(dialog.locator(".compose-count")).toHaveText("400 / 1024");
+  await expect(fill).toHaveAttribute("stroke-dasharray", "39.1 100");
+  await expect(heard).toHaveText("A long cast: up to 1,024 bytes.");
+  // Amber in its last 75 bytes; then what's left, as a number.
+  await text.fill("a".repeat(960));
+  await expect(ring).toHaveClass(/alert/);
+  await expect(heard).toHaveText("Under 75 bytes left.");
+  await text.fill("a".repeat(1010));
+  await expect(ring).toBeHidden();
+  await expect(dialog.locator(".length-left")).toHaveText("14");
+  await expect(heard).toHaveText("Under 25 bytes left.");
+  await text.fill("a".repeat(400));
   await post.click();
   await expect(dialog).toBeHidden();
   expect(castOf(calls.sent[0]).type).toBe(1);
-  // Over 1,024 bytes: no post.
+  // Over 1,024 bytes: below zero, in red, and no post.
   await page.getByRole("button", { name: "Write a cast" }).click();
   await text.fill("b".repeat(1100));
-  await expect(dialog.locator(".compose-count.over")).toHaveText("1100 / 1024");
+  await expect(dialog.locator(".length-left.over")).toHaveText("-76");
+  await expect(heard).toHaveText("Too long to post.");
   await expect(post).toBeDisabled();
   // Refused: the draft stays, with why.
   await text.fill("refused, but kept");

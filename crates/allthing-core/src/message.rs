@@ -79,7 +79,8 @@ impl Reaction {
 /// "long cast", which every account may post; over 1,024 only Farcaster
 /// Pro's 10,000-byte casts, which Allthing doesn't offer.
 pub const MAX_CAST_BYTES: usize = 1024;
-const SHORT_CAST_BYTES: usize = 320;
+/// The longest text of a cast that isn't a long cast, in bytes.
+pub const SHORT_CAST_BYTES: usize = 320;
 /// The most embeds (links and quoted casts) and mentions a cast may carry.
 pub const MAX_EMBEDS: usize = 2;
 pub const MAX_MENTIONS: usize = 10;
