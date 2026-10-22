@@ -4405,6 +4405,401 @@ p.jumbo .emoji img {
   border-radius: 7px;
 }
 
+/* An account's followers and following (`/u/<name>/followers`): one
+   column, a feed's width. The header and toolbar keep their heights
+   whatever has come, and every row is as tall as the others (64 px, 72 px
+   on a phone; pages/follows/window.rs counts on it), so the list is as
+   tall as all its people before most are drawn, and nothing moves. */
+.follows-page {
+  max-width: 770px;
+  margin: 0 auto;
+}
+
+.follows-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  min-height: 52px;
+  margin: 0 0 6px;
+}
+
+.follows-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  height: 52px;
+  padding: 0 10px 0 4px;
+  margin-left: -4px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.follows-back {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.follows-owner .avatar,
+.follows-owner .sk-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  border-radius: 50%;
+}
+
+.follows-owner-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.follows-owner-names > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.follows-owner-names strong {
+  font-size: 16px;
+}
+
+.follows-owner-names .muted {
+  font-size: 13.5px;
+}
+
+.follows-owner-names .sk {
+  width: 130px;
+  margin: 3px 0;
+}
+
+.follows-owner-names .sk-meta {
+  width: 80px;
+}
+
+/* As tall with its counts or without: the toolbar under it doesn't move as
+   they come. */
+.follows-tabs {
+  align-items: stretch;
+  height: 40px;
+  margin: 0;
+}
+
+.follows-tabs a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 0;
+  padding-bottom: 0;
+  white-space: nowrap;
+}
+
+.follows-tabs .num {
+  margin-left: 2px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.follows-tabs a.selected .num {
+  color: var(--ink-2);
+}
+
+.follows-tabs .sk-num {
+  display: inline-block;
+  width: 3.2ch;
+  height: 0.8em;
+  border-radius: 4px;
+  vertical-align: -1px;
+  background: #eceae3;
+}
+
+.follows-tabs .sk-tab {
+  display: inline-block;
+  width: 96px;
+  height: 17px;
+  margin: auto 8px;
+}
+
+/* Searching and sorting the list, under the site's header as it scrolls:
+   the header is 60.5 px tall, 56.5 at 640 px and narrower (measured on 21
+   October 2026), and the toolbar tucks half a pixel under it, so no row
+   shows between them whichever way a font rounds. */
+.follows-page {
+  --site-header-height: 60px;
+}
+
+.follows-toolbar {
+  position: sticky;
+  top: var(--site-header-height);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  margin: 0 0 6px;
+  background: var(--paper);
+}
+
+.follows-search {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+
+.follows-search .icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 15px;
+  height: 15px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.follows-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 34px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--ink);
+  font: 14px/1 var(--font-ui);
+}
+
+.follows-search input:disabled {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.follows-sort {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 11px 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--ink-2);
+  font: 600 13.5px/1 var(--font-ui);
+}
+
+.follows-sort .icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The list: its rows at their places in it. A row opens the profile; its
+   name is the link, and shows the profile card. */
+.people-list {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "pic id stat"
+    "pic bio stat";
+  align-content: center;
+  column-gap: 12px;
+  height: 64px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.people-list.waiting .person-row {
+  position: static;
+}
+
+.people-list.waiting .person-row-id {
+  grid-area: id;
+}
+
+.person-row-pic,
+.person-row > .sk-avatar {
+  grid-area: pic;
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  border-radius: 50%;
+}
+
+.person-row-pic .avatar {
+  width: 40px;
+  height: 40px;
+}
+
+.person-row-who {
+  grid-area: id;
+  display: flex;
+  min-width: 0;
+}
+
+.person-row-id {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--ink);
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.person-row-name,
+.person-row-handle,
+.person-row-bio {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-row-name {
+  font-size: 15px;
+}
+
+.person-row-handle {
+  flex: 0 1 auto;
+  color: var(--ink-3);
+  font-size: 13.5px;
+}
+
+.person-row-bio {
+  grid-area: bio;
+  color: var(--ink-3);
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+
+.person-row-stat {
+  grid-area: stat;
+  color: var(--ink-3);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.person-row-stat strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.person-row .sk {
+  margin: 2px 0;
+}
+
+/* An open profile card's row above the rows after it. */
+.person-row:has(.popover-panel) {
+  z-index: 30;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .follows-owner:hover,
+  .person-row:hover {
+    background: rgba(255, 255, 255, 0.7);
+  }
+
+  .person-row-id:hover .person-row-name {
+    text-decoration: underline;
+  }
+}
+
+/* What comes after the people: one line, the same height whatever it says. */
+.follows-tail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+}
+
+.follows-more {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+/* A profile's counts are the ways to its lists. */
+.count-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.count-link:hover .number {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .follows-page {
+    --site-header-height: 56px;
+  }
+
+  .follows-head {
+    margin-bottom: 4px;
+  }
+
+  .follows-tabs {
+    display: flex;
+    width: 100%;
+  }
+
+  .follows-tabs a {
+    flex: 1;
+    text-align: center;
+  }
+
+  .person-row {
+    height: 72px;
+    padding: 0 4px;
+  }
+
+  /* 44 px taps on the counts. */
+  .count-link {
+    position: relative;
+  }
+
+  .count-link::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+
 /* The whole card opens the post; text stays selectable. */
 .cast-card {
   cursor: pointer;

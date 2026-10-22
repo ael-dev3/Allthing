@@ -21,8 +21,10 @@ use std::future::Future;
 use std::rc::Rc;
 
 use allthing_core::api::{
-    API_PREFIX, ApiError, CachePolicy, ENGAGEMENT_USAGE, EngagementRequest, ReactionKind, home_page_path,
+    API_PREFIX, ApiError, CachePolicy, ENGAGEMENT_USAGE, EngagementRequest, FollowsDir, ReactionKind, follows_path,
+    home_page_path,
 };
+use allthing_core::follows::Paging;
 use allthing_core::params::{
     channel_key_from_decoded, hash_from_param, percent_decode, percent_encode, username_from_param,
 };
@@ -219,6 +221,9 @@ pub enum Endpoint {
     Channels(Option<String>),
     Search(String),
     Reactions(String, ReactionKind, u32),
+    /// An account's followers or following, by name (`fid:<n>` for later
+    /// pages), from the start or from a cursor.
+    Follows(String, FollowsDir, Option<String>),
     /// Who liked and recasted a batch of feed cards, and their replies, each
     /// as its own preview (`Reactions` with a limit of 10, `Replies`)
     /// answers it.
@@ -272,6 +277,18 @@ impl Endpoint {
             )
             .map(Endpoint::Engagement)
             .ok_or(bad(ENGAGEMENT_USAGE)),
+            "/follows" => {
+                let name =
+                    query("name").and_then(|v| username_from_param(&v)).ok_or(bad("Expected ?name=<username>"))?;
+                let dir =
+                    query("dir").and_then(|v| FollowsDir::parse(&v)).ok_or(bad("Expected ?dir=followers|following"))?;
+                let cursor = match query("cursor") {
+                    None => None,
+                    Some(cursor) if Paging::decode(&cursor).is_some() => Some(cursor),
+                    Some(_) => return Err(bad("Expected ?cursor=<the previous page's next>")),
+                };
+                Ok(Endpoint::Follows(name, dir, cursor))
+            }
             "/vote" => query("fid")
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|f| *f > 0)
@@ -352,6 +369,10 @@ impl Endpoint {
                 request.path().trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
             }
             Endpoint::Replies(hash) => format!("replies?hash={hash}"),
+            Endpoint::Follows(name, dir, cursor) => follows_path(name, *dir, cursor.as_deref())
+                .trim_start_matches(API_PREFIX)
+                .trim_start_matches('/')
+                .to_owned(),
             Endpoint::Vote(fid) => format!("vote?fid={fid}"),
             Endpoint::Channel(id) => format!("channel?id={}", percent_encode(id)),
             Endpoint::Cast(hash) => format!("cast?hash={hash}"),
@@ -373,6 +394,7 @@ impl Endpoint {
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
+            Endpoint::Follows(name, dir, cursor) => pages::follows(inv, name, dir, cursor).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
             Endpoint::Cast(hash) => pages::cast(inv, hash, previous).await,
@@ -485,6 +507,41 @@ mod tests {
         ] {
             let refused = Endpoint::from_path(&bad).map_err(|e| (e.status, e.message));
             assert_eq!(refused, Err((400, ENGAGEMENT_USAGE)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn parses_follows_pages() {
+        let cursor = Paging { places: vec![None], waiting: vec![Vec::new()] }.encode();
+        assert_eq!(
+            Endpoint::from_path("/api/v1/follows?name=Alice&dir=followers"),
+            Ok(Endpoint::Follows("alice".into(), FollowsDir::Followers, None))
+        );
+        let later = format!("/api/v1/follows?name=fid%3A42&dir=following&cursor={cursor}");
+        assert_eq!(
+            Endpoint::from_path(&later),
+            Ok(Endpoint::Follows("fid:42".into(), FollowsDir::Following, Some(cursor.clone())))
+        );
+        // The cache name is the path the app asks for.
+        let first = Endpoint::Follows("vitalik.eth".into(), FollowsDir::Followers, None);
+        assert_eq!(first.cache_name(), "follows?name=vitalik.eth&dir=followers");
+        assert_eq!(
+            Endpoint::Follows("fid:42".into(), FollowsDir::Following, Some(cursor.clone())).cache_name(),
+            format!("follows?name=fid%3A42&dir=following&cursor={cursor}")
+        );
+        assert_eq!(
+            Endpoint::from_path(&allthing_core::api::follows_path("fid:42", FollowsDir::Following, Some(&cursor))),
+            Ok(Endpoint::Follows("fid:42".into(), FollowsDir::Following, Some(cursor)))
+        );
+        for bad in [
+            "/api/v1/follows?dir=followers",
+            "/api/v1/follows?name=alice",
+            "/api/v1/follows?name=alice&dir=fans",
+            "/api/v1/follows?name=alice&dir=followers&cursor=",
+            "/api/v1/follows?name=alice&dir=followers&cursor=not%20a%20cursor",
+            "/api/v1/follows?name=alice&dir=followers&cursor=AAAA",
+        ] {
+            assert_eq!(Endpoint::from_path(bad).map_err(|e| e.status), Err(400), "{bad}");
         }
     }
 

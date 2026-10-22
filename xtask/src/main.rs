@@ -328,7 +328,7 @@ const SPLIT_LOADER: &str = "allthing-split.js";
 /// The parts that are pages of their own, which `index.html` starts
 /// fetching with the app when a visit starts on one (its `early-parts`
 /// script, which names them by the same words).
-const PAGE_PARTS: [&str; 6] = ["post", "user", "channel", "search", "channels", "notifications"];
+const PAGE_PARTS: [&str; 7] = ["post", "user", "channel", "search", "channels", "notifications", "follows"];
 
 /// Each page part's files, under `folder`, as JSON: its own module and the
 /// code it shares with other parts, which the loader fetches alongside it.

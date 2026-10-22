@@ -24,6 +24,7 @@ pub mod media;
 pub mod notifications;
 #[cfg(not(feature = "static-host"))]
 pub mod outgoing;
+pub mod people;
 pub mod player;
 #[cfg(not(feature = "static-host"))]
 pub mod poll;

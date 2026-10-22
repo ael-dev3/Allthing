@@ -29,10 +29,12 @@ use wasm_bindgen::prelude::*;
 
 use crate::components::layout::{NotFound, SiteFooter, SiteHeader};
 use crate::components::media::{Lightbox, Viewer};
+use crate::components::people::follows_placeholder;
 use crate::components::who::{WhoDialog, WhoList};
 use crate::pages::channel::channel_page;
 use crate::pages::channels::channels_page;
 use crate::pages::dau::DauPage;
+use crate::pages::follows::follows_page;
 use crate::pages::messages::MessagesPage;
 use crate::pages::post::post_page;
 use crate::pages::scheduled::ScheduledPage;
@@ -92,6 +94,8 @@ fn App() -> impl IntoView {
                     <Route path=path!("/p/:hash") view=|| split::page(post_page())/>
                     <Route path=path!("/p") view=|| split::page(post_page())/>
                     <Route path=path!("/u/:name") view=|| split::page(user_page())/>
+                    <Route path=path!("/u/:name/followers") view=|| split::lazy_page(follows_placeholder, follows_page())/>
+                    <Route path=path!("/u/:name/following") view=|| split::lazy_page(follows_placeholder, follows_page())/>
                     <Route path=path!("/u") view=|| split::page(user_page())/>
                     <Route path=path!("/channels") view=|| split::page(channels_page())/>
                     <Route path=path!("/dau") view=DauPage/>

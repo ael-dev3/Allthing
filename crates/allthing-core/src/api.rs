@@ -254,6 +254,153 @@ pub struct ReactionsPayload {
     pub meta: Meta,
 }
 
+/// Which of an account's lists a follows page shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FollowsDir {
+    /// The accounts that follow it.
+    Followers,
+    /// The accounts it follows.
+    Following,
+}
+
+impl FollowsDir {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FollowsDir::Followers => "followers",
+            FollowsDir::Following => "following",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<FollowsDir> {
+        match value {
+            "followers" => Some(FollowsDir::Followers),
+            "following" => Some(FollowsDir::Following),
+            _ => None,
+        }
+    }
+
+    /// The account's other list.
+    pub fn other(self) -> FollowsDir {
+        match self {
+            FollowsDir::Followers => FollowsDir::Following,
+            FollowsDir::Following => FollowsDir::Followers,
+        }
+    }
+}
+
+/// The account whose followers or following a follows page lists, as its
+/// header shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowsOwner {
+    pub fid: u64,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pfp_url: Option<String>,
+    #[serde(default)]
+    pub followers: u64,
+    #[serde(default)]
+    pub following: u64,
+}
+
+impl FollowsOwner {
+    pub fn summary(&self) -> UserSummary {
+        UserSummary {
+            fid: self.fid,
+            username: self.username.clone(),
+            display_name: self.display_name.clone(),
+            pfp_url: self.pfp_url.clone(),
+        }
+    }
+
+    /// The display name, falling back to the username.
+    pub fn name(&self) -> &str {
+        if self.display_name.is_empty() { &self.username } else { &self.display_name }
+    }
+
+    /// How many accounts the list holds, as the account's profile counts them.
+    pub fn count(&self, dir: FollowsDir) -> u64 {
+        match dir {
+            FollowsDir::Followers => self.followers,
+            FollowsDir::Following => self.following,
+        }
+    }
+}
+
+/// One account in a followers or following list: what its row and its
+/// profile card show.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Person {
+    pub fid: u64,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pfp_url: Option<String>,
+    /// The start of the bio, as a profile card shows it
+    /// ([`crate::profile::bio_excerpt`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bio: String,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub followers: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub following: u64,
+    /// Unix seconds: when the follow was made.
+    pub followed_at: i64,
+    /// Unix seconds of the onchain ID registration the provider reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_at: Option<i64>,
+}
+
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
+
+impl Person {
+    pub fn summary(&self) -> UserSummary {
+        UserSummary {
+            fid: self.fid,
+            username: self.username.clone(),
+            display_name: self.display_name.clone(),
+            pfp_url: self.pfp_url.clone(),
+        }
+    }
+
+    /// The display name, falling back to the username.
+    pub fn name(&self) -> &str {
+        if self.display_name.is_empty() { &self.username } else { &self.display_name }
+    }
+
+    /// What the person's profile card shows, from their row: it needs no
+    /// request of its own.
+    pub fn card(&self) -> UserCard {
+        UserCard {
+            bio: self.bio.clone(),
+            followers: self.followers,
+            following: self.following,
+            registered_at: self.registered_at,
+            first_username_at: None,
+        }
+    }
+}
+
+/// A page of an account's followers or of whom it follows, the newest
+/// follow first (`/api/v1/follows`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowsPayload {
+    pub dir: FollowsDir,
+    /// The account, on a list's first page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<FollowsOwner>,
+    pub people: Vec<Person>,
+    /// Where the next page starts (`cursor=`); none at the list's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    pub meta: Meta,
+}
+
 /// The first direct replies of a cast, for the replies preview.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepliesPayload {
@@ -598,6 +745,19 @@ pub fn replies_path(hash: &str) -> String {
     format!("{API_PREFIX}/replies?hash={hash}")
 }
 
+/// A page of `name`'s followers or following: its first, or the one at
+/// `cursor` (the previous page's `next`). `name` is a profile URL's name,
+/// so a page that starts on the list can ask for its first page before the
+/// app has come (index.html's `early-fetch`); later pages name the account
+/// `fid:<n>`, which skips looking the name up.
+pub fn follows_path(name: &str, dir: FollowsDir, cursor: Option<&str>) -> String {
+    let path = format!("{API_PREFIX}/follows?name={}&dir={}", percent_encode(name), dir.as_str());
+    match cursor {
+        Some(cursor) => format!("{path}&cursor={}", percent_encode(cursor)),
+        None => path,
+    }
+}
+
 /// `POST`: a write a signed-in reader just made from Allthing ([`Wrote`]),
 /// for the Worker to refresh the pages it changes.
 pub const REFRESH_PATH: &str = "/api/v1/refresh";
@@ -757,6 +917,10 @@ pub const ENGAGEMENT_CACHE: CachePolicy = REACTIONS_CACHE;
 /// keep it.
 pub const ENGAGEMENT_PARTIAL_CACHE: CachePolicy = CachePolicy { fresh: 15, stale: 60, keep: 86_400, browser: 0 };
 pub const REPLIES_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
+/// Followers and following: a list changes by a few follows a minute even
+/// for the busiest accounts, and its newest page is the one that does.
+/// Later pages are kept as long: their cursor names where they start.
+pub const FOLLOWS_CACHE: CachePolicy = CachePolicy { fresh: 600, stale: 3600, keep: 86_400, browser: 300 };
 /// Votes change rarely (a vote can be changed or revoked); hourly is plenty.
 pub const VOTE_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 /// A signed-in reader's notifications, cached at the edge per account:

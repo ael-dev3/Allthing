@@ -35,11 +35,12 @@ where
 /// - a post's a few seconds after the app starts, once the browser is idle
 ///   (opening a post is how most visits go on from a feed), and as a card
 ///   is pointed at or touched (`CastCard`);
-/// - a profile's, a channel's, search's, the channels' and the reader's
-///   notifications' as a link to one is pointed at, touched, pressed or
-///   focused, anywhere on the page (the header's bell, say), and search's
-///   as the search box is; the data of a post or a channel a link opens
-///   comes then too (`prefetch_page_data`).
+/// - a profile's, an account's followers and following, a channel's,
+///   search's, the channels' and the reader's notifications' as a link to
+///   one is pointed at, touched, pressed or focused, anywhere on the page
+///   (the header's bell, say), and search's as the search box is; the data
+///   of a post or a channel a link opens comes then too
+///   (`prefetch_page_data`).
 ///
 /// A visit that starts on one of them has `index.html` fetch its code with
 /// the app. On a slow or metered connection only intent fetches anything.
@@ -122,14 +123,17 @@ pub fn page_came(path: &str) -> bool {
 fn page_part(path: &str) -> Option<usize> {
     let path = path.strip_prefix(crate::util::BASE).unwrap_or(path);
     let path = path.split(['?', '#']).next().unwrap_or(path);
+    // An account's followers and following are a part of their own.
+    let follows = path.starts_with("/u/") && (path.ends_with("/followers") || path.ends_with("/following"));
     [
         path.starts_with("/p/") || path == "/p",
-        path.starts_with("/u/") || path == "/u",
+        (path.starts_with("/u/") && !follows) || path == "/u",
         path.starts_with("/c/") || path == "/c",
         path == "/search",
         path == "/channels",
         // The static copy has no notifications.
         cfg!(not(feature = "static-host")) && path == "/notifications",
+        follows,
     ]
     .iter()
     .position(|&is| is)
@@ -148,9 +152,10 @@ pub fn preload_page(path: &str) {
             1 => crate::pages::user::preload_user().await,
             2 => crate::pages::channel::preload_channel().await,
             3 => crate::pages::search::preload_search().await,
+            4 => crate::pages::channels::preload_channels().await,
             #[cfg(not(feature = "static-host"))]
             5 => crate::pages::notifications::with_worker::preload_notifications().await,
-            _ => crate::pages::channels::preload_channels().await,
+            _ => crate::pages::follows::preload_follows().await,
         };
         // Couldn't come: the next intent asks again.
         if fetched.is_err() {
@@ -161,16 +166,36 @@ pub fn preload_page(path: &str) {
     });
 }
 
+thread_local! {
+    /// The number of the page last opened, counting from the app's start.
+    static OPENED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// A page whose code is fetched on first use: `pending` until it has come
 /// (nothing at all once it has), then the page. If it can't come, the page
 /// is loaded again (see [`reload_once`]), with only `pending` meanwhile,
 /// and if that doesn't bring it, says so.
+///
+/// A page the reader has left by the time its code comes is dropped: it
+/// doesn't take the place of the page they went on or back to, which can
+/// share its place in the router's view.
 pub fn lazy_page<P, V, F>(pending: P, view: F) -> impl IntoView
 where
     P: Fn() -> V + Send + Sync + 'static,
     V: IntoView + 'static,
     F: Future<Output = Result<AnyView, SplitLoaderError>> + 'static,
 {
+    let page = OPENED.with(|opened| {
+        opened.set(opened.get() + 1);
+        opened.get()
+    });
+    let view = async move {
+        let view = view.await;
+        if OPENED.with(std::cell::Cell::get) != page {
+            std::future::pending::<()>().await;
+        }
+        view
+    };
     lazy(pending, view, true, || {
         view! {
             <section class="error-panel" role="alert">

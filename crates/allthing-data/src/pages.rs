@@ -6,13 +6,14 @@ use std::rc::Rc;
 
 use allthing_core::activity::AppsWindow;
 use allthing_core::api::{
-    self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, EngagementPayload, EngagementRequest, HomePayload,
-    IndexCoverage, LatestPayload, Meta, QuotedCast, ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload,
-    UserPayload,
+    self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, EngagementPayload, EngagementRequest, FollowsDir,
+    FollowsPayload, HomePayload, IndexCoverage, LatestPayload, Meta, QuotedCast, ReactionKind, ReactionsPayload,
+    RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
 use allthing_core::embeds::link_key;
 use allthing_core::emoji::ReactionReply;
+use allthing_core::follows;
 use allthing_core::index::{Ranking, Span};
 use allthing_core::latest::{self, Cursor};
 use allthing_core::model::{Cast, Channel};
@@ -805,6 +806,77 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
     // The people found are whole profiles already; the casts' authors get cards.
     notes.keep_users(read_cards(&hydrated, quoted), listed_accounts(&casts, &notes.quotes));
     Built::json(&SearchPayload { query, casts, users, channels, notes, meta: meta(&inv) }, api::SEARCH_CACHE)
+}
+
+/// Links a followers read brings from each shard: two shards, so up to 100
+/// people a page. Whom an account follows is in one shard: 100 a page.
+pub const FOLLOWERS_PAGE: usize = 50;
+pub const FOLLOWING_PAGE: usize = 100;
+
+/// A page of `name`'s followers or following, the newest follow first: the
+/// first, or the one `cursor` names (the previous page's `next`). Its links
+/// come from the node ([`hypersnap::follow_links`]), put in order across the
+/// node's shards ([`follows::merge`]), and its people from one `user/bulk`
+/// read, which also brings the account itself on a first page asked for by
+/// fid. A first page asked for by name looks the account up first; later
+/// pages name it `fid:<n>`.
+pub async fn follows(
+    inv: Rc<Invocation>,
+    name: String,
+    dir: FollowsDir,
+    cursor: Option<String>,
+) -> Result<Built, Failure> {
+    let before = match cursor.as_deref() {
+        Some(cursor) => Some(follows::Paging::decode(cursor).ok_or_else(|| Failure {
+            status: 400,
+            message: "Expected ?cursor=<the previous page's next>".into(),
+            retry_after: None,
+        })?),
+        None => None,
+    };
+    let (fid, raw_owner) = match fid_username(&name) {
+        Some(fid) => (fid, None),
+        None => match hypersnap::user_by_username(&inv, &name).await.map_err(Failure::upstream)? {
+            Some(raw) => (raw.fid, Some(raw)),
+            None => return Ok(Built::not_found("No such user")),
+        },
+    };
+    let page_size = match dir {
+        FollowsDir::Followers => FOLLOWERS_PAGE,
+        FollowsDir::Following => FOLLOWING_PAGE,
+    };
+    let ask = before.as_ref().map(|paging| paging.ask(page_size));
+    // Nothing left to read, only links waiting to be listed.
+    let read = match &ask {
+        Some(ask) if ask.iter().all(Option::is_none) => {
+            follows::Read { links: Vec::new(), next: vec![None; ask.len()] }
+        }
+        _ => hypersnap::follow_links(&inv, dir, fid, page_size, ask.as_deref()).await.map_err(Failure::upstream)?.0,
+    };
+    let merged = follows::merge(before.as_ref(), read, page_size);
+    // An account may follow itself (the oldest do): not listed.
+    let listed: Vec<follows::Link> = merged.listed.into_iter().filter(|link| link.fid != fid).collect();
+    let first = before.is_none();
+    let mut fids: Vec<u64> = listed.iter().map(|link| link.fid).collect();
+    if first && raw_owner.is_none() {
+        fids.push(fid);
+    }
+    let users = hypersnap::users_bulk(&inv, &fids).await.map_err(Failure::upstream)?;
+    let by_fid: HashMap<u64, &normalize::RawUser> = users.iter().map(|user| (user.fid, user)).collect();
+    let owner = match first {
+        true => match raw_owner.as_ref().or_else(|| by_fid.get(&fid).copied()) {
+            Some(raw) => Some(normalize::follows_owner(raw)),
+            None => return Ok(Built::not_found("No such user")),
+        },
+        false => None,
+    };
+    // An account the node lists but `user/bulk` doesn't know is left out.
+    let people = listed
+        .iter()
+        .filter_map(|link| by_fid.get(&link.fid).map(|raw| normalize::person(raw, follows::unix(link.ts))))
+        .collect();
+    let next = merged.paging.map(|paging| paging.encode());
+    Built::json(&FollowsPayload { dir, owner, people, next, meta: meta(&inv) }, api::FOLLOWS_CACHE)
 }
 
 /// Who reacted to a cast, newest first: at most `limit` people out of the

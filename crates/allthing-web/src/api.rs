@@ -716,6 +716,12 @@ fn forgotten(path: &str, asked: f64) -> bool {
     }
 }
 
+/// Forget the answer kept for `path`, so the next read of it asks again:
+/// for a "no such thing" the reader asks to be tried again.
+pub fn forget_one(path: &str) {
+    CACHE.with(|c| c.borrow_mut().remove(path));
+}
+
 /// A recent answer for `path`, read at once, without waiting or fetching:
 /// a popover whose data is kept renders it in the frame it opens.
 pub fn peek<T: DeserializeOwned>(path: &str) -> Option<Result<Fetched<T>, Failure>> {
