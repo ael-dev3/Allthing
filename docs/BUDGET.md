@@ -97,6 +97,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | engagement missing a list (a read failed, or the bucket was kept for page builds) | 15 s | 1 min | 24 h | 0 |
 | replies (popover preview; one a batch brings is as fresh as its batch) | 2 min | 30 min | 24 h | 60 s |
 | vote | 1 h | 24 h | 48 h | 10 min |
+| notifications (a signed-in reader's own, per account and page) | 60 s | 10 min | 24 h | none (`private, no-store`) |
 | not found (404) | 5 min | — | 5 min | 2 min |
 
 - **Fresh**: served from cache as is (1 subrequest, the cache read).
@@ -129,6 +130,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | engagement | cache read 1 + one `reactions/cast` read per list ≤12 (six cards, likes and recasts) + one `cast/conversation` read (depth 1) per card with 1 to 100 replies ≤6 (six reads at a time, the lists first) + link pages ≤6 (the replies' links, one batch, as `/replies` checks them) + cache write 1 (≤ 26; ≤ 20 when no reply links a page not yet checked) |
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤6 + cache write 1 (≤ 9) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
+| notifications | cache read 1 + the page 1 and, with the first page, the reader's latest casts 1 (in parallel) + one batch of the hub's newest recasts of the liked casts that may have some ≤6 and, with the first page, the quotes of the newest casts ≤4 + link pages ≤6 (replies, mentions and quotes) + cache write 1 (≤ 20; the recorded first page took 9 upstream reads, a later page of it 8). No `user/bulk`: the people come with the notifications |
 | sign-in `verify` | one batched OP Mainnet `eth_call` pair 1 (custody and auth address; + 1 fallback RPC) + the account's name and picture (`user/bulk`) 1 (≤ 3); never cached |
 | sign-in `key` | the account's keys (`signersByFid`) 1 + the account's name and picture (`user/bulk`) 1 (2); never cached. The Ed25519 signature is checked by the runtime's WebCrypto, not in WebAssembly |
 | sign-in `start`, `qr`, `signout`; a key's endorsement (`auth/signer`) and `/api/v1/signer` | 0 |
@@ -181,6 +183,8 @@ Endorsing a reader's key signs one EIP-712 digest with secp256k1 (two with `ALLT
 
 An attachment's upload costs the same CPU whatever its size: the Worker hands the request's own body stream to R2 and never reads it, so none of it passes through WebAssembly. Measured on the real Worker under `wrangler dev`, its WebAssembly memory stayed at 1.31 MiB through two 45 MiB uploads, where a body read into Rust would have grown it by 45 MiB at least, and for good. The work around the stream, natively at `opt-level = "z"`: **0.0012 ms** an upload (the session's HMAC, the type and size, the quota, the name, URL and answer) and **0.0007 ms** a range served; the rest is a few runtime calls and D1's two queries. A sampling profiler attached to the local runtime isn't a measure of it: it charges the runtime's own receiving of a large body to whichever JavaScript frame ran last, about 230 ms for a 45 MiB body refused before anything touched it.
 
+A signed-in reader's notifications parse the most of any build per item: Hypersnap repeats each notification's person and cast whole, about 3 KB an item, so a page of 30 is about 100 KB, and a like of a cast that names ten accounts repeats their ten user objects too. Measured natively at `opt-level = "z"` on pages recorded on 21 October 2026, the whole build (parsing the page, the latest casts and the recasts read, normalizing, telling recasts from likes, grouping, the profile cards, and serializing the payload of about 10 KB) took **0.60 to 0.76 ms** for pages of 25 to 30 (98 to 146 KB in all; for the recorded page, parsing it 0.16 ms, normalizing 0.14 ms, grouping 0.10 ms) and **1.16 ms** for the heaviest page of 30 found (199 KB: likes of a cast naming ten accounts). Pages of 40 took 0.90 to 1.50 ms, which is why a page is 30. At 3 to 5 times as WebAssembly: about 2 to 4 ms, and at most about 6 ms. A later page reads no casts and no quotes.
+
 Signing in costs little CPU, measured the same way: a `verify` parses the message (under 0.001 ms), recovers its signer with secp256k1 (**0.10 ms**) and signs the session cookie (0.001 ms); drawing a sign-in QR code takes **0.86 ms**, most of it scoring the code's eight masks. Even at several times slower as WebAssembly, that is about 0.5 ms and 2 to 4 ms.
 
 WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild stays around **2 to 5 ms**, well under 10 ms. A cache hit only copies bytes. Upstream responses are parsed into structs that declare only the fields Allthing reads. A Solana history read (up to 1,000 signatures per address, about 200 KB) is parsed without keeping its entries.
@@ -205,6 +209,7 @@ Allthing's goal is that the number of viewers barely changes upstream volume.
 - **Timeouts**: 8 s for Hypersnap, 5 s for RPCs and 2.5 s for link pages, via `AbortController`.
 - **Memoized per isolate**: signer maps (1 h), app accounts (24 h), trending channels for the directory (10 min), resolved origins (forever, bounded), link page verdicts (24 h, bounded).
 - **Profile cards read votes and wallets more often** than profile views alone would: the first card opened for an account in a data center builds its `/vote` (fresh for an hour) and `/wallets` (fresh for 6 hours). The chain buckets above still cap the wallet reads. A chain refused while its bucket is empty is left out of that copy of the account's shares, as it would be on a profile.
+- **Notifications are a reader's own**, cached per account: the edge cache serves only that reader's repeat views, so their reads grow with the signed-in readers who look, not with page views. A first page reads 2 to 12 times from Hypersnap (the recorded one: 8, and one link page), a later page 1 to 7, at most once a minute per account and data center.
 - **Solana activity** with the `SOLANA_RPC_URL` secret set: `getSignaturesForAddress` per verified address (at most 2), paged 1,000 at a time for up to 5 pages each, so at most 10 calls per wallet read, under the keyed endpoint's own bucket (burst 10, 5 a second). Without the secret, one call per address to Solana's public RPC (burst 4, two calls every 5 s), which refuses Cloudflare Workers' addresses (HTTP 403).
 
 ## 6. Abuse and the daily request limit

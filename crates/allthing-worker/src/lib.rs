@@ -40,6 +40,8 @@ use allthing_core::dc;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::media::{MEDIA_PATH, SERVED_PREFIX};
+use allthing_core::notifications::{NOTIFICATIONS_PATH, cursor_from_param};
+use allthing_core::params::percent_encode;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::scheduled::SCHEDULED_PATH;
 use allthing_core::time::iso_utc;
@@ -166,7 +168,39 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         }
     });
     REQUESTS.with(|r| r.set(r.get() + 1));
+    // The signed-in reader's own notifications: whose is the session's.
+    if url.path() == NOTIFICATIONS_PATH {
+        return notifications(&inv, &req, &env, &url).await;
+    }
     route(&inv, &url, &env).await
+}
+
+/// `/api/v1/notifications[?cursor=]`: the signed-in reader's
+/// notifications (`pages::notifications`), for the account their session
+/// names, never one a query names; 401 without a session. Cached at the
+/// edge per account and page like any payload (a minute fresh), and
+/// answered `private, no-store`, so no browser or shared cache keeps one
+/// for another reader.
+async fn notifications(inv: &Rc<Invocation>, req: &Request, env: &Env, url: &Url) -> Result<Response> {
+    let Some(fid) = auth::signed_in_fid(req, env, (inv.now() / 1000.0) as i64)? else {
+        return error(401, "Sign in to see your notifications", None);
+    };
+    let cursor = match query(url, "cursor").filter(|value| !value.is_empty()) {
+        None => None,
+        Some(value) => match cursor_from_param(&value) {
+            Some(cursor) => Some(cursor),
+            None => return error(400, "Expected ?cursor= as a page of notifications gives it", None),
+        },
+    };
+    let name = match &cursor {
+        Some(cursor) => format!("notifications?fid={fid}&cursor={}", percent_encode(cursor)),
+        None => format!("notifications?fid={fid}"),
+    };
+    let build: cache::Builder = Rc::new(move |inv, previous| {
+        let cursor = cursor.clone();
+        async move { pages::notifications(inv, fid, cursor, previous).await }.boxed_local()
+    });
+    answer(inv, cache_key(url, &name), build, false, false, true).await
 }
 
 /// The cron trigger in wrangler.toml that stores the newest casts. It fires
@@ -312,13 +346,31 @@ async fn serve(inv: &Rc<Invocation>, key: String, endpoint: Rc<Endpoint>) -> Res
         let endpoint = endpoint.clone();
         async move { endpoint.build(inv, previous).await }.boxed_local()
     });
+    answer(inv, key, build, wallets, engagement, false).await
+}
+
+/// A payload from the edge cache, built with `build` when it must be. A
+/// `private` one (a session's own) is never kept by a browser or a shared
+/// cache.
+async fn answer(
+    inv: &Rc<Invocation>,
+    key: String,
+    build: cache::Builder,
+    wallets: bool,
+    engagement: bool,
+    private: bool,
+) -> Result<Response> {
     let started = inv.now();
     match cache::serve(inv, &key, build).await {
         Ok((entry, served)) => {
             let headers = Headers::new();
             headers.set("content-type", "application/json; charset=utf-8")?;
             let browser = if served == Served::StaleIfError { 15 } else { entry.policy.browser };
-            headers.set("cache-control", &format!("public, max-age={browser}"))?;
+            if private {
+                headers.set("cache-control", "private, no-store")?;
+            } else {
+                headers.set("cache-control", &format!("public, max-age={browser}"))?;
+            }
             headers.set("x-allthing-cache", served.label())?;
             // The Worker's own time for this answer: a cache read, or the
             // build a miss waited for. Clocks only advance across I/O, so it

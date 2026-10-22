@@ -753,6 +753,11 @@ pub const ENGAGEMENT_PARTIAL_CACHE: CachePolicy = CachePolicy { fresh: 15, stale
 pub const REPLIES_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
 /// Votes change rarely (a vote can be changed or revoked); hourly is plenty.
 pub const VOTE_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
+/// A signed-in reader's notifications, cached at the edge per account:
+/// read again a minute after the last read, served while one rebuild runs
+/// for ten, and never kept by browsers (the Worker answers them `private,
+/// no-store`, as a session's own).
+pub const NOTIFICATIONS_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 0 };
 /// Lookups that found nothing (unknown user, missing cast).
 pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 300, browser: 120 };
 
@@ -967,6 +972,7 @@ mod tests {
             ENGAGEMENT_PARTIAL_CACHE,
             REPLIES_CACHE,
             VOTE_CACHE,
+            NOTIFICATIONS_CACHE,
             MISS_CACHE,
         ] {
             assert!(policy.fresh <= policy.stale && policy.stale <= policy.keep);

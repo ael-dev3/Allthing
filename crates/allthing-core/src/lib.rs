@@ -30,6 +30,7 @@ pub mod message;
 pub mod metadata;
 pub mod model;
 pub mod normalize;
+pub mod notifications;
 pub mod params;
 pub mod people;
 pub mod profile;
