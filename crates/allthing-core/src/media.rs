@@ -204,7 +204,7 @@ pub fn served_type(stored: Option<&str>) -> &'static str {
 /// The headers every file is served with, beside its length and range:
 /// its type, a year's caching, its ETag, `nosniff` and the sandbox policy,
 /// and leave for any site or app to show it.
-pub fn served_headers(content_type: &'static str, etag: &str) -> [(&'static str, String); 8] {
+pub fn served_headers(content_type: &'static str, etag: &str) -> [(&'static str, String); 9] {
     [
         ("content-type", content_type.to_owned()),
         ("cache-control", SERVED_CACHE.to_owned()),
@@ -214,7 +214,67 @@ pub fn served_headers(content_type: &'static str, etag: &str) -> [(&'static str,
         ("content-security-policy", SERVED_CSP.to_owned()),
         ("cross-origin-resource-policy", "cross-origin".to_owned()),
         ("access-control-allow-origin", "*".to_owned()),
+        ("access-control-expose-headers", EXPOSED.to_owned()),
     ]
+}
+
+/// What another site's script may read of a served file's answer: what an
+/// HLS or MP4 player looks at.
+pub const EXPOSED: &str = "accept-ranges, content-length, content-range, etag";
+
+/// The answer to a CORS preflight for a served file (an `OPTIONS` before a
+/// `GET` with headers a page sets, such as a player's `Range`): any site,
+/// reading, with those headers, for a day.
+pub fn preflight_headers() -> [(&'static str, &'static str); 4] {
+    [
+        ("access-control-allow-origin", "*"),
+        ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
+        ("access-control-allow-headers", "range, if-none-match, if-range"),
+        ("access-control-max-age", "86400"),
+    ]
+}
+
+/// The two playlists a remuxed video is served with, beside its `.mp4`
+/// (see `crate::fmp4`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Playlist {
+    /// `<id>.m3u8`, which a cast embeds.
+    Master,
+    /// `<id>.v.m3u8`, its segments.
+    Media,
+}
+
+impl Playlist {
+    /// The video and the playlist a path names, if it names one exactly:
+    /// `/m/<fid>/<id>.m3u8` or `/m/<fid>/<id>.v.m3u8`, of an MP4.
+    pub fn from_path(path: &str) -> Option<(MediaKey, Playlist)> {
+        let base = path.strip_suffix(".m3u8")?;
+        let (base, playlist) = match base.strip_suffix(".v") {
+            Some(base) => (base, Playlist::Media),
+            None => (base, Playlist::Master),
+        };
+        Some((MediaKey::from_path(&format!("{base}.mp4"))?, playlist))
+    }
+
+    /// Its ETag, from the video's: a playlist changes with it, and only then.
+    pub fn etag(self, video: &str) -> String {
+        let tag = video.trim_start_matches("W/").trim_matches('"');
+        format!("\"{tag}-{}\"", if self == Playlist::Master { "m3u8" } else { "v.m3u8" })
+    }
+}
+
+/// For Allthing's own player: the `.mp4` beside one of Allthing's own video
+/// playlists (`/m/<fid>/<id>.m3u8` on `allthing.social` or `origin`), a
+/// fragmented MP4 that the browser plays by itself.
+pub fn progressive_of(url: &str, origin: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://allthing.social").or_else(|| {
+        let origin = origin.trim_end_matches('/');
+        (!origin.is_empty()).then(|| url.strip_prefix(origin)).flatten()
+    })?;
+    match Playlist::from_path(rest)? {
+        (key, Playlist::Master) => Some(format!("{}{}", &url[..url.len() - rest.len()], key.path())),
+        _ => None,
+    }
 }
 
 /// What `GET` [`MEDIA_PATH`] answers where attachments can be uploaded.
@@ -343,6 +403,12 @@ impl MediaKey {
     /// Its key in R2.
     pub fn object(&self) -> String {
         format!("{}/{}.{}", self.fid, self.id, self.media.extension())
+    }
+
+    /// Where the Worker serves its master playlist, if it is a video
+    /// remuxed for HLS (`crate::fmp4`): `/m/<fid>/<id>.m3u8`.
+    pub fn playlist_path(&self) -> String {
+        format!("{SERVED_PREFIX}{}/{}.m3u8", self.fid, self.id)
     }
 
     /// Where the Worker serves it.
@@ -572,7 +638,57 @@ mod tests {
             assert_eq!(get("cross-origin-resource-policy"), Some("cross-origin"));
             assert_eq!(get("accept-ranges"), Some("bytes"));
             assert_eq!(get("etag"), Some("\"abc\""));
+            assert_eq!(get("access-control-allow-origin"), Some("*"));
+            assert_eq!(get("access-control-expose-headers"), Some(EXPOSED));
         }
+    }
+
+    #[test]
+    fn a_remuxed_videos_playlists_are_beside_it() {
+        let key = MediaKey::new(1234, ID, MediaType::Mp4).unwrap();
+        assert_eq!(key.playlist_path(), format!("/m/1234/{ID}.m3u8"));
+        assert_eq!(Playlist::from_path(&format!("/m/1234/{ID}.m3u8")), Some((key.clone(), Playlist::Master)));
+        assert_eq!(Playlist::from_path(&format!("/m/1234/{ID}.v.m3u8")), Some((key.clone(), Playlist::Media)));
+        for bad in [
+            format!("/m/1234/{ID}.mp4"),
+            format!("/m/1234/{ID}.x.m3u8"),
+            format!("/m/1234/{ID}.mp4.m3u8"),
+            format!("/m/1234/{ID}.v.v.m3u8"),
+            format!("/m/1234/{ID}.M3U8"),
+            format!("/m/01234/{ID}.m3u8"),
+            format!("/m/1234/{}.m3u8", &ID[1..]),
+            format!("/m/1234/{ID}.m3u8/"),
+            "/m/1234/.m3u8".to_owned(),
+        ] {
+            assert_eq!(Playlist::from_path(&bad), None, "{bad}");
+        }
+        // An MP4's own path is still an MP4.
+        assert_eq!(MediaKey::from_path(&format!("/m/1234/{ID}.m3u8")), None);
+        assert_eq!(Playlist::Master.etag("\"abc\""), "\"abc-m3u8\"");
+        assert_eq!(Playlist::Media.etag("W/\"abc\""), "\"abc-v.m3u8\"");
+    }
+
+    #[test]
+    fn own_playlists_play_as_their_mp4() {
+        let at = |host: &str, name: &str| format!("{host}/m/1234/{ID}.{name}");
+        let site = "https://allthing.social";
+        assert_eq!(progressive_of(&at(site, "m3u8"), ""), Some(at(site, "mp4")));
+        assert_eq!(progressive_of(&at(site, "m3u8"), "http://127.0.0.1:8787"), Some(at(site, "mp4")));
+        let local = "http://127.0.0.1:8787";
+        assert_eq!(progressive_of(&at(local, "m3u8"), local), Some(at(local, "mp4")));
+        assert_eq!(progressive_of(&at(local, "m3u8"), ""), None);
+        assert_eq!(progressive_of(&at("https://elsewhere.example", "m3u8"), local), None);
+        assert_eq!(progressive_of(&at(site, "v.m3u8"), ""), None);
+        assert_eq!(progressive_of(&at(site, "mp4"), ""), None);
+        assert_eq!(progressive_of("https://stream.farcaster.xyz/v1/video/x.m3u8", ""), None);
+        assert_eq!(progressive_of(&format!("https://allthing.social.evil/m/1234/{ID}.m3u8"), ""), None);
+    }
+
+    #[test]
+    fn preflights_say_any_site_may_read() {
+        let headers = preflight_headers();
+        assert!(headers.contains(&("access-control-allow-origin", "*")));
+        assert!(headers.iter().any(|(n, v)| *n == "access-control-allow-headers" && v.contains("range")));
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod compose;
 pub mod dc;
 pub mod embeds;
 pub mod emoji;
+pub mod fmp4;
 pub mod format;
 pub mod guard;
 pub mod hls;

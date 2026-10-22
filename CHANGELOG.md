@@ -5,6 +5,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+
+- Videos attached in Allthing play in the Farcaster app. It plays only HLS (`.m3u8`) video in a cast, wherever it is hosted, and showed an MP4 at `allthing.social/m/…` as "No preview found for shared link", however it was served: a live MP4 on another host with the same headers fares the same. Now the composer remuxes an MP4 or MOV (H.264 or HEVC, with or without AAC) in the browser before it uploads it: the same frames and sound, nothing re-encoded, as one fragmented MP4 cut at key frames every 4 s or more, without the file's metadata (where it was recorded, the phone). It is kept as `<id>.mp4`, and the cast embeds `https://allthing.social/m/<fid>/<id>.m3u8`, a master playlist with the video's size and codecs, whose media playlist (`<id>.v.m3u8`) names byte ranges of the MP4. The Worker writes both from the index the browser sent with the upload, kept as the file's R2 metadata: one R2 `head` a playlist, no body read. Allthing plays the MP4 itself. A video that can't be remuxed (WebM, other codecs, an MP4 already fragmented) is kept and embedded as before. `/m/` also answers CORS preflights (`OPTIONS`, 204) and lets other sites' players read `Content-Range`. Casts already posted keep the URL they embed: an MP4 posted before this still shows as a link there.
+
 - Feed refreshes retain all three levels of already loaded quotes. They no longer reread known nested quotes or collapse them to links when the provider is unavailable or the request budget is tight.
 
 - Keyed Solana RPC failures keep the private endpoint and provider content out of public wallet error responses, while preserving status, timeout and request-budget diagnostics.

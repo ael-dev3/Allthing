@@ -184,6 +184,9 @@ impl Attachment {
 pub struct Live {
     pub file: web_sys::File,
     pub body: Option<web_sys::Blob>,
+    /// A video remuxed for HLS: its index (`allthing_core::fmp4`), sent with
+    /// `body`, which is then the remuxed MP4.
+    pub hls: Option<String>,
     pub request: Option<web_sys::XmlHttpRequest>,
     pub progress: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::ProgressEvent)>>,
     pub ended: Option<wasm_bindgen::closure::Closure<dyn FnMut()>>,

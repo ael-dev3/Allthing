@@ -105,8 +105,9 @@ function png(width: number) {
 type Upload = { status: number; json: { url?: string; type?: string; bytes?: number; error?: string; retry_after?: number }; headers: Headers };
 
 /** POST `body` to the spec's Worker as `type`, from Allthing itself unless told otherwise. */
-async function upload(body: Buffer | string, type: string | null, fid: number | null, origin: string | null = ORIGIN): Promise<Upload> {
+async function upload(body: Buffer | string, type: string | null, fid: number | null, origin: string | null = ORIGIN, hls?: string): Promise<Upload> {
   const headers: Record<string, string> = {};
+  if (hls !== undefined) headers["x-allthing-hls"] = hls;
   if (type !== null) headers["content-type"] = type;
   if (fid !== null) headers.cookie = session(fid);
   if (origin !== null) headers.origin = origin;
@@ -231,6 +232,90 @@ test("a reader uploads an image and a video, and anyone gets them back byte for 
   expect(d1("SELECT COUNT(*) AS files, SUM(bytes) AS bytes FROM media WHERE fid = 1234")).toEqual([{ files: 3, bytes }]);
   expect(d1("SELECT bytes, files FROM media_total WHERE name = 'all'")).toEqual([{ bytes, files: 3 }]);
   expect(d1("SELECT SUM(bytes) AS bytes, SUM(files) AS files FROM media_total WHERE name LIKE 'd%'")).toEqual([{ bytes, files: 3 }]);
+});
+
+test("a video remuxed for HLS is embedded as its playlist, which the Worker writes from R2's metadata, for the Farcaster app", async () => {
+  // A fragmented MP4 as the composer remuxes one (allthing_core::fmp4), and its index.
+  const video = readFileSync(path.join(__dirname, "fixtures/remuxed/video.mp4"));
+  const index = "1;64x36;avc1.64000a,mp4a.40.2;1258;4000:19463,4000:18474,4000:18667";
+  const sent = await upload(video, "video/mp4", 4321, ORIGIN, index);
+  expect(sent.status, sent.json.error).toBe(200);
+  expect(sent.json.type).toBe("video/mp4");
+  expect(sent.json.bytes).toBe(video.length);
+  const url = sent.json.url!;
+  expect(url).toMatch(/\/m\/4321\/[0-9a-f]{32}\.m3u8$/);
+  const id = url.match(/([0-9a-f]{32})\.m3u8$/)![1];
+
+  // The master playlist: one rendition, with its size and codecs, as the Farcaster app reads them.
+  const master = await fetch(local(url));
+  expect(master.status).toBe(200);
+  const body = await master.text();
+  expect(body).toBe(
+    "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n" +
+      `#EXT-X-STREAM-INF:BANDWIDTH=38926,AVERAGE-BANDWIDTH=38575,RESOLUTION=64x36,CODECS="avc1.64000a,mp4a.40.2"\n${id}.v.m3u8\n`,
+  );
+  const headers = Object.fromEntries(master.headers);
+  expect(headers).toMatchObject({
+    "content-type": "application/vnd.apple.mpegurl",
+    "content-length": String(Buffer.byteLength(body)),
+    "cache-control": "public, max-age=31536000, immutable",
+    "access-control-allow-origin": "*",
+    "x-content-type-options": "nosniff",
+  });
+  expect(headers.etag).toMatch(/^"[0-9a-f]+-m3u8"$/);
+  expect(headers["accept-ranges"]).toBeUndefined();
+  const head = await fetch(local(url), { method: "HEAD" });
+  expect(head.status).toBe(200);
+  expect(head.headers.get("content-type")).toBe("application/vnd.apple.mpegurl");
+  expect(head.headers.get("content-length")).toBe(String(Buffer.byteLength(body)));
+  expect((await fetch(local(url), { headers: { "if-none-match": headers.etag } })).status).toBe(304);
+
+  // The media playlist: each segment a byte range of the MP4, and those ranges are its fragments.
+  const media = await (await fetch(local(url.replace(/\.m3u8$/, ".v.m3u8")))).text();
+  expect(media).toContain(`#EXT-X-MAP:URI="${id}.mp4",BYTERANGE="1258@0"`);
+  const ranges = [...media.matchAll(/#EXTINF:([\d.]+),\n#EXT-X-BYTERANGE:(\d+)@(\d+)\n(\S+)/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3]), m[4]]);
+  expect(ranges).toEqual([
+    [4, 19463, 1258, `${id}.mp4`],
+    [4, 18474, 20721, `${id}.mp4`],
+    [4, 18667, 39195, `${id}.mp4`],
+  ]);
+  expect(media.endsWith("#EXT-X-ENDLIST\n")).toBe(true);
+  const mp4 = local(url.replace(/\.m3u8$/, ".mp4"));
+  for (const [, length, offset] of ranges as number[][]) {
+    const part = await fetch(mp4, { headers: { range: `bytes=${offset}-${offset + length - 1}` } });
+    expect(part.status).toBe(206);
+    const bytes = Buffer.from(await part.arrayBuffer());
+    expect(bytes.subarray(4, 8).toString("latin1"), "each segment starts with its moof").toBe("moof");
+    expect(bytes.equals(video.subarray(offset, offset + length))).toBe(true);
+  }
+  // A player on another site asks first: any may, with a Range.
+  const preflight = await fetch(mp4, { method: "OPTIONS", headers: { origin: "https://farcaster.xyz", "access-control-request-method": "GET", "access-control-request-headers": "range" } });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+  expect(preflight.headers.get("access-control-allow-headers")).toContain("range");
+  expect((await fetch(mp4)).headers.get("access-control-expose-headers")).toContain("content-range");
+
+  // A video kept without an index (one that couldn't be remuxed, or uploaded before) has no playlist.
+  const plain = await upload(video, "video/mp4", 4321);
+  expect(plain.json.url).toMatch(/\.mp4$/);
+  expect((await fetch(local(plain.json.url!.replace(/\.mp4$/, ".m3u8")))).status).toBe(404);
+  expect((await fetch(local(plain.json.url!.replace(/\.mp4$/, ".v.m3u8")))).status).toBe(404);
+  expect((await fetch(`${ORIGIN}/m/4321/${"0".repeat(32)}.m3u8`)).status).toBe(404);
+
+  // An index that isn't the file's, or with anything but an MP4, is refused, and nothing is kept.
+  const [{ files }] = d1("SELECT COUNT(*) AS files FROM media WHERE fid = 4321");
+  for (const [body, type, line] of [
+    [video, "video/mp4", "1;64x36;avc1.64000a;1258;4000:19463"],
+    [video, "video/mp4", "1;64x36;avc1\",x=\"y;1258;4000:19463,4000:18474,4000:18667"],
+    [video, "video/mp4", "nonsense"],
+    [video, "video/quicktime", index],
+    [png(4), "image/png", "1;4x1;avc1.64000a;10;4000:" + (png(4).length - 10)],
+  ] as const) {
+    const refused = await upload(body, type, 4321, ORIGIN, line);
+    expect(refused.status, line).toBe(400);
+    expect(refused.json.error).toBe("That video's stream index doesn't match it; try again");
+  }
+  expect(d1("SELECT COUNT(*) AS files FROM media WHERE fid = 4321")).toEqual([{ files }]);
 });
 
 test("a file is served only as the type it was declared as, and never runs as a page", async ({ page }) => {

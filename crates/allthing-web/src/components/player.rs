@@ -317,6 +317,10 @@ pub fn HlsVideo(
         visibility: None,
     })));
     let in_view = RwSignal::new(false);
+    // Allthing's own videos are playlists for the Farcaster app, of an MP4
+    // the browser plays by itself.
+    let origin = web_sys::window().and_then(|w| w.location().origin().ok()).unwrap_or_default();
+    let url = allthing_core::media::progressive_of(&url, &origin).unwrap_or(url);
     let hls = is_hls(&url);
     // Its width and height, for a box of the right shape: from the
     // playlist, or a plain file's metadata (the lightbox sizes its own).

@@ -10,15 +10,24 @@
 //! upload takes the same CPU time for 1 KB as for 50 MB. Serving is the same
 //! the other way round: R2's body stream is the response's.
 //!
+//! A video the browser remuxed for HLS (`allthing_core::fmp4`) comes with
+//! its index, in a header, which is kept as the file's custom metadata in
+//! R2; its two playlists are written from that at `/m/<fid>/<id>.m3u8` and
+//! `.v.m3u8`, from the file's metadata alone: one `head`, no body read.
+//!
 //! Without the binding (until the owner sets R2 up, docs/DEPLOY.md), an
 //! upload answers 404, and so does every `/m/` path; `/api/v1/status` says
 //! `media.ready: false`.
 
 use std::cell::RefCell;
 
+use std::collections::HashMap;
+
+use allthing_core::fmp4::{self, HlsIndex};
 use allthing_core::media::{
-    self, ByteRange, LIMITS, MAX_EMBED_URL_BYTES, MediaKey, RangeRead, Refused, UploadLimiter, Uploaded, admit,
-    check_upload, content_range, none_match, served_headers, served_type, unsatisfied_range,
+    self, ByteRange, LIMITS, MAX_EMBED_URL_BYTES, MediaKey, MediaType, Playlist, RangeRead, Refused, UploadLimiter,
+    Uploaded, admit, check_upload, content_range, none_match, preflight_headers, served_headers, served_type,
+    unsatisfied_range,
 };
 use futures::future::FutureExt;
 use worker::web_sys::ReadableStream;
@@ -39,6 +48,8 @@ const NOT_KEPT: Refused =
     Refused { status: 503, message: "That file couldn't be kept just now; try again", retry_after: Some(5) };
 const NOT_WHOLE: Refused =
     Refused { status: 400, message: "That file didn't arrive whole; try again", retry_after: None };
+const BAD_INDEX: Refused =
+    Refused { status: 400, message: "That video's stream index doesn't match it; try again", retry_after: None };
 
 thread_local! {
     /// Uploads each reader started in the past minute, in this isolate.
@@ -106,13 +117,26 @@ async fn upload(req: Request, env: &Env, ctx: &Context, now_ms: f64) -> Result<R
         Ok(checked) => checked,
         Err(refused) => return refuse(refused),
     };
+    // A video remuxed for HLS: its index, which must be the MP4's, whole.
+    let hls = match req.headers().get(fmp4::INDEX_HEADER)? {
+        None => None,
+        Some(line) => match HlsIndex::parse(&line) {
+            Some(index) if media == MediaType::Mp4 && index.total() == length => Some(index),
+            _ => return refuse(BAD_INDEX),
+        },
+    };
     if let Err(wait) = LIMITER.with(|limiter| limiter.borrow_mut().allow(fid, now_ms)) {
         return error(429, "That's a lot of uploads at once; try again in a moment", Some(wait));
     }
     let Some(key) = random_hex(16).and_then(|id| MediaKey::new(fid, &id, media)) else {
         return error(500, "No randomness for a file's name", None);
     };
-    let url = key.url(&origin);
+    // The cast embeds the playlist, which the Farcaster app plays; the file
+    // itself, which it doesn't, only when there is none.
+    let url = match hls {
+        Some(_) => format!("{origin}{}", key.playlist_path()),
+        None => key.url(&origin),
+    };
     if url.len() > MAX_EMBED_URL_BYTES {
         return error(500, "This server's address is too long for a cast to embed its files", None);
     }
@@ -129,7 +153,7 @@ async fn upload(req: Request, env: &Env, ctx: &Context, now_ms: f64) -> Result<R
     let Some(body) = req.inner().body() else { return refuse(media::EMPTY) };
     // Kept and recorded under waitUntil, so a reader who leaves as their
     // last byte arrives leaves no file that the totals don't count.
-    let kept = keep(bucket, index, key, body, length, now).boxed_local().shared();
+    let kept = keep(bucket, index, key, body, length, hls, now).boxed_local().shared();
     let background = kept.clone();
     ctx.wait_until(async move {
         let _ = background.await;
@@ -149,11 +173,16 @@ async fn keep(
     key: MediaKey,
     body: ReadableStream,
     length: u64,
+    hls: Option<HlsIndex>,
     now: i64,
 ) -> std::result::Result<u64, Refused> {
     let object = key.object();
     let metadata = HttpMetadata { content_type: Some(key.media.mime().to_owned()), ..HttpMetadata::default() };
-    let size = match bucket.put(object.as_str(), body).http_metadata(metadata).execute().await {
+    let mut put = bucket.put(object.as_str(), body).http_metadata(metadata);
+    if let Some(hls) = &hls {
+        put = put.custom_metadata(HashMap::from([(fmp4::INDEX_METADATA.to_owned(), hls.encode())]));
+    }
+    let size = match put.execute().await {
         Ok(Some(stored)) => stored.size(),
         Ok(None) => return Err(NOT_KEPT),
         Err(failure) => {
@@ -181,8 +210,13 @@ pub async fn serve(req: &Request, env: &Env, path: &str) -> Result<Response> {
     let head = match req.method() {
         Method::Get => false,
         Method::Head => true,
+        Method::Options => return preflight(),
         _ => return error(405, "Attachments are read with GET", None),
     };
+    if let Some((key, playlist)) = Playlist::from_path(path) {
+        let Some(bucket) = bucket(env) else { return not_found() };
+        return serve_playlist(req, &bucket, &key, playlist, head).await;
+    }
     let (Some(key), Some(bucket)) = (MediaKey::from_path(path), bucket(env)) else { return not_found() };
     let object = key.object();
     let if_none_match = req.headers().get("if-none-match")?;
@@ -232,6 +266,54 @@ pub async fn serve(req: &Request, env: &Env, path: &str) -> Result<Response> {
             _ => unreadable(&object, &failure),
         },
     }
+}
+
+/// A CORS preflight: any site may read attachments, with a `Range`.
+fn preflight() -> Result<Response> {
+    let headers = Headers::new();
+    for (name, value) in preflight_headers() {
+        headers.set(name, value)?;
+    }
+    Ok(ResponseBuilder::new().with_status(204).with_headers(headers).empty())
+}
+
+/// `GET` or `HEAD` a remuxed video's playlist, written from its index in
+/// R2's metadata (one `head`): 404 for a file without one.
+async fn serve_playlist(
+    req: &Request,
+    bucket: &Bucket,
+    key: &MediaKey,
+    playlist: Playlist,
+    head: bool,
+) -> Result<Response> {
+    let object = key.object();
+    let found = match bucket.head(object.as_str()).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return not_found(),
+        Err(failure) => return unreadable(&object, &failure),
+    };
+    let Some(index) = found.custom_metadata()?.get(fmp4::INDEX_METADATA).and_then(|line| HlsIndex::parse(line)) else {
+        return not_found();
+    };
+    let etag = playlist.etag(&found.http_etag());
+    let headers = Headers::new();
+    for (name, value) in served_headers(fmp4::PLAYLIST_TYPE, &etag) {
+        headers.set(name, &value)?;
+    }
+    // A playlist is read whole.
+    headers.delete("accept-ranges")?;
+    if req.headers().get("if-none-match")?.is_some_and(|tags| none_match(&tags, &etag)) {
+        return Ok(ResponseBuilder::new().with_status(304).with_headers(headers).empty());
+    }
+    let text = match playlist {
+        Playlist::Master => fmp4::master_playlist(&index, &key.id),
+        Playlist::Media => fmp4::media_playlist(&index, &key.id),
+    };
+    headers.set("content-length", &text.len().to_string())?;
+    if head {
+        return Ok(ResponseBuilder::new().with_headers(headers).empty());
+    }
+    Ok(ResponseBuilder::new().with_headers(headers).fixed(text.into_bytes()))
 }
 
 /// The headers of a served file: the type it was kept as, if it is one of

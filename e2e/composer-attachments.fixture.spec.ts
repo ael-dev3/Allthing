@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { expect, test, type Browser, type JSHandle, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
@@ -47,7 +49,7 @@ const gif = (slug: string) => {
 };
 
 type FileLike = { name: string; mimeType: string; buffer: Buffer };
-type Upload = { body: Buffer; type: string; url: string };
+type Upload = { body: Buffer; type: string; url: string; hls?: string };
 type Kept = { id: number; at: number; hash: string; state: "waiting"; draft: string };
 
 /**
@@ -84,12 +86,15 @@ class Media {
       const refused = this.refuse.shift();
       // The page may have stopped it meanwhile.
       if (refused) return route.fulfill({ status: refused[0], json: { error: refused[1] } }).catch(() => {});
-      const url = `${new URL(request.url()).origin}/m/${me.fid}/${"f".repeat(30)}${String(this.uploads.length + 1).padStart(2, "0")}.${EXT[type]}`;
-      this.uploads.push({ body, type, url });
+      // A video remuxed for HLS comes with its index, and the cast embeds its playlist, as the Worker answers.
+      const hls = request.headers()["x-allthing-hls"];
+      const url = `${new URL(request.url()).origin}/m/${me.fid}/${"f".repeat(30)}${String(this.uploads.length + 1).padStart(2, "0")}.${hls ? "m3u8" : EXT[type]}`;
+      this.uploads.push({ body, type, url, hls });
       return route.fulfill({ json: { url, type, bytes: body.length } }).catch(() => {});
     });
     await page.route("**/m/**", (route) => {
-      const upload = this.uploads.find((u) => u.url === route.request().url());
+      const url = route.request().url();
+      const upload = this.uploads.find((u) => u.url === url || (u.hls && u.url.replace(/\.m3u8$/, ".mp4") === url));
       return upload ? route.fulfill({ body: upload.body, contentType: upload.type }) : route.fulfill({ status: 404, body: "" });
     });
   }
@@ -483,6 +488,44 @@ test("a PNG and an MP4 from the attach button upload, go out as the cast's embed
   await page.screenshot({ path: info.outputPath("attach-1280-posted.png") });
   await page.goto(`/p/${sent.hash}`);
   await showsMedia(page.locator(".post"), urls[0], urls[1]);
+});
+
+test("an MP4 is remuxed for the Farcaster app: it goes up as a fragmented MP4 with its HLS index, the cast embeds its playlist, and Allthing plays its MP4", async ({ page }) => {
+  const media = new Media();
+  const calls = await ready(page, media);
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  // An MP4 as a camera or an editor writes it: progressive, H.264 and AAC, with where it was recorded.
+  const original = readFileSync(path.join(__dirname, "../crates/allthing-core/tests/fixtures/video-h264-aac.mp4"));
+  await attach(page, dialog, [{ name: "reading.mp4", mimeType: "video/mp4", buffer: original }]);
+  await expect(tiles(dialog)).toHaveCount(1);
+  await dialog.getByRole("textbox", { name: "What's happening?" }).fill("Chapter 1, Part 02");
+  const cast = dialog.getByRole("button", { name: "Cast", exact: true });
+  await expect(cast).toBeEnabled();
+  await cast.click();
+  await expect(dialog).toBeHidden();
+  const [up] = media.uploads;
+  expect(up.type).toBe("video/mp4");
+  // The same samples as fragments: a different file, with a moof per segment and no recorded place.
+  expect(up.body.equals(original)).toBe(false);
+  expect(up.body.subarray(4, 8).toString("latin1")).toBe("ftyp");
+  expect(up.body.includes(Buffer.from("moof"))).toBe(true);
+  expect(up.body.includes(Buffer.from("+40.0000-074.0000"))).toBe(false);
+  // Its index: its size and codecs, its init and three 4 s segments, which add up to the file.
+  const match = up.hls?.match(/^1;64x36;avc1\.[0-9a-f]{6},mp4a\.40\.2;(\d+);(\d+):(\d+),(\d+):(\d+),(\d+):(\d+)$/);
+  expect(match, up.hls).toBeTruthy();
+  const [init, ...segments] = match!.slice(1).map(Number);
+  expect(segments.filter((_, i) => i % 2 === 0)).toEqual([4000, 4000, 4000]);
+  expect(init + segments.filter((_, i) => i % 2 === 1).reduce((a, b) => a + b)).toBe(up.body.length);
+  // The cast embeds the playlist, which the Farcaster app plays.
+  const [sent] = calls.sent;
+  expect(up.url).toMatch(/\/m\/1234\/[0-9a-f]{32}\.m3u8$/);
+  expect(castOf(sent).embeds).toEqual([{ url: up.url }]);
+  // Allthing's own card plays the MP4 beside it, as a plain file.
+  calls.feed.push(listed(sent.hash, "Chapter 1, Part 02", [{ kind: "video", url: up.url }]));
+  await page.reload();
+  const card = page.locator(".cast-card:not(.outgoing)").filter({ hasText: "Chapter 1, Part 02" });
+  await expect(card.locator(".tile-video video")).toHaveAttribute("src", `${up.url.replace(/\.m3u8$/, ".mp4")}#t=0.1`);
 });
 
 test("files dropped on the composer attach, with a hint while they're over it; a cast takes two embeds, a GIF and a quote among them", async ({ page }, info) => {

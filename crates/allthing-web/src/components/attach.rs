@@ -12,9 +12,15 @@
 //! the URLs of those uploaded, in order, before its GIF or sticker; with
 //! those and the cast it quotes, it carries two embeds at most.
 //!
+//! A video in an MP4 or MOV is remuxed first (`allthing_core::fmp4`): the
+//! same frames and sound, as a fragmented MP4 with an HLS index, so the cast
+//! embeds a playlist, the only kind of video the Farcaster app plays. One
+//! that can't be is uploaded as it is.
+//!
 //! In the composer's part (`split_composer.wasm`), with the composer's
 //! pickers and bar.
 
+use allthing_core::fmp4;
 use allthing_core::media::{EMBEDS_FULL, MEDIA_PATH, MediaType, accepted, check_file, size_label};
 use allthing_core::metadata;
 use leptos::prelude::*;
@@ -67,7 +73,7 @@ fn start(composer: Composer, file: File, media: MediaType) {
     let state = Sending::Up { sent: 0.0, of: file.size() };
     composer.files.update(|files| files.push(Attachment { id, name: file.name(), media, local, state }));
     LIVE.with(|live| {
-        live.borrow_mut().insert(id, Live { file, body: None, request: None, progress: None, ended: None })
+        live.borrow_mut().insert(id, Live { file, body: None, hls: None, request: None, progress: None, ended: None })
     });
     send(composer, id);
 }
@@ -97,23 +103,31 @@ fn media_of(composer: Composer, id: u64) -> Option<MediaType> {
 fn send(composer: Composer, id: u64) {
     spawn_local(async move {
         let Some(media) = media_of(composer, id) else { return };
-        let Some((file, kept)) = LIVE.with(|live| live.borrow().get(&id).map(|l| (l.file.clone(), l.body.clone())))
+        let Some((file, kept, hls)) =
+            LIVE.with(|live| live.borrow().get(&id).map(|l| (l.file.clone(), l.body.clone(), l.hls.clone())))
         else {
             return;
         };
-        let body = match kept {
-            Some(body) => body,
+        let (body, hls) = match kept {
+            Some(body) => (body, hls),
             None if metadata::stripped(media) => match without_metadata(&file, media).await {
-                Ok(body) => body,
+                Ok(body) => (body, None),
                 Err(why) => return set(composer, id, Sending::Failed { why }),
             },
-            None => file.clone().into(),
+            None if matches!(media, MediaType::Mp4 | MediaType::Mov) => match remuxed(&file).await {
+                Some((body, index)) => (body, Some(index)),
+                None => (file.clone().into(), None),
+            },
+            None => (file.clone().into(), None),
         };
+        // A remuxed video goes as an MP4, whatever it was.
+        let mime = if hls.is_some() { MediaType::Mp4.mime() } else { media.mime() };
         // Removed meanwhile, or the draft cleared.
         let Some(request) = LIVE.with(|live| {
             let mut live = live.borrow_mut();
             let live = live.get_mut(&id)?;
             live.body = Some(body.clone());
+            live.hls = hls.clone();
             let request = XmlHttpRequest::new().ok()?;
             live.request = Some(request.clone());
             Some(request)
@@ -142,7 +156,8 @@ fn send(composer: Composer, id: u64) {
             set(composer, id, state);
         });
         let sent = request.open_with_async("POST", MEDIA_PATH, true).is_ok()
-            && request.set_request_header("content-type", media.mime()).is_ok()
+            && request.set_request_header("content-type", mime).is_ok()
+            && hls.as_deref().is_none_or(|index| request.set_request_header(fmp4::INDEX_HEADER, index).is_ok())
             && request.upload().is_ok_and(|upload| {
                 upload.set_onprogress(Some(progress.as_ref().unchecked_ref()));
                 true
@@ -180,6 +195,19 @@ async fn without_metadata(file: &File, media: MediaType) -> Result<Blob, String>
     let options = BlobPropertyBag::new();
     options.set_type(media.mime());
     Blob::new_with_u8_array_sequence_and_options(&parts, &options).map_err(|_| unreadable())
+}
+
+/// A video as a fragmented MP4 and its HLS index, if it can be remuxed.
+async fn remuxed(file: &File) -> Option<(Blob, String)> {
+    let buffer = JsFuture::from(file.array_buffer()).await.ok()?;
+    let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+    let remuxed = fmp4::remux(&bytes).ok()?;
+    drop(bytes);
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(remuxed.bytes.as_slice()));
+    let options = BlobPropertyBag::new();
+    options.set_type(MediaType::Mp4.mime());
+    let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
+    Some((blob, remuxed.index.encode()))
 }
 
 /// "a JPEG", for what is said of a file.
