@@ -168,14 +168,14 @@ fn site(site: &Site) -> Result<()> {
         cargo.args(["--features", "static-host"]);
     }
     // The SpacetimeDB bridge (web/stdb/bridge.ts, bundled by esbuild), for
-    // Chat and Encrypted on /messages: the app learns its fingerprinted
+    // the Messages inbox on /messages: the app learns its fingerprinted
     // name at build time. The static copy has no sign-in, so none.
     let bridge = if site.static_host {
         cargo.env_remove("ALLTHING_STDB_BRIDGE");
         None
     } else {
         // Without Node or the npm packages (`npm ci`) the app builds
-        // without them: the tabs say so, and the rest of the site is whole.
+        // without them: Messages says so, and the rest of the site is whole.
         let out = root.join("target/stdb-bridge/bridge.js");
         let _ = fs::remove_file(&out);
         let built =
@@ -188,7 +188,7 @@ fn site(site: &Site) -> Result<()> {
                 Some((name, bytes))
             }
             Err(why) => {
-                eprintln!("xtask: no SpacetimeDB bridge ({why}); Chat and Encrypted are left out (run npm ci)");
+                eprintln!("xtask: no SpacetimeDB bridge ({why}); Messages are left out (run npm ci)");
                 cargo.env_remove("ALLTHING_STDB_BRIDGE");
                 None
             }

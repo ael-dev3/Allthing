@@ -38,15 +38,12 @@ use crate::upstream::UpstreamError;
 pub enum HttpMethod {
     Get,
     Post,
-    /// The Direct Cast API's send, through the Worker's relay.
-    Put,
 }
 
 pub struct HttpRequest {
     pub method: HttpMethod,
     pub url: String,
-    /// Headers beyond `Accept` and `Content-Type`: a relayed Direct Cast
-    /// call's `Authorization` and `Idempotency-Key`.
+    /// Headers beyond `Accept` and `Content-Type`.
     pub headers: Vec<(&'static str, String)>,
     /// A JSON body, for POST.
     pub body: Option<String>,

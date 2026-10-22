@@ -8,8 +8,8 @@
 // AGPL and its license audit don't take; the TypeScript SDK is ISC.
 //
 // `scripts/build-stdb.mjs` bundles this into one file, `assets/stdb-<hash>.js`,
-// which the app adds as a module script only when a reader opens the Chat
-// or Encrypted tab on /messages: no other page fetches it. It sets
+// which the app adds as a module script only when a signed-in reader opens
+// /messages: no other page fetches it. It sets
 // `window.allthingStdb`, and the app talks to it in JSON strings, so the
 // app's own module needs no glue for it.
 //

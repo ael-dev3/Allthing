@@ -1,30 +1,11 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* Chat and Encrypted on /messages, and the encryption explainer
+/* The Messages inbox (#general and encrypted conversations), and the encryption explainer
    (crates/allthing-web/src/pages/messages/realtime, components/encryption.rs).
    Not in allthing.css: the realtime part adds these when it first draws,
    so no other page downloads them. */
-.rt-room,
-.rt-e2e {
-  display: grid;
-  gap: 10px;
-}
-
-.rt-room-head {
+.rt-bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 14px;
-}
-
-.rt-room-head h2 {
-  margin: 0;
-  font: 600 18px/1.3 var(--font-ui);
-}
-
-.rt-room-note {
-  flex: 1 1 260px;
-  margin: 0;
-  font-size: 14px;
+  justify-content: flex-end;
 }
 
 .rt-online {
@@ -44,29 +25,30 @@
   color: var(--ink-2);
 }
 
-.rt-card {
-  display: flex;
-  flex-direction: column;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-
 .rt-list {
   list-style: none;
   margin: 0;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
   gap: 2px;
-  height: clamp(300px, calc(100vh - 400px), 600px);
-  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+.rt-online {
+  margin-left: auto;
+}
+
+.rt-room-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .rt-typing {
-  padding: 0 16px;
+  padding: 4px 16px 0;
 }
 
 .rt-msg {
@@ -244,7 +226,6 @@
 
 @media (max-width: 640px) {
   .rt-list {
-    height: clamp(260px, calc(100dvh - 380px), 600px);
     padding: 8px;
   }
 

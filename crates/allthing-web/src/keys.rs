@@ -7,12 +7,7 @@
 //! (`allthing_core::message`); its public half is what the reader approves
 //! in the Farcaster app. Not in the static copy, which has no sign-in.
 //!
-//! It also keeps the reader's Farcaster API key for Direct Casts
-//! (`allthing_core::dc`), in a database of its own, `allthing-dc`, one per
-//! signed-in account ([`dc_key`]). That key is a bearer token, a string the
-//! page must read to send it, so it is kept as one.
-//!
-//! And, for Messages on SpacetimeDB, one record per signed-in account in
+//! It also keeps, for Messages on SpacetimeDB, one record per signed-in account in
 //! `allthing-stdb` ([`Realtime`]): the SpacetimeDB token and identity this
 //! browser connects with, and its X25519 key pair for end-to-end encrypted
 //! messages (`allthing_core::e2e`), which WebCrypto makes unexportable as
@@ -36,8 +31,6 @@ struct Database {
 
 /// The reader's app keys.
 const APP_KEYS: Database = Database { name: "allthing-keys", store: "keys" };
-/// The reader's Farcaster API keys, for Direct Casts.
-const DC_KEYS: Database = Database { name: "allthing-dc", store: "keys" };
 /// SpacetimeDB identities and message keys.
 const REALTIME: Database = Database { name: "allthing-stdb", store: "identities" };
 /// The account a key made to sign in with is kept for, until the account
@@ -165,29 +158,6 @@ pub async fn save(stored: &Stored) -> Result<(), KeyError> {
 /// Forget the key kept for `fid`.
 pub async fn remove(fid: u64) -> Result<(), KeyError> {
     request(APP_KEYS, IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64)))
-        .await
-        .map(|_| ())
-}
-
-/// The Farcaster API key this browser keeps for `fid`'s Direct Casts, if
-/// any.
-pub async fn dc_key(fid: u64) -> Result<Option<String>, KeyError> {
-    let found =
-        request(DC_KEYS, IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64))).await?;
-    Ok(field(&found, "key").as_string().filter(|key| !key.is_empty()))
-}
-
-/// Keep `key` as `fid`'s Farcaster API key, in place of any kept before.
-pub async fn keep_dc_key(fid: u64, key: &str) -> Result<(), KeyError> {
-    let record = Object::new();
-    let _ = Reflect::set(&record, &JsValue::from_str("fid"), &JsValue::from_f64(fid as f64));
-    let _ = Reflect::set(&record, &JsValue::from_str("key"), &JsValue::from_str(key));
-    request(DC_KEYS, IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
-}
-
-/// Forget `fid`'s Farcaster API key.
-pub async fn forget_dc_key(fid: u64) -> Result<(), KeyError> {
-    request(DC_KEYS, IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64)))
         .await
         .map(|_| ())
 }

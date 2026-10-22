@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import axe from "axe-core";
 import { signIn } from "./helpers/farcaster";
 
 /*
- * Chat and Encrypted on /messages, on Allthing's SpacetimeDB database,
+ * The Messages inbox (#general and encrypted conversations, in one list),
+ * on Allthing's SpacetimeDB database,
  * from end to end in the browser: two readers, Alice and Bob, each in a
  * browser of their own, with the app's real code (the Rust that seals and
  * opens messages, WebCrypto's X25519, IndexedDB).
@@ -211,21 +213,32 @@ function keptMessageKey(page: Page, fid: number) {
 
 for (const width of [1280, 390]) {
   test.describe(`at ${width}px`, () => {
-    test("Direct Casts stays the first tab, and nothing of SpacetimeDB loads until Chat or Encrypted opens", async ({ browser }) => {
+    test("one inbox lists #general and encrypted conversations, asks for no API key, and passes axe", async ({ browser }) => {
       const db = new Database();
       const { context, page, requests } = await reader(browser, db, alice, width);
       await page.goto("/");
-      await page.goto("/messages");
-      const tabs = page.getByRole("navigation", { name: "Messages" });
-      await expect(tabs.getByRole("link", { name: "Direct Casts" })).toHaveAttribute("aria-current", "page");
-      await expect(page.getByText("Your Direct Casts, Allthing's room and encrypted messages.")).toBeVisible();
       expect(requests.some((u) => /\/assets\/stdb-/.test(u))).toBe(false);
-      await tabs.getByRole("link", { name: "Chat" }).click();
-      await expect(page).toHaveURL(/\/messages\?tab=chat$/);
+      await page.goto("/messages");
+      const list = page.getByRole("navigation", { name: "Conversations" });
+      await expect(list.getByRole("link", { name: /#general/ })).toBeVisible();
+      await expect(list.getByRole("link", { name: "New message" })).toBeVisible();
+      await expect(page.getByText(/API key|wc_secret|Direct Cast/i)).toHaveCount(0);
+      await list.getByRole("link", { name: /#general/ }).click();
+      await expect(page).toHaveURL(/\/messages\?room=general$/);
       await expect(page.getByRole("heading", { name: "#general" })).toBeVisible();
+      await expect(page.getByLabel("Message #general")).toBeVisible();
       await expect.poll(() => requests.filter((u) => /\/assets\/stdb-[0-9a-f]+\.js$/.test(u)).length).toBe(1);
-      // It connects to Allthing's database on maincloud.
+      // It connects to Allthing's database on maincloud, and never to Farcaster's Direct Cast API.
       expect(await page.evaluate(() => (window as unknown as { __stdbTarget: object }).__stdbTarget)).toEqual({ uri: "wss://maincloud.spacetimedb.com", database: "allthing" });
+      expect(requests.filter((u) => /api\.farcaster\.xyz\/(fc|v2\/ext-send)|\/api\/v1\/dc\b/.test(u))).toEqual([]);
+      await page.evaluate(axe.source);
+      const violations = await page.evaluate(async () => {
+        // @ts-expect-error axe is the injected script's global
+        const result = await window.axe.run(".dm", { resultTypes: ["violations"] });
+        return result.violations.map((v: { id: string; nodes: unknown[] }) => `${v.id} (${v.nodes.length})`);
+      });
+      expect(violations).toEqual([]);
+      await page.screenshot({ path: test.info().outputPath(`inbox-${width}.png`) });
       await context.close();
     });
 
@@ -234,8 +247,8 @@ for (const width of [1280, 390]) {
       db.verifyAttestations = true;
       const a = await reader(browser, db, alice, width);
       const b = await reader(browser, db, bob, width);
-      await a.page.goto("/messages?tab=chat");
-      await b.page.goto("/messages?tab=chat");
+      await a.page.goto("/messages?room=general");
+      await b.page.goto("/messages?room=general");
       const box = a.page.getByLabel("Message #general");
       await expect(box).toBeVisible();
       await box.fill("gm from Alice");
@@ -259,14 +272,14 @@ for (const width of [1280, 390]) {
       const db = new Database();
       const a = await reader(browser, db, alice, width);
       const b = await reader(browser, db, bob, width);
-      // Bob opens Encrypted once, so his browser has a key.
-      await b.page.goto("/messages?tab=encrypted");
-      await expect(b.page.getByRole("heading", { name: "Encrypted messages" })).toBeVisible();
+      // Bob opens Messages once, so his browser has a key.
+      await b.page.goto("/messages");
+      await expect(b.page.getByRole("navigation", { name: "Conversations" })).toBeVisible();
       await expect.poll(() => db.keys.size).toBe(1);
       // Without the Worker's attestation key, names are as people claim them, and the page says so.
       await expect(b.page.getByText("Accounts can't be verified here yet")).toBeVisible();
 
-      await a.page.goto(`/messages?tab=encrypted&to=${bob.fid}`);
+      await a.page.goto(`/messages?to=${bob.fid}`);
       const box = a.page.getByLabel("Encrypted message to @bob");
       await expect(box).toBeVisible();
       const secret = "the eagle lands at noon 🦅";
@@ -286,12 +299,14 @@ for (const width of [1280, 390]) {
       expect([dm.sender_key_version, dm.recipient_key_version]).toEqual([1, 1]);
 
       // Bob reads it, and answers.
-      await b.page.goto(`/messages?tab=encrypted&to=${alice.fid}`);
+      await b.page.goto(`/messages?to=${alice.fid}`);
       const bobsThread = b.page.getByRole("list", { name: "Encrypted messages with @alice" });
       await expect(bobsThread.getByText(secret)).toBeVisible();
       await b.page.getByLabel("Encrypted message to @alice").fill("copy that");
       await b.page.getByLabel("Encrypted message to @alice").press("Enter");
       await expect(a.page.getByRole("list", { name: "Encrypted messages with @bob" }).getByText("copy that")).toBeVisible();
+      // Bob's conversation is in Alice's one inbox, beside #general.
+      if (width >= 1280) await expect(a.page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /Bob/ })).toBeVisible();
       await a.page.screenshot({ path: test.info().outputPath(`encrypted-${width}.png`) });
 
       // The private keys stay in each browser, unexportable; only public halves went out.
@@ -314,7 +329,7 @@ for (const width of [1280, 390]) {
     test("the encryption explainer says how, and copies the full explanation for an agent", async ({ browser }) => {
       const db = new Database();
       const { context, page } = await reader(browser, db, alice, width);
-      await page.goto("/messages?tab=encrypted");
+      await page.goto("/messages");
       const lock = page.getByRole("button", { name: "End-to-end encrypted: how" });
       await expect(lock).toBeVisible();
       await lock.click();

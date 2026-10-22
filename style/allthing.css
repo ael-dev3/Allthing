@@ -9133,7 +9133,7 @@ p.jumbo .emoji img {
   }
 }
 
-/* The reader's Direct Casts (pages/messages): the conversations beside the
+/* Messages (pages/messages): the conversations beside the
    one open, in a box whose height is fixed so nothing moves as they load;
    on a phone, one at a time. */
 .dm {
@@ -9188,42 +9188,12 @@ p.jumbo .emoji img {
   overflow: hidden;
 }
 
-.dm-box-single {
-  grid-template-columns: minmax(0, 1fr);
-  height: auto;
-  min-height: 380px;
-}
-
 .dm-list {
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--line);
   background: var(--paper-2);
-}
-
-.dm-list-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 60px;
-  padding: 8px 12px 8px 16px;
-  border-bottom: 1px solid var(--line);
-}
-
-.dm-list-title {
-  margin: 0;
-  font: 600 13px/1.2 var(--font-ui);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.dm-new-button {
-  min-height: 36px;
-  padding: 0 13px;
-  font-size: 13px;
 }
 
 .dm-rows {
@@ -9293,13 +9263,6 @@ p.jumbo .emoji img {
   min-width: 0;
 }
 
-.dm-row-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .dm-row-name {
   font-weight: 600;
   font-size: 14.5px;
@@ -9323,30 +9286,6 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
-.dm-unread .dm-row-name,
-.dm-unread .dm-row-last {
-  color: var(--ink);
-  font-weight: 700;
-}
-
-.dm-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.dm-more {
-  margin: 6px 12px 12px;
-  min-height: 40px;
-}
-
-.dm-list-note {
-  margin: 0;
-  padding: 16px;
-  line-height: 1.5;
-}
-
 .dm-pane {
   display: flex;
   flex-direction: column;
@@ -9366,10 +9305,6 @@ p.jumbo .emoji img {
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
-}
-
-.dm-box-single .dm-thread {
-  min-height: 380px;
 }
 
 .dm-thread-head {
@@ -9407,32 +9342,6 @@ p.jumbo .emoji img {
   stroke-linejoin: round;
 }
 
-.dm-thread-who {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-}
-
-.dm-thread-title {
-  margin: 0;
-  font: 600 15px/1.25 var(--font-ui);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dm-thread-handle {
-  font-size: 13px;
-  justify-self: start;
-}
-
-.dm-open-app {
-  flex: none;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 .dm-scroll {
   display: flex;
   flex-direction: column;
@@ -9440,10 +9349,6 @@ p.jumbo .emoji img {
   min-height: 0;
   padding: 14px 16px;
   overflow-y: auto;
-}
-
-.dm-older {
-  align-self: center;
 }
 
 .dm-messages {
@@ -9485,49 +9390,10 @@ p.jumbo .emoji img {
   border-radius: 16px 16px 6px 16px;
 }
 
-.dm-deleted,
-.dm-mine .dm-deleted {
-  font-style: italic;
-  color: var(--ink-3);
-  background: none;
-  border: 1px dashed var(--line-2);
-}
-
-.dm-outgoing:not(.dm-failed) .dm-bubble {
-  opacity: 0.82;
-}
-
-.dm-failed .dm-bubble,
-.dm-mine.dm-failed .dm-bubble {
-  color: var(--ink);
-  background: var(--card);
-  border: 1px solid rgba(163, 50, 42, 0.55);
-}
-
 .dm-time {
   margin: 3px 4px 0;
   font-size: 11.5px;
   color: var(--ink-3);
-}
-
-.dm-sender {
-  margin: 0 4px 2px;
-  font-size: 12px;
-}
-
-.dm-failure {
-  margin: 4px 4px 0;
-  color: #a3322a;
-  font-size: 13px;
-  line-height: 1.4;
-  text-align: right;
-}
-
-.dm-failure-actions {
-  display: flex;
-  gap: 14px;
-  margin: 2px 4px 0;
-  font-size: 13.5px;
 }
 
 .dm-composer {
@@ -9555,8 +9421,7 @@ p.jumbo .emoji img {
 }
 
 .dm-text:focus-visible,
-.dm-picker-input:focus-visible,
-.dm-key-row input:focus-visible {
+.dm-picker-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -9617,54 +9482,9 @@ p.jumbo .emoji img {
 }
 
 /* Links in a sentence are underlined, not told apart by colour alone. */
-.dm-panel p a:not(.button),
-.dm-steps a,
-.dm-note a {
+.dm-panel p a:not(.button) {
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-
-.dm-steps {
-  margin: 0;
-  padding-left: 22px;
-  display: grid;
-  gap: 8px;
-}
-
-.dm-key-form {
-  display: grid;
-  gap: 6px;
-}
-
-.dm-key-form label {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.dm-key-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.dm-key-row input {
-  flex: 1 1 260px;
-  min-width: 0;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--line-2);
-  border-radius: 10px;
-  background: var(--paper-2);
-  font: 15px var(--font-mono);
-}
-
-.dm-key-row .button {
-  min-height: 44px;
-}
-
-.dm-note {
-  font-size: 13.5px;
-  color: var(--ink-2);
 }
 
 .dm-actions {
@@ -9675,12 +9495,6 @@ p.jumbo .emoji img {
 
 .dm-actions .button {
   min-height: 44px;
-}
-
-.dm-key-line {
-  margin: 0;
-  font-size: 13.5px;
-  text-align: center;
 }
 
 .dm .link-button {
@@ -9751,33 +9565,15 @@ p.jumbo .emoji img {
   font-size: 13px;
 }
 
-.dm-to {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-}
-
 /* On a touch screen, a fingertip's size: buttons 44 px tall, and the
    small links and text buttons a tap band 44 px tall (their ::after), as
    wide as they are and centred on them, leaving the layout as it is. */
 @media (pointer: coarse) {
-  .dm-new-button,
-  .dm-more,
-  .dm-older {
-    min-height: 44px;
-  }
-
-  .dm .link-button,
-  .dm-open-app,
-  .dm-thread-handle {
+  .dm .link-button {
     position: relative;
   }
 
-  .dm .link-button::after,
-  .dm-open-app::after,
-  .dm-thread-handle::after {
+  .dm .link-button::after {
     content: "";
     position: absolute;
     top: 50%;
@@ -9795,15 +9591,11 @@ p.jumbo .emoji img {
     height: clamp(420px, calc(100dvh - 190px), 760px);
   }
 
-  .dm-box-single {
-    height: auto;
-  }
-
   .dm-box.dm-has-pane .dm-list {
     display: none;
   }
 
-  .dm-box:not(.dm-has-pane):not(.dm-box-single) .dm-pane {
+  .dm-box:not(.dm-has-pane) .dm-pane {
     display: none;
   }
 

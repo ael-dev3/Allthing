@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Chat: Allthing's general room, live. Its messages are public (anyone
+//! `#general`: Allthing's public room, live, in the inbox's pane. Its messages are public (anyone
 //! signed in reads them), stored in the clear in the database's
 //! `chat_message`, and never posted to Farcaster.
 
@@ -9,8 +9,9 @@ use allthing_core::stdb::{GENERAL_ROOM, MAX_CHAT_BYTES};
 use leptos::ev;
 use leptos::prelude::*;
 
+use super::inbox::BackLink;
 use super::live::{Live, Phase};
-use super::{Clock, Status, Who, time_label};
+use super::{Clock, Who, time_label};
 use crate::pages::messages::people::People;
 
 /// While typing, the room is told at most this often (the module keeps
@@ -89,25 +90,22 @@ pub fn Chat(live: Live, people: People) -> impl IntoView {
     };
 
     view! {
-        <section class="rt-room" aria-labelledby="rt-room-title">
-            <header class="rt-room-head">
-                <h2 id="rt-room-title">"#general"</h2>
-                <p class="muted rt-room-note">
-                    "Allthing's public room: anyone signed in reads it, live. Nothing here goes to Farcaster."
-                </p>
-                <span class="rt-online muted" aria-live="polite">{move || format!("{} online", online())}</span>
+        <div class="dm-thread rt-room">
+            <header class="dm-thread-head">
+                <BackLink/>
+                <h2 class="rt-peer">"#general"</h2>
+                <span class="rt-online muted">{move || format!("{} online", online())}</span>
             </header>
-            <Status live=live.clone()/>
-            <div class="rt-card">
-                <ol class="rt-list" node_ref=list aria-label="Messages in #general" aria-live="polite">
-                    {rows}
-                </ol>
+            <ol class="rt-list dm-scroll" node_ref=list aria-label="Messages in #general" aria-live="polite">
+                {rows}
+            </ol>
+            <div class="rt-foot">
                 <p class="rt-typing muted" aria-live="polite">{typing}</p>
                 <Show when=ready>
                     <RoomComposer live=live.clone()/>
                 </Show>
             </div>
-        </section>
+        </div>
     }
 }
 

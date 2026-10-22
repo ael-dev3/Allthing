@@ -55,7 +55,6 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     let method = match request.method {
         HttpMethod::Get => Method::Get,
         HttpMethod::Post => Method::Post,
-        HttpMethod::Put => Method::Put,
     };
     init.with_method(method).with_headers(headers);
     if let Some(body) = request.body {

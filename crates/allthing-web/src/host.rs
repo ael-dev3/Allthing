@@ -71,7 +71,6 @@ async fn exchange(request: HttpRequest) -> Result<HttpResponse, FetchError> {
     init.set_method(match request.method {
         HttpMethod::Get => "GET",
         HttpMethod::Post => "POST",
-        HttpMethod::Put => "PUT",
     });
     let headers = web_sys::Headers::new().map_err(failed)?;
     let _ = headers.set("accept", request.accept);

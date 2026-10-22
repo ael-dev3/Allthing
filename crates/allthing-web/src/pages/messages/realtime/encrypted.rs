@@ -1,158 +1,54 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Encrypted: one-to-one messages, end to end (`allthing_core::e2e`). The
+//! Encrypted conversations: one-to-one messages, end to end (`allthing_core::e2e`). The
 //! database keeps ciphertext only; this browser seals what the reader
 //! writes and opens what they read, with its X25519 key, which WebCrypto
 //! keeps unexportable in IndexedDB (`keys::Realtime`).
 
 use std::collections::BTreeMap;
 
-use allthing_core::e2e::{self, MAX_TEXT, Party, messages_explainer};
-use allthing_core::model::UserSummary;
-use allthing_core::stdb::{DmRow, KeyRow, Mirror, hex, unhex};
+use allthing_core::e2e::{self, MAX_TEXT, Party};
+use allthing_core::stdb::{DmRow, KeyRow, hex, unhex};
 use leptos::ev;
 use leptos::prelude::*;
 
+use super::inbox::BackLink;
 use super::live::{Live, Phase};
-use super::{Status, Who, time_label};
-use crate::components::encryption::EncryptionNote;
-use crate::pages::messages::people::{People, PersonPicker};
-use crate::util::{encrypted_href, use_go, use_query_param};
+use super::{Who, time_label};
+use crate::pages::messages::people::People;
 
 /// What a message reads as, once this browser has tried to open it.
-type Opened = Result<String, String>;
+pub type Opened = Result<String, String>;
 
-#[component]
-pub fn Encrypted(live: Live, people: People) -> impl IntoView {
-    let to = use_query_param("to");
-    let peer_fid = Memo::new(move |_| to.get().and_then(|t| t.parse::<u64>().ok()).filter(|f| *f > 0));
-    let go = use_go();
-    let mirror = live.mirror.clone();
-    let identity = live.identity.clone();
-    let opened = RwSignal::new(BTreeMap::<u64, Opened>::new());
-
-    // Every message this browser hasn't opened yet, opened.
-    {
-        let (live, mirror, identity) = (live.clone(), mirror.clone(), identity.clone());
-        Effect::new(move |_| {
-            let Some(me) = identity.get() else { return };
-            let ready = matches!(live.phase.get(), Phase::Ready { .. });
-            if !ready {
-                return;
-            }
-            let fresh: Vec<DmRow> = mirror.with(|m| {
-                m.dms.values().filter(|d| !opened.with_untracked(|o| o.contains_key(&d.id))).cloned().collect()
+/// Open every message this browser hasn't opened yet, as they come.
+pub fn open_all(live: &Live, opened: RwSignal<BTreeMap<u64, Opened>>) {
+    let live = live.clone();
+    Effect::new(move |_| {
+        let Some(me) = live.identity.get() else { return };
+        if !matches!(live.phase.get(), Phase::Ready { .. }) {
+            return;
+        }
+        let fresh: Vec<DmRow> = live
+            .mirror
+            .with(|m| m.dms.values().filter(|d| !opened.with_untracked(|o| o.contains_key(&d.id))).cloned().collect());
+        for row in fresh {
+            opened.update(|o| {
+                o.insert(row.id, Err("Decrypting…".into()));
             });
-            for row in fresh {
+            let (live, me) = (live.clone(), me.clone());
+            leptos::task::spawn_local(async move {
+                let text = open_row(&live, &me, &row).await;
                 opened.update(|o| {
-                    o.insert(row.id, Err("Decrypting…".into()));
+                    o.insert(row.id, text);
                 });
-                let (live, me) = (live.clone(), me.clone());
-                leptos::task::spawn_local(async move {
-                    let text = open_row(&live, &me, &row).await;
-                    opened.update(|o| {
-                        o.insert(row.id, text);
-                    });
-                });
-            }
-        });
-    }
-
-    // The conversations, by the other account, newest first.
-    let threads = {
-        let (mirror, identity) = (mirror.clone(), identity.clone());
-        Memo::new(move |_| {
-            let me = identity.get().unwrap_or_default();
-            mirror.with(|m| {
-                let mut seen = Vec::<(u64, i64)>::new();
-                for t in m.threads(&me) {
-                    if let Some(fid) = m.fid_of(&t.peer) {
-                        match seen.iter_mut().find(|(f, _)| *f == fid) {
-                            Some(entry) => entry.1 = entry.1.max(t.last_at),
-                            None => seen.push((fid, t.last_at)),
-                        }
-                    }
-                }
-                seen.sort_by_key(|t| std::cmp::Reverse(t.1));
-                seen
-            })
-        })
-    };
-    Effect::new(move |_| people.want(threads.with(|t| t.iter().map(|(f, _)| *f).collect::<Vec<_>>())));
-    Effect::new(move |_| people.want(peer_fid.get()));
-
-    let list = move || {
-        let open = peer_fid.get();
-        let rows = threads.get();
-        if rows.is_empty() {
-            return view! { <p class="dm-empty muted">"No encrypted messages yet."</p> }.into_any();
+            });
         }
-        rows.into_iter()
-            .map(|(fid, at)| {
-                let label = move || people.get(fid).map_or_else(|| format!("fid {fid}"), |u| u.name().to_owned());
-                view! {
-                    <a class="dm-row rt-thread" href=encrypted_href(Some(fid)) aria-current=move || (open == Some(fid)).then_some("page")>
-                        {move || view! { <crate::components::chips::Avatar url=people.get(fid).and_then(|u| u.pfp_url) size=32/> }}
-                        <span class="dm-row-name">{label}</span>
-                        <time class="dm-row-time" datetime=time_label(at).0>{time_label(at).1}</time>
-                    </a>
-                }
-            })
-            .collect_view()
-            .into_any()
-    };
-
-    let picked = Callback::new(move |user: UserSummary| {
-        people.add(vec![user.clone()]);
-        go(&encrypted_href(Some(user.fid)), Default::default());
     });
-
-    let pane = {
-        let (live, mirror, identity) = (live.clone(), mirror.clone(), identity.clone());
-        move || {
-            match peer_fid.get() {
-            None => view! {
-                <div class="rt-start">
-                    <p class="muted">"Write to someone by name. They need to have opened Encrypted on Allthing once, so their browser has a key."</p>
-                    <PersonPicker people picked/>
-                </div>
-            }
-            .into_any(),
-            Some(fid) => {
-                view! { <Conversation live=live.clone() mirror=mirror.clone() identity=identity.clone() people fid opened/> }
-                    .into_any()
-            }
-        }
-        }
-    };
-
-    view! {
-        <section class="rt-e2e" aria-labelledby="rt-e2e-title">
-            <header class="rt-room-head">
-                <h2 id="rt-e2e-title">"Encrypted messages"</h2>
-                <EncryptionNote explainer=messages_explainer()/>
-            </header>
-            <Status live=live.clone()/>
-            <div class="dm-box rt-box" class:dm-has-pane=move || peer_fid.with(Option::is_some)>
-                <nav class="dm-list" aria-label="Encrypted conversations">
-                    <a class="button rt-new" href=encrypted_href(None)>"New message"</a>
-                    {list}
-                </nav>
-                <div class="dm-pane">{pane}</div>
-            </div>
-        </section>
-    }
 }
 
 /// The messages with `fid`, and the box to write to them.
 #[component]
-fn Conversation(
-    live: Live,
-    mirror: ArcRwSignal<Mirror>,
-    identity: ArcRwSignal<Option<String>>,
-    people: People,
-    fid: u64,
-    opened: RwSignal<BTreeMap<u64, Opened>>,
-) -> impl IntoView {
+pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTreeMap<u64, Opened>>) -> impl IntoView {
+    let (mirror, identity) = (live.mirror.clone(), live.identity.clone());
     let rows = {
         let (mirror, identity) = (mirror.clone(), identity.clone());
         Memo::new(move |_| {
@@ -215,15 +111,13 @@ fn Conversation(
     view! {
         <div class="dm-thread">
             <header class="dm-thread-head">
-                <a class="dm-back" href=encrypted_href(None) data-noscroll="" aria-label="Back to your encrypted conversations">
-                    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>
-                </a>
-                <h3 class="rt-peer">
+                <BackLink/>
+                <h2 class="rt-peer">
                     {move || match their_key.get() {
                         Some((verified, _)) => view! { <Who people fid verified/> }.into_any(),
                         None => view! { <Who people fid verified=true/> }.into_any(),
                     }}
-                </h3>
+                </h2>
             </header>
             <div class="dm-scroll" node_ref=list>
                 <ol class="dm-messages" aria-label=move || format!("Encrypted messages with {}", heading())>
@@ -233,7 +127,7 @@ fn Conversation(
             {move || match their_key.get() {
                 None => view! {
                     <p class="dm-empty muted rt-nokey">
-                        {move || heading()}" hasn't opened Encrypted on Allthing yet, so there's no key to write to them with. Once they do, you can."
+                        {move || heading()}" hasn't opened Messages on Allthing yet, so there's no key to write to them with. Once they do, you can."
                     </p>
                 }
                 .into_any(),

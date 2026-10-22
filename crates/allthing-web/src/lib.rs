@@ -73,8 +73,6 @@ fn App() -> impl IntoView {
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]
-    provide_context(components::dc_key::DcKey::new());
-    #[cfg(not(feature = "static-host"))]
     provide_context(components::notifications::Notifications::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::compose::Composer::new());
