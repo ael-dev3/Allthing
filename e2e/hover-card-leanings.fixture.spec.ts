@@ -91,12 +91,14 @@ async function pressed(panel: Locator, favorite: boolean, less: boolean) {
 }
 
 /** How much room the card's row of buttons has to spare, on one line, and its height. */
+// Layout sizes (offsetWidth, offsetHeight), not the bounding boxes: the
+// card scales in as it opens, so a box measured mid-animation is short.
 const fit = (panel: Locator) =>
   panel.locator(".profile-card-leaning").evaluate((row) => {
-    const items = [...row.children].filter((item) => item.getBoundingClientRect().width > 1);
+    const items = ([...row.children] as HTMLElement[]).filter((item) => item.offsetWidth > 1);
     const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
-    const used = items.reduce((width, item) => width + item.getBoundingClientRect().width, 0) + gap * (items.length - 1);
-    return { spare: row.clientWidth - used, height: Math.round(row.getBoundingClientRect().height) };
+    const used = items.reduce((width, item) => width + item.offsetWidth, 0) + gap * (items.length - 1);
+    return { spare: row.clientWidth - used, height: (row as HTMLElement).offsetHeight };
   });
 
 /** Targets in the card whose tap areas (each box, and its ::after band) meet one of Favorite's or Show less's. */
