@@ -221,9 +221,10 @@ pub struct Cast {
     pub recasts: u64,
     #[serde(default)]
     pub replies: u64,
-    /// The cast embeds a mini app or frame. Allthing does not run them, so
-    /// such casts are left out of listings, and kept in threads only as an
-    /// emptied node when they have replies.
+    /// The cast embeds a mini app or frame. Allthing does not run them:
+    /// payloads keep such casts, marked, and the browser leaves them out of
+    /// its lists unless the reader chose to see them ([`Cast::hidden_for`]),
+    /// then shows them as a link to open in Farcaster.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mini_app: bool,
     /// The cast is spam by Allthing's content rules (see [`crate::spam`]),
@@ -236,6 +237,12 @@ impl Cast {
     /// Left out of listings: a mini app or spam.
     pub fn hidden(&self) -> bool {
         self.mini_app || self.spam
+    }
+
+    /// Left out for a reader: spam always, a mini app cast unless they
+    /// chose to see mini apps.
+    pub fn hidden_for(&self, show_mini_apps: bool) -> bool {
+        self.spam || (self.mini_app && !show_mini_apps)
     }
 
     /// Drop a hidden cast's content, keeping its place in a thread.

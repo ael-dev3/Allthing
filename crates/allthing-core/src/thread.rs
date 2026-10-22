@@ -63,12 +63,36 @@ pub fn without_hidden(casts: Vec<Cast>) -> Vec<Cast> {
     casts.into_iter().filter(|c| !c.hidden()).collect()
 }
 
+/// Listings as payloads carry them: spam left out, mini app casts kept,
+/// marked, for the reader's browser to show or leave out
+/// ([`Cast::hidden_for`]).
+pub fn without_spam(casts: Vec<Cast>) -> Vec<Cast> {
+    casts.into_iter().filter(|c| !c.spam).collect()
+}
+
 /// Threads keep their shape: a hidden reply (mini app, spam) with no
 /// replies of its own is dropped, and one with replies stays as an emptied
 /// node so the replies below it still make sense.
-pub fn prune_hidden(mut node: ThreadNode) -> Option<ThreadNode> {
-    node.children = node.children.into_iter().filter_map(prune_hidden).collect();
-    if node.cast.hidden() {
+pub fn prune_hidden(node: ThreadNode) -> Option<ThreadNode> {
+    prune(node, &Cast::hidden)
+}
+
+/// [`prune_hidden`] for spam alone: what a thread's payload keeps, its mini
+/// app replies whole, for the browser to prune as the reader chose
+/// ([`prune_hidden_for`]).
+pub fn prune_spam(node: ThreadNode) -> Option<ThreadNode> {
+    prune(node, &|c: &Cast| c.spam)
+}
+
+/// [`prune_hidden`] as a reader sees a thread: mini app replies too unless
+/// they chose to see them.
+pub fn prune_hidden_for(node: ThreadNode, show_mini_apps: bool) -> Option<ThreadNode> {
+    prune(node, &|c: &Cast| c.hidden_for(show_mini_apps))
+}
+
+fn prune(mut node: ThreadNode, hide: &dyn Fn(&Cast) -> bool) -> Option<ThreadNode> {
+    node.children = node.children.into_iter().filter_map(|child| prune(child, hide)).collect();
+    if hide(&node.cast) {
         if node.children.is_empty() {
             return None;
         }
@@ -84,9 +108,10 @@ pub const CHAIN_COLLAPSE_ABOVE: usize = 3;
 pub const CHAIN_SHOWN_TAIL: usize = 2;
 
 /// Ancestors read nearest first, as the walk up the chain finds them, put
-/// in reading order (root first) without the hidden ones.
+/// in reading order (root first) without the spam. Mini app ancestors stay,
+/// marked, for the reader's choice ([`Cast::hidden_for`]).
 pub fn chain_in_order(nearest_first: Vec<Cast>) -> Vec<Cast> {
-    let mut chain = without_hidden(nearest_first);
+    let mut chain = without_spam(nearest_first);
     chain.reverse();
     chain
 }
@@ -203,6 +228,30 @@ mod tests {
     }
 
     #[test]
+    fn payloads_keep_mini_apps_for_the_reader_to_show_or_not() {
+        let mini = |hash: &str, children| {
+            let mut n = node(hash, children);
+            n.cast.mini_app = true;
+            n.cast.text = "play now".into();
+            n
+        };
+        let mut spam = node("spam", vec![]);
+        spam.cast.spam = true;
+        let tree = node("r", vec![mini("lone", vec![]), spam.clone(), node("ok", vec![])]);
+        // The payload: spam pruned, the mini app whole.
+        let kept = prune_spam(tree).unwrap();
+        let hashes: Vec<&str> = kept.children.iter().map(|c| c.cast.hash.as_str()).collect();
+        assert_eq!(hashes, ["lone", "ok"]);
+        assert_eq!(kept.children[0].cast.text, "play now");
+        // The reader: as they chose.
+        assert_eq!(prune_hidden_for(kept.clone(), true).unwrap().children.len(), 2);
+        assert_eq!(prune_hidden_for(kept, false).unwrap().children.len(), 1);
+        let listing = without_spam(vec![mini("m", vec![]).cast, spam.cast, node("n", vec![]).cast]);
+        assert_eq!(listing.len(), 2);
+        assert!(listing[0].hidden_for(false) && !listing[0].hidden_for(true));
+    }
+
+    #[test]
     fn counts_and_flattens() {
         let tree = node("r", vec![node("a", vec![node("a1", vec![]), node("a2", vec![])]), node("b", vec![])]);
         assert_eq!(count_descendants(&tree), 4);
@@ -212,13 +261,15 @@ mod tests {
     }
 
     #[test]
-    fn chains_read_root_first_without_hidden_casts() {
+    fn chains_read_root_first_without_spam() {
         let mut mini = node("mini", vec![]).cast;
         mini.mini_app = true;
-        let nearest_first = vec![node("parent", vec![]).cast, mini, node("root", vec![]).cast];
+        let mut spam = node("spam", vec![]).cast;
+        spam.spam = true;
+        let nearest_first = vec![node("parent", vec![]).cast, mini, spam, node("root", vec![]).cast];
         let chain = chain_in_order(nearest_first);
         let order: Vec<&str> = chain.iter().map(|c| c.hash.as_str()).collect();
-        assert_eq!(order, ["root", "parent"]);
+        assert_eq!(order, ["root", "mini", "parent"]);
     }
 
     #[test]

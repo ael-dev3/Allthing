@@ -168,13 +168,14 @@ pub fn candidates(raw: &[RawCast], metas: &[RankingMeta], now: i64) -> Vec<Cast>
         .collect()
 }
 
-/// The casts of a page worth keeping: top-level, shown in listings (not a
-/// mini app or spam), and with points that could rank.
+/// The casts of a page worth keeping: top-level, not spam, and with points
+/// that could rank. Mini app casts are kept, for readers who show them; the
+/// front page marks them and the browser leaves them out for the others.
 pub fn worth_indexing(casts: &[Cast], metas: &[RankingMeta], now: i64) -> Vec<Entry> {
     let mut seen = HashSet::new();
     casts
         .iter()
-        .filter(|c| !c.is_reply() && !c.hidden() && points(c) >= floor(metas, c.ts, now))
+        .filter(|c| !c.is_reply() && !c.spam && points(c) >= floor(metas, c.ts, now))
         .filter(|c| seen.insert(c.hash.as_str()))
         .map(|c| Entry(c.hash.clone(), c.ts, points(c)))
         .collect()
@@ -469,10 +470,10 @@ mod tests {
         ];
         // Empty rankings: anything with MIN_POINTS.
         let kept: Vec<String> = worth_indexing(&casts, &[], NOW).into_iter().map(|e| e.0).collect();
-        assert_eq!(kept, ["0x1", "0x6", "0x7", "0x8", "0x9"]);
+        assert_eq!(kept, ["0x1", "0x4", "0x6", "0x7", "0x8", "0x9"]);
         // Full rankings: each cast against its narrowest span's floor.
         let kept: Vec<String> = worth_indexing(&casts, &metas(100, 200, 500), NOW).into_iter().map(|e| e.0).collect();
-        assert_eq!(kept, ["0x1", "0x7", "0x9"]);
+        assert_eq!(kept, ["0x1", "0x4", "0x7", "0x9"]);
         assert_eq!(worth_indexing(&casts[..1], &[], NOW), [Entry("0x1".into(), NOW - DAY, 150)]);
     }
 

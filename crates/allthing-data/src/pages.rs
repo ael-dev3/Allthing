@@ -27,7 +27,8 @@ use allthing_core::provenance::Backend;
 use allthing_core::quotes::{self, QUOTE_DEPTH};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::thread::{
-    chain_in_order, flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_hidden, reply_preview, without_hidden,
+    chain_in_order, flatten, mark_mini_apps, mark_mini_apps_in_tree, prune_spam, reply_preview, without_hidden,
+    without_spam,
 };
 use allthing_core::vote::{AppVote, VotePayload};
 use allthing_core::wallet::{self, ChainActivity, ChainKind, WalletActivity};
@@ -102,16 +103,19 @@ fn with_defaults(mut channels: Vec<Channel>, limit: usize) -> Vec<Channel> {
 }
 
 /// Check the casts' links for mini app pages (within the build's budget),
-/// then leave out every cast that is a mini app or spam.
+/// mark the mini app casts, and leave out spam. A feed (`keep_apps`) keeps
+/// the mini app casts, marked, for the browser to show to the readers who
+/// chose to see them and leave out for the others; search leaves them out.
 async fn drop_hidden(
     inv: &Invocation,
     mut casts: Vec<Cast>,
     notes: &mut api::Annotations,
     known_links: &BTreeMap<String, bool>,
+    keep_apps: bool,
 ) -> Vec<Cast> {
     notes.links = miniapps::check(inv, &casts, known_links).await;
     mark_mini_apps(&mut casts, &notes.links);
-    without_hidden(casts)
+    if keep_apps { without_spam(casts) } else { without_hidden(casts) }
 }
 
 /// Keep what a listing's notes need for the casts it shows, once the hidden
@@ -176,8 +180,9 @@ async fn quoted_casts(
     (known, cards)
 }
 
-/// Check a quote's own links before stripping hidden content. The outer
-/// cast stays visible; its quote keeps the author and the hidden reason.
+/// Check a quote's own links before stripping spam. The outer cast stays
+/// visible; a spam quote keeps the author and the hidden reason, a mini app
+/// quote its content, marked, for the browser to show or not.
 async fn check_quotes<'a>(
     inv: &Invocation,
     casts: impl IntoIterator<Item = &'a mut Cast>,
@@ -187,7 +192,7 @@ async fn check_quotes<'a>(
     let links = miniapps::check(inv, casts.iter().map(|c| &**c), known_links).await;
     for cast in casts {
         mark_mini_apps(std::slice::from_mut(cast), &links);
-        if cast.hidden() {
+        if cast.spam {
             cast.strip_hidden();
         }
     }
@@ -328,7 +333,7 @@ pub async fn home(
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
         let (ranked, counted, poll) = join3(ranked_casts(&inv, &hashes), counted, polled).await;
         let (raw, casts) = ranked?;
-        let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
+        let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
         let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
@@ -341,7 +346,7 @@ pub async fn home(
         join3(hypersnap::trending_casts(&inv, POOL_SIZE, offset, window), counted, polled).await;
     let raw = trending.map_err(Failure::upstream)?;
     let casts = raw.iter().map(normalize::cast).collect();
-    let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
+    let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
@@ -381,7 +386,7 @@ pub async fn following(
         raw.extend(trending);
     }
     let mine: HashSet<String> = theirs.iter().map(|c| c.hash.clone()).collect();
-    let all = drop_hidden(&inv, theirs.into_iter().chain(topping).collect(), &mut notes, &known_links).await;
+    let all = drop_hidden(&inv, theirs.into_iter().chain(topping).collect(), &mut notes, &known_links, true).await;
     let quoted = annotate_listing(&inv, &mut notes, &all, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&all, &notes.quotes));
     let (pool, topped_up): (Vec<Cast>, Vec<Cast>) = all.into_iter().partition(|c| mine.contains(&c.hash));
@@ -559,7 +564,7 @@ async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<B
     };
     let fresh = raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect();
     let known_links = std::mem::take(&mut notes.links);
-    let fresh = drop_hidden(inv, fresh, &mut notes, &known_links).await;
+    let fresh = drop_hidden(inv, fresh, &mut notes, &known_links, true).await;
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
     let quoted = annotate_listing(inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
@@ -646,12 +651,13 @@ pub async fn channel(inv: Rc<Invocation>, key: String, previous: Option<Rc<Vec<u
     let mut casts: Vec<Cast> = raw.iter().map(normalize::cast).collect();
     let mut pinned_cast: Vec<Cast> = pinned.iter().map(normalize::cast).collect();
     // The pinned cast's links are checked first, with the feed's, and it is
-    // left out like any listed cast if it is a mini app or spam.
+    // left out like any listed cast if it is spam, and kept marked if it is
+    // a mini app.
     notes.links = miniapps::check(&inv, pinned_cast.iter().chain(&casts), &known_links).await;
     mark_mini_apps(&mut pinned_cast, &notes.links);
     mark_mini_apps(&mut casts, &notes.links);
-    channel.pinned = without_hidden(pinned_cast).pop();
-    let pool = newest_unique(without_hidden(casts), POOL_SIZE as usize);
+    channel.pinned = without_spam(pinned_cast).pop();
+    let pool = newest_unique(without_spam(casts), POOL_SIZE as usize);
     let listed: Vec<Cast> = channel.pinned.iter().chain(&pool).cloned().collect();
     let quoted = annotate_listing(&inv, &mut notes, &listed, ORIGIN_AUTHORS, &known_links).await;
     // Cards for the casts' authors and for the hosts, whose user objects
@@ -717,8 +723,10 @@ pub async fn cast(inv: Rc<Invocation>, hash: String, previous: Option<Rc<Vec<u8>
     notes.links = links;
     mark_mini_apps_in_tree(&mut thread, &notes.links);
     mark_mini_apps(&mut above, &notes.links);
-    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_hidden).collect();
-    if thread.cast.hidden() {
+    // Spam is pruned here; mini app replies stay whole, marked, for the
+    // browser to prune as the reader chose (`thread::prune_hidden_for`).
+    thread.children = std::mem::take(&mut thread.children).into_iter().filter_map(prune_spam).collect();
+    if thread.cast.spam {
         thread.cast.strip_hidden();
     }
     let ancestors = chain_in_order(above);
@@ -818,7 +826,7 @@ pub async fn user(inv: Rc<Invocation>, username: String, previous: Option<Rc<Vec
         join(miniapps::check(&inv, &casts, &known_links), annotate_listing(&inv, &mut notes, &casts, 2, &known_links))
             .await;
     mark_mini_apps(&mut casts, &links);
-    let pool = without_hidden(casts);
+    let pool = without_spam(casts);
     let quote_links = std::mem::replace(&mut notes.links, links);
     notes.links.extend(quote_links);
     keep_shown(&mut notes, &pool);
@@ -870,7 +878,8 @@ pub async fn search(inv: Rc<Invocation>, query: String) -> Result<Built, Failure
         casts.unwrap_or_default().iter().map(|c| allthing_core::params::normalize_hash(&c.hash)).collect();
     let hydrated = hypersnap::casts_bulk(&inv, &hashes).await.unwrap_or_default();
     let mut notes = api::Annotations::default();
-    let casts = drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes, &BTreeMap::new()).await;
+    let casts =
+        drop_hidden(&inv, hydrated.iter().map(normalize::cast).collect(), &mut notes, &BTreeMap::new(), false).await;
     let users: Vec<_> = users.unwrap_or_default().iter().map(normalize::user).collect();
     let channels: Vec<Channel> = channels.unwrap_or_default().iter().map(searched_channel).take(10).collect();
     let (quotes, quoted) = quoted_casts(&inv, &casts, BTreeMap::new()).await;
@@ -1895,13 +1904,13 @@ mod channel_tests {
     }
 
     #[test]
-    fn a_pinned_mini_app_is_left_out() {
+    fn a_pinned_mini_app_is_kept_marked() {
         let host = Upstreams::new(true, "play https://farcaster.xyz/miniapps/abc/game");
         let (payload, _) = build(&host);
-        assert!(payload.channel.pinned.is_none());
+        // Kept, marked, for the browser to show or not as the reader chose.
+        assert!(payload.channel.pinned.as_ref().is_some_and(|c| c.mini_app && !c.text.is_empty()));
         assert_eq!(payload.channel.member_count, Some(1));
-        // So is its author's card.
-        assert!(!payload.notes.users.contains_key(&37));
+        assert!(payload.notes.users.contains_key(&37));
     }
 }
 
@@ -2968,7 +2977,7 @@ mod profile_tests {
     }
 
     #[test]
-    fn quotes_are_read_while_the_link_checks_wait_and_a_hidden_cast_leaves_nothing_behind() {
+    fn quotes_are_read_while_the_link_checks_wait_and_a_mini_app_cast_is_kept_marked() {
         let hub = Rc::new(Hub::default());
         let inv = Rc::new(Invocation::new(hub.clone(), 45));
         let mut build = Box::pin(user(inv, "alice".into(), None));
@@ -2979,10 +2988,13 @@ mod profile_tests {
             }
         };
         let payload: UserPayload = serde_json::from_slice(&built.body).unwrap();
-        // The mini app's cast is left out, and with it the quote it alone needed.
-        assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0x01"]);
+        // The mini app's cast is kept, marked, with the quote it needs.
+        assert_eq!(
+            payload.pool.iter().map(|c| (c.hash.as_str(), c.mini_app)).collect::<Vec<_>>(),
+            [("0x02", true), ("0x01", false)]
+        );
         assert_eq!(payload.notes.links, BTreeMap::from([("https://app.example/game".to_owned(), true)]));
-        assert_eq!(payload.notes.quotes.keys().collect::<Vec<_>>(), ["0xb1"]);
+        assert_eq!(payload.notes.quotes.keys().collect::<Vec<_>>(), ["0xb1", "0xb2"]);
         assert_eq!(payload.notes.quotes["0xb1"].text, "quoted 0xb1");
         // One bulk read brought both quotes.
         assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 1);

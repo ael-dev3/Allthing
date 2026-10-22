@@ -65,7 +65,8 @@ fn quote_metadata_is_checked_in_listings() {
     assert_eq!(payload.pool.len(), 1);
     let quoted = &payload.notes.quotes[INNER];
     assert!(quoted.mini_app, "quoted own-domain frame was not detected");
-    assert!(quoted.text.is_empty() && quoted.embeds.is_empty());
+    // Kept whole, marked: the browser shows it or not as the reader chose.
+    assert!(!quoted.embeds.is_empty());
     assert_eq!(host.requests.borrow().iter().filter(|u| *u == LINK).count(), 1);
 }
 
@@ -78,7 +79,8 @@ fn quote_metadata_is_checked_on_post_pages() {
     assert_eq!(payload.thread.cast.text, "Ordinary outer cast");
     let quoted = payload.quotes[0].cast.as_ref().unwrap();
     assert!(quoted.mini_app, "quoted own-domain frame was not detected");
-    assert!(quoted.text.is_empty() && quoted.embeds.is_empty());
+    // Kept whole, marked: the browser shows it or not as the reader chose.
+    assert!(!quoted.embeds.is_empty());
     assert_eq!(host.requests.borrow().iter().filter(|u| *u == LINK).count(), 1);
 }
 

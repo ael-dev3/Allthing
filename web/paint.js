@@ -81,7 +81,9 @@ async function paint(payload, { sort, range }) {
   if (appCame() || !Array.isArray(payload.pool)) return;
   const notes = payload.notes || {};
   const lean = leanings();
-  const casts = sorted(payload.pool.filter((c) => !c.parent_hash), sort, lean).slice(0, CARDS);
+  // Mini app casts only for a reader who shows them (miniapps.rs).
+  const apps = showsMiniApps();
+  const casts = sorted(payload.pool.filter((c) => !c.parent_hash && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);
   // Each card is drawn once it and those above it can be, in order: one
   // with a single image once its size has come, a round trip away.
   const ready = casts.map((cast) => (drawable(cast) ? sized(cast) : Promise.reject(new Error("drawn otherwise"))));
@@ -137,6 +139,15 @@ function sorted(casts, sort, lean) {
   // In top, the points plus one times the weight; in hot, the weight's log added once for each day the casts span. On a tie, the heavier first.
   const key = sort === "top" ? (c) => (points(c) + 1) * weight(c) : (c) => hotScore(points(c), c.ts) + (weight(c) === 1 ? 0 : Math.log10(weight(c)) * days);
   return [...casts].sort((a, b) => key(b) - key(a) || weight(b) - weight(a) || newestFirst(a, b));
+}
+
+/** Whether the reader shows mini app casts (miniapps.rs). */
+function showsMiniApps() {
+  try {
+    return localStorage.getItem("allthing.show-mini-apps") === "1";
+  } catch {
+    return false;
+  }
 }
 
 /** The reader's favorites and those they see less of (leanings.rs). */

@@ -12,6 +12,7 @@ mod kept;
 #[cfg(not(feature = "static-host"))]
 mod keys;
 mod leanings;
+mod miniapps;
 mod nav;
 mod pages;
 mod preload;

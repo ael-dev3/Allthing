@@ -52,11 +52,12 @@ pub fn retain_quoted<'a>(quotes: &mut BTreeMap<String, Cast>, casts: impl IntoIt
     quotes.retain(|hash, _| wanted.contains(hash));
 }
 
-/// A quoted cast as a listing carries it. A hidden one (spam, a mini app)
-/// keeps its author and time but not its content, so its card can say that
-/// it is hidden without showing it.
+/// A quoted cast as a listing carries it. Spam keeps its author and time
+/// but not its content, so its card can say that it is hidden without
+/// showing it; a mini app keeps its content, marked, for the browser to
+/// show or not as the reader chose.
 pub fn as_quote(mut cast: Cast) -> Cast {
-    if cast.hidden() {
+    if cast.spam {
         cast.strip_hidden();
     }
     cast
@@ -159,7 +160,8 @@ mod tests {
 
         let mut mini_app = cast("0xq2", &[]);
         mini_app.mini_app = true;
-        assert!(as_quote(mini_app).text.is_empty());
+        // A mini app is kept whole, for the reader who shows them.
+        assert_eq!(as_quote(mini_app.clone()), mini_app);
 
         let shown = cast("0xq3", &["0xq9"]);
         assert_eq!(as_quote(shown.clone()), shown);

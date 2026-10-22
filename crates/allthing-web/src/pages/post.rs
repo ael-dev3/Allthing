@@ -145,6 +145,22 @@ fn PostPage() -> impl IntoView {
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data: payload, stale, .. }))) => {
                 let payload: Arc<CastPayload> = payload;
+                // The reader's choice about mini apps: their replies and ancestors pruned
+                // as they chose, the page drawn again when it changes.
+                let show_apps = crate::miniapps::shown();
+                let payload = if allthing_core::thread::flatten(&payload.thread).iter().skip(1).any(|c| c.mini_app)
+                    || payload.ancestors.iter().any(|c| c.mini_app)
+                {
+                    let mut thread = payload.thread.clone();
+                    thread.children = std::mem::take(&mut thread.children)
+                        .into_iter()
+                        .filter_map(|child| allthing_core::thread::prune_hidden_for(child, show_apps))
+                        .collect();
+                    let ancestors = payload.ancestors.iter().filter(|c| !c.hidden_for(show_apps)).cloned().collect();
+                    Arc::new(CastPayload { thread, ancestors, ..(*payload).clone() })
+                } else {
+                    payload
+                };
                 let notes: Notes = Arc::new(payload.notes.clone());
                 api::remember_cards(&notes.users);
                 let mut cast = payload.thread.cast.clone();
@@ -280,7 +296,12 @@ async fn newer_replies(hash: &str, want: u64) {
 }
 
 #[component]
-fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
+fn MainCast(mut cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
+    // A mini app cast, for a reader who leaves them out: who and when, and
+    // that it is one (spam comes emptied already).
+    if crate::miniapps::hides(&cast) {
+        cast.strip_hidden();
+    }
     // Whether the reader liked and recasted this cast, which may be older
     // than their latest likes and recasts.
     #[cfg(not(feature = "static-host"))]
@@ -313,19 +334,24 @@ fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoVie
                     </div>
                 </ProfileHover>
             </header>
-            {if cast.hidden() {
+            {if crate::miniapps::hides(&cast) {
                 let note = if cast.spam {
                     "Post hidden: Allthing leaves out posts with links to vercel.app apps, gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions."
                 } else {
                     "Mini app post hidden: Allthing does not run mini apps or frames."
                 };
-                view! { <p class="mini-app-note">{note}</p> }.into_any()
+                view! {
+                    <p class="mini-app-note">{note}</p>
+                    {(!cast.spam).then(|| view! { <crate::miniapps::MiniAppsSwitch class="in-note"/> })}
+                }
+                .into_any()
             } else {
                 view! { <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
             }}
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
+            <crate::miniapps::MiniAppLink cast=cast.clone()/>
             {payload.quotes.iter().map(|quote| match &quote.cast {
                 Some(q) => view! {
                     <QuoteCard cast=q.clone() max_chars=POST_QUOTE_CHARS author_card=notes.users.get(&q.author.fid).cloned() notes=Some(notes.clone())/>
@@ -378,15 +404,16 @@ const TOP_REPLIES: usize = 4;
 /// `sort`'s order.
 fn top_images(payload: &CastPayload, sort: CommentSort) -> Vec<String> {
     let cast = &payload.thread.cast;
-    let mut images: Vec<&str> = if cast.hidden() { Vec::new() } else { single_image(cast).into_iter().collect() };
-    for quote in payload.quotes.iter().filter_map(|quote| quote.cast.as_ref()).filter(|q| !q.hidden()) {
+    let mut images: Vec<&str> =
+        if crate::miniapps::hides(cast) { Vec::new() } else { single_image(cast).into_iter().collect() };
+    for quote in payload.quotes.iter().filter_map(|quote| quote.cast.as_ref()).filter(|q| !crate::miniapps::hides(q)) {
         images.extend(single_images(quote, &payload.notes.quotes));
     }
     let mut replies = payload.thread.children.clone();
     sort_thread(&mut replies, sort);
     let mut first = Vec::new();
     first_nodes(&replies, &mut first);
-    images.extend(first.into_iter().filter(|c| !c.hidden()).filter_map(single_image));
+    images.extend(first.into_iter().filter(|c| !crate::miniapps::hides(c)).filter_map(single_image));
     images.into_iter().map(str::to_owned).collect()
 }
 

@@ -114,6 +114,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 - **Expired**: rebuilt while the request waits. If the rebuild fails, the last good copy is served with `x-allthing-stale: 1` and the page says so.
 - **Concurrent misses** for the same key in an isolate share one build (request coalescing).
 - Bad links (unknown user, missing cast) are cached as 404s for 5 minutes, so they don't reach upstream repeatedly.
+- **Mini app casts** (since October 2026) are kept in the one payload, marked, rather than in a second, filtered one: the home, newest, channel, profile and cast payloads carry them, and each browser leaves them out unless its reader turned on Show mini app casts. So the choice costs no Worker request, no subrequest and no cache key: a key per choice would have doubled the edge cache's builds of each page, and `/api/v1/refresh`'s purges, for a few readers. What it costs instead is bytes and a little CPU: the payloads carry the mini app casts every reader's browser parses (a share of each feed that varies, more in some channels; not measured yet), their quotes and app names are read with the rest (the same bulk reads, no more subrequests), and a default reader sees that many fewer cards per page, which the front page's "load more" already fills. The index keeps mini app casts too (a few more D1 rows; `worth_indexing`). Search, reply previews and notifications still leave them out server-side.
 
 ## 3. Subrequests per invocation
 

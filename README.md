@@ -41,7 +41,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Provenance.** Each cast names the app that registered its signing key ([docs/PROVENANCE.md](docs/PROVENANCE.md)).
 - **Daily active accounts.** [/dau](https://allthing.social/dau) counts Farcaster's active accounts from the network's event stream, exactly as [SnapMeter](https://github.com/ael-dev3/SnapMeter) does.
 - **Allthing's poll.** One question on the front page: would you like an Allthing mobile client?
-- **Less noise, judged by content.** Casts with mini apps or frames, and spam by a few fixed content rules, are left out by the Worker. Nothing is hidden because of who posted it.
+- **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in the account menu; then each links to open in Farcaster. Nothing is hidden because of who posted it.
 
 ### Signed in
 
