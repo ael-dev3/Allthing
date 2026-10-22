@@ -151,9 +151,7 @@ pub fn HandOffDialog() -> impl IntoView {
     let dialog = NodeRef::<leptos::html::Div>::new();
     Effect::new(move |_| {
         let open = hand_off.ask.with(Option::is_some);
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().toggle_with_force("handoff-open", open);
-        }
+        crate::util::dialog_open("handoff-open", open);
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
         if hand_off.ask.with_untracked(Option::is_none) {

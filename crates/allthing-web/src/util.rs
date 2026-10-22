@@ -13,6 +13,30 @@ pub fn now() -> i64 {
     (js_sys::Date::now() / 1000.0) as i64
 }
 
+/// The classes on the page's root that say a dialog is open: the
+/// composer's, the likes list's, the hand-off's and sign-in's.
+const DIALOGS: [&str; 4] = ["compose-open", "who-open", "handoff-open", "signin-open"];
+
+/// Say on the page's root that the dialog `class` names is open, or not.
+/// Once the frame that shows it is painted, the header's drifting line and
+/// the wordmark's sheen stand still while any dialog is open, and move again
+/// once none is (`header-still`, style/allthing.css). Stilled in the frame
+/// the dialog opens in, as `html:has(.modal-backdrop)` did, they and the
+/// page's root were styled again in the press's own task, which opening
+/// the composer on a phone keeps busy enough (docs/PERFORMANCE.md).
+pub fn dialog_open(class: &str, open: bool) {
+    let Some(root) = document().document_element() else { return };
+    let _ = root.class_list().toggle_with_force(class, open);
+    crate::components::cast::after_paint(|| {
+        let Some(root) = document().document_element() else { return };
+        let classes = root.class_list();
+        let any = DIALOGS.iter().any(|dialog| classes.contains(dialog));
+        if classes.contains("header-still") != any {
+            let _ = classes.toggle_with_force("header-still", any);
+        }
+    });
+}
+
 pub fn document() -> web_sys::Document {
     web_sys::window().and_then(|w| w.document()).expect("document")
 }

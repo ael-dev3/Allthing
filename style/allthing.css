@@ -520,13 +520,16 @@ code {
   }
 }
 
-/* Under a dialog, the line and the wordmark's sheen stand still, out of
-   sight behind its blurred backdrop. Moving, they had the browser blur the
+/* Under a dialog, the line and the wordmark's sheen stand still, behind
+   its backdrop. Moving under a blurred one, they had the browser blur the
    whole screen again in every frame: in the composer, with no GPU to draw
    it, that took 540 of every 600 ms, and each key typed waited 60 to 130 ms
-   to show. */
-html:has(.modal-backdrop) .portal-line::before,
-html:has(.modal-backdrop) .wordmark {
+   to show. They stand still from the frame after the dialog opens
+   (`header-still`, util::dialog_open): by `html:has(.modal-backdrop)`, the
+   dialog's own frame styled them and the page's root again, in the task of
+   the press that opened it. */
+html.header-still .portal-line::before,
+html.header-still .wordmark {
   animation-play-state: paused;
 }
 
