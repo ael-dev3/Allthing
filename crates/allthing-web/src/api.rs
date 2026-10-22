@@ -637,10 +637,13 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
 /// busy answers, unreadable bodies and what the Worker says to keep nowhere
 /// (a preload batch it couldn't read, answered as empty) are asked for
-/// again next time.
+/// again next time. The reader's notifications are `no-store` too, but so
+/// that no HTTP cache keeps a reader's own: the app keeps them for a minute
+/// (`ttl`) and forgets them when someone else signs in (`forget`).
 fn remember(path: &str, raw: Raw, now: f64) {
+    let own = path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH);
     let worth = match raw.status {
-        _ if raw.no_store => false,
+        _ if raw.no_store && !own => false,
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
@@ -828,6 +831,16 @@ mod tests {
         assert!(cached::<serde_json::Value>("/test/skipped", 2000.0).is_none());
         remember("/test/kept", response(200, r#"{"previews":[]}"#), 1000.0);
         assert!(cached::<serde_json::Value>("/test/kept", 2000.0).is_some());
+    }
+
+    #[test]
+    fn the_reader_s_notifications_are_reused_though_no_http_cache_keeps_them() {
+        // `private, no-store`, for the browser's and shared caches; the bell's
+        // read is reused by the page within the minute.
+        let path = allthing_core::notifications::NOTIFICATIONS_PATH;
+        remember(path, Raw { no_store: true, ..response(200, r#"{"groups":[]}"#) }, 1000.0);
+        assert!(cached::<serde_json::Value>(path, 2000.0).is_some());
+        assert!(cached::<serde_json::Value>(path, 1000.0 + NOTIFICATIONS_TTL_MS + 1.0).is_none());
     }
 
     #[test]
