@@ -54,8 +54,17 @@ test("the bar names a range ranked from the index", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Apps posting the past month's trending casts" })).toBeVisible();
 });
 
-test("no share bar until enough casts have a known app", async ({ page }) => {
+test("with few casts' apps known, the bar shares them among all the casts, and counts the rest as not known", async ({ page }) => {
   await serve(page, 10);
+  await page.goto("/");
+  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
+  // 10 from the Farcaster app of 25: 40%, not 100%.
+  await expect(share.locator(".client-legend li")).toHaveText(["Farcaster 40%", "15 not known"]);
+  await expect(share.locator(".share-bar .seg-unknown")).toHaveCount(1);
+});
+
+test("no share bar when no cast's app is known and none is coming", async ({ page }) => {
+  await serve(page, 0);
   await page.goto("/");
   await expect(page.locator(".cast-card").first()).toBeVisible();
   await expect(page.locator(".client-share")).toHaveCount(0);

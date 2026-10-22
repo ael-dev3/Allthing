@@ -3036,22 +3036,42 @@ p.jumbo .emoji img {
 .client-legend {
   list-style: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px 14px;
   margin: 7px 0 0;
   padding: 0;
   font-size: 12.5px;
+  line-height: 18px;
   color: var(--ink-2);
+  /* One line whatever it lists, so the feed under it never moves as the
+     apps come in, or between lists: what doesn't fit scrolls sideways. Its
+     cards open against the window (clients.rs, `fixed`), so it clips none. */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  white-space: nowrap;
 }
 
-/* On a touch screen, the apps' 44 px tap bands don't meet: their rows are
-   25 px apart, and the first is clear of the bar's segments, which take a
-   tap 17 px tall of their own. */
+.client-legend::-webkit-scrollbar {
+  display: none;
+}
+
+/* On a touch screen, the apps' 44 px tap bands fit inside the line, clear
+   of the bar's segments, which take a tap 17 px tall of their own. */
 @media (pointer: coarse) {
   .client-legend {
-    margin-top: 19px;
-    row-gap: 25px;
+    padding: 13px 0;
   }
+}
+
+/* The casts whose app isn't known yet: a light grey at the bar's end, and
+   their count at the legend's. */
+.seg-unknown {
+  background: #dddbd3;
+}
+
+.client-unknown {
+  color: var(--ink-3);
 }
 
 /* A legend app is a link that filters the feed. */
@@ -3123,6 +3143,7 @@ p.jumbo .emoji img {
 
 .client-legend li {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
 }
