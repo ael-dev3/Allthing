@@ -961,7 +961,6 @@ async function presses(page: Page, profile: Profile, cdp: CDPSession) {
   // The composer's.
   await page.locator(profile.touch ? ".cast-fab" : ".cast-pill").click();
   const composer = page.getByRole("dialog", { name: "New cast" });
-  // It opens the frame after the press shows.
   await expect(composer).toBeVisible();
   await expect(composer.locator(".compose-loading")).toHaveCount(0);
   const title = composer.locator("#compose-title");

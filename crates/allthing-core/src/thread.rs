@@ -14,6 +14,21 @@ pub fn count_nodes(nodes: &[ThreadNode]) -> usize {
     nodes.iter().map(|node| 1 + count_descendants(node)).sum()
 }
 
+/// How many of `nodes`, from the first, hold at least `replies` replies
+/// with those under them (all of them if they hold fewer): the ones a page
+/// draws at once, about a screen, before the rest.
+pub fn leading_with(nodes: &[ThreadNode], replies: usize) -> usize {
+    let mut held = 0;
+    nodes
+        .iter()
+        .take_while(|node| {
+            let before = held;
+            held += 1 + count_descendants(node);
+            before < replies
+        })
+        .count()
+}
+
 /// Every cast in a tree, depth first, root first.
 pub fn flatten(node: &ThreadNode) -> Vec<&Cast> {
     let mut out = vec![&node.cast];
@@ -100,6 +115,24 @@ mod tests {
             },
             children,
         }
+    }
+
+    #[test]
+    fn leading_replies_hold_at_least_as_many_as_asked() {
+        let nodes = vec![
+            node("a", vec![node("a1", vec![]), node("a2", vec![])]),
+            node("b", vec![]),
+            node("c", vec![node("c1", vec![])]),
+            node("d", vec![]),
+        ];
+        assert_eq!(leading_with(&nodes, 0), 0);
+        assert_eq!(leading_with(&nodes, 1), 1);
+        assert_eq!(leading_with(&nodes, 3), 1);
+        assert_eq!(leading_with(&nodes, 4), 2);
+        assert_eq!(leading_with(&nodes, 5), 3);
+        assert_eq!(leading_with(&nodes, 7), 4);
+        assert_eq!(leading_with(&nodes, 50), 4);
+        assert_eq!(leading_with(&[], 6), 0);
     }
 
     #[test]

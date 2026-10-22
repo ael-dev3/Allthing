@@ -376,12 +376,9 @@ impl Composer {
         }
         self.picker.set(Picker::Closed);
         self.error.set(None);
-        // The press shows first, in the frame after it, and the composer
-        // opens in the next: drawn in the press's own task, it held a tap
-        // on a slow phone for 40 to 100 ms (docs/PERFORMANCE.md).
-        crate::components::cast::after_paint(move || {
-            let _ = self.open.try_set(true);
-        });
+        // Opened in the press's own task, so the box has focus, and the
+        // keyboard held for it, in the first frame (docs/PERFORMANCE.md).
+        self.open.set(true);
     }
 
     fn clear(self) {
