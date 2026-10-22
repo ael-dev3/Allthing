@@ -21,6 +21,8 @@ pub mod handoff;
 pub mod layout;
 pub mod media;
 #[cfg(not(feature = "static-host"))]
+pub mod mention;
+#[cfg(not(feature = "static-host"))]
 pub mod notifications;
 #[cfg(not(feature = "static-host"))]
 pub mod outgoing;

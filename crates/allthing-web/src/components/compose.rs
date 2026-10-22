@@ -2138,6 +2138,7 @@ fn composer_extras(
         focus_soon(".compose-text");
     });
     Ok(view! {
+        <crate::components::mention::MentionSuggest text draft=composer.text/>
         <Attached composer/>
         {move || composer.gif.get().map(|gif| view! {
             <figure class="compose-gif" class:compose-sticker=emoji::sticker_of(&gif.embed.url).is_some()>

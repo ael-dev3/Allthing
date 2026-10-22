@@ -5520,6 +5520,74 @@ p.jumbo .emoji img {
   padding: 14px 18px 16px;
 }
 
+/* The "@" suggestions, under the caret (`components/mention.rs`). */
+.mention-list {
+  position: fixed;
+  z-index: 90;
+  width: min(300px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px -24px rgba(27, 34, 51, 0.45);
+}
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.mention-option.active {
+  background: var(--accent-soft);
+}
+
+.mention-option .avatar {
+  flex: none;
+  border-radius: 50%;
+}
+
+.mention-names {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mention-name,
+.mention-handle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mention-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mention-handle {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.mention-following {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--line);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
 .compose-context {
   margin: 0;
   color: var(--ink-2);

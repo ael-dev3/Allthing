@@ -181,6 +181,41 @@ pub fn between(text: &str, from: usize, to: usize) -> String {
     String::from_utf16_lossy(&units[from..to])
 }
 
+/// The "@name" being typed where the caret is (`caret`, in UTF-16 units, as
+/// a text box counts them): where its "@" is, in UTF-16 units, and the
+/// name typed so far, in lowercase, at least one character of it. The "@"
+/// starts a word as a mention's does (not in an email address or a link),
+/// and only a name's characters lie between it and the caret: what the
+/// composer suggests accounts for.
+pub fn mention_query(text: &str, caret: usize) -> Option<(usize, String)> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let before = String::from_utf16_lossy(&units[..caret.min(units.len())]);
+    let at = before.rfind('@')?;
+    let name = &before[at + 1..];
+    if name.is_empty() || name.len() > 20 || !name.chars().all(is_name_char) {
+        return None;
+    }
+    if !name.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let prev = before[..at].chars().next_back();
+    if prev.is_some_and(|p| p.is_alphanumeric() || p == '_' || p == '/') {
+        return None;
+    }
+    Some((before[..at].encode_utf16().count(), name.to_ascii_lowercase()))
+}
+
+/// `text` with the "@name" being typed, from `start` (its "@") to `caret`
+/// (UTF-16 units), replaced by the mention of `username` and a space, and
+/// the caret's place after it. A space already after the caret isn't
+/// doubled.
+pub fn complete_mention(text: &str, start: usize, caret: usize, username: &str) -> (String, usize) {
+    let follows = between(text, caret, caret + 1) == " ";
+    let put = if follows { format!("@{username}") } else { format!("@{username} ") };
+    let (out, at) = splice(text, start, caret, &put);
+    (out, at + usize::from(follows))
+}
+
 /// `text` as the composer's text box shows it while it is written: runs of
 /// text, and the pack's emoji, each with its shortcode as written, which the
 /// box keeps so that the draft is what was typed. The same shortcodes are
@@ -398,6 +433,35 @@ pub fn paragraphs(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_name_being_typed_is_found_before_the_caret() {
+        assert_eq!(mention_query("gm @al", 6), Some((3, "al".into())));
+        assert_eq!(mention_query("@Al", 3), Some((0, "al".into())));
+        assert_eq!(mention_query("gm @alice and", 6), Some((3, "al".into())));
+        assert_eq!(mention_query("x\n@v.eth", 8), Some((2, "v.eth".into())));
+        // An emoji before it counts as two UTF-16 units.
+        assert_eq!(mention_query("😀 @bo", 6), Some((3, "bo".into())));
+    }
+
+    #[test]
+    fn no_name_is_found_where_none_is_typed() {
+        assert_eq!(mention_query("gm @", 4), None);
+        assert_eq!(mention_query("gm @al ice", 10), None);
+        assert_eq!(mention_query("me@mail.com", 11), None);
+        assert_eq!(mention_query("https://x.com/@al", 17), None);
+        assert_eq!(mention_query("@_al", 4), None);
+        assert_eq!(mention_query("gm @alice", 2), None);
+        assert_eq!(mention_query("", 0), None);
+    }
+
+    #[test]
+    fn a_picked_name_replaces_what_was_typed() {
+        assert_eq!(complete_mention("gm @al", 3, 6, "alice"), ("gm @alice ".into(), 10));
+        assert_eq!(complete_mention("gm @al and", 3, 6, "alice"), ("gm @alice and".into(), 10));
+        assert_eq!(complete_mention("@b😀", 0, 2, "bob"), ("@bob 😀".into(), 5));
+        let (text, _) = complete_mention("gm @al", 3, 6, "alice");
+        assert_eq!(split_mentions(&text, |n| (n == "alice").then_some(42)), ("gm  ".into(), vec![(42, 3)]));
+    }
     use super::*;
 
     fn mention(username: &str, fid: u64) -> Mention {
