@@ -380,6 +380,15 @@ On the phone profile the front page shows its first cast about 0.23 s sooner, th
 - LCP counts the first screen's images here, and they come sooner: they're asked for once the WebAssembly is in, not once the app has drawn its cards.
 - On main, a single image grows its card as it loads and pushes the cards below it down. The early cards' tiles have their boxes from the start, and the app's take the same boxes.
 
+**The early cards drawn again, 22 October 2026.** On production they had stopped drawing: the front page's first card was often a quote, which `paint.js` didn't draw, and a card it doesn't draw ends the early ones, so there were none, and the first cast came with the app's (production, f596b2b, median of 5: 2,768 ms on the desktop profile, 4,645 ms on the phone, the WebAssembly in by 3,993 ms and the data by 2,244 ms). Now quotes are drawn as the app's quote cards, and on a phone the early cards stop at the fourth, before the app's poll, so nothing moves when the app takes over. Locally (`wrangler dev`, live data, a 737.6 KB WebAssembly uncompressed), median of 7:
+
+| | Desktop, before | Desktop, after | Phone, before | Phone, after |
+|---|---|---|---|---|
+| Data in by | 262 ms | 277 ms | 1,298 ms | 1,270 ms |
+| WebAssembly in by | 928 ms | 911 ms | 4,778 ms | 4,786 ms |
+| First cast on screen | 1,193 ms | 450 ms | 5,458 ms | 1,578 ms (1,446–1,603) |
+| The app's own first card | 1,193 ms | 1,066 ms | 5,458 ms | 5,537 ms |
+
 **Since then, 20 October 2026 (3cc5cd0).** Production, median of 7 on a CI runner (run 39483304275), against 040d095 the day before (run 39251478185), each run's own profile:
 
 | Desktop, 1280 px | 19 Oct (040d095) | 20 Oct (3cc5cd0) |
