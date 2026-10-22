@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{CastPayload, QuotedCast, cast_path};
+use allthing_core::api::{COUNTS_MAX, CastPayload, QuotedCast, cast_path};
 use allthing_core::clients::{client_name, client_profile};
 use allthing_core::embeds::single_image;
 use allthing_core::emoji::reactions;
@@ -137,8 +137,8 @@ fn PostPage() -> impl IntoView {
             }
             .into_any(),
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
-            Some(Some(Ok(Fetched { data, stale, .. }))) => {
-                let payload: Arc<CastPayload> = data;
+            Some(Some(Ok(Fetched { data: payload, stale, .. }))) => {
+                let payload: Arc<CastPayload> = payload;
                 let notes: Notes = Arc::new(payload.notes.clone());
                 api::remember_cards(&notes.users);
                 let mut cast = payload.thread.cast.clone();
@@ -153,7 +153,38 @@ fn PostPage() -> impl IntoView {
                 let path = cast_href(&hash);
                 let mut in_thread = std::collections::HashSet::from([cast.hash.to_ascii_lowercase()]);
                 thread_hashes(&children, &mut in_thread);
-                let (count, _) = crate::components::chips::replies_shown(&cast.hash, cast.replies);
+                // Kept current while the post is open (`counts`): the post
+                // and its first replies.
+                let mut watched = vec![cast.hash.clone()];
+                watched.extend(children.iter().take(COUNTS_MAX - 1).map(|child| child.cast.hash.clone()));
+                crate::counts::watch(watched);
+                let read = cast.replies;
+                let live = {
+                    let hash = cast.hash.clone();
+                    Signal::derive(move || crate::counts::replies(&hash, read))
+                };
+                let (count, _) = crate::components::chips::replies_shown(&cast.hash, live);
+                // Replies the node has that this read doesn't list, beyond
+                // the reader's own (which show at once): offered, not
+                // pushed in, so nothing the reader is reading moves.
+                let (ours, _) = crate::components::chips::replies_shown(&cast.hash, Signal::stored(read));
+                let newer = Memo::new(move |_| count.get().saturating_sub(ours.get()));
+                let fetching = RwSignal::new(false);
+                let reload = {
+                    let hash = hash.clone();
+                    move |_| {
+                        if fetching.get_untracked() {
+                            return;
+                        }
+                        fetching.set(true);
+                        let (hash, want) = (hash.clone(), read + newer.get_untracked());
+                        leptos::task::spawn_local(async move {
+                            newer_replies(&hash, want).await;
+                            let _ = fetching.try_set(false);
+                            data.refetch();
+                        });
+                    }
+                };
                 view! {
                     <Columns>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
@@ -210,10 +241,34 @@ fn PostPage() -> impl IntoView {
                                 }
                             }
                         </section>
+                        <Show when=move || { newer.get() > 0 }>
+                            <button type="button" class="new-replies" aria-live="polite" aria-busy=move || fetching.get().then_some("true") on:click=reload.clone()>
+                                {move || match newer.get() { 1 => "1 new reply".to_owned(), n => format!("{n} new replies") }}
+                            </button>
+                        </Show>
                     </Columns>
                 }
                 .into_any()
             }
+        }
+    }
+}
+
+/// Read the post again until it lists `want` replies, or three tries: the
+/// first read after its edge copy aged may answer that copy while the
+/// Worker rebuilds it.
+async fn newer_replies(hash: &str, want: u64) {
+    let path = cast_path(hash);
+    for attempt in 0..3 {
+        api::forget_one(&path);
+        if let Ok(fetched) = api::get::<CastPayload>(&path).await {
+            let thread = &fetched.data.thread;
+            if thread.cast.replies.max(thread.children.len() as u64) >= want {
+                return;
+            }
+        }
+        if attempt < 2 {
+            crate::video::sleep(2500).await;
         }
     }
 }

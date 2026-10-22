@@ -901,6 +901,19 @@ pub async fn reactions(inv: Rc<Invocation>, hash: String, kind: ReactionKind, li
     Built::json(&payload, api::REACTIONS_CACHE)
 }
 
+/// The likes, recasts and replies of a few casts (`/api/v1/counts`): one
+/// bulk read of the node's casts, the source the reader's notifications
+/// come from, keeping only their counts.
+pub async fn counts(inv: Rc<Invocation>, hashes: Vec<String>) -> Result<Built, Failure> {
+    let casts = hypersnap::casts_bulk(&inv, &hashes).await.map_err(Failure::upstream)?;
+    let counts: BTreeMap<_, _> = casts
+        .iter()
+        .map(|raw| (allthing_core::params::normalize_hash(&raw.hash), normalize::counts(raw)))
+        .filter(|(hash, _)| hashes.contains(hash))
+        .collect();
+    Built::json(&api::CountsPayload { counts, meta: meta(&inv) }, api::COUNTS_CACHE)
+}
+
 /// Whether a preloaded preview may read now: Hypersnap's bucket holds more
 /// than [`PREVIEW_RESERVE`] tokens, and the build keeps a subrequest for its
 /// cache write. Checked as each read starts, so batches built side by side

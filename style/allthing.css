@@ -10134,3 +10134,26 @@ p.jumbo .emoji img {
     padding-inline: 20px;
   }
 }
+
+/* New replies on an open post: offered over the page, never pushed into
+   it, so nothing the reader is reading moves. */
+.new-replies {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+.new-replies[aria-busy="true"] {
+  opacity: 0.7;
+  cursor: progress;
+}

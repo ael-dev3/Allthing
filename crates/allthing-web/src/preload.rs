@@ -87,6 +87,36 @@ pub fn noticed(card: Element, in_view: bool) {
     schedule(SETTLE_MS);
 }
 
+/// The hashes of each run of `chunk` cards (in list order) that a card in
+/// view belongs to, topmost first: what `counts` keeps current.
+pub fn runs_in_view(chunk: usize) -> Vec<Vec<String>> {
+    let cards: Vec<Element> =
+        STATE.with(|state| state.borrow().in_view.iter().filter(|c| c.is_connected()).cloned().collect());
+    let height = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or(0.0);
+    let mut shown: Vec<(f64, Element)> = cards
+        .into_iter()
+        .filter_map(|card| {
+            let rect = card.get_bounding_client_rect();
+            (rect.top() < height && rect.bottom() > 0.0).then_some((rect.top(), card))
+        })
+        .collect();
+    shown.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut runs: Vec<Vec<String>> = Vec::new();
+    for (_, card) in shown {
+        let beside = cards_beside(&card);
+        let Some(index) = beside.iter().position(|c| *c == card) else { continue };
+        let start = index - index % chunk;
+        let run: Vec<String> = beside[start..beside.len().min(start + chunk)]
+            .iter()
+            .filter_map(|c| c.get_attribute("data-hash"))
+            .collect();
+        if !runs.contains(&run) {
+            runs.push(run);
+        }
+    }
+    runs
+}
+
 /// A card left the page.
 pub fn forget(card: &Element) {
     STATE.with(|state| state.borrow_mut().in_view.retain(|seen| seen != card));

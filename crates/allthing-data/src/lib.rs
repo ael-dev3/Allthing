@@ -229,6 +229,8 @@ pub enum Endpoint {
     /// answers it.
     Engagement(EngagementRequest),
     Replies(String),
+    /// The likes, recasts and replies of a few casts in view, sorted.
+    Counts(Vec<String>),
     Vote(u64),
     /// Farcaster's daily active accounts, as the cron last counted them.
     Activity,
@@ -277,6 +279,9 @@ impl Endpoint {
             )
             .map(Endpoint::Engagement)
             .ok_or(bad(ENGAGEMENT_USAGE)),
+            "/counts" => allthing_core::api::parse_counts(query("casts").as_deref())
+                .map(Endpoint::Counts)
+                .ok_or(bad("Expected ?casts=<up to 12 comma-separated cast hashes>")),
             "/follows" => {
                 let name =
                     query("name").and_then(|v| username_from_param(&v)).ok_or(bad("Expected ?name=<username>"))?;
@@ -369,6 +374,7 @@ impl Endpoint {
                 request.path().trim_start_matches(API_PREFIX).trim_start_matches('/').to_owned()
             }
             Endpoint::Replies(hash) => format!("replies?hash={hash}"),
+            Endpoint::Counts(hashes) => format!("counts?casts={}", hashes.join(",")),
             Endpoint::Follows(name, dir, cursor) => follows_path(name, *dir, cursor.as_deref())
                 .trim_start_matches(API_PREFIX)
                 .trim_start_matches('/')
@@ -394,6 +400,7 @@ impl Endpoint {
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
+            Endpoint::Counts(hashes) => pages::counts(inv, hashes).await,
             Endpoint::Follows(name, dir, cursor) => pages::follows(inv, name, dir, cursor).await,
             Endpoint::Vote(fid) => pages::vote(inv, fid).await,
             Endpoint::Channel(id) => pages::channel(inv, id, previous).await,
@@ -409,6 +416,16 @@ impl Endpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_share_one_entry_whatever_the_order() {
+        let (a, b) = (format!("0x{:040x}", 1), format!("0x{:040x}", 2));
+        let endpoint = Endpoint::from_path(&format!("/api/v1/counts?casts={b},{a}")).unwrap();
+        assert_eq!(endpoint, Endpoint::Counts(vec![a.clone(), b.clone()]));
+        assert_eq!(endpoint.cache_name(), format!("counts?casts={a},{b}"));
+        assert_eq!(Endpoint::from_path("/api/v1/counts").map_err(|e| e.status), Err(400));
+        assert_eq!(Endpoint::from_path("/api/v1/counts?casts=0x12").map_err(|e| e.status), Err(400));
+    }
 
     #[test]
     fn parses_api_paths() {
