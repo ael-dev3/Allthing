@@ -162,7 +162,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                     // The apps the newest casts came from, as hot and top
                     // show their trending casts': the list starts where
                     // theirs does, so switching between them doesn't move it.
-                    <ClientShareBar casts=data.pool.clone() notes=notes.clone()/>
+                    <ClientShareBar casts=crate::miniapps::as_shown(&data.pool) notes=notes.clone()/>
                     {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
                     {crate::components::poll_gutter()}
@@ -355,7 +355,7 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                     <Columns class="front-columns">
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
-                        <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
+                        <ClientShareBar casts=crate::miniapps::as_shown(&payload.pool) notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}

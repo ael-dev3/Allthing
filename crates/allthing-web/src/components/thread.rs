@@ -237,7 +237,7 @@ fn Comment(
             <div class="comment-body" prop:inert=move || collapsed.get()>
                 <div class="comment-inner">
                     <p class="deleted-note">"You deleted this reply."</p>
-                    {if cast.hidden() {
+                    {if crate::miniapps::hides(&cast) {
                         let note = if cast.spam { "Post hidden" } else { "Mini app post hidden" };
                         view! { <p class="mini-app-note">{note}</p> }.into_any()
                     } else {
@@ -246,6 +246,7 @@ fn Comment(
                     <MediaGrid cast=cast.clone()/>
                     <VideoLinks cast=cast.clone()/>
                     <LinkCards cast=cast.clone()/>
+                    <crate::miniapps::MiniAppLink cast=cast.clone()/>
                     <div class="comment-foot" prop:inert=posting.is_some()>
                         <Engagement cast=cast.clone() tight=true/>
                         {reply_button(&cast, "reply")}

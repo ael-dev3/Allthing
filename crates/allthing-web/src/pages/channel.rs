@@ -151,15 +151,17 @@ fn ChannelPage() -> impl IntoView {
                         <ChannelHeader channel=channel.clone() notes=notes.clone()/>
                         {pinned.map(|cast| {
                             api::remember_casts(std::slice::from_ref(&cast), &notes);
-                            view! {
+                            let notes = notes.clone();
+                            // A mini app, shown as the reader chose.
+                            move || (!cast.hidden_for(crate::miniapps::shown())).then(|| view! {
                                 <section class="pinned-cast" aria-labelledby="pinned-label">
                                     <p class="pinned-label" id="pinned-label">
                                         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=PIN/></svg>
                                         "Pinned"
                                     </p>
-                                    <CastCard cast notes=notes.clone()/>
+                                    <CastCard cast=cast.clone() notes=notes.clone()/>
                                 </section>
-                            }
+                            })
                         })}
                         <div class="listing-head">{move || view! { <SortTabs path=path.clone() current=sort.get()/> }}</div>
                         <StaleNotice stale/>

@@ -8,6 +8,9 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Added
 
 - A signed-in reader's front page ranks the casts of the people they follow. Hot and top on `/` read `/api/v1/following` (the session's account's follows, from Hypersnap's `feed/following`, cached per account and never for another reader) and rank them as before, with Show less and favorites; a **Following / Everyone** menu beside the sort tabs switches to the trending feed and its time ranges (`?feed=everyone`). Where they follow few who cast lately, up to 40 trending casts follow theirs, and a note says so. Signed out, nothing changes; early paint skips a signed-in reader's front page.
+
+- Show mini app casts: a switch in the account menu, over any feed that has mini app casts ("3 mini app casts hidden"), and on a mini app post. On, feeds, channels, profiles and threads show casts with mini apps or frames, each with a "Mini app · Open in Farcaster" link; Allthing still doesn't run them. Off is the default. The choice is kept in this browser and followed by its other tabs. The Worker now marks mini app casts instead of dropping them (one payload for everyone, no new requests), and the index keeps them; spam is left out as before, and search, reply previews and notifications still leave out both.
+
 - @mention suggestions in the composer, for casts, replies and quotes: typing "@name" lists matching people under the caret, those you follow first and marked "Following"; arrows move, Enter or Tab picks, Escape closes.
 
 - A reply's page shows the casts it answers as full cards, root first, each avatar joined to the next by a line, in place of the dashed "In reply to" snippet. A chain of more than three folds its middle behind "Show N earlier", which opens in place. The cards keep their media, counts, actions and hover cards, and hidden casts are left out as elsewhere.

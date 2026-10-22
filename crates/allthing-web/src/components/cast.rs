@@ -117,6 +117,7 @@ pub fn CastCard(
             <MediaGrid cast=cast.clone()/>
             <VideoLinks cast=cast.clone()/>
             <LinkCards cast=cast.clone()/>
+            <crate::miniapps::MiniAppLink cast=cast.clone()/>
             {quotes}
             <footer class="cast-foot">
                 <Engagement cast=cast.clone() reply_href=href.clone()/>
@@ -153,6 +154,16 @@ pub fn CastList(
     #[prop(default = None)]
     inset: Option<fn() -> AnyView>,
 ) -> impl IntoView {
+    // Mini app casts, which payloads keep marked, are left out unless the
+    // reader chose to see them (`crate::miniapps`); the note over the list
+    // says how many, with the switch.
+    let all = casts;
+    let apps = Memo::new(move |_| all.with(|c| c.iter().filter(|c| c.mini_app && !c.spam).count()));
+    let casts: Signal<Vec<Cast>> = Memo::new(move |_| {
+        let show = crate::miniapps::shown();
+        all.with(|c| c.iter().filter(|c| !c.hidden_for(show)).cloned().collect::<Vec<_>>())
+    })
+    .into();
     // Back to a list shows as many cards as before, so the reader's place
     // exists before the scroll position is restored.
     let key = crate::nav::location_key();
@@ -305,6 +316,7 @@ pub fn CastList(
     };
 
     view! {
+        <crate::miniapps::MiniAppsNote count=apps/>
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
             <div class="cast-list" node_ref=list>
                 <For
