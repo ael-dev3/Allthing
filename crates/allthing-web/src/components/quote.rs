@@ -48,15 +48,12 @@ pub fn quote_chip(hash: &str) -> AnyView {
 /// A quoted cast as a small card inside the cast that quotes it: author,
 /// time, text and media. A click on the card, away from its links and media,
 /// opens the quoted cast, not the post around it; the time is its link for
-/// keyboards and screen readers. A hidden quoted cast (spam, a mini app)
-/// says so instead of showing its content, and a quote inside the quote
-/// stays a link.
+/// keyboards and screen readers, and its media opens in the media viewer. A
+/// hidden quoted cast (spam, a mini app) says so instead of showing its
+/// content, and a quote inside the quote stays a link.
 #[component]
 pub fn QuoteCard(
     cast: Cast,
-    /// Images open the media viewer instead of the quoted cast.
-    #[prop(optional)]
-    open_on_click: bool,
     /// How much of the text to show.
     #[prop(default = FEED_QUOTE_CHARS)]
     max_chars: usize,
@@ -83,7 +80,7 @@ pub fn QuoteCard(
             {(!text.is_empty()).then(|| view! {
                 <div class="quote-text"><CastText text mentions=cast.mentions.clone()/></div>
             })}
-            <MediaGrid cast=cast.clone() open_on_click/>
+            <MediaGrid cast=cast.clone()/>
             {nested_quotes(&cast, notes.as_ref(), depth)}
         }
         .into_any()

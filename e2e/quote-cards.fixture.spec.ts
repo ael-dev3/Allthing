@@ -56,7 +56,8 @@ for (const layout of layouts) {
       await expect(quote.locator(".user-chip")).toContainText("@quoted-author");
       await expect(quote.locator(".user-chip .avatar")).toHaveAttribute("src", quoted.author.pfp_url);
       await expect(quote.locator(".quote-text")).toHaveText(quotedWords);
-      await expect(quote.locator(".tile-image")).toHaveAttribute("href", `/p/${quoted.hash}`);
+      // Its image opens in the media viewer; its time is its link.
+      await expect(quote.locator(".tile-image")).toHaveAccessibleName(/^Open Image posted by @quoted-author: Words from the quoted cast/);
       await expect(quote.locator("a.when")).toHaveAttribute("href", `/p/${quoted.hash}`);
       await expect(card.locator(".quote-chip")).toHaveCount(0);
       await expect(card).not.toContainText("quotes a cast");

@@ -8,13 +8,14 @@ import { appCame } from "./helpers/app";
  * GIFs show at about the size Discord gives them, not a photo's: a Tenor
  * GIF, a KLIPY GIF and an image whose path is a .gif each take their own
  * shape, at most 300 px wide and 300 px tall, from the left edge of the
- * card's text, with rounded corners, in a feed card and on the post's page.
- * On a phone, at most 70% of the card's width. A Tenor GIF that comes as an
- * MP4 is sized the same. A photo in the same feed still spans the card. A
- * GIF in a feed still opens its post, and there a click (a tap on a phone)
- * opens the media viewer at the GIF's own size. The GIFs are animated GIFs
- * made here, and the MP4 is the fixture stream's video, so nothing leaves
- * the test.
+ * card's text, with rounded corners, in a feed card and on the post's page;
+ * in a feed no taller than its other media (270 px on a computer). On a
+ * phone, at most 70% of the card's width. A Tenor GIF that comes as an MP4
+ * is sized the same. A photo in the same feed is as large as a feed's media
+ * is. A click (a tap on a phone) on a GIF opens the media viewer at the
+ * GIF's own size, in a feed as on its post's page. The GIFs are animated
+ * GIFs made here, and the MP4 is the fixture stream's video, so nothing
+ * leaves the test.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -24,6 +25,8 @@ const ts = 1792235681;
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const author = { fid: 1, username: "fixture", display_name: "Fixture" };
 const CAP = 300;
+/** How tall a feed's media is at most on a computer (style/allthing.css, --feed-media). */
+const FEED_CAP = 270;
 
 type Media = { url: string; width: number; height: number };
 const tenor: Media = { url: "https://media.tenor.com/fixtureAAAAC/cat-dance.gif", width: 498, height: 280 };
@@ -142,19 +145,20 @@ const contentWidth = (locator: Locator) =>
 /**
  * A GIF (`media`) in `scope`, a card or a post whose text is `text`, shown
  * by `frame`: at its own shape (±2 px), at most `cap` px wide (300 at most)
- * and 300 px tall, and as big as those allow; from the text's left edge,
- * with rounded corners.
+ * and `tall` px tall (300 at most), and as big as those allow; from the
+ * text's left edge, with rounded corners.
  */
-async function expectGifSize(scope: Locator, text: string, frame: Locator, media: Media, cap: number) {
+async function expectGifSize(scope: Locator, text: string, frame: Locator, media: Media, cap: number, tall = CAP) {
   await frame.scrollIntoViewIfNeeded();
   await expect(frame).toHaveAttribute("data-sized", "");
   const shown = await box(frame);
+  const height = Math.min(tall, CAP);
   expect(shown.width).toBeLessThanOrEqual(Math.min(cap, CAP) + 0.5);
-  expect(shown.height).toBeLessThanOrEqual(CAP + 0.5);
+  expect(shown.height).toBeLessThanOrEqual(height + 0.5);
   expect(Math.abs(shown.height - (shown.width * media.height) / media.width)).toBeLessThanOrEqual(2);
   // An image also grows to 1.25 times its own width at most, as a photo does.
   const grow = (await frame.evaluate((el) => el.matches(".tile-image"))) ? media.width * 1.25 : Infinity;
-  expect(Math.abs(shown.width - Math.min(cap, CAP, (CAP * media.width) / media.height, grow))).toBeLessThanOrEqual(1);
+  expect(Math.abs(shown.width - Math.min(cap, CAP, (height * media.width) / media.height, grow))).toBeLessThanOrEqual(1);
   expect(Math.abs(shown.x - (await box(scope.locator(text))).x)).toBeLessThanOrEqual(1);
   expect(await frame.evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius))).toBeGreaterThan(0);
   return shown;
@@ -169,7 +173,7 @@ for (const size of sizes) {
   test.describe(`at ${size.name}`, () => {
     test.use(size.use);
 
-    test("GIFs in feed cards are Discord-sized, at their own shape from the text's left edge; a photo still spans the card", async ({ page }, info) => {
+    test("GIFs in feed cards are Discord-sized, at their own shape from the text's left edge; a photo is as large as a feed's media", async ({ page }, info) => {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await serve(page);
@@ -178,13 +182,14 @@ for (const size of sizes) {
       const first = card(page, gifs[0].cast.hash);
       await expect(first).toBeVisible();
       const width = await contentWidth(first);
-      // On a phone, at most 70% of the card's width.
+      // On a phone, at most 70% of the card's width; on a computer, no taller than a feed's media.
       const cap = size.phone ? 0.7 * width : CAP;
+      const tall = size.phone ? CAP : FEED_CAP;
 
       for (const { cast: c, media } of gifs) {
         const tile = card(page, c.hash).locator(".media-grid.n1 .tile-image");
         await expect(tile).toHaveClass(/(^| )gif( |$)/);
-        const shown = await expectGifSize(card(page, c.hash), ".cast-text", tile, media, cap);
+        const shown = await expectGifSize(card(page, c.hash), ".cast-text", tile, media, cap, tall);
         // The GIF fills its tile, which clips it to its rounded corners.
         const img = await box(tile.locator("img"));
         expect(Math.abs(img.width - shown.width)).toBeLessThanOrEqual(1);
@@ -194,17 +199,19 @@ for (const size of sizes) {
 
       // A Tenor GIF that comes as an MP4 is a GIF too.
       const video = card(page, videoGif.hash).locator(".tile-video.gif .video");
-      await expectGifSize(card(page, videoGif.hash), ".cast-text", video, tenorMp4, cap);
+      await expectGifSize(card(page, videoGif.hash), ".cast-text", video, tenorMp4, cap, tall);
 
-      // A photo is as before: the card's whole width, at its own shape.
+      // A photo is a feed's media: at its own shape, as wide as the card and
+      // a feed's media cap (half the window on a phone) allow.
       const still = card(page, photoCast.hash).locator(".tile-image");
       await still.scrollIntoViewIfNeeded();
       await expect(still).toHaveAttribute("data-sized", "");
       await expect(still).not.toHaveClass(/(^| )gif( |$)/);
       const grid = await box(card(page, photoCast.hash).locator(".media-grid"));
       const photoBox = await box(still);
+      const photoCap = size.phone ? page.viewportSize()!.height / 2 : FEED_CAP;
       expect(Math.abs(grid.width - width)).toBeLessThanOrEqual(1);
-      expect(Math.abs(photoBox.width - grid.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(photoBox.width - Math.min(grid.width, (photoCap * photo.width) / photo.height))).toBeLessThanOrEqual(1);
       expect(Math.abs(photoBox.height - (photoBox.width * photo.height) / photo.width)).toBeLessThanOrEqual(2);
 
       await first.scrollIntoViewIfNeeded();
@@ -214,13 +221,21 @@ for (const size of sizes) {
 
     test("on its post's page a GIF is Discord-sized too, and a click or a tap opens it in the media viewer at its own size", async ({ page }, info) => {
       await serve(page);
-      // From the feed, a GIF still opens its post.
+      // In the feed, a click or a tap on a GIF opens it in the media viewer;
+      // its time opens its post.
       await page.goto("/");
       await appCame(page);
       const feedTile = card(page, gifs[0].cast.hash).locator(".tile-image.gif");
       await expect(feedTile).toHaveAttribute("data-sized", "");
       if (size.phone) await feedTile.tap();
       else await feedTile.click();
+      const feedViewer = page.getByRole("dialog", { name: "Media viewer", exact: true });
+      await expect(feedViewer.locator("img.lb-media")).toHaveAttribute("src", gifs[0].media.url);
+      await expect(page).toHaveURL(/\/$/);
+      if (size.phone) await feedViewer.getByRole("button", { name: "Close media viewer (Escape)", exact: true }).tap();
+      else await page.keyboard.press("Escape");
+      await expect(feedViewer).toHaveCount(0);
+      await card(page, gifs[0].cast.hash).locator("header.cast-meta a.when").click();
       await expect(page).toHaveURL(new RegExp(`/p/${gifs[0].cast.hash}$`));
 
       for (const [i, { cast: c, media }] of gifs.entries()) {
