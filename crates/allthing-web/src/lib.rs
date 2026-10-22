@@ -111,13 +111,14 @@ fn App() -> impl IntoView {
     }
 }
 
-/// The sign-in dialog and the composer, and Cast's button on phones, in
+/// The composer, the sign-in dialog over it (whose approve form asks for
+/// Allthing's key as a first cast goes), and Cast's button on phones, in
 /// front of the Worker; the hand-off to the Farcaster app over them.
 #[cfg(not(feature = "static-host"))]
 fn sign_in_dialog() -> impl IntoView {
     view! {
-        <components::signin::SignInDialog/>
         <components::compose::ComposerDialog/>
+        <components::signin::SignInDialog/>
         <components::writer::WriterDialog/>
         <components::handoff::HandOffDialog/>
         <components::compose::CastFab/>

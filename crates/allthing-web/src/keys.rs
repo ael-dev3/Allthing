@@ -69,6 +69,9 @@ pub struct Request {
     pub token: String,
     pub link: String,
     pub deadline: f64,
+    /// The account that asks for the key, whose endorsement the request
+    /// carries: the Farcaster app names it to the reader.
+    pub asker: Option<u64>,
 }
 
 /// Why there is no key.
@@ -120,7 +123,9 @@ pub async fn load(fid: u64) -> Result<Option<Stored>, KeyError> {
     let text = |name: &str| field(&found, name).as_string();
     let number = |name: &str| field(&found, name).as_f64();
     let request = match (text("token"), text("link"), number("deadline")) {
-        (Some(token), Some(link), Some(deadline)) => Some(Request { token, link, deadline }),
+        (Some(token), Some(link), Some(deadline)) => {
+            Some(Request { token, link, deadline, asker: number("asker").map(|fid| fid as u64) })
+        }
         _ => None,
     };
     Ok(Some(Stored { fid, key: text("key").unwrap_or_default(), private, request, approved_at: number("approvedAt") }))
@@ -139,6 +144,9 @@ pub async fn save(stored: &Stored) -> Result<(), KeyError> {
         set("token", &JsValue::from_str(&request.token));
         set("link", &JsValue::from_str(&request.link));
         set("deadline", &JsValue::from_f64(request.deadline));
+        if let Some(asker) = request.asker {
+            set("asker", &JsValue::from_f64(asker as f64));
+        }
     }
     if let Some(at) = stored.approved_at {
         set("approvedAt", &JsValue::from_f64(at));

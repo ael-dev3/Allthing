@@ -251,7 +251,8 @@ for (const width of [1280, 390] as const) {
     await expect.poll(() => kept(page, me.fid)).toBeNull();
     expect(node.sent).toHaveLength(1);
     await press(gone.getByRole("button", { name: "Approve again" }));
-    await expect(page.getByRole("dialog", { name: "Approve Allthing" })).toBeVisible();
+    // The sign-in dialog's approve form, the one approval.
+    await expect(page.getByRole("dialog", { name: "Approve Allthing to write from here" })).toBeVisible();
     await close();
   });
 
