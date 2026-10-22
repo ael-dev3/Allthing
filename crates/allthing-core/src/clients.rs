@@ -69,7 +69,7 @@ impl ClientShares {
 
 /// Whole percents of `counts` that sum to 100, by the largest-remainder
 /// method (all zero when the counts are).
-fn percents(counts: &[u64]) -> Vec<u32> {
+pub(crate) fn percents(counts: &[u64]) -> Vec<u32> {
     let total: u64 = counts.iter().sum();
     if total == 0 {
         return vec![0; counts.len()];

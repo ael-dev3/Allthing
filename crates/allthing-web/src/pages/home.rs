@@ -62,6 +62,8 @@ pub fn Home() -> impl IntoView {
     // Leaving the front page before its cards are drawn: its first cards,
     // drawn before the app came, can't stay over the next page.
     on_cleanup(crate::boot::hand_over);
+    // Allthing's poll, beside the feed or in it, whichever list it shows.
+    crate::components::provide_poll();
     // The tab tapped shows as chosen in the next frame, and the feed follows
     // in a task of its own once that frame is painted: a tap is answered at
     // once, even where drawing the cards takes a while (docs/PERFORMANCE.md).
@@ -128,7 +130,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
             let sorted_by = StoredValue::new(None);
             let casts = Memo::new(move |_| sorted_for(&pool, Sort::New, &leaning.for_list(sorted_by, ())));
             view! {
-                <Columns>
+                <Columns class="front-columns">
                     <Heading sort range/>
                     // The apps the newest casts came from, as hot and top
                     // show their trending casts': the list starts where
@@ -136,7 +138,8 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                     <ClientShareBar casts=data.pool.clone() notes=notes.clone()/>
                     {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
-                    <CastList casts notes=Signal::stored(notes)/>
+                    {crate::components::poll_gutter()}
+                    <CastList casts notes=Signal::stored(notes) inset=crate::components::poll_inset()/>
                 </Columns>
             }
             .into_any()
@@ -153,6 +156,12 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
     let data = LocalResource::new(move || {
         let window = window.get();
         async move { api::get::<HomePayload>(&home_page_path(0, window)).await }
+    });
+    // The poll's counts, newer than the reader's own vote's, perhaps.
+    Effect::new(move |_| {
+        if let Some(Ok(fetched)) = data.get() {
+            crate::components::poll_counts(fetched.data.poll, fetched.data.meta.fetched_at as f64);
+        }
     });
     // Keep page boundaries so appending a page does not move earlier cards.
     // Each page is ranked using the currently selected sort.
@@ -316,14 +325,15 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                 });
                 let chip_notes = Arc::new(payload.notes.clone());
                 view! {
-                    <Columns>
+                    <Columns class="front-columns">
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
                         <ClientShareBar casts=payload.pool.clone() notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
-                        <CastList casts notes on_end=load_more page_cursor=next_offset/>
+                        {crate::components::poll_gutter()}
+                        <CastList casts notes on_end=load_more page_cursor=next_offset inset=crate::components::poll_inset()/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                     </Columns>
                 }

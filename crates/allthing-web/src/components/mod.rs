@@ -25,6 +25,8 @@ pub mod notifications;
 #[cfg(not(feature = "static-host"))]
 pub mod outgoing;
 pub mod player;
+#[cfg(not(feature = "static-host"))]
+pub mod poll;
 pub mod popover;
 pub mod profile_card;
 pub mod quote;
@@ -107,6 +109,56 @@ pub fn outgoing_profile(
     {
         let _ = (fid, replies, listed);
         ().into_any()
+    }
+}
+
+/// Allthing's poll, for the front page's two places for it (`poll`). None
+/// in the static copy, which has no Worker to vote with.
+pub fn provide_poll() {
+    #[cfg(not(feature = "static-host"))]
+    {
+        leptos::prelude::provide_context(poll::Poll::new());
+    }
+}
+
+/// The poll's counts a front page's payload brought, counted at `at` (Unix
+/// milliseconds), for a reader who has voted.
+pub fn poll_counts(counts: Option<allthing_core::poll::Counts>, at: f64) {
+    #[cfg(not(feature = "static-host"))]
+    {
+        if let (Some(counts), Some(poll)) = (counts, leptos::prelude::use_context::<poll::Poll>()) {
+            poll.offer(counts, at);
+        }
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = (counts, at);
+    }
+}
+
+/// The poll beside the front page's feed, where the screen has room.
+pub fn poll_gutter() -> leptos::prelude::AnyView {
+    use leptos::prelude::*;
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <poll::PollGutter/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        ().into_any()
+    }
+}
+
+/// The poll as the front page's feed carries it, after its fourth card,
+/// where the screen hasn't room beside it (`cast::CastList`'s inset).
+pub fn poll_inset() -> Option<fn() -> leptos::prelude::AnyView> {
+    #[cfg(not(feature = "static-host"))]
+    {
+        Some(poll::inline)
+    }
+    #[cfg(feature = "static-host")]
+    {
+        None
     }
 }
 

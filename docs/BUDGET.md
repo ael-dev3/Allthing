@@ -54,6 +54,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Following, unfollowing, or deleting one's own cast | **0**: signed and handed to Hypersnap by the browser, and read back from it (`/v1/linkById`, `/v1/castById`), like a like | none |
 | Attaching an image or a video to a cast | 1 per file (`POST /api/v1/media`: D1 1–2 and R2 1, no upstream call), and 1 as the composer opens for a reader signed in, to ask whether it may attach (`GET /api/v1/media`: no subrequest, kept 5 minutes by the app and the browser; none for a reader signed out) ([§12](#12-attachments-r2)) | none |
 | Showing a reader's attachment, here or in any other app | 1 per file a browser doesn't have (`/m/…`, an R2 read; each kept a year, as immutable); a video as many as the ranges its player asks for, usually 1 to 3; in an HLS player (the Farcaster app), 2 for its playlists, then 1 for the init and 1 per segment (4 s or more) it plays | none |
+| Voting in Allthing's poll | 1 (`POST /api/v1/poll`: one D1 batch, no cache call, no upstream call), once a browser: a later visit shows the results it kept, and the counts come with the front page's payload ([§14](#14-allthings-poll)) | none |
 | Messages `/messages` (a reader's [Direct Casts](ARCHITECTURE.md#direct-casts)) | **1**: whether the Worker relays them (`GET /api/v1/dc`, 404 unless Allthing's owner turned the relay on; no subrequest), asked once a visit and as the key form shows. The browser reads and sends them at Farcaster's API itself, with the reader's key (while it answers this origin; otherwise it sends only, with `ext-send-direct-cast`), and reads names from Hypersnap's `user/bulk` for the fids it hasn't seen this visit. The list and an open conversation are asked for again every 20 s while the page is in view, never through the Worker | none |
 | Messages through the [Direct Cast relay](ARCHITECTURE.md#direct-casts), where Allthing's owner has turned it on | 2 to find it (`/api/v1/dc`, and a read of one conversation through it), then 1 per call: the list every 20 s while the page is in view, the open conversation every 20 s, each page of older messages, each message sent; 3 to 6 a minute with the page open. Each is one subrequest, never cached ([§13](#13-the-direct-cast-relay)) | none |
 | Finding someone to write to | 1 per distinct query, after typing pauses for 250 ms, from 2 characters (`/api/v1/search`, the search box's payload) | none |
@@ -115,11 +116,12 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Build | Calls |
 |---|---|
 | Any cache hit | 1 (cache read) |
-| home | cache read 1 + trending casts 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + cache write 1 |
+| home | cache read 1 + trending casts 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + the poll's counts 1 (a D1 read alongside the trending read, on the first page only) + cache write 1 |
 | home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
 | the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1; first, [scheduled casts](#11-scheduled-casts) due: D1 1 (takes what is due, and reads it) + submits ≤5 + D1 1 (what became of them, only when some were due) (≤ 11) |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
+| a vote in the poll | D1 1 (one batch: count the vote, keep it, read the counts; + the schema once per isolate); no cache call, no upstream call |
 | activity | cache read 1 + the cron's stored payload 1 (a D1 read) + cache write 1 (≤ 3); no upstream calls |
 | the active-accounts follower (cron, every 2 minutes) | D1 4 or 5 (the state; the apps of the keys that signed; the sets it adds to and the 48 hours of the windows, in one query; once an hour, the count by app; the sets, keys, state and payload written in one batch; the schema once per isolate) + events 2 (a page per shard) + the newest event per shard 2, on a first run only + key lookups ≤24 (an account each, 6 while catching up) + removed keys' histories ≤6 + with the count by app, the top apps' accounts 1 (`user/bulk`, for those not read yet that day) (≤ 42; the lookups always leave the calls after them their subrequests) |
 | channel | cache read 1 + channel lookup, feed and farcaster.xyz channel record 3 (in parallel) + feed refetch ≤1 (when the guessed feed URL was wrong, or its read failed) + feed pages ≤3 (after pages with no casts but a cursor for more, one at a time: /veg's newest come after two), lead and moderators (`user/bulk`) ≤1 and pinned cast ≤1 (in parallel) + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + link pages ≤6 + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins + app names ≤1 + cache write 1 (22 before origins, which take what is left of the 45) |
@@ -317,3 +319,18 @@ Off unless Allthing's owner turns it on (`DC_RELAY`, [ARCHITECTURE.md](ARCHITECT
 | Subrequests | 50 per invocation | 1, the call to `api.farcaster.xyz`. No Cache API calls: every answer is `no-store`, and nothing goes through `cache::serve` |
 
 Its calls have a guard of their own (`direct-casts` in `/api/v1/status`): a burst of 20 and 4 a second per isolate, an 8 s timeout, and a breaker that opens on 5xx answers and no answer, but not on a 429, which the API gives one key at a time.
+
+## 14. Allthing's poll
+
+One question on the front page, one vote per network ([ARCHITECTURE.md](ARCHITECTURE.md#allthings-poll)), counted in D1. Against the Free plan:
+
+| Limit | Free plan | The poll |
+|---|---|---|
+| Worker requests | 100,000/day | One a vote (`POST /api/v1/poll`), once a browser: a later visit shows the results the browser kept, with no request, and the front page's payload brings the counts. A browser that votes again (its storage cleared) is told its network has voted, for one more. The per-client limit (`API_LIMITER`, 120 a minute) holds |
+| CPU time | 10 ms per invocation | An HMAC of about 40 bytes and a body of 256 bytes at most: well under a millisecond |
+| Subrequests | 50 per invocation | A vote: D1 1 (one batch; + the schema once per isolate), no cache call, no upstream call. The front page's first page: D1 1 more, the counts, alongside its trending read ([§3](#3-subrequests-per-invocation)) |
+| D1 rows written | 100,000/day | A vote counted: 2 (its row, its answer's count); one from a network that has voted: none |
+| D1 rows read | 5,000,000/day | A vote: about 5 (whether its network has voted, by its key, twice; its answer's count; the two counts). A front page build (the first page of each range, at most every 60 s per data center): 2 |
+| D1 storage | 5 GB | About 100 bytes a network that voted |
+
+**Not set up** (no `SESSION_SECRET` secret, or no D1), a vote is answered 503 at once, with no subrequest, and the card goes.

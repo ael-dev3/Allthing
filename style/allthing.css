@@ -732,6 +732,209 @@ code {
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
+/* ---------- Allthing's poll (components/poll.rs) ---------- */
+
+/* One card in two places: after the feed's fourth card, and, where the
+   screen has room beside the feed, in the gutter to its right, where it
+   stays in view as the feed scrolls (the media query below). Its body
+   keeps one height whatever it shows, so a vote moves nothing. */
+.poll-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px 14px;
+  box-shadow: var(--shadow);
+}
+
+/* In the feed it is laid out as its cards are (`.cast-card`): skipped out
+   of view, at the height it last had in view. Laid out in full where they
+   weren't, it was the one thing a new list moved: drawn while the cards
+   above it were still laid out at their placeholder height, it came into
+   view as they took their own, which counted as layout shift. */
+.cast-list > .poll-card {
+  animation: rise 0.5s var(--ease) backwards;
+  animation-delay: calc(4 * 26ms);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 224px;
+}
+
+.poll-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 18px;
+}
+
+.poll-overline,
+.poll-total {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.poll-overline {
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.poll-total {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.poll-question {
+  margin: 4px 0 12px;
+  font: 400 21px/1.2 var(--font-display);
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+/* Yes and No (44 px) and a note, or the results (two 30 px rows) and a
+   note, of one or two lines of 18 px, in the middle of one height. */
+.poll-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 112px;
+}
+
+.poll-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.poll-choice {
+  height: 44px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink);
+  font: 600 15px/1 var(--font-ui);
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+.poll-choice:hover:not(:disabled) {
+  border-color: rgba(79, 67, 212, 0.45);
+  background: var(--accent-soft);
+}
+
+.poll-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.poll-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.poll-choice:disabled {
+  cursor: progress;
+}
+
+.poll-choice:disabled:not([aria-pressed="true"]) {
+  opacity: 0.55;
+}
+
+.poll-note {
+  max-height: 36px;
+  margin: 10px 0 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.poll-note.failed {
+  color: #a63b1e;
+}
+
+.poll-results {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A bar as long as the choice's share, behind its name and numbers. */
+.poll-result {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+.poll-result::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  width: var(--share, 0%);
+  background: var(--accent-soft);
+}
+
+.poll-result.mine {
+  font-weight: 650;
+}
+
+.poll-result.mine::before {
+  background: rgba(79, 67, 212, 0.2);
+}
+
+.poll-share {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Beside the feed only where the gutter has room for the card: half of
+   what the 770 px feed leaves, less 20 px from the feed and 24 px from the
+   window's edge (room for a scrollbar too), is 211 px at 1280 px, and it is
+   260 px from 1378 px. */
+.poll-gutter {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .front-columns > .content {
+    position: relative;
+  }
+
+  .poll-gutter {
+    display: block;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(100% + 20px);
+    width: min(260px, calc((100vw - 100%) / 2 - 44px));
+  }
+
+  .poll-gutter > .poll-card {
+    position: sticky;
+    top: 78px;
+  }
+
+  .cast-list > .poll-card {
+    display: none;
+  }
+}
+
 /* ---------- Cast cards ---------- */
 
 .cast-list {

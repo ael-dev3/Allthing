@@ -29,7 +29,7 @@ const KEEP_MS: f64 = 300_000.0;
 
 /// What has an entrance on the front page: put back in the page, it would
 /// play it again.
-const ENTERED: &str = ".cast-card, .share-bar, .hidden-count";
+const ENTERED: &str = ".cast-card, .share-bar, .hidden-count, .poll-card";
 
 struct Kept {
     /// What it was drawn under: cleaned up, it's disposed of.
@@ -132,15 +132,16 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
     }
 }
 
-/// Each card in `slot` keeps the height it has. A card out of view is laid
-/// out at the height it last had in view, without laying out what it holds
-/// (`content-visibility: auto`), and it forgets that height out of the page:
+/// Each card in `slot`, and the poll in its feed, keeps the height it has.
+/// A card out of view is laid out at the height it last had in view,
+/// without laying out what it holds (`content-visibility: auto`), and it
+/// forgets that height out of the page:
 /// put back, each card not yet back in view was laid out as if it held
 /// 180 px, so a front page of 30 cards came back 2,800 px taller at 1280 px,
 /// and moved under the reader as its cards were laid out again, one screen
 /// at a time. With the heights kept, it's as it was from its first frame.
 fn keep_heights(slot: &web_sys::Element) {
-    let Ok(cards) = slot.query_selector_all(".cast-card") else { return };
+    let Ok(cards) = slot.query_selector_all(".cast-card, .cast-list > .poll-card") else { return };
     // All read, then all kept: a height kept between two reads would have
     // the page laid out again for the next.
     let heights: Vec<_> = (0..cards.length())
@@ -151,11 +152,18 @@ fn keep_heights(slot: &web_sys::Element) {
                 let value = style.get_property_value(property).ok()?;
                 value.strip_suffix("px")?.parse::<f64>().ok()
             };
+            // Its height as laid out: the style's is written to six figures
+            // ("133.359px" for 133.359375), which kept is laid out a 64th of
+            // a pixel short, and over a page of cards that came back a pixel
+            // shorter. Its box's, unless a transform scales it (a press).
+            let style_height = px("height")?;
+            let laid_out = card.get_bounding_client_rect().height();
+            let height = if (laid_out - style_height).abs() < 0.01 { laid_out } else { style_height };
             // The height of what it holds, which the size it's laid out at
             // stands for: its height less its padding and borders.
             let held = ["padding-top", "padding-bottom", "border-top-width", "border-bottom-width"]
                 .into_iter()
-                .try_fold(px("height")?, |left, edge| Some(left - px(edge)?))?;
+                .try_fold(height, |left, edge| Some(left - px(edge)?))?;
             (held > 0.0).then_some((card, held))
         })
         .collect();

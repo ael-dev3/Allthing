@@ -19,6 +19,7 @@ use allthing_core::model::{Cast, Channel};
 use allthing_core::normalize::{self, RawAppChannel, RawCast, RawFeed};
 use allthing_core::notifications::{self, Event, Kind, NotificationsPayload, Recasts};
 use allthing_core::params::fid_username;
+use allthing_core::poll::{self, Counts};
 use allthing_core::profile::UserCard;
 use allthing_core::provenance::Backend;
 use allthing_core::quotes::{self, QUOTE_DEPTH};
@@ -315,31 +316,46 @@ pub async fn home(
 ) -> Result<Built, Failure> {
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
-    // Only the first page heads the list with the client bar.
+    // Only the first page heads the list with the client bar, and carries
+    // the poll's counts.
     let counted = async { if offset == 0 { apps_24h(&inv).await } else { None } };
+    let polled = async { if offset == 0 { poll_counts(&inv).await } else { None } };
     if let Some(span) = Span::of(window)
         && let Some(ranking) = ranking(&inv, span).await
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
-        let (ranked, counted) = join(ranked_casts(&inv, &hashes), counted).await;
+        let (ranked, counted, poll) = join3(ranked_casts(&inv, &hashes), counted, polled).await;
         let (raw, casts) = ranked?;
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
         let index = IndexCoverage { casts: ranking.total, since: ranking.oldest, ranked_at: ranking.built };
         let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
-        let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index), apps_24h };
+        let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index), apps_24h, poll };
         return Built::json(&payload, api::INDEXED_HOME_CACHE);
     }
     let window = if window.is_indexed() { TrendingWindow::Week } else { window };
-    let (trending, counted) = join(hypersnap::trending_casts(&inv, POOL_SIZE, offset, window), counted).await;
+    let (trending, counted, poll) =
+        join3(hypersnap::trending_casts(&inv, POOL_SIZE, offset, window), counted, polled).await;
     let raw = trending.map_err(Failure::upstream)?;
     let casts = raw.iter().map(normalize::cast).collect();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
-    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h }, api::HOME_CACHE)
+    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll }, api::HOME_CACHE)
+}
+
+/// How many voted each way in Allthing's poll, so a reader who voted sees
+/// them with no request of their own: one D1 read of the two counts its
+/// votes keep, given an index and a subrequest for it. `None` before anyone
+/// has voted, or when the read can't be made.
+async fn poll_counts(inv: &Invocation) -> Option<Counts> {
+    let index = inv.index()?;
+    if !inv.take_subrequests(1) {
+        return None;
+    }
+    index.poll(poll::MOBILE_CLIENT).await.ok().filter(|counts| counts.total() > 0)
 }
 
 /// Accounts active by app in the past 24 hours, as the cron last counted
@@ -2111,7 +2127,11 @@ mod indexed_home_tests {
     }
 
     fn filled() -> Rc<Memory> {
-        let index = Memory::default();
+        fill(Memory::default())
+    }
+
+    /// `index` with casts indexed and ranked.
+    fn fill(index: Memory) -> Rc<Memory> {
         let now = (NOW_MS / 1000.0) as i64;
         let day = 86_400;
         let entries = [("0xc1", now - day, 900), ("0xc2", now - 3 * day, 400), ("0xc3", now - day, 300)];
@@ -2157,6 +2177,29 @@ mod indexed_home_tests {
         // The week itself never asks the index.
         let host = Rc::new(Indexed { index: Some(filled()), requests: RefCell::new(Vec::new()) });
         assert_eq!(build(&host, 0, TrendingWindow::Week).index, None);
+    }
+
+    #[test]
+    fn the_first_page_carries_the_polls_counts_once_someone_has_voted() {
+        let counts = Counts { yes: 3, no: 1 };
+        let voted = fill(Memory { poll: counts, ..Memory::default() });
+        let host = Rc::new(Indexed { index: Some(voted), requests: RefCell::new(Vec::new()) });
+        // Trending, and ranked from the index.
+        assert_eq!(build(&host, 0, TrendingWindow::Day).poll, Some(counts));
+        assert_eq!(build(&host, 0, TrendingWindow::Month).poll, Some(counts));
+        // Not the later pages; nor before anyone has voted, nor where the index fails or there is none.
+        assert_eq!(build(&host, 100, TrendingWindow::Day).poll, None);
+        for index in [Some(filled()), Some(Rc::new(Memory { fail: true, ..Memory::default() })), None] {
+            let host = Rc::new(Indexed { index, requests: RefCell::new(Vec::new()) });
+            assert_eq!(build(&host, 0, TrendingWindow::Day).poll, None);
+        }
+        // Like any read, it takes one of the build's subrequests: with only
+        // the trending read's left, the counts are left out.
+        let voted = fill(Memory { poll: counts, ..Memory::default() });
+        let host = Rc::new(Indexed { index: Some(voted), requests: RefCell::new(Vec::new()) });
+        let built =
+            home(Rc::new(Invocation::new(host, 1)), 0, TrendingWindow::Day, None).now_or_never().unwrap().unwrap();
+        assert_eq!(serde_json::from_slice::<HomePayload>(&built.body).unwrap().poll, None);
     }
 }
 

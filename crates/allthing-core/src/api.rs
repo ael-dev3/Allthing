@@ -121,6 +121,12 @@ pub struct HomePayload {
     /// static copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apps_24h: Option<crate::activity::AppsWindow>,
+    /// How many voted each way in Allthing's poll (`crate::poll`), on the
+    /// first page: a reader who voted sees them with no request of its own.
+    /// Absent before anyone has voted, where D1 doesn't answer, and in the
+    /// static copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<crate::poll::Counts>,
 }
 
 /// What a ranking from Allthing's index was ranked from.

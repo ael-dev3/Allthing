@@ -28,6 +28,7 @@ mod dc_relay;
 mod host;
 mod index;
 mod media;
+mod poll;
 mod refresh;
 mod scheduled_casts;
 
@@ -43,6 +44,7 @@ use allthing_core::latest;
 use allthing_core::media::{MEDIA_PATH, SERVED_PREFIX};
 use allthing_core::notifications::{NOTIFICATIONS_PATH, cursor_from_param};
 use allthing_core::params::percent_encode;
+use allthing_core::poll::POLL_PATH;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::scheduled::SCHEDULED_PATH;
 use allthing_core::time::iso_utc;
@@ -131,6 +133,14 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             return Ok(limited);
         }
         return media::handle(req, &env, &ctx, Date::now().as_millis() as f64).await;
+    }
+    // A vote in Allthing's poll, signed in or not: POST, never cached, one
+    // D1 batch, nothing upstream.
+    if url.path() == POLL_PATH {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        return poll::handle(req, &env).await;
     }
     // A signed-in reader's Direct Casts, with their own key, where
     // Allthing's owner turned the relay on (404 otherwise): GET and PUT,
@@ -500,6 +510,9 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
             Some(public_key) => serde_json::json!({ "attest": true, "public_key": public_key }),
             None => serde_json::json!({ "attest": attest::ready(env) }),
         },
+        // Whether votes in Allthing's poll are counted: SESSION_SECRET,
+        // which keys the voters, and D1, which keeps them.
+        "poll": { "ready": poll::ready(env) },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;
