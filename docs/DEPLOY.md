@@ -107,7 +107,7 @@ Once `ALLTHING_CUSTODY_KEY` is set and the deploy is live, on allthing.social:
 3. **Like.** Click a cast's heart: it fills and the count goes up at once, with no dialog. Reload: the heart is still filled, read back from Hypersnap, and the Farcaster app shows the like. Click again to unlike.
 4. **"via Allthing".** Post a cast with **Cast**. The notice says "Posted." with **View**, which opens the cast: its meta line says "via Allthing", linked to @allthingapp's profile. Then **Delete** it.
 5. **No hand-off once approved.** Signed in with the key, a recast, a follow, a reply, a quote, a Pepe reaction and a delete all happen here, with no "… in Farcaster" dialog, and the composer's button says **Cast**, **Reply** or **Quote**, not **Post in Farcaster**. Signed out, a write still goes to the Farcaster app.
-6. **Asked once elsewhere.** In another browser where you were already signed in, the first page load opens **Approve Allthing** by itself, once; approve there, or dismiss it and a like asks later.
+6. **Approving in another browser.** In another browser where you were already signed in, nothing opens by itself: your first write there opens the sign-in dialog in its approve form, "Approve Allthing to write from here", and goes once you approve; closed, it doesn't.
 
 If a step fails, delete the secret: writes go back to the Farcaster app at once. Report the notice Allthing showed, or the browser console's error, never the key.
 
