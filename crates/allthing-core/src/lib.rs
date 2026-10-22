@@ -40,6 +40,7 @@ pub mod ranking;
 pub mod scheduled;
 pub mod siwf;
 pub mod spam;
+pub mod stdb;
 pub mod text;
 pub mod thread;
 pub mod time;

@@ -36,9 +36,9 @@ Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. Tha
 - Future: X3DH/Double Ratchet for forward secrecy, plus multi-device keys (one key row per device).
 
 ## TODOs
-1. **FID verification**: `register` currently trusts the FID the client sends (`verified=false`). Plan: Allthing's backend runs SIWF, then signs
-   Ed25519(identity_hex|fid|expiry) with a pinned key. A new `verify_fid(attestation)` reducer checks it in-module (ed25519-dalek) and sets verified=true.
-   Until that's done, the UI should treat FIDs as unverified.
+1. ~~FID verification~~: done. `verify_fid(fid, expiry, signature)` checks the Worker's Ed25519 attestation of
+   `allthing-spacetimedb-fid-v1|identity_hex|fid|expiry` against the key pinned in `src/attest_key.rs` (all zeros until
+   `node scripts/attest-key.mjs` sets it; see docs/DEPLOY.md#secrets). Once pinned, only verified identities may speak.
 2. Pruning of expired typing rows (add a scheduled reducer; clients can filter by `expires_at` for now). Message retention/pagination.
 3. Rooms are public, with no membership or moderation. Add `room_member` plus visibility views for private rooms.
 4. RLS: views are used instead of `client_visibility_filter`. Users can still query the public `user_key`/`user` tables, which is intended.
