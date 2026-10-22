@@ -898,6 +898,20 @@ pub struct CachePolicy {
 }
 
 pub const HOME_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 30 };
+
+/// The front page's cache for a trending window (not the index's, which is
+/// [`INDEXED_HOME_CACHE`]). A copy is kept no longer than the window it
+/// lists: past its span it holds no cast in the window, and it is what
+/// stale-if-error serves when a rebuild fails, so a past-hour list could
+/// otherwise show casts hours old. Up to 12 hours a copy is also refreshed
+/// after 2 minutes, not 10.
+pub fn home_cache(window: TrendingWindow) -> CachePolicy {
+    match window.span_secs() {
+        Some(span) if span <= 12 * 3_600 => CachePolicy { fresh: 60, stale: 120, keep: span as u32, browser: 30 },
+        Some(span) => CachePolicy { keep: span.min(86_400) as u32, ..HOME_CACHE },
+        None => HOME_CACHE,
+    }
+}
 /// Rankings from Allthing's index are recomputed every 5 minutes at most.
 pub const INDEXED_HOME_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 /// New casts arrive every few seconds: fresh for 30 s, then refreshed in the
@@ -1586,5 +1600,18 @@ mod tests {
         );
         assert_eq!(reply.only(&[]), Wrote::default());
         assert_eq!(reply.only(&reply.paths()), reply);
+    }
+
+    #[test]
+    fn a_short_window_keeps_its_copy_no_longer_than_the_window() {
+        let hour = home_cache(TrendingWindow::Hour);
+        assert_eq!((hour.fresh, hour.stale, hour.keep), (60, 120, 3_600));
+        assert!(hour.fresh < hour.stale && hour.stale <= hour.keep);
+        assert_eq!(home_cache(TrendingWindow::SixHours).keep, 21_600);
+        assert_eq!(home_cache(TrendingWindow::TwelveHours).keep, 43_200);
+        // A day and a week keep a day, as the front page always has.
+        assert_eq!(home_cache(TrendingWindow::Day).keep, 86_400);
+        assert_eq!(home_cache(TrendingWindow::Week).keep, 86_400);
+        assert_eq!(home_cache(TrendingWindow::Week).stale, HOME_CACHE.stale);
     }
 }

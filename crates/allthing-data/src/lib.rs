@@ -248,7 +248,9 @@ impl Endpoint {
             "/home" => {
                 let window = match query("window") {
                     None => TrendingWindow::Day,
-                    Some(w) => TrendingWindow::parse(&w).ok_or(bad("Expected ?window=1h|24h|7d|30d|365d|all"))?,
+                    Some(w) => {
+                        TrendingWindow::parse(&w).ok_or(bad("Expected ?window=1h|6h|12h|24h|7d|30d|365d|all"))?
+                    }
                 };
                 match query("offset").map(|o| o.parse::<u32>()) {
                     None => Ok(Endpoint::Home(0, window)),
@@ -434,6 +436,13 @@ mod tests {
             Ok(Endpoint::Home(100, TrendingWindow::Week))
         );
         assert_eq!(Endpoint::from_path("/api/v1/home?window=30d"), Ok(Endpoint::Home(0, TrendingWindow::Month)));
+        assert_eq!(Endpoint::from_path("/api/v1/home?window=6h"), Ok(Endpoint::Home(0, TrendingWindow::SixHours)));
+        assert_eq!(
+            Endpoint::Home(0, TrendingWindow::TwelveHours).cache_name(),
+            "home?window=12h",
+            "a 12-hour copy is its own cache entry"
+        );
+        assert!(Endpoint::from_path("/api/v1/home?window=90d").is_err());
         assert_eq!(
             Endpoint::from_path("/api/v1/home?window=all&offset=900"),
             Ok(Endpoint::Home(900, TrendingWindow::All))

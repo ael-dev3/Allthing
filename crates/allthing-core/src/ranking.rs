@@ -48,22 +48,36 @@ impl Sort {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TimeRange {
     Hour,
+    SixHours,
+    TwelveHours,
     #[default]
     Day,
     Week,
     Month,
+    /// Not in the menu any more: a `t=year` link still shows the past year.
     Year,
     All,
 }
 
 impl TimeRange {
-    /// In menu order, the widest first.
-    pub const ALL: [TimeRange; 6] =
-        [TimeRange::All, TimeRange::Year, TimeRange::Month, TimeRange::Week, TimeRange::Day, TimeRange::Hour];
+    /// In menu order, the narrowest first. `Year` is left out of the menu
+    /// unless it is the range shown.
+    pub const ALL: [TimeRange; 8] = [
+        TimeRange::Hour,
+        TimeRange::SixHours,
+        TimeRange::TwelveHours,
+        TimeRange::Day,
+        TimeRange::Week,
+        TimeRange::Month,
+        TimeRange::All,
+        TimeRange::Year,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             TimeRange::Hour => "hour",
+            TimeRange::SixHours => "6h",
+            TimeRange::TwelveHours => "12h",
             TimeRange::Day => "day",
             TimeRange::Week => "week",
             TimeRange::Month => "month",
@@ -72,7 +86,7 @@ impl TimeRange {
         }
     }
 
-    /// Unknown or missing values fall back to the default, Today.
+    /// Unknown or missing values fall back to the default, 24 hours.
     pub fn parse(value: Option<&str>) -> TimeRange {
         TimeRange::ALL.into_iter().find(|r| Some(r.as_str()) == value).unwrap_or_default()
     }
@@ -80,9 +94,11 @@ impl TimeRange {
     pub fn label(self) -> &'static str {
         match self {
             TimeRange::Hour => "Past hour",
-            TimeRange::Day => "Today",
-            TimeRange::Week => "Past week",
-            TimeRange::Month => "Past month",
+            TimeRange::SixHours => "6 hours",
+            TimeRange::TwelveHours => "12 hours",
+            TimeRange::Day => "24 hours",
+            TimeRange::Week => "7 days",
+            TimeRange::Month => "30 days",
             TimeRange::Year => "Past year",
             TimeRange::All => "All time",
         }
@@ -93,6 +109,8 @@ impl TimeRange {
     pub fn window(self) -> TrendingWindow {
         match self {
             TimeRange::Hour => TrendingWindow::Hour,
+            TimeRange::SixHours => TrendingWindow::SixHours,
+            TimeRange::TwelveHours => TrendingWindow::TwelveHours,
             TimeRange::Day => TrendingWindow::Day,
             TimeRange::Week => TrendingWindow::Week,
             TimeRange::Month => TrendingWindow::Month,
@@ -103,11 +121,14 @@ impl TimeRange {
 }
 
 /// The windows the front page ranks casts over: Hypersnap's trending
-/// windows (`time_window`, at most 7 days), and the longer ones ranked from
-/// Allthing's own index of past casts (see [`crate::index`]).
+/// windows (up to a week), and the longer ones ranked from Allthing's own
+/// index of past casts (see [`crate::index`]). Every window but All time
+/// holds only the casts posted within its span ([`TrendingWindow::holds`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TrendingWindow {
     Hour,
+    SixHours,
+    TwelveHours,
     #[default]
     Day,
     Week,
@@ -117,8 +138,10 @@ pub enum TrendingWindow {
 }
 
 impl TrendingWindow {
-    pub const ALL: [TrendingWindow; 6] = [
+    pub const ALL: [TrendingWindow; 8] = [
         TrendingWindow::Hour,
+        TrendingWindow::SixHours,
+        TrendingWindow::TwelveHours,
         TrendingWindow::Day,
         TrendingWindow::Week,
         TrendingWindow::Month,
@@ -129,6 +152,8 @@ impl TrendingWindow {
     pub fn as_str(self) -> &'static str {
         match self {
             TrendingWindow::Hour => "1h",
+            TrendingWindow::SixHours => "6h",
+            TrendingWindow::TwelveHours => "12h",
             TrendingWindow::Day => "24h",
             TrendingWindow::Week => "7d",
             TrendingWindow::Month => "30d",
@@ -144,6 +169,44 @@ impl TrendingWindow {
     /// Ranked from Allthing's index rather than Hypersnap's trending feed.
     pub fn is_indexed(self) -> bool {
         matches!(self, TrendingWindow::Month | TrendingWindow::Year | TrendingWindow::All)
+    }
+
+    /// How far back the window reaches, in seconds; `None` for all time.
+    pub fn span_secs(self) -> Option<i64> {
+        const HOUR: i64 = 3_600;
+        match self {
+            TrendingWindow::Hour => Some(HOUR),
+            TrendingWindow::SixHours => Some(6 * HOUR),
+            TrendingWindow::TwelveHours => Some(12 * HOUR),
+            TrendingWindow::Day => Some(24 * HOUR),
+            TrendingWindow::Week => Some(7 * 24 * HOUR),
+            TrendingWindow::Month => Some(30 * 24 * HOUR),
+            TrendingWindow::Year => Some(365 * 24 * HOUR),
+            TrendingWindow::All => None,
+        }
+    }
+
+    /// Whether a cast posted at `ts` is inside the window at `now` (both in
+    /// seconds since the Unix epoch, which has no time zone). The window
+    /// starts just after `now − span`: a cast exactly that old is out, and
+    /// one a second newer is in. A cast newer than `now`, from a clock a
+    /// little ahead, is in.
+    pub fn holds(self, ts: i64, now: i64) -> bool {
+        self.span_secs().is_none_or(|span| ts > now - span)
+    }
+
+    /// The window in words, for a note under the list.
+    pub fn past(self) -> &'static str {
+        match self {
+            TrendingWindow::Hour => "the past hour",
+            TrendingWindow::SixHours => "the past 6 hours",
+            TrendingWindow::TwelveHours => "the past 12 hours",
+            TrendingWindow::Day => "the past 24 hours",
+            TrendingWindow::Week => "the past 7 days",
+            TrendingWindow::Month => "the past 30 days",
+            TrendingWindow::Year => "the past year",
+            TrendingWindow::All => "all time",
+        }
     }
 }
 
@@ -358,7 +421,15 @@ mod tests {
             assert_eq!(TimeRange::parse(Some(range.as_str())), range);
         }
         assert_eq!(TimeRange::Hour.window().as_str(), "1h");
+        assert_eq!(TimeRange::SixHours.window().as_str(), "6h");
+        assert_eq!(TimeRange::TwelveHours.window().as_str(), "12h");
         assert_eq!(TimeRange::Day.window().as_str(), "24h");
+        assert_eq!(TimeRange::parse(Some("6h")), TimeRange::SixHours);
+        assert_eq!(TimeRange::parse(Some("12h")), TimeRange::TwelveHours);
+        // The menu: seven ranges, narrowest first, with Past year left out.
+        let menu: Vec<&str> =
+            TimeRange::ALL.into_iter().filter(|r| *r != TimeRange::Year).map(TimeRange::label).collect();
+        assert_eq!(menu, ["Past hour", "6 hours", "12 hours", "24 hours", "7 days", "30 days", "All time"]);
         // Every range has its own window: up to a week from Hypersnap, the
         // longer ones from Allthing's index.
         let windows: Vec<TrendingWindow> = TimeRange::ALL.into_iter().map(TimeRange::window).collect();
@@ -372,6 +443,53 @@ mod tests {
         assert!(!TimeRange::Week.window().is_indexed());
         assert_eq!(TrendingWindow::parse("30d"), Some(TrendingWindow::Month));
         assert_eq!(TrendingWindow::parse("90d"), None);
+    }
+
+    #[test]
+    fn a_window_holds_casts_inside_its_span_at_the_edges() {
+        let now = 1_792_000_000;
+        // Exactly one span old is out; a second newer is in.
+        for (window, span) in [
+            (TrendingWindow::Hour, 3_600),
+            (TrendingWindow::SixHours, 21_600),
+            (TrendingWindow::TwelveHours, 43_200),
+            (TrendingWindow::Day, 86_400),
+            (TrendingWindow::Week, 604_800),
+            (TrendingWindow::Month, 2_592_000),
+        ] {
+            assert_eq!(window.span_secs(), Some(span), "{window:?}");
+            assert!(!window.holds(now - span, now), "{window:?} exact boundary is out");
+            assert!(window.holds(now - span + 1, now), "{window:?} one second inside is in");
+            assert!(!window.holds(now - span - 1, now), "{window:?} one second outside is out");
+            assert!(window.holds(now, now), "{window:?} now is in");
+        }
+        // A cast from a clock a little ahead is in, not dropped.
+        assert!(TrendingWindow::Hour.holds(now + 5, now));
+    }
+
+    #[test]
+    fn a_window_for_all_time_holds_every_cast() {
+        assert_eq!(TrendingWindow::All.span_secs(), None);
+        assert!(TrendingWindow::All.holds(0, 1_792_000_000));
+        assert!(TrendingWindow::All.holds(i64::MIN / 2, 1_792_000_000));
+    }
+
+    #[test]
+    fn a_window_is_plain_seconds_across_midnight_utc() {
+        // 23:50 to 00:20 UTC, with the clock at 00:10: a one-hour window
+        // holds 23:50 onward and no time zone shifts the edge.
+        let midnight = 1_792_022_400; // 00:00:00 UTC
+        let now = midnight + 10 * 60;
+        assert!(TrendingWindow::Hour.holds(midnight - 10 * 60, now));
+        assert!(TrendingWindow::Hour.holds(midnight - 49 * 60, now));
+        assert!(!TrendingWindow::Hour.holds(midnight - 50 * 60, now));
+    }
+
+    #[test]
+    fn the_windows_say_what_they_cover() {
+        assert_eq!(TrendingWindow::SixHours.past(), "the past 6 hours");
+        assert_eq!(TrendingWindow::Day.past(), "the past 24 hours");
+        assert_eq!(TrendingWindow::All.past(), "all time");
     }
     use crate::model::UserSummary;
     use crate::time::parse_rfc3339;

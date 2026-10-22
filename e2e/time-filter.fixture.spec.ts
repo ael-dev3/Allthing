@@ -18,7 +18,7 @@ const pool = (window: string) =>
     hash: `0x${String(Object.keys(pools).indexOf(window) + 1).repeat(39)}${i}`,
     author: { fid: 1, username: "fixture" },
     text: `${pools[window]} cast ${i}`,
-    ts: 1792235681 - i,
+    ts: Math.floor(Date.now() / 1000) - 60 * (i + 1),
     likes: 3 - i,
   }));
 // 12 Mar 2024, the oldest cast in the fixture index.
@@ -51,12 +51,13 @@ test("the time filter picks the window and is kept in the URL", async ({ page })
   const range = page.getByRole("combobox", { name: "Time range" });
   await expect(range).toHaveValue("day");
   await expect(range.locator("option")).toHaveText([
-    "All time",
-    "Past year",
-    "Past month",
-    "Past week",
-    "Today",
     "Past hour",
+    "6 hours",
+    "12 hours",
+    "24 hours",
+    "7 days",
+    "30 days",
+    "All time",
   ]);
 
   await page.getByRole("navigation", { name: "Sort", exact: true }).getByRole("link", { name: "top", exact: true }).click();
@@ -67,12 +68,12 @@ test("the time filter picks the window and is kept in the URL", async ({ page })
   await expect(page).toHaveURL(/[?&]sort=top/);
   await expect(cards.first()).toContainText("Past hour cast");
   expect(calls).toContain("/api/v1/home?window=1h");
-  await expect(page.locator(".range-note")).toHaveCount(0);
+  // The fixture's list has three casts, and the page says so once it has run out.
+  await expect(page.locator(".range-note")).toHaveText("Only 3 casts in the past hour.");
 
   // Beyond a week, each range is ranked from Allthing's index, and says what it covers.
   for (const [t, window, label] of [
     ["month", "30d", "Past month"],
-    ["year", "365d", "Past year"],
     ["all", "all", "All time"],
   ]) {
     await range.selectOption(t);
@@ -87,7 +88,7 @@ test("the time filter picks the window and is kept in the URL", async ({ page })
   await range.selectOption("week");
   await expect(page).toHaveURL(/[?&]t=week/);
   await expect(cards.first()).toContainText("Past week cast");
-  await expect(page.locator(".range-note")).toHaveCount(0);
+  await expect(page.locator(".range-note")).toHaveText("Only 3 casts in the past 7 days.");
 
   // The sort tabs keep the range; "new" is newest first, with no filter.
   await page.getByRole("navigation", { name: "Sort", exact: true }).getByRole("link", { name: "new", exact: true }).click();

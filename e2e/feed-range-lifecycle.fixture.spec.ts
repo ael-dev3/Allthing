@@ -21,7 +21,7 @@ for (const width of [1280, 390]) {
       if (offset === 100) await (window === "day" ? day : hour);
       return route.fulfill({ json: { pool: [{
         hash: `0x${(window === "day" ? "a" : "b").repeat(38)}${offset === 100 ? "11" : "00"}`,
-        author: { fid: 1, username: "fixture" }, text: `${window} page ${offset}`, ts: 1792235681,
+        author: { fid: 1, username: "fixture" }, text: `${window} page ${offset}`, ts: Math.floor(Date.now() / 1000) - 600,
       }], meta } });
     });
     try {

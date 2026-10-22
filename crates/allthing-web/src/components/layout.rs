@@ -134,9 +134,10 @@ pub fn SortTabs(path: String, current: Sort, #[prop(optional)] default_sort: Opt
 }
 
 /// Whether the menu offers `range`. The static copy has no index, so it
-/// leaves out the ranges ranked from one.
+/// leaves out the ranges ranked from one; past year is no longer offered
+/// (a link to it still shows it, as the menu's current range).
 fn offered(range: TimeRange) -> bool {
-    !(cfg!(feature = "static-host") && range.window().is_indexed())
+    range != TimeRange::Year && !(cfg!(feature = "static-host") && range.window().is_indexed())
 }
 
 /// Reddit's time filter: how far back the front page reaches, kept in the

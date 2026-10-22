@@ -38,7 +38,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
-| Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `7d`, `30d`, `365d` or `all`) | none |
+| Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `6h`, `12h`, `7d`, `30d` or `all`) | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Being signed in | **0**: the header reads who is signed in from a cookie (its bell's reads are the next row) | none |
 | The bell, for a signed-in reader | 1 (`/api/v1/notifications`) when the app starts, then 1 every 3 minutes while the page is in view, and 1 when it comes back into view or its window regains focus. A read under a minute old is reused and one on its way is shared, so at most 1 a minute: about 20 an hour for a tab left in view, none while it is hidden. The static copy has no bell | none |
@@ -87,8 +87,9 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 
 | Endpoint | Fresh | Stale-while-revalidate until | Kept for stale-if-error | Browser `max-age` |
 |---|---|---|---|---|
-| home | 60 s | 10 min | 24 h | 30 s |
-| home, Past month, Past year and All time (ranked from the index) | 5 min | 30 min | 24 h | 2 min |
+| home, 24 hours and 7 days | 60 s | 10 min | 24 h | 30 s |
+| home, 1, 6 and 12 hours (copies kept no longer than their window: 1 h, 6 h and 12 h, so stale-if-error never serves casts older than the window) | 60 s | 2 min | the window's length | 30 s |
+| home, 30 days and All time (ranked from the index) | 5 min | 30 min | 24 h | 2 min |
 | latest ("new") | 30 s | 60 s | 24 h | 15 s |
 | channel | 2 min | 15 min | 24 h | 60 s |
 | cast | 30 s | 30 min | 24 h | 15 s |
@@ -122,8 +123,8 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | Build | Calls |
 |---|---|
 | Any cache hit | 1 (cache read) |
-| home | cache read 1 + trending casts 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + the poll's counts 1 (a D1 read alongside the trending read, on the first page only) + cache write 1 |
-| home, Past month, Past year and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
+| home | cache read 1 + trending casts 1 (for 12 hours, Hypersnap's 24-hour list, cut to the window: the same one call) + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 (12 authors × at most 3) + app names ≤1 + the apps' active accounts 1 (the follower's stored payload, a D1 read alongside the trending read, on the first page only) + the poll's counts 1 (a D1 read alongside the trending read, on the first page only) + cache write 1 |
+| home, 30 days and All time | as home, with the trending read replaced by the index's ranking row 1 (a D1 query, counted as a subrequest to be safe) and the page's casts in bulk 1 |
 | the indexer (cron) | D1 3 (the state with the rankings' metadata, in one batch; the casts, ranking and state written in one batch; the schema once per isolate) + one Hypersnap page 1; first, [scheduled casts](#11-scheduled-casts) due: D1 1 (takes what is due, and reads it) + submits ≤5 + D1 1 (what became of them, only when some were due) (≤ 11) |
 | latest | cache read 1 + events 2 (one page per shard) + casts bulk 1 + link pages ≤6 + quoted casts ≤3 (one bulk read per level of quotes, up to three levels) + emoji reactions ≤1 (a D1 read, when a listed cast has replies, taken before origins) + origins ≤36 + app names ≤1 + cache write 1 |
 | status | cache reads 2 (the latest and home payloads, for their freshness); no upstream calls |
@@ -209,7 +210,7 @@ WebAssembly in V8 runs these about 1.5 to 2.5 times slower, so a full rebuild st
 
 Allthing's goal is that the number of viewers barely changes upstream volume.
 
-- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. A steady-state rebuild costs about 2 to 7 Hypersnap calls once origins are memoized, one of them for newly quoted casts when there are any.
+- **Per data center, per payload**: at most one refresh per freshness window while traffic lasts. For the front page that is at most 1,440 builds a day per active data center. The hour, 6-hour and 12-hour windows refresh every 2 minutes while read (their stale-while-revalidate is 2 minutes, not 10, so their lists stay as fresh as the window needs; the read-side filter would keep an older copy right, but not current), so each of them can add up to 720 builds a day per active data center, about 2 to 7 Hypersnap calls each, when read all day; a window nobody reads builds nothing. A steady-state rebuild costs about 2 to 7 Hypersnap calls once origins are memoized, one of them for newly quoted casts when there are any.
 - **Per isolate token buckets** (`crates/allthing-data/src/upstream.rs`) cap bursts:
 
   | Upstream | Burst | Sustained |
@@ -253,7 +254,7 @@ Linked HTML uses the same 128 KB body limit in the browser: chunks are copied on
 
 ## 9. The index: cron and D1
 
-Past month, Past year and All time are ranked from Allthing's own index in D1 ([ARCHITECTURE.md](ARCHITECTURE.md#allthings-index-past-month-past-year-all-time)). Its costs, against the Free plan:
+30 days and All time are ranked from Allthing's own index in D1 ([ARCHITECTURE.md](ARCHITECTURE.md#allthings-index-past-month-past-year-all-time)). Its costs, against the Free plan:
 
 | Limit | Free plan | The index |
 |---|---|---|
