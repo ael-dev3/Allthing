@@ -166,9 +166,7 @@ pub fn WhoDialog() -> impl IntoView {
     });
     Effect::new(move |_| {
         let open = who.0.with(Option::is_some);
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().toggle_with_force("who-open", open);
-        }
+        crate::util::dialog_open("who-open", open);
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
         if who.0.with_untracked(Option::is_none) {
@@ -206,9 +204,7 @@ pub fn WhoDialog() -> impl IntoView {
     on_cleanup(move || {
         keys.remove();
         RETURN_FOCUS.with(|r| r.borrow_mut().take());
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().remove_1("who-open");
-        }
+        crate::util::dialog_open("who-open", false);
     });
     move || {
         who.0.get().map(|(hash, kind)| {

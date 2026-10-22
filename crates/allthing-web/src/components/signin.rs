@@ -685,9 +685,7 @@ pub fn SignInDialog() -> impl IntoView {
     });
     Effect::new(move |_| {
         let open = session.open.get();
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().toggle_with_force("signin-open", open);
-        }
+        crate::util::dialog_open("signin-open", open);
     });
     // An approval is for whoever is signed in: signed out, it closes.
     Effect::new(move |_| {

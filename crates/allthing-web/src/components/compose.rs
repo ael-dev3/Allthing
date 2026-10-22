@@ -1484,12 +1484,20 @@ pub fn ComposerDialog() -> impl IntoView {
     let session = use_session();
     let location = use_location();
     let dialog = NodeRef::<leptos::html::Div>::new();
+    // KLIPY's key, once the bar has asked for it (`BarAsks`): kept from one
+    // opening to the next, so the GIF button is there as the bar is drawn.
+    let gif_key = RwSignal::new(None::<String>);
     // A history navigation, or signing out, closes it. Signed out, it
     // takes no files.
     Effect::new(move |_| {
         let _ = (location.pathname.get(), location.search.get());
-        if session.user.with(Option::is_none) && composer.limits.with_untracked(Option::is_some) {
-            composer.limits.set(None);
+        if session.user.with(Option::is_none) {
+            if composer.limits.with_untracked(Option::is_some) {
+                composer.limits.set(None);
+            }
+            if gif_key.with_untracked(Option::is_some) {
+                gif_key.set(None);
+            }
         }
         if composer.open.get_untracked() {
             composer.close();
@@ -1497,13 +1505,12 @@ pub fn ComposerDialog() -> impl IntoView {
     });
     Effect::new(move |_| {
         let open = composer.open.get();
-        if let Some(root) = document().document_element() {
-            let _ = root.class_list().toggle_with_force("compose-open", open);
-        }
+        crate::util::dialog_open("compose-open", open);
         // Whether files can go with the draft, asked while the composer's
-        // code comes the first time (`composer_bar` reads it).
+        // code comes the first time (`BarAsks` reads it), once the first
+        // frame is on screen.
         if open && session.user.with_untracked(Option::is_some) {
-            api::prefetch(MEDIA_PATH);
+            crate::components::cast::after_paint(|| api::prefetch(MEDIA_PATH));
         }
     });
     let keys = window_event_listener(ev::keydown, move |ev| {
@@ -1605,8 +1612,6 @@ pub fn ComposerDialog() -> impl IntoView {
         // for something else.
         composer.target.track();
         composer.open.get().then(|| {
-            // KLIPY's key, once the bar has asked for it (`composer_bar`).
-            let gif_key = RwSignal::new(None::<String>);
             // Only the field's showing, not its value, redraws the row.
             let scheduling = Memo::new(move |_| composer.when.with(Option::is_some));
             let text = NodeRef::<leptos::html::Div>::new();
@@ -1663,9 +1668,26 @@ pub fn ComposerDialog() -> impl IntoView {
             // goes around it comes with the composer's code (`composer_extras`,
             // `composer_bar`). The extras say nothing if it can't come: the
             // bar does.
-            let extras = async move {
-                Ok(composer_extras(composer, text, caret, gif_key, scheduling).await.unwrap_or_else(|_| ().into_any()))
+            let extras = move || {
+                let extras = async move {
+                    Ok(composer_extras(composer, text, caret, gif_key, scheduling).await.unwrap_or_else(|_| ().into_any()))
+                };
+                crate::split::lazy_view(|| (), extras)
             };
+            // They come once the composer's first frame is on screen, with
+            // the box focused and its bar: for a draft with nothing there,
+            // they show nothing yet, and drawn in the press's task they took
+            // it over 50 ms on a phone (docs/PERFORMANCE.md#smoothness).
+            let under = RwSignal::new(
+                composer.gif.with_untracked(Option::is_some)
+                    || composer.files.with_untracked(|files| !files.is_empty())
+                    || composer.when.with_untracked(Option::is_some),
+            );
+            if !under.get_untracked() {
+                crate::components::cast::after_paint(move || {
+                    let _ = under.try_set(true);
+                });
+            }
             // Files dragged over the composer, which takes them dropped
             // anywhere on it, where this server takes files; nested elements
             // each say they're entered and left, so it counts them.
@@ -1780,7 +1802,7 @@ pub fn ComposerDialog() -> impl IntoView {
                                 .into_any(),
                                 None => view! { <ComposeText node_ref=text text=composer.text caret label=placeholder files=pasted submit/> }.into_any(),
                             }}
-                            {crate::split::lazy_view(|| (), extras)}
+                            {move || under.get().then(extras)}
                         </div>
                         // Below what scrolls, so the picker never hides it.
                         {crate::split::lazy_view(pending_bar, composer_bar(composer, gif_key, scheduling))}
@@ -2194,29 +2216,11 @@ fn composer_bar(
     gif_key: RwSignal<Option<String>>,
     scheduling: Memo<bool>,
 ) -> Result<AnyView, SplitLoaderError> {
-    // The GIF key, for a reader signed in, the only one the Worker gives
-    // one to: kept in the client cache for 5 minutes, and by the browser for
-    // an hour.
-    let session = use_session();
-    let key = LocalResource::new(move || {
-        let signed_in = session.user.with(Option::is_some);
-        async move { if signed_in { api::get::<GifKey>(&gif_key_path()).await.ok() } else { None } }
-    });
-    Effect::new(move |_| {
-        gif_key.set(key.get().flatten().map(|k| k.data.key.clone()).filter(|k| !k.is_empty()));
-    });
-    // Whether files can go with a cast: asked as the composer opens, for a
-    // reader signed in (kept 5 minutes).
-    let media = LocalResource::new(move || {
-        let signed_in = session.user.with(Option::is_some);
-        async move { if signed_in { Some(api::get::<MediaLimits>(MEDIA_PATH).await) } else { None } }
-    });
-    // Only a 200 shows the attach button: not set up (404), signed out or
-    // not answered, the composer is as it was without files.
-    Effect::new(move |_| {
-        if let Some(answer) = media.get() {
-            composer.limits.set(answer.and_then(Result::ok).map(|fetched| *fetched.data));
-        }
+    // What the bar asks the Worker, asked once its first frame is on
+    // screen (`BarAsks`): meanwhile it shows what was said last.
+    let asking = RwSignal::new(false);
+    crate::components::cast::after_paint(move || {
+        let _ = asking.try_set(true);
     });
     let room = Memo::new(move |_| composer.room_for_gif());
     let writer = use_writer();
@@ -2234,6 +2238,7 @@ fn composer_bar(
                 && composer.files.with(Vec::is_empty))
     });
     Ok(view! {
+        {move || asking.get().then(|| view! { <BarAsks composer gif_key/> })}
         <div class="compose-foot">
             {move || (composer.discarding.get() && drafted.get()).then(|| view! { <DiscardAsk composer/> })}
             <div class="compose-bar">
@@ -2315,6 +2320,45 @@ fn composer_bar(
         </div>
     }
     .into_any())
+}
+
+/// What the bar asks the Worker, as the composer opens: KLIPY's key, for a
+/// reader signed in, the only one the Worker gives one to (kept in the
+/// client cache for 5 minutes, and by the browser for an hour), and whether
+/// files can go with a cast (kept 5 minutes). Each answer is kept from one
+/// opening to the next (`gif_key`, `Composer::limits`), so the bar shows
+/// its GIF and attach buttons as it's drawn, and only an answer that
+/// changes them draws them again. Asked in the press's own task, as the bar
+/// was drawn, they held its frame on a phone (docs/PERFORMANCE.md#smoothness).
+#[component]
+fn BarAsks(composer: Composer, gif_key: RwSignal<Option<String>>) -> impl IntoView {
+    let session = use_session();
+    let key = LocalResource::new(move || {
+        let signed_in = session.user.with(Option::is_some);
+        async move { if signed_in { api::get::<GifKey>(&gif_key_path()).await.ok() } else { None } }
+    });
+    Effect::new(move |_| {
+        if let Some(answer) = key.get() {
+            let next = answer.map(|k| k.data.key.clone()).filter(|k| !k.is_empty());
+            if gif_key.with_untracked(|key| *key != next) {
+                gif_key.set(next);
+            }
+        }
+    });
+    let media = LocalResource::new(move || {
+        let signed_in = session.user.with(Option::is_some);
+        async move { if signed_in { Some(api::get::<MediaLimits>(MEDIA_PATH).await) } else { None } }
+    });
+    // Only a 200 shows the attach button: not set up (404), signed out or
+    // not answered, the composer is as it was without files.
+    Effect::new(move |_| {
+        if let Some(answer) = media.get() {
+            let next = answer.and_then(Result::ok).map(|fetched| *fetched.data);
+            if composer.limits.get_untracked() != next {
+                composer.limits.set(next);
+            }
+        }
+    });
 }
 
 /// Discard, asked once: Keep, focused, or Discard, which lets the draft go,
