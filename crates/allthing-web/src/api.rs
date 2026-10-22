@@ -665,7 +665,7 @@ fn keep(path: &str, raw: Raw, now: f64) {
 pub fn know<T: serde::Serialize>(path: &str, value: &T) {
     let Ok(body) = serde_json::to_string(value) else { return };
     let now = js_sys::Date::now();
-    keep(path, Raw { at: now, status: 200, body: body.into(), age: 0, stale: false, retry_after: None }, now);
+    keep(path, Raw { at: now, status: 200, body: body.into(), age: 0, stale: false, retry_after: None, no_store: false }, now);
 }
 
 /// A recent answer for `path`, read at once, without waiting or fetching:
