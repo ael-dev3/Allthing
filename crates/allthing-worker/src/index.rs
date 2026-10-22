@@ -11,6 +11,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use allthing_core::activity::{ActiveWeek, Fids, week_set};
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
 use allthing_core::media::{Usage, WINDOW, day_row};
@@ -62,10 +63,10 @@ const STORE_SETS: &str = "INSERT INTO activity (name, body) \
     SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true \
     ON CONFLICT (name) DO UPDATE SET body = excluded.body";
 /// Drop hourly sets (of fids, `h`, and of keys, `k`) before hour ?1 and
-/// daily ones before day ?2.
+/// daily ones (a day's, `d`, and a week's to a day, `w`) before day ?2.
 const DROP_SETS: &str = "DELETE FROM activity WHERE \
     (substr(name, 1, 1) IN ('h', 'k') AND CAST(substr(name, 2) AS INTEGER) < ?1) OR \
-    (substr(name, 1, 1) = 'd' AND CAST(substr(name, 2) AS INTEGER) < ?2)";
+    (substr(name, 1, 1) IN ('d', 'w') AND CAST(substr(name, 2) AS INTEGER) < ?2)";
 /// Keys' apps, given as one JSON array of `[pair, app]`. A key's app never
 /// changes, so a key already there is left as it is.
 const STORE_KEYS: &str = "INSERT OR IGNORE INTO signer_apps (pair, app) \
@@ -79,6 +80,17 @@ const KEY_APPS: &str = "SELECT CAST(pair AS TEXT) AS pair, app FROM signer_apps 
 const COUNT_APPS: &str = "SELECT k.app AS app, COUNT(DISTINCT j.value >> 32) AS active, \
       json_group_array(CAST(j.value AS TEXT)) FILTER (WHERE k.pair IS NULL) AS unknown \
     FROM json_each(?1) AS j LEFT JOIN signer_apps AS k ON k.pair = j.value GROUP BY k.app";
+/// The apps whose keys the accounts given as one JSON array of fids have
+/// signed with: each account's keys are the pairs from `fid << 32` to
+/// `fid << 32 | 0xffffffff` (the next fid's start would pass D1's integers
+/// for the last fid kept). Fids and apps only: pairs are past a JavaScript
+/// number.
+const APPS_OF: &str = "SELECT j.value AS fid, s.app AS app FROM json_each(?1) AS j \
+    JOIN signer_apps AS s ON s.pair BETWEEN (j.value << 32) AND ((j.value << 32) | 4294967295) \
+    GROUP BY j.value, s.app";
+/// The later of the week's sets to the ends of days ?1 and ?2 (`w<day>`),
+/// if kept: one row.
+const LATEST_WEEK: &str = "SELECT name, body FROM activity WHERE name IN (?1, ?2) ORDER BY name DESC LIMIT 1";
 const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
 /// Emoji reactions, given as one JSON array of `[parent, hash, emoji, fid,
 /// ts]`; one already kept stays as it is.
@@ -199,6 +211,12 @@ struct AppRow {
     app: Option<f64>,
     active: f64,
     unknown: String,
+}
+
+#[derive(Deserialize)]
+struct FidAppRow {
+    fid: f64,
+    app: f64,
 }
 
 #[derive(Deserialize)]
@@ -369,6 +387,42 @@ impl Index for D1Index {
             let args = [name.into(), number(snapshot.built.floor()), snapshot.body.into()];
             db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?.run().await.map_err(failed)?;
             Ok(())
+        }
+        .boxed_local()
+    }
+
+    /// Fids of 2^31 or more have no keys kept (`activity::key_pair`), and
+    /// would take the pairs' range past D1's integers: they are left out.
+    fn apps_of(&self, fids: &[u64]) -> LocalBoxFuture<'static, Result<Vec<(u64, u64)>, IndexError>> {
+        let db = self.db.clone();
+        let fids: Vec<u64> = fids.iter().copied().filter(|&fid| fid < 1 << 31).collect();
+        async move {
+            if fids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let statement = db.prepare(APPS_OF).bind(&[to_json(&fids)?.into()]).map_err(failed)?;
+            let rows = statement.all().await.map_err(failed)?.results::<FidAppRow>().map_err(failed)?;
+            Ok(rows.into_iter().map(|row| (row.fid as u64, row.app as u64)).collect())
+        }
+        .boxed_local()
+    }
+
+    /// Yesterday's week, or until the cron's daily pass has kept it, the
+    /// day before's: one row of about 2 bytes an account, decoded once and
+    /// asked about each of `fids` (`Fids::contains`).
+    fn active_week(&self, fids: &[u64], today: i64) -> LocalBoxFuture<'static, Result<Option<ActiveWeek>, IndexError>> {
+        let db = self.db.clone();
+        let fids = fids.to_vec();
+        async move {
+            let names: [JsValue; 2] = [week_set(today - 1).into(), week_set(today - 2).into()];
+            let statement = db.prepare(LATEST_WEEK).bind(&names).map_err(failed)?;
+            let Some(row) = statement.first::<SetRow>(None).await.map_err(failed)? else { return Ok(None) };
+            let day = row.name.strip_prefix('w').and_then(|day| day.parse().ok());
+            let week = Fids::decode(&row.body);
+            match (day, week) {
+                (Some(day), Some(week)) => Ok(Some(ActiveWeek::among(day, &week, &fids))),
+                _ => Err(IndexError(format!("{} isn't a week's set", row.name))),
+            }
         }
         .boxed_local()
     }

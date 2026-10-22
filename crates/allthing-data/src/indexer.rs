@@ -2,6 +2,7 @@
 //! Allthing's index of notable casts (see `allthing_core::index`): the
 //! storage it needs from the runtime, and the cron job's run.
 
+use allthing_core::activity::ActiveWeek;
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{
     Entry, Feed, IndexerState, Ranking, RankingMeta, Span, Step, candidates, due, notable_authors, recompute_reads,
@@ -78,6 +79,24 @@ pub trait Index {
         _casts: Vec<String>,
     ) -> LocalBoxFuture<'static, Result<Vec<(String, ReactionReply)>, IndexError>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+    /// The apps whose keys each of `fids` has signed with, as the
+    /// active-accounts cron learned them (`activity`): `(fid, app)`, app 0
+    /// for a key no app requested. An account the cron hasn't seen sign
+    /// since it began counting by app has none.
+    fn apps_of(&self, _fids: &[u64]) -> LocalBoxFuture<'static, Result<Vec<(u64, u64)>, IndexError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    /// Which of `fids` were active in the 7 days to the end of yesterday
+    /// (or of the day before, until the cron's daily pass on `today`, a
+    /// UTC day): the union it keeps of those days' accounts, once they were
+    /// read in full. `None` until it has one.
+    fn active_week(
+        &self,
+        _fids: &[u64],
+        _today: i64,
+    ) -> LocalBoxFuture<'static, Result<Option<ActiveWeek>, IndexError>> {
+        Box::pin(async { Ok(None) })
     }
 }
 
