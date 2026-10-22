@@ -47,7 +47,11 @@ for (const [name, viewport] of [["at 1280", { width: 1280, height: 900 }], ["at 
       await page.goto("/");
       const card = page.locator(`.cast-card[data-hash="${post.hash}"]`);
       await expect(card.locator(".stat-likes .n")).toHaveText("3");
-      const before = await card.boundingBox();
+      // The app's own card, once it has taken the early paint's place.
+      await expect(page.locator("html.ready")).toHaveCount(1);
+      const height = async () => (await card.boundingBox())?.height ?? 0;
+      await expect.poll(height).toBeGreaterThan(0);
+      const before = await height();
       // A page just read is as fresh: nothing is asked for at once.
       expect(state.asked).toBe(0);
       state.likes = 12;
@@ -55,7 +59,7 @@ for (const [name, viewport] of [["at 1280", { width: 1280, height: 900 }], ["at 
       await page.clock.fastForward("00:31");
       await expect(card.locator(".stat-likes .n")).toHaveText("12");
       expect(state.asked).toBeGreaterThan(0);
-      expect((await card.boundingBox())!.height).toBe(before!.height);
+      await expect.poll(height).toBe(before);
     });
 
     test("an open post's counts follow, and new replies wait for the reader", async ({ page }) => {
