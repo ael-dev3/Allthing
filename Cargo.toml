@@ -7,6 +7,8 @@ members = [
     "crates/allthing-worker",
     "xtask",
 ]
+# The SpacetimeDB module builds on its own (spacetime/README.md).
+exclude = ["spacetime/spacetimedb"]
 resolver = "3"
 
 [workspace.package]

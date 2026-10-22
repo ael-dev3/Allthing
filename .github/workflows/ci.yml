@@ -43,6 +43,25 @@ jobs:
           tool: cargo-deny
       - run: sh scripts/check.sh
 
+  spacetime:
+    # The SpacetimeDB module (spacetime/spacetimedb), its own crate outside
+    # the workspace: fmt, Clippy, unit tests, the wasm32 release build that
+    # `spacetime publish` uploads, and the license audit.
+    name: SpacetimeDB module
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spacetime/spacetimedb
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: sh spacetime/check.sh
+
   perf:
     # The performance budget (docs/PERFORMANCE.md), checked against the live
     # site after Workers Builds deploys the checked-out main commit.
