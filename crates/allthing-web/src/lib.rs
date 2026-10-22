@@ -5,6 +5,7 @@
 mod api;
 mod boot;
 mod components;
+mod counts;
 #[cfg(feature = "static-host")]
 mod host;
 mod kept;
@@ -67,6 +68,7 @@ fn App() -> impl IntoView {
     provide_context(Viewer::new());
     provide_context(WhoList::new());
     provide_context(leanings::Leaning::new());
+    counts::start();
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]

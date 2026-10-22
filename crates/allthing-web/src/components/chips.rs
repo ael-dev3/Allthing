@@ -7,7 +7,6 @@ use allthing_core::embeds::{ImageSize, resized_image_url};
 use allthing_core::format::{compact_number, full_number, short_address, short_number};
 use allthing_core::model::{Cast, UserSummary};
 use allthing_core::profile::UserCard;
-use allthing_core::ranking::points;
 use allthing_core::time::{format_date_time, iso_utc, time_ago};
 use leptos::prelude::*;
 
@@ -127,18 +126,33 @@ pub fn Engagement(
 ) -> impl IntoView {
     let who = use_who_list();
     let navigate = use_go();
-    let pts = points(&cast);
-    let title = format!(
-        "{} likes, {} recasts, {} replies. Ranked by engagement points: likes + 2 × recasts + replies = {}.",
-        full_number(cast.likes),
-        full_number(cast.recasts),
-        full_number(cast.replies),
-        full_number(pts)
-    );
-    let likes = reaction_stat(&cast, ReactionKind::Likes, cast.likes, who, tight);
-    let recasts = reaction_stat(&cast, ReactionKind::Recasts, cast.recasts, who, tight);
+    // The counts as last read while in view (`counts`), or as the page
+    // read them.
+    let fresh = {
+        let (hash, cast) = (cast.hash.clone(), cast.clone());
+        Memo::new(move |_| {
+            [
+                crate::counts::likes(&hash, cast.likes),
+                crate::counts::recasts(&hash, cast.recasts),
+                crate::counts::replies(&hash, cast.replies),
+            ]
+        })
+    };
+    let title = move || {
+        let [l, r, c] = fresh.get();
+        let pts = l + 2 * r + c;
+        format!(
+            "{} likes, {} recasts, {} replies. Ranked by engagement points: likes + 2 × recasts + replies = {}.",
+            full_number(l),
+            full_number(r),
+            full_number(c),
+            full_number(pts)
+        )
+    };
+    let likes = reaction_stat(&cast, ReactionKind::Likes, Signal::derive(move || fresh.get()[0]), who, tight);
+    let recasts = reaction_stat(&cast, ReactionKind::Recasts, Signal::derive(move || fresh.get()[1]), who, tight);
     // With the reader's replies handed to the Farcaster app since, at once.
-    let (n, pending) = replies_shown(&cast.hash, cast.replies);
+    let (n, pending) = replies_shown(&cast.hash, Signal::derive(move || fresh.get()[2]));
     let replies = if cast.replies == 0 {
         view! {
             <span class=move || format!("stat stat-replies{}", if pending.get() { " pending" } else { "" })>
@@ -173,7 +187,7 @@ pub fn Engagement(
 /// The reply count of the cast `hash`, `read` as the page has it, with the
 /// reader's replies handed to the Farcaster app since, and whether one of
 /// those isn't posted yet.
-pub fn replies_shown(hash: &str, read: u64) -> (Signal<u64>, Signal<bool>) {
+pub fn replies_shown(hash: &str, read: Signal<u64>) -> (Signal<u64>, Signal<bool>) {
     #[cfg(not(feature = "static-host"))]
     if let Some(writer) = crate::components::writer::use_writer() {
         // Memos: the reader's likes loading, or any other change of theirs,
@@ -183,10 +197,10 @@ pub fn replies_shown(hash: &str, read: u64) -> (Signal<u64>, Signal<bool>) {
             let hash = hash.clone();
             Memo::new(move |_| writer.replying(&hash))
         };
-        return (Memo::new(move |_| writer.replies_shown(&hash, read)).into(), pending.into());
+        return (Memo::new(move |_| writer.replies_shown(&hash, read.get())).into(), pending.into());
     }
     let _ = hash;
-    (Signal::stored(read), Signal::stored(false))
+    (read, Signal::stored(false))
 }
 
 /// A like or recast: its icon, then its count. Pointing at either previews
@@ -195,7 +209,7 @@ pub fn replies_shown(hash: &str, read: u64) -> (Signal<u64>, Signal<bool>) {
 /// preview). The icon never opens the list: in front of the Worker it is the
 /// button that likes or recasts (`acting_stat`); in the static copy, a
 /// picture.
-fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList, tight: bool) -> AnyView {
+fn reaction_stat(cast: &Cast, kind: ReactionKind, n: Signal<u64>, who: WhoList, tight: bool) -> AnyView {
     #[cfg(not(feature = "static-host"))]
     if let Some(writer) = crate::components::writer::use_writer()
         && let Some(target) = allthing_core::message::CastId::new(cast.author.fid, &cast.hash)
@@ -205,7 +219,7 @@ fn reaction_stat(cast: &Cast, kind: ReactionKind, n: u64, who: WhoList, tight: b
     let (icon, _, _, class) = reaction_words(kind);
     let lead =
         ViewFn::from(move || view! { <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=icon/></svg> });
-    view! { <span class=format!("stat {class}")>{count_stat(kind, Signal::stored(n), cast.hash.clone(), who, lead, tight)}</span> }
+    view! { <span class=format!("stat {class}")>{count_stat(kind, n, cast.hash.clone(), who, lead, tight)}</span> }
         .into_any()
 }
 
@@ -256,7 +270,7 @@ fn acting_stat(
     target: allthing_core::message::CastId,
     cast: &Cast,
     kind: ReactionKind,
-    n: u64,
+    n: Signal<u64>,
     who: WhoList,
     tight: bool,
 ) -> AnyView {
@@ -278,7 +292,7 @@ fn acting_stat(
     let key = hash.clone();
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
-    let shown = Memo::new(move |_| writer.shown_count(&key, reaction, n));
+    let shown = Memo::new(move |_| writer.shown_count(&key, reaction, n.get()));
     // Not done yet: handed to the Farcaster app, or sent from here and not
     // shown on the node yet.
     let key = hash.clone();

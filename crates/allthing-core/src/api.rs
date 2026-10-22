@@ -745,6 +745,52 @@ pub fn replies_path(hash: &str) -> String {
     format!("{API_PREFIX}/replies?hash={hash}")
 }
 
+/// Casts one `/api/v1/counts` request asks about, at most: two runs of
+/// [`ENGAGEMENT_CHUNK`] feed cards, or a post and its first replies.
+pub const COUNTS_MAX: usize = 2 * ENGAGEMENT_CHUNK;
+
+/// A cast's likes, recasts and replies as the node counts them now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Counts {
+    pub likes: u64,
+    pub recasts: u64,
+    pub replies: u64,
+}
+
+/// The counts of a few casts, read together (`/api/v1/counts`): what keeps
+/// the cards and the post in view as current as the reader's notifications.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CountsPayload {
+    /// By cast hash; a cast the node doesn't have is left out.
+    pub counts: BTreeMap<String, Counts>,
+    pub meta: Meta,
+}
+
+/// The hashes of a `?casts=` list, sorted and without repeats, so the same
+/// casts share one cache entry: `None` when one isn't a cast hash, or there
+/// are none or more than [`COUNTS_MAX`].
+pub fn parse_counts(casts: Option<&str>) -> Option<Vec<String>> {
+    let value = casts.map(str::trim).filter(|v| !v.is_empty())?;
+    if value.split(',').nth(COUNTS_MAX).is_some() {
+        return None;
+    }
+    let mut hashes: Vec<String> = value.split(',').map(hash_from_param).collect::<Option<_>>()?;
+    hashes.sort_unstable();
+    hashes.dedup();
+    Some(hashes)
+}
+
+/// `/api/v1/counts?casts=0x…,0x…` for up to [`COUNTS_MAX`] of `hashes`
+/// (malformed ones skipped), canonical as [`parse_counts`] reads it; `None`
+/// when none is a cast hash.
+pub fn counts_path<'a>(hashes: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut list: Vec<String> = hashes.into_iter().filter_map(hash_from_param).collect();
+    list.sort_unstable();
+    list.dedup();
+    list.truncate(COUNTS_MAX);
+    (!list.is_empty()).then(|| format!("{API_PREFIX}/counts?casts={}", list.join(",")))
+}
+
 /// A page of `name`'s followers or following: its first, or the one at
 /// `cursor` (the previous page's `next`). `name` is a profile URL's name,
 /// so a page that starts on the list can ask for its first page before the
@@ -858,7 +904,9 @@ pub const ACTIVITY_PATH: &str = "/api/v1/activity";
 
 pub const ACTIVITY_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 600, keep: 86_400, browser: 30 };
 pub const CHANNEL_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 900, keep: 86_400, browser: 60 };
-pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
+/// A post's counts and replies: fresh for 30 s, as a reader's notifications
+/// are for 60, so a like or a reply shows on the post first.
+pub const CAST_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 1800, keep: 86_400, browser: 15 };
 pub const USER_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 /// What a cached profile payload knew of its account that a build reads
 /// apart from it, for a build whose own read failed.
@@ -916,7 +964,11 @@ pub const ENGAGEMENT_CACHE: CachePolicy = REACTIONS_CACHE;
 /// Hypersnap's bucket to page builds) is rebuilt soon, and browsers don't
 /// keep it.
 pub const ENGAGEMENT_PARTIAL_CACHE: CachePolicy = CachePolicy { fresh: 15, stale: 60, keep: 86_400, browser: 0 };
-pub const REPLIES_CACHE: CachePolicy = CachePolicy { fresh: 120, stale: 1800, keep: 86_400, browser: 60 };
+pub const REPLIES_CACHE: CachePolicy = CachePolicy { fresh: 30, stale: 1800, keep: 86_400, browser: 15 };
+/// The counts of the cards and the post in view, asked for again every 30 s
+/// while they are: one bulk read of at most [`COUNTS_MAX`] casts, so they
+/// can be this fresh. Browsers don't keep them; the app does, briefly.
+pub const COUNTS_CACHE: CachePolicy = CachePolicy { fresh: 15, stale: 60, keep: 3600, browser: 0 };
 /// Followers and following: a list changes by a few follows a minute even
 /// for the busiest accounts, and its newest page is the one that does.
 /// Later pages are kept as long: their cursor names where they start.
@@ -1141,6 +1193,7 @@ mod tests {
             ENGAGEMENT_CACHE,
             ENGAGEMENT_PARTIAL_CACHE,
             REPLIES_CACHE,
+            COUNTS_CACHE,
             VOTE_CACHE,
             NOTIFICATIONS_CACHE,
             MISS_CACHE,
@@ -1154,6 +1207,31 @@ mod tests {
         // 2026 a copy from the day before, with Base unread, still showed
         // 0xael.eth at Optimism 58%, Monad 41% to the first reader.
         const { assert!(WALLET_RETRY_CACHE.stale <= 600 && WALLET_RETRY_CACHE.fresh * 12 <= WALLET_CACHE.fresh) };
+    }
+
+    #[test]
+    fn counts_are_as_fresh_as_notifications_or_fresher() {
+        const { assert!(COUNTS_CACHE.fresh * 2 <= NOTIFICATIONS_CACHE.fresh) };
+        const { assert!(CAST_CACHE.fresh <= NOTIFICATIONS_CACHE.fresh) };
+        const { assert!(REPLIES_CACHE.fresh <= NOTIFICATIONS_CACHE.fresh) };
+    }
+
+    #[test]
+    fn counts_lists_are_canonical_and_bounded() {
+        let (a, b) = (hash(1), hash(2));
+        let path = counts_path([b.as_str(), a.as_str(), b.as_str(), "nope"]).unwrap();
+        assert_eq!(path, format!("{API_PREFIX}/counts?casts={a},{b}"));
+        let query = path.split_once("casts=").unwrap().1;
+        assert_eq!(parse_counts(Some(query)), Some(vec![a.clone(), b.clone()]));
+        assert_eq!(parse_counts(Some(&format!("{b},{a}"))), Some(vec![a.clone(), b.clone()]));
+        assert_eq!(parse_counts(Some(&format!("{a},nope"))), None);
+        assert_eq!(parse_counts(Some("")), None);
+        assert_eq!(parse_counts(None), None);
+        let many: Vec<String> = (0..=COUNTS_MAX as u32).map(hash).collect();
+        assert_eq!(parse_counts(Some(&many.join(","))), None);
+        assert_eq!(parse_counts(Some(&many[..COUNTS_MAX].join(","))).map(|l| l.len()), Some(COUNTS_MAX));
+        assert!(counts_path(many.iter().map(String::as_str)).unwrap().matches("0x").count() == COUNTS_MAX);
+        assert_eq!(counts_path(["nope"]), None);
     }
 
     fn hash(n: u32) -> String {

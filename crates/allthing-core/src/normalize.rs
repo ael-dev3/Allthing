@@ -903,6 +903,15 @@ pub fn enrich_channel(channel: &mut Channel, app: &RawAppChannel, users: &[RawUs
     });
 }
 
+/// A cast's likes, recasts and replies, as [`cast`] reads them.
+pub fn counts(raw: &RawCast) -> crate::api::Counts {
+    crate::api::Counts {
+        likes: raw.reactions.as_ref().and_then(|r| r.likes_count).unwrap_or(0),
+        recasts: raw.reactions.as_ref().and_then(|r| r.recasts_count).unwrap_or(0),
+        replies: raw.replies.as_ref().and_then(|r| r.count).unwrap_or(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

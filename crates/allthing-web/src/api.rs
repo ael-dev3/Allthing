@@ -19,6 +19,14 @@ use wasm_bindgen_futures::JsFuture;
 /// Long enough that going back to a feed or post is instant.
 const CLIENT_TTL_MS: f64 = 300_000.0;
 const LATEST_TTL_MS: f64 = 30_000.0;
+/// A post, and a replies preview: kept as long as the Worker keeps them
+/// fresh (`CAST_CACHE`), so a post opened again shows its new replies.
+const POST_TTL_MS: f64 = 30_000.0;
+/// Counts in view (`counts`), asked for again every 30 s.
+const COUNTS_TTL_MS: f64 = 15_000.0;
+const COUNTS_PREFIX: &str = "/api/v1/counts?";
+const CAST_PREFIX: &str = "/api/v1/cast?";
+const REPLIES_PREFIX: &str = "/api/v1/replies?";
 /// The signed-in reader's notifications (`components::notifications`).
 const NOTIFICATIONS_TTL_MS: f64 = 60_000.0;
 /// How many answers the session cache keeps.
@@ -607,6 +615,12 @@ fn ttl(path: &str) -> f64 {
     } else if path == allthing_core::scheduled::SCHEDULED_PATH {
         // The reader's own list, read afresh each time.
         0.0
+    } else if path.starts_with(COUNTS_PREFIX) {
+        // Read again every half minute while in view (`counts`).
+        COUNTS_TTL_MS
+    } else if path.starts_with(CAST_PREFIX) || path.starts_with(REPLIES_PREFIX) {
+        // A post's counts and replies: as fresh as the Worker keeps them.
+        POST_TTL_MS
     } else if path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH) {
         // As long as the Worker keeps them fresh: the bell, asking every few
         // minutes, and the page reuse a read within it.
