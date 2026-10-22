@@ -15,6 +15,7 @@ pub mod channels;
 pub mod clients;
 pub mod compose;
 pub mod dc;
+pub mod e2e;
 pub mod embeds;
 pub mod emoji;
 pub mod fmp4;
