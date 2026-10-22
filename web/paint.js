@@ -5,7 +5,7 @@
 // e2e/early-paint.fixture.spec.ts holds this to). It only shows: the boot
 // screen holds it, inert and hidden from screen readers, until the app's own
 // cards are drawn in the same places and take over (boot.rs). A card
-// it can't draw as the app does (one that quotes a cast, or has a video or
+// it can't draw as the app does (one with a video or
 // a sticker, or a single image it can't size) ends it there, as does
 // anything it doesn't expect. A single image's tile takes its final box
 // before the image comes, from Cloudflare Images' description of it (about
@@ -17,8 +17,11 @@
 const BASE = "{{BASE}}";
 /** The Pepe pack (`allthing_core::emoji::PACK`): code -> [width, height, animated]. */
 const PACK = {{EMOJI}};
-/** How many cards the app draws first (cast.rs, `DRAW_STEP`). */
-const CARDS = 6;
+/** How many cards are drawn here: those the app draws first (cast.rs,
+ * `DRAW_STEP`), or, where the app's poll follows the feed's fourth card
+ * (narrower than 1280 px; poll.rs, `inline`, and allthing.css), the four
+ * before it, which nothing then moves. */
+const CARDS = matchMedia("(min-width: 1280px)").matches ? 6 : 4;
 /** The usage bar's apps and the casts it needs to show (components/clients.rs). */
 const TOP_APPS = 4;
 const FARCASTER_APP = 9152;
@@ -86,7 +89,7 @@ async function paint(payload, { sort, range }) {
   const casts = sorted(payload.pool.filter((c) => !c.parent_hash && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);
   // Each card is drawn once it and those above it can be, in order: one
   // with a single image once its size has come, a round trip away.
-  const ready = casts.map((cast) => (drawable(cast) ? sized(cast) : Promise.reject(new Error("drawn otherwise"))));
+  const ready = casts.map((cast) => (drawable(cast, notes) ? sized(cast, notes) : Promise.reject(new Error("drawn otherwise"))));
   ready.forEach((card) => card.catch(() => {}));
   let list = null;
   for (const [i, cast] of casts.entries()) {
@@ -312,7 +315,7 @@ function shareBar(payload, notes, range) {
 // A card (cast.rs, CastCard), or nothing for one the app draws otherwise.
 
 function castCard(cast, notes, i, favorite) {
-  if (!cast || !cast.hash || !cast.author || typeof cast.ts !== "number" || !drawable(cast)) return null;
+  if (!cast || !cast.hash || !cast.author || typeof cast.ts !== "number" || !drawable(cast, notes)) return null;
   const link = castHref(cast.hash);
   const text = typeof cast.text === "string" ? cast.text : "";
   const images = (cast.embeds || []).filter((e) => e.kind === "image");
@@ -334,6 +337,7 @@ function castCard(cast, notes, i, favorite) {
     text.trim() ? el("div", { class: "cast-text" }, castText(text, cast.mentions || [])) : null,
     images.length ? mediaGrid(cast, images) : null,
     linkCards(cast, text),
+    nestedQuotes(cast, notes, 0),
     el("footer", { class: "cast-foot" }, engagement(cast)),
     // Its Pepe reactions' row, as the app draws it until their chips come
     // (reactions.rs, `card_reactions`), as tall as they are.
@@ -342,19 +346,29 @@ function castCard(cast, notes, i, favorite) {
   return card;
 }
 
-/** Whether the card is one drawn here as the app draws it. */
-function drawable(cast) {
+/** Whether the card is one drawn here as the app draws it: its quotes too, as
+ * cards to the depth the app shows them (quote.rs), and links below that. */
+function drawable(cast, notes, depth = 0) {
   for (const embed of cast.embeds || []) {
     if (embed.kind === "image") {
       if (typeof embed.url !== "string" || embed.url.startsWith("https://allthing.social/assets/stickers/")) return false;
     } else if (embed.kind === "link") {
-      if (typeof embed.url !== "string" || isVideoLink(embed.url)) return false;
+      if (typeof embed.url !== "string" || (depth === 0 && isVideoLink(embed.url))) return false;
+    } else if (embed.kind === "cast") {
+      if (typeof embed.hash !== "string") return false;
+      const quoted = carried(embed.hash, notes, depth);
+      if (quoted && !(quoted.author && typeof quoted.ts === "number" && (hiddenQuote(quoted) || drawable(quoted, notes, depth + 1)))) return false;
     } else {
       return false;
     }
   }
-  return !tokenize(cast.text || "", []).some((t) => t.url && isVideoLink(t.url));
+  // A quote card shows no video links, the card around it does.
+  return depth > 0 || !tokenize(cast.text || "", []).some((t) => t.url && isVideoLink(t.url));
 }
+
+/** The quoted cast the payload carries, if it shows as a card at this depth. */
+const carried = (hash, notes, depth) => (depth < QUOTE_DEPTH ? (notes.quotes || {})[hash] : undefined);
+const hiddenQuote = (cast) => Boolean(cast.spam || cast.mini_app);
 
 /** A URL's host, lowercase, without its port (embeds.rs, `host_of`). */
 function hostOf(url) {
@@ -370,12 +384,6 @@ function hostOf(url) {
 const isVideoLink = (url) => VIDEO_HOSTS.test(hostOf(url) || "");
 
 function meta(cast, notes, link, favorite) {
-  const user = cast.author;
-  const to = userHref(user.username);
-  const avatar = user.pfp_url
-    ? image({ class: "avatar", alt: "", width: 22, height: 22, loading: "lazy", decoding: "async", referrerpolicy: "no-referrer" }, resized(user.pfp_url, "anim=false,fit=cover,f=auto,w=64,h=64"), [22, 22])
-    : el("span", { class: "avatar avatar-empty", style: "width: 22px; height: 22px;" });
-  const named = user.display_name && user.display_name !== user.username;
   const channel = cast.channel ? el("span", { class: "in-channel" }, "in ", el("a", { class: "channel-name", href: channelHref(cast.channel.id) }, "/" + cast.channel.label)) : null;
   return el(
     "header",
@@ -384,20 +392,32 @@ function meta(cast, notes, link, favorite) {
     el(
       "span",
       { class: "byline" },
-      el(
-        "span",
-        { class: "popover user-chip" },
-        el("a", { class: "user-link", href: to, tabindex: "-1", "aria-hidden": "true" }, avatar),
-        named ? el("a", { class: "display-name", href: to }, user.display_name) : null,
-        el("a", { class: "author", href: to }, "@" + user.username),
-      ),
+      userChip(cast.author),
       favorite ? el("span", { class: "favorite-mark", role: "img", "aria-label": "One of your favorites" }, icon(STAR)) : null,
-      el("a", { class: "when", href: link }, el("span", { class: "visually-hidden" }, "Open post, "), el("time", { datetime: isoUtc(cast.ts), "aria-description": dateTime(cast.ts) }, timeAgo(cast.ts))),
+      el("a", { class: "when", href: link }, el("span", { class: "visually-hidden" }, "Open post, "), timeEl(cast.ts)),
     ),
     channel,
     origin(cast.hash, notes),
   );
 }
+
+/** An author's chip with their name (chips.rs, `UserChip`). */
+function userChip(user) {
+  const to = userHref(user.username);
+  const avatar = user.pfp_url
+    ? image({ class: "avatar", alt: "", width: 22, height: 22, loading: "lazy", decoding: "async", referrerpolicy: "no-referrer" }, resized(user.pfp_url, "anim=false,fit=cover,f=auto,w=64,h=64"), [22, 22])
+    : el("span", { class: "avatar avatar-empty", style: "width: 22px; height: 22px;" });
+  const named = user.display_name && user.display_name !== user.username;
+  return el(
+    "span",
+    { class: "popover user-chip" },
+    el("a", { class: "user-link", href: to, tabindex: "-1", "aria-hidden": "true" }, avatar),
+    named ? el("a", { class: "display-name", href: to }, user.display_name) : null,
+    el("a", { class: "author", href: to }, "@" + user.username),
+  );
+}
+
+const timeEl = (ts) => el("time", { datetime: isoUtc(ts), "aria-description": dateTime(ts) }, timeAgo(ts));
 
 /** "0xc052…23fa" (allthing_core::format, `short_address`). */
 function shortAddress(address) {
@@ -652,12 +672,24 @@ const sizes = (window.__allthingSizes = window.__allthingSizes || {});
 /** The variant a feed shows an image at (embeds.rs, `ImageSize::Inline`). */
 const INLINE = "fit=scale-down,f=auto,w=720";
 
-/** Once a card's single image, if it has one, has its size. */
-function sized(cast) {
-  const images = (cast.embeds || []).filter((e) => e.kind === "image");
-  if (images.length !== 1) return Promise.resolve();
-  const src = resized(images[0].url, INLINE);
-  if (src === images[0].url) return Promise.reject(new Error("not on Cloudflare Images"));
+/** Once a card's single images, its own and its quotes', have their sizes (allthing_core::quotes, `single_images`). */
+function sized(cast, notes) {
+  const singles = [];
+  const visit = (c, depth) => {
+    const images = (c.embeds || []).filter((e) => e.kind === "image");
+    if (images.length === 1) singles.push(images[0].url);
+    for (const e of c.embeds || []) {
+      const quoted = e.kind === "cast" ? carried(e.hash, notes, depth) : undefined;
+      if (quoted && !hiddenQuote(quoted)) visit(quoted, depth + 1);
+    }
+  };
+  visit(cast, 0);
+  return Promise.all(singles.map(sizeOf));
+}
+
+function sizeOf(url) {
+  const src = resized(url, INLINE);
+  if (src === url) return Promise.reject(new Error("not on Cloudflare Images"));
   // The same options, described rather than drawn.
   return fetch(src.slice(0, src.lastIndexOf("/") + 1) + "fit=scale-down,w=720,format=json")
     .then((response) => (response.ok ? response.json() : null))
@@ -693,6 +725,44 @@ function mediaGrid(cast, images) {
     return tile;
   });
   return el("div", { class: "media-grid n" + Math.min(images.length, 4) }, tiles);
+}
+
+// Quoted casts (components/quote.rs).
+
+/** Levels of quotes shown as cards (allthing_core::quotes, `QUOTE_DEPTH`). */
+const QUOTE_DEPTH = 3;
+/** How much of a quoted cast's text a feed card shows (`FEED_QUOTE_CHARS`). */
+const FEED_QUOTE_CHARS = 280;
+
+function nestedQuotes(cast, notes, depth) {
+  return (cast.embeds || [])
+    .filter((e) => e.kind === "cast")
+    .map((e) => {
+      const quoted = carried(e.hash, notes, depth);
+      return quoted ? quoteCard(quoted, notes, depth + 1) : el("a", { class: "quote-chip", href: castHref(e.hash) }, "↳ quotes a cast");
+    });
+}
+
+function quoteCard(cast, notes, depth) {
+  const link = castHref(cast.hash);
+  let body;
+  if (hiddenQuote(cast)) {
+    body = [el("p", { class: "quote-hidden" }, cast.spam ? "Quoted cast hidden" : "Quoted cast hidden: mini app")];
+  } else {
+    const text = truncateTitle(cast.text || "", FEED_QUOTE_CHARS);
+    const images = (cast.embeds || []).filter((e) => e.kind === "image");
+    body = [text ? el("div", { class: "quote-text" }, castText(text, cast.mentions || [])) : null, images.length ? mediaGrid(cast, images) : null, ...nestedQuotes(cast, notes, depth)];
+  }
+  return el(
+    "blockquote",
+    { class: "quote" },
+    el(
+      "div",
+      { class: "cast-meta" },
+      el("span", { class: "byline" }, userChip(cast.author), el("a", { class: "when", href: link }, el("span", { class: "visually-hidden" }, "Open quoted cast, "), timeEl(cast.ts))),
+    ),
+    ...body,
+  );
 }
 
 function linkCards(cast, text) {

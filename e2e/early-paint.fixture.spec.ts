@@ -26,7 +26,8 @@ const person = (fid: number, username: string) => ({
 const [ann, bob, cat, dee] = [person(1, "ann"), person(2, "bob"), person(3, "cat"), person(4, "dee")];
 
 // Hot order, with bob a favorite: bob's, ann's, cat's, dee's, then the quote
-// that ends the early cards (the app draws a quoted cast; they don't).
+// of a cast the payload doesn't carry (a link), then cat's. On a phone the
+// early cards end after the fourth, where the app puts its poll (poll.rs).
 const favorite = { hash: hex(1), author: bob, text: "Plain words.\n\nA second paragraph.", ts: now - 1.5 * HOUR, likes: 10, recasts: 0, replies: 0 };
 const rich = {
   hash: hex(2),
@@ -40,6 +41,10 @@ const rich = {
   channel: { id: "books", label: "books" },
   embeds: [{ kind: "image", url: "https://imagedelivery.net/fixture/wide/original" }],
 };
+// A quote, as the front page often has among its first (the early cards
+// used to stop at one, so none were drawn): a carried quote with a single
+// image, a mention and a hidden quote of its own, and one the payload doesn't
+// carry, a link.
 const busy = {
   hash: hex(3),
   author: cat,
@@ -48,7 +53,11 @@ const busy = {
   likes: 12_345,
   recasts: 1_200,
   replies: 1,
-  embeds: [{ kind: "link", url: "https://example.org/essay", title: "An essay", image_url: "https://imagedelivery.net/fixture/thumb/original" }],
+  embeds: [
+    { kind: "link", url: "https://example.org/essay", title: "An essay", image_url: "https://imagedelivery.net/fixture/thumb/original" },
+    { kind: "cast", fid: 3, hash: hex(50) },
+    { kind: "cast", fid: 4, hash: hex(52) },
+  ],
 };
 const pair = {
   hash: hex(4),
@@ -62,18 +71,37 @@ const pair = {
   embeds: [{ kind: "image", url: "https://media.example/one.gif" }, { kind: "image", url: "https://media.tenor.com/fixtureAAAAe/two.webp" }],
 };
 const quoting = { hash: hex(5), author: ann, text: "Quoting", ts: now - 3.5 * HOUR, likes: 4, recasts: 0, replies: 0, embeds: [{ kind: "cast", fid: 2, hash: favorite.hash }] };
+const quoted = {
+  hash: hex(50),
+  author: cat,
+  text: "Quoted, with a picture, for @bob",
+  mentions: [{ fid: 2, username: "bob" }],
+  ts: now - 30 * HOUR,
+  likes: 0,
+  recasts: 0,
+  replies: 0,
+  embeds: [
+    { kind: "image", url: "https://imagedelivery.net/fixture/tall/original" },
+    { kind: "cast", fid: 2, hash: hex(51) },
+  ],
+};
+const hiddenQuote = { hash: hex(51), author: bob, text: "", ts: now - 40 * HOUR, likes: 0, recasts: 0, replies: 0, mini_app: true };
 const later = { hash: hex(6), author: cat, text: "Later on", ts: now - 4.5 * HOUR, likes: 3, recasts: 0, replies: 0 };
 // Enough casts with a known app for the usage bar.
 const rest = Array.from({ length: 20 }, (_, i) => ({ hash: hex(100 + i), author: dee, text: `Quiet ${i}`, ts: now - 8.5 * HOUR - i * 60, likes: 1, recasts: 0, replies: 0 }));
 const pool = [later, quoting, pair, busy, rich, favorite, ...rest];
-const painted = [favorite, rich, busy, pair].map((c) => c.hash);
+const first = [favorite, rich, busy, pair, quoting, later].map((c) => c.hash);
+/** The early cards at a width: six, or four where the poll follows the fourth. */
+const paintedAt = (width: number) => first.slice(0, width >= 1280 ? 6 : 4);
+const painted = paintedAt(1280);
 const origins = Object.fromEntries(pool.map((c, i) => [c.hash, { signer: `0x${"ab".repeat(32)}`, app_fid: i % 5 === 4 ? 2904 : 9152 }]));
 const apps = {
   9152: { fid: 9152, username: "farcaster", display_name: "Farcaster" },
   2904: { fid: 2904, username: "wake", display_name: "wake" },
 };
 const apps24h = { to: now - 600, counted: now - 590, active: 120, apps: [{ app: 9152, active: 110 }, { app: 2904, active: 9 }], none: 1 };
-const payload = { pool, notes: { origins, apps }, meta, apps_24h: apps24h };
+const quotes = { [quoted.hash]: quoted, [hiddenQuote.hash]: hiddenQuote };
+const payload = { pool, notes: { origins, apps, quotes }, meta, apps_24h: apps24h };
 
 const svg = (w: number, h: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="#4f43d4"/></svg>`;
 
@@ -180,6 +208,7 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    const painted = paintedAt(width);
     const held = await hold(page);
     const { images, probes } = await serve(page);
     await favorites(page);
@@ -200,7 +229,12 @@ for (const width of [1280, 390]) {
     await expect(tile).toHaveAttribute("data-sized", "");
     await expect(tile).not.toHaveClass(/(^| )gif( |$)/);
     await expect(boot.locator(`.cast-card[data-hash="${pair.hash}"] .tile-image.gif`)).toHaveCount(2);
-    expect(probes).toEqual(["https://imagedelivery.net/fixture/wide/fit=scale-down,w=720,format=json"]);
+    expect(probes).toEqual(["https://imagedelivery.net/fixture/wide/fit=scale-down,w=720,format=json", "https://imagedelivery.net/fixture/tall/fit=scale-down,w=720,format=json"]);
+    // The quote's card, its image's tile sized, its hidden quote and the link to the one not carried.
+    const quote = boot.locator(`.cast-card[data-hash="${busy.hash}"] > blockquote.quote`);
+    await expect(quote.locator(".tile-image")).toHaveAttribute("data-sized", "");
+    await expect(quote.locator("blockquote.quote .quote-hidden")).toHaveText("Quoted cast hidden: mini app");
+    await expect(boot.locator(`.cast-card[data-hash="${busy.hash}"] > a.quote-chip`)).toHaveCount(1);
     await expect(boot.locator('img:not([src^="data:"]), source[srcset]')).toHaveCount(0);
     expect(images).toEqual([]);
     await settled(page, "#boot");
@@ -226,7 +260,7 @@ for (const width of [1280, 390]) {
     expect(entrances).toEqual(entrances.map(() => 0));
     expect(entrances.length).toBe(2 + painted.length);
     // The cards after them come in as they always do.
-    await expect(page.locator(`#app .cast-card[data-hash="${quoting.hash}"]`)).toBeVisible();
+    await expect(page.locator(`#app .cast-card[data-hash="${rest[0].hash}"]`)).toHaveCount(1);
     await page.screenshot({ path: info.outputPath(`app-${width}.png`) });
     expect(errors).toEqual([]);
   });
@@ -260,8 +294,8 @@ test("top's first cards come in top's order, with the time range the address nam
   await page.goto("/?sort=top&t=week");
   const boot = page.locator("#boot");
   // Top: cat's 14,746 points, bob's 10 (and one) counted 25 times, ann's 28.
-  await expect(boot.locator(".cast-card")).toHaveCount(4);
-  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual([busy.hash, favorite.hash, rich.hash, pair.hash]);
+  await expect(boot.locator(".cast-card")).toHaveCount(6);
+  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual([busy, favorite, rich, pair, quoting, later].map((c) => c.hash));
   await expect(boot.locator(".sort-tabs a.selected")).toHaveText("top");
   await expect(boot.locator(".time-filter option[selected]")).toHaveText("Past week");
   await moduleIn(page, held);
