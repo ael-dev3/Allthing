@@ -384,6 +384,52 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+/* Revoke permissions: what it does, in Allthing's tooltip look, under the
+   item in the menu (which grows; a tooltip over the rows below would make
+   the menu, a scrolling box, scroll): on hover after a moment, on keyboard
+   focus, and once a first click has armed it, phones included, when the
+   item is a gentle warning. */
+.revoke-what-box {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s var(--ease);
+}
+
+.revoke-what {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.revoke-what > span {
+  display: block;
+  margin: 2px 4px 6px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--paper-2);
+  font: 500 12.5px/1.45 var(--font-ui);
+  color: var(--ink-2);
+}
+
+.revoke:has(.revoke-button:focus-visible) .revoke-what-box,
+.revoke.armed .revoke-what-box {
+  grid-template-rows: 1fr;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .revoke:hover .revoke-what-box {
+    grid-template-rows: 1fr;
+    transition-delay: 0.5s;
+  }
+}
+
+.revoke.armed .revoke-button,
+.revoke.armed .revoke-button:hover,
+.revoke.armed .revoke-button:focus-visible {
+  color: #8a5a12;
+  background: rgba(185, 130, 42, 0.12);
+}
+
 /* The picture answers a tap with its ring, not the browser's tap colour. */
 .account-button {
   -webkit-tap-highlight-color: transparent;

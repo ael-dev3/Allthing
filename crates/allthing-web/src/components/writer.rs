@@ -1343,13 +1343,16 @@ impl Writer {
         });
     }
 
-    /// Turn off liking and recasting from this browser: its key is
-    /// forgotten.
+    /// Revoke this browser's permission to write as the reader (the
+    /// account menu's Revoke permissions): its key is forgotten, here and in
+    /// the site's other tabs. Nothing changes on chain: the key stays on
+    /// the reader's account until they remove Allthing in the Farcaster
+    /// app, and casts they scheduled, signed already, still go out.
     fn turn_off(self) {
         let Some(fid) = KEY.with(|k| k.borrow_mut().take().map(|s| s.fid)) else { return };
         self.can.set(Can::Approve);
         self.mine.update(|m| m.known.clear());
-        self.say("This browser's key is deleted. To remove it from your account too, remove Allthing in the Farcaster app's settings.".into());
+        self.say("Write permission revoked in this browser.".into());
         spawn_local(async move {
             let _ = keys::remove(fid).await;
             tell_tabs();
@@ -2175,17 +2178,113 @@ pub fn ScheduledMenuItem() -> impl IntoView {
     .into_any()
 }
 
-/// The account menu's line about likes and recasts: on in this browser,
-/// with a way to turn it off.
+/// What Revoke permissions does, as it says it.
+const REVOKE_WHAT: &str = "Removes this browser's permission to write as you: liking, recasting, casting, replying, quoting, following and deleting from here stop until you approve Allthing again. You stay signed in, and casts you scheduled still go out, as they're signed already. Allthing's key stays among your Farcaster app's connected apps until you remove it there.";
+/// How long Revoke permissions waits for its second click.
+const ARMED_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long the pointer or focus may leave it before it stops waiting.
+const AWAY_FOR: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// The account menu's Revoke permissions, where this browser writes for the
+/// reader: the first click arms it ("Click again to revoke", or "Tap again"
+/// on a touch screen), and a second within 5 s revokes (`Writer::turn_off`).
+/// It disarms after those 5 s, on Escape (the menu stays open), when the
+/// pointer or focus leaves it for more than a moment, and with the menu,
+/// whose closing takes it away. What it does shows under it, in Allthing's
+/// tooltip look, on hover and keyboard focus, and once armed, phones
+/// included; it's the button's description.
 #[component]
 pub fn WriterMenuItem() -> impl IntoView {
     let Some(writer) = use_writer() else { return ().into_any() };
+    let armed = RwSignal::new(false);
+    // When it was armed (ms), and a count that moves on with each arming,
+    // disarming, leaving and coming back, so a timer set before one does
+    // nothing after it.
+    let armed_at = StoredValue::new(0.0_f64);
+    let turn = StoredValue::new(0_u32);
+    let next = move || {
+        turn.update_value(|t| *t = t.wrapping_add(1));
+        turn.get_value()
+    };
+    let disarm = move || {
+        next();
+        armed.set(false);
+    };
+    let disarm_after = move |after: std::time::Duration| {
+        let at = next();
+        set_timeout(
+            move || {
+                if turn.try_get_value() == Some(at) {
+                    let _ = armed.try_set(false);
+                }
+            },
+            after,
+        );
+    };
+    let press = move |_| {
+        if armed.get_untracked() {
+            disarm();
+            writer.turn_off();
+        } else {
+            armed_at.set_value(js_sys::Date::now());
+            armed.set(true);
+            disarm_after(ARMED_FOR);
+        }
+    };
+    // Back before the moment is up: still armed, for what's left of its 5 s.
+    let back = move || {
+        if armed.get_untracked() {
+            let left = ARMED_FOR.as_millis() as f64 - (js_sys::Date::now() - armed_at.get_value());
+            disarm_after(std::time::Duration::from_millis(left.max(0.0) as u64));
+        }
+    };
+    let away = move || {
+        if armed.get_untracked() {
+            disarm_after(AWAY_FOR);
+        }
+    };
+    let label = move || match (armed.get(), can_hover()) {
+        (false, _) => "Revoke permissions",
+        (true, true) => "Click again to revoke",
+        (true, false) => "Tap again to revoke",
+    };
     (move || {
         (writer.can.get() == Can::Yes).then(|| {
             view! {
-                <button type="button" class="account-link turn-off" on:click=move |_| writer.turn_off()>
-                    "Stop liking from this browser"
-                </button>
+                <div class="revoke" class:armed=move || armed.get()>
+                    <button
+                        type="button"
+                        class="account-link revoke-button"
+                        aria-describedby="revoke-what"
+                        on:click=press
+                        on:keydown=move |ev: ev::KeyboardEvent| {
+                            if ev.key() == "Escape" && armed.get_untracked() {
+                                // Escape disarms it; the menu stays open.
+                                ev.stop_propagation();
+                                disarm();
+                            }
+                        }
+                        // A mouse leaving it; a finger lifts off a button
+                        // it just tapped, which isn't leaving it.
+                        on:pointerleave=move |ev: ev::PointerEvent| {
+                            if ev.pointer_type() == "mouse" {
+                                away();
+                            }
+                        }
+                        on:pointerenter=move |ev: ev::PointerEvent| {
+                            if ev.pointer_type() == "mouse" {
+                                back();
+                            }
+                        }
+                        on:focusout=move |_| away()
+                        on:focusin=move |_| back()
+                    >
+                        {label}
+                    </button>
+                    <div class="revoke-what-box">
+                        <div class="revoke-what"><span id="revoke-what">{REVOKE_WHAT}</span></div>
+                    </div>
+                </div>
             }
         })
     })
