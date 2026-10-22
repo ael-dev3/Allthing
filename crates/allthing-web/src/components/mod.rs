@@ -55,24 +55,6 @@ pub fn deleted(hash: &str) -> leptos::prelude::Signal<bool> {
     }
 }
 
-/// The reader's replies, handed to the Farcaster app or posted from here,
-/// to the cast `hashes` (a post's, and its replies'), above its replies,
-/// until the thread has them; none in the static copy, which has no
-/// sign-in.
-pub fn outgoing_replies(hashes: std::collections::HashSet<String>) -> leptos::prelude::AnyView {
-    use leptos::prelude::*;
-    #[cfg(not(feature = "static-host"))]
-    {
-        let listed = Signal::stored(hashes.clone());
-        view! { <outgoing::OutgoingCasts place=outgoing::Place::Replies(hashes) listed/> }.into_any()
-    }
-    #[cfg(feature = "static-host")]
-    {
-        let _ = hashes;
-        ().into_any()
-    }
-}
-
 /// The reader's casts and quotes, handed to the Farcaster app or posted
 /// from here, above a feed: a channel's (`channel`), its own; until the
 /// feed lists them (`listed`). None in the static copy.

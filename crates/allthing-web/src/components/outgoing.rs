@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Casts the reader handed to the Farcaster app, shown where they will be
-//! while the reader posts them there: a reply above its post's replies, a
-//! cast or a quote above the feed (a channel's, for a cast in it), and on
-//! the reader's own profile. A clock says Farcaster doesn't have it yet;
+//! while the reader posts them there: a cast or a quote above the feed (a
+//! channel's, for a cast in it), and on the reader's own profile, its
+//! Replies tab for a reply (in a post's thread, a reply shows as a reply,
+//! under what it answers: `components::thread`). A clock says Farcaster doesn't have it yet;
 //! once the node has it, a check, and a link to it (`Writer::watch`). Not
 //! posted in time, it goes, and the draft is back in the composer. A cast
 //! posted from here with the reader's key shows the same way at once, as
@@ -29,8 +30,6 @@ const CHECK: &str = "M3.5 8.5l3 3 6-7";
 /// Where on the page.
 #[derive(Clone)]
 pub enum Place {
-    /// Above a post's replies: replies to it, or to any of its replies.
-    Replies(HashSet<String>),
     /// Above a feed: casts and quotes, or on a channel's page, the casts
     /// that go to it.
     Feed(Option<String>),
@@ -42,7 +41,6 @@ pub enum Place {
 impl Place {
     fn holds(&self, cast: &Outgoing, reader: u64) -> bool {
         match (self, &cast.sent) {
-            (Place::Replies(hashes), Sent::Reply { parent, .. }) => hashes.contains(parent),
             (Place::Feed(None), Sent::Cast { .. } | Sent::Quote { .. }) => true,
             (Place::Feed(Some(channel)), Sent::Cast { .. }) => cast.channel.as_ref() == Some(channel),
             (Place::Profile { fid, replies }, Sent::Cast { .. } | Sent::Quote { .. }) => {
@@ -55,8 +53,8 @@ impl Place {
 }
 
 /// The reader's casts that belong at `place` and that the page doesn't
-/// list itself (`listed`, by hash) or that aren't deleted: replies in the
-/// order they went, casts newest first, as the lists below them.
+/// list itself (`listed`, by hash) or that aren't deleted, newest first,
+/// as the lists below them.
 #[component]
 pub fn OutgoingCasts(place: Place, #[prop(into)] listed: Signal<HashSet<String>>) -> impl IntoView {
     let (Some(writer), session) = (use_writer(), use_session()) else { return ().into_any() };
@@ -72,9 +70,7 @@ pub fn OutgoingCasts(place: Place, #[prop(into)] listed: Signal<HashSet<String>>
                     .is_none_or(|hash| !listed.with(|listed| listed.contains(hash)) && !writer.deleted(hash))
             })
             .collect::<Vec<_>>();
-        if !matches!(place, Place::Replies(_)) {
-            casts.reverse();
-        }
+        casts.reverse();
         casts
     });
     (move || {
@@ -109,8 +105,9 @@ fn OutgoingCard(cast: Outgoing, user: allthing_core::model::UserSummary) -> impl
                 <span class="byline">
                     <UserChip user show_name=true card=None/>
                     {match cast.hash {
-                        // The node has taken it; its store doesn't show it yet.
-                        Some(_) if cast.pending => clock("Posting…"),
+                        // On its way from here, or taken by the node and not in
+                        // its store yet.
+                        _ if cast.pending => clock("Posting…"),
                         Some(hash) => view! {
                             <a class="when outgoing-state" href=cast_href(&hash)>
                                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d=CHECK/></svg>

@@ -114,6 +114,9 @@ const KEY_GONE: &str =
     "Allthing's key isn't on your Farcaster account anymore. Like or recast again to approve a new one.";
 /// The same, in a notice that offers the approval.
 const KEY_REMOVED: &str = "Allthing's key isn't on your Farcaster account anymore.";
+/// The same, for a reply back in the composer.
+const REPLY_KEY_GONE: &str =
+    "Allthing's key isn't on your Farcaster account anymore. Reply again to approve a new one.";
 const UNLOADED: &str = "This part of Allthing couldn't load. Check the connection, or reload the page.";
 
 /// Whether the reader can like and recast here.
@@ -252,6 +255,12 @@ pub enum Expect {
 /// composer that made it may be gone by then.
 pub type Settle = std::sync::Arc<dyn Fn(bool) + Send + Sync>;
 
+/// What the composer does when a reply it sent doesn't go out, or doesn't
+/// show up on the node in time (`Writer::send_reply`): it opens again with
+/// the draft, says why, and offers Retry, which sends the same message
+/// again, where that may help. `false` when it holds another draft by then.
+pub type Reopen = Rc<dyn Fn(String, Option<Rc<dyn Fn()>>) -> bool>;
+
 impl Expect {
     /// What it is about: a newer hand-off of the same takes its place.
     fn about(&self) -> String {
@@ -286,10 +295,17 @@ pub struct Outgoing {
     pub replies_before: u64,
     /// Its hash, once the node has it.
     pub hash: Option<String>,
-    /// Posted from here: the node has taken it, but its store doesn't show
-    /// it yet.
+    /// Posted from here: on its way (signed or not yet), or taken by the
+    /// node, but its store doesn't show it yet.
     #[serde(default)]
     pub pending: bool,
+    /// Its images, videos and GIF, as the cast embeds them: a reply shows
+    /// them in its thread (`components::thread`).
+    #[serde(default)]
+    pub media: Vec<String>,
+    /// When it went (Unix seconds).
+    #[serde(default)]
+    pub at: i64,
 }
 
 /// How to take back what a hand-off shows before it's done.
@@ -315,6 +331,8 @@ pub struct Writer {
     can: RwSignal<Can>,
     mine: RwSignal<Mine>,
     notice: RwSignal<Option<Notice>>,
+    /// A word for screen readers only ("Reply posted."), said politely.
+    heard: RwSignal<Option<&'static str>>,
     /// Moves on whenever the reader schedules, changes or cancels a cast,
     /// for their list to be read again.
     scheduled: RwSignal<u32>,
@@ -348,6 +366,8 @@ thread_local! {
     /// then asks at once.
     static WAKES: Cell<u64> = const { Cell::new(0) };
     static NOTICE_RUN: Cell<u64> = const { Cell::new(0) };
+    /// The last id a reply on its way was given.
+    static REPLY_ID: Cell<u64> = const { Cell::new(0) };
     /// What the notice's button does (Retry).
     static ACTION: RefCell<Option<Action>> = const { RefCell::new(None) };
     static TABS_CHANNEL: RefCell<Option<web_sys::BroadcastChannel>> = const { RefCell::new(None) };
@@ -374,6 +394,7 @@ impl Writer {
             can: RwSignal::new(Can::No),
             mine: RwSignal::new(Mine { deleted: deleted_before(), ..Mine::default() }),
             notice: RwSignal::new(None),
+            heard: RwSignal::new(None),
             scheduled: RwSignal::new(0),
         };
         Effect::new(move |before: Option<Option<u64>>| {
@@ -829,6 +850,163 @@ impl Writer {
                 Err(unsent) => self.failed(fid, unsent, "", move || self.approve()),
             }
         });
+    }
+
+    /// A reply on its way from the composer with the reader's key: it shows
+    /// at once in its thread, under the cast it answers, as posting
+    /// (`components::thread`), while its mentions are looked up and it's
+    /// signed (`Writer::send_reply`). Its id.
+    pub fn reply_going(self, mut reply: Outgoing) -> u64 {
+        // An id of its own, apart from the hand-offs' runs.
+        let id = REPLY_ID.with(|last| {
+            last.set((js_sys::Date::now() as u64).max(last.get() + 1));
+            last.get()
+        });
+        (reply.id, reply.hash, reply.pending) = (id, None, true);
+        self.mine.update(|m| m.outgoing.push(reply));
+        id
+    }
+
+    /// Send the reply `id` that the composer shows on its way (`reply_going`,
+    /// `shown`): `cast`, signed with the reader's key, handed to the node,
+    /// and read back from the node's store. Meanwhile it shows as posting;
+    /// once the node shows it, it's a reply like the others, and screen
+    /// readers hear so. If it doesn't go out, or doesn't show up in time, it
+    /// goes, and the composer takes the draft back (`reopen`) with why, and
+    /// Retry where the same message again may help; or, holding another
+    /// draft by then, a notice says it.
+    pub fn send_reply(self, id: u64, cast: Result<NewCast, String>, shown: Outgoing, reopen: Reopen) {
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else {
+            // Forgotten meanwhile (in another tab): approved again, it goes.
+            if let Some(fid) = self.fid() {
+                self.reply_failed(id, fid, Unsent::KeyGone, shown, reopen);
+            }
+            return;
+        };
+        spawn_local(async move {
+            let handed = match cast {
+                Ok(cast) => handed_in(&stored, Body::CastAdd(cast), None).await,
+                Err(why) => Err(Unsent::Failed(why)),
+            };
+            self.reply_out(id, stored.fid, handed, shown, reopen).await;
+        });
+    }
+
+    /// The reply `id`, handed to the node (or not): looked for on the node,
+    /// then shown as posted, or taken back.
+    async fn reply_out(self, id: u64, fid: u64, handed: Result<Signed, Unsent>, shown: Outgoing, reopen: Reopen) {
+        let outcome = match handed {
+            Ok(signed) => {
+                // Its hash, for its card, and for the page to find it by.
+                let hash = signed.hash();
+                self.mine.update(|m| {
+                    if let Some(reply) = m.outgoing.iter_mut().find(|reply| reply.id == id) {
+                        reply.hash = Some(hash);
+                    }
+                });
+                confirmed(signed).await
+            }
+            Err(unsent) => Err(unsent),
+        };
+        // Signed out meanwhile: what showed went with the reader.
+        if self.fid() != Some(fid) {
+            return;
+        }
+        match outcome {
+            Ok(confirmed) => self.reply_landed(id, confirmed.signed.hash()),
+            Err(unsent) => self.reply_failed(id, fid, unsent, shown, reopen),
+        }
+    }
+
+    /// The reply `id` shows on the node: a reply like the others from now
+    /// on, on this tab's page loads too for ten minutes, until the page lists
+    /// it; and the pages that list it are refreshed.
+    fn reply_landed(self, id: u64, hash: String) {
+        let Some(user) = self.session.user.get_untracked() else { return };
+        let mut landed = None;
+        self.mine.update(|m| {
+            if let Some(reply) = m.outgoing.iter_mut().find(|reply| reply.id == id) {
+                (reply.hash, reply.pending) = (Some(hash.clone()), false);
+                landed = Some(reply.clone());
+            }
+        });
+        let Some(reply) = landed else { return };
+        remember_posted(user.fid, &reply);
+        self.hear("Reply posted.");
+        let reply_to = match &reply.sent {
+            Sent::Reply { parent, .. } => Some(parent.clone()),
+            _ => None,
+        };
+        let wrote = Wrote {
+            username: Some(user.username.clone()),
+            reply_to,
+            page: page_cast(),
+            channel: reply.channel.clone(),
+            ..Wrote::default()
+        };
+        self.refresh(wrote, Landing::Listed(hash));
+    }
+
+    /// The reply `id` didn't go out, or didn't show up on the node in time:
+    /// it goes from its thread, its cast's reply count goes back, and the
+    /// composer has the draft back (`reopen`), with why.
+    fn reply_failed(self, id: u64, fid: u64, unsent: Unsent, shown: Outgoing, reopen: Reopen) {
+        self.mine.update(|m| m.outgoing.retain(|reply| reply.id != id));
+        let (why, signed) = match unsent {
+            Unsent::KeyGone => {
+                self.forget_key(fid);
+                (REPLY_KEY_GONE.to_owned(), None)
+            }
+            // The same message would be refused again: the draft, as it is
+            // or changed, goes as a new one.
+            Unsent::Refused(why) => (refused(&why), None),
+            Unsent::Unreachable(signed) => (NODE_DOWN.to_owned(), Some(signed)),
+            Unsent::Unseen(signed) => {
+                ("Your reply didn't show up on Farcaster in time, so it's taken back.".to_owned(), Some(signed))
+            }
+            Unsent::Failed(message) => (message, None),
+        };
+        // Retry: the same message, which the node keeps once.
+        let retry = signed.map(|signed| {
+            let reopen = reopen.clone();
+            Rc::new(move || self.resend_reply(shown.clone(), signed.clone(), reopen.clone())) as Rc<dyn Fn()>
+        });
+        if !reopen(why.clone(), retry.clone()) {
+            match retry {
+                Some(retry) => self.act(why, "Retry", move || retry()),
+                None => self.say(why),
+            }
+        }
+    }
+
+    /// Hand a reply that didn't go out, or didn't show up in time, to the
+    /// node again, as it was signed (Retry): the same message, which the
+    /// node keeps once. It shows in its thread as posting again meanwhile.
+    fn resend_reply(self, shown: Outgoing, signed: Signed, reopen: Reopen) {
+        let fid = signed.fid;
+        let id = self.reply_going(shown.clone());
+        let hash = signed.hash();
+        self.mine.update(|m| {
+            if let Some(reply) = m.outgoing.iter_mut().find(|reply| reply.id == id) {
+                reply.hash = Some(hash);
+            }
+        });
+        spawn_local(async move {
+            let handed = resent(signed).await;
+            self.reply_out(id, fid, handed, shown, reopen).await;
+        });
+    }
+
+    /// The reader's replies to `parent` from here this visit, oldest first:
+    /// on their way, posted, or handed to the Farcaster app.
+    pub fn replies_to(self, parent: &str) -> Vec<Outgoing> {
+        self.mine.with(|m| {
+            m.outgoing
+                .iter()
+                .filter(|reply| matches!(&reply.sent, Sent::Reply { parent: to, .. } if to == parent))
+                .cloned()
+                .collect()
+        })
     }
 
     /// What the reader posted, liked and recasted from here in this tab's
@@ -1361,12 +1539,12 @@ impl Writer {
     }
 
     /// Whether one of the reader's replies to `hash`, handed to the
-    /// Farcaster app, isn't posted yet.
+    /// Farcaster app or on its way from here, isn't posted yet.
     pub fn replying(self, hash: &str) -> bool {
         self.mine.with(|m| {
-            m.outgoing
-                .iter()
-                .any(|c| c.hash.is_none() && matches!(&c.sent, Sent::Reply { parent, .. } if parent == hash))
+            m.outgoing.iter().any(|c| {
+                (c.hash.is_none() || c.pending) && matches!(&c.sent, Sent::Reply { parent, .. } if parent == hash)
+            })
         })
     }
 
@@ -1514,6 +1692,18 @@ impl Writer {
     /// region, for a few seconds.
     pub fn say(self, message: String) {
         self.notify(Notice { text: message, link: None, action: None });
+    }
+
+    /// Say `words` to screen readers only, politely: what needs no notice
+    /// on screen ("Reply posted.", as the reply shows as posted).
+    fn hear(self, words: &'static str) {
+        self.heard.set(Some(words));
+        spawn_local(async move {
+            crate::video::sleep(NOTICE_MS).await;
+            if self.heard.get_untracked() == Some(words) {
+                self.heard.set(None);
+            }
+        });
     }
 
     fn notify(self, notice: Notice) {
@@ -2294,6 +2484,9 @@ pub fn WriterDialog() -> impl IntoView {
                 })}
             })}
         </p>
+        // A live region of its own, not a second status: the notice is the
+        // page's one.
+        <p class="visually-hidden heard" aria-live="polite" aria-atomic="true">{move || writer.heard.get()}</p>
     }
     .into_any()
 }

@@ -179,9 +179,9 @@ test("a reply, a quote, and a cast in a channel go where they belong", async ({ 
   expect(castOf(calls.sent[2])).toMatchObject({ text: "Shrike season", parent: { url: CHANNEL_URL } });
 });
 
-test("Ctrl or Cmd and Enter posts a reply, which reads Replying… while it goes; in the GIF search, Enter only searches", async ({ page }) => {
+test("Ctrl or Cmd and Enter posts a reply, which shows in the thread at once; in the GIF search, Enter only searches", async ({ page }) => {
   const calls = await ready(page, `/p/${post.hash}`);
-  // The node holds the reply until let go, so what Reply says meanwhile shows.
+  // The node holds the reply until let go, so how it shows meanwhile can be seen.
   let release = () => {};
   const held = new Promise<void>((resolve) => (release = resolve));
   await page.route(`${NODE}/submitMessage`, async (route) => {
@@ -200,12 +200,14 @@ test("Ctrl or Cmd and Enter posts a reply, which reads Replying… while it goes
   expect(calls.sent).toHaveLength(0);
   await dialog.getByRole("button", { name: "Add a GIF" }).click();
   // No newline: the reply goes, as Reply would send it.
+  // The composer closes at once, and the reply shows in the thread as posting.
   await box.press("Control+Enter");
-  await expect(dialog.getByRole("button", { name: "Replying…" })).toBeDisabled();
-  await expectDraft(box, "Read Hyperion");
-  release();
   await expect(dialog).toBeHidden();
-  expect(calls.sent).toHaveLength(1);
+  const mine = page.locator(".replies .comment.mine");
+  await expect(mine.locator(".comment-text")).toHaveText("Read Hyperion");
+  await expect(mine.locator(".comment-head .when")).toHaveText("Posting…");
+  release();
+  await expect.poll(() => calls.sent.length).toBe(1);
   expect(castOf(calls.sent[0])).toMatchObject({ text: "Read Hyperion", parent: { cast: { fid: alice.fid, hash: post.hash } } });
   // An empty draft has nothing to post: Cmd and Enter does nothing.
   await page.getByRole("button", { name: "Reply to @alice" }).click();
