@@ -49,7 +49,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Write from Allthing.** Cast, reply, quote, like, recast, follow, delete your own casts and [schedule casts](docs/ARCHITECTURE.md#scheduled-casts) (listed at /scheduled), shown "via Allthing". Each is a Farcaster message signed in your browser and sent to Hypersnap; Allthing asks for keys as its own account, @allthingapp.
 - **A composer like the Farcaster app's.** Images and videos (PNG, JPEG, GIF, WebP; MP4, MOV, WebM) by the attach button, paste or drop, with photo location data stripped in the browser; @mention autocomplete; a Pepe emoji picker, animated Pepe stickers and GIFs (from [KLIPY](https://klipy.com)); drafts that last; a sheet on the keyboard on a phone.
 - **Notifications.** A bell with what's new, and /notifications with likes, recasts, replies, mentions, quotes and follows, grouped as the Farcaster app groups them.
-- **Messages.** SpacetimeDB chat and end-to-end encrypted DMs, at /messages ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#messages-on-spacetimedb)).
+- **Messages.** One inbox on SpacetimeDB at /messages: Allthing's public `#general` room and end-to-end encrypted conversations ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#messages-on-spacetimedb)).
 - **Signed out**, a write opens the cast, the profile or a ready draft in the Farcaster app instead.
 
 ### Fast and frugal
