@@ -100,7 +100,7 @@ test("a reply shows in the thread at once, then as posted, with the count", asyn
   await expect(myReply(page)).toContainText("Posting in Farcaster");
   // The reader posts it in the app, a little changed.
   posted.push({ hash: hex(9), text: "so true!", parent: theirs.hash });
-  const done = myReply(page).getByRole("link", { name: "permalink" });
+  const done = myReply(page).locator(".comment-head a.when");
   await expect(done).toHaveAttribute("href", /\/p\/0x0+9$/, { timeout: 10_000 });
   await expect(myReply(page)).not.toContainText("Posting in Farcaster");
   await expect(page.getByRole("status").filter({ hasText: "Posted." })).toBeVisible();
@@ -181,7 +181,7 @@ test("on a phone, a reply sent by its link shows at once, and as posted on comin
   posted.push({ hash: hex(13), text: "from my phone", parent: theirs.hash });
   await app.close();
   await page.bringToFront();
-  await expect(myReply(page).getByRole("link", { name: "permalink" })).toHaveAttribute("href", `/p/${hex(13)}`, { timeout: 10_000 });
+  await expect(myReply(page).locator(".comment-head a.when")).toHaveAttribute("href", `/p/${hex(13)}`, { timeout: 10_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: info.outputPath("handoff-posts-390-posted.png") });
   await context.close();
