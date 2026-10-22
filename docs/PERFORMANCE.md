@@ -37,7 +37,7 @@ A finger stays down 80 ms, and the mouse rests on its target for 250 ms and hold
 | Layout shift on navigations | < 0.01 | every `layout-shift` after the navigation's first frame, whether the browser counts it as answering input or not; on a sort tab, whose new order is its answer, only those CLS counts |
 | Blank frames | none | each frame of a navigation, sampled by `requestAnimationFrame`: whether any of 15 points on the page's main content shows something readable (at least half opaque) or a placeholder, or something over it, and whether the page is white |
 | Back | the reader's card within 2 px | the card at the line `nav.rs` reads the reader's place at, before and after |
-| Press feedback | shown in the first frame, nothing moved | the computed transform, scale and opacity of the control and what it holds, in the first frame after `pointerdown`, and its laid-out box |
+| Press feedback | shown in the first frame, nothing moved | the computed transform, scale and opacity of the control and what it holds, in the first frame after `pointerdown`, and its laid-out box; pressed once it has stayed put for 200 ms with the images on screen loaded, as a reader presses what they see, since a scroll to it can bring photos above it into view that take their shape a moment later and move it |
 
 It also reports, with no budget yet: when a navigation first shows the next page, the longest task and frame in the second after an interaction, frames that show placeholders, and the scroll's frame intervals. `SMOOTH_OUT=numbers.json` writes every run's numbers, and `SMOOTH_TRACE=trace.zip` records a Playwright trace of the phone's run.
 

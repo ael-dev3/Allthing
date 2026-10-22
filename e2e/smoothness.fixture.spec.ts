@@ -398,6 +398,41 @@ function harness() {
   const differs = (a: number[][], b: number[][]) =>
     a.some((v, i) => v.some((x, j) => Math.abs(x - b[i][j]) > (j === 2 || j === 3 ? 0.5 : 0.004)));
   const box = (el: HTMLElement) => [el.offsetLeft, el.offsetTop, el.offsetWidth, el.offsetHeight].join(",");
+  /*
+   * Where to press `el` once it has stayed put: its box the same for 200 ms
+   * (and three frames), no image on screen still loading, and the point
+   * pressed on it, not on something drawn over it. A scroll to it can bring
+   * cards above it into view whose photos take their shape a moment later
+   * (a square until the size comes), which moves it after the scroll is
+   * done; a reader presses what has sat still.
+   */
+  S.steady = (el: Element) =>
+    new Promise((resolve) => {
+      const start = performance.now();
+      let last = "";
+      let since = start;
+      let frames = 0;
+      const frame = () => {
+        const now = performance.now();
+        const r = el.getBoundingClientRect();
+        const point = { x: r.x + Math.min(r.width / 2, 20), y: r.y + r.height / 2 };
+        const at = [r.x, r.y, r.width, r.height].map(Math.round).join(",");
+        const loading = Array.from(document.images).some((img) => {
+          if (img.complete) return false;
+          const b = img.getBoundingClientRect();
+          return b.bottom > 0 && b.top < innerHeight && b.right > 0 && b.left < innerWidth;
+        });
+        const hit = el.contains(document.elementFromPoint(point.x, point.y));
+        if (at !== last || loading || !hit) {
+          last = at;
+          since = now;
+          frames = 0;
+        } else frames += 1;
+        if ((frames >= 3 && now - since >= 200) || now - start > 3000) resolve(point);
+        else requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
   S.armPress = (el: HTMLElement) => {
     const before = looks(el);
     const layout = box(el);
@@ -831,9 +866,11 @@ async function presses(page: Page, profile: Profile, cdp: CDPSession) {
     if (!(await target.count())) return;
     const el = target.first();
     await el.scrollIntoViewIfNeeded();
-    const box = (await el.boundingBox())!;
-    const x = box.x + Math.min(box.width / 2, 20);
-    const y = box.y + box.height / 2;
+    // A touch goes to a point, and unlike a click doesn't wait for what is
+    // there to be still: pressed where it is once it has stayed put, or it
+    // lands on whatever moved there (the next card's picture, once a photo
+    // above the link card had taken its shape).
+    const { x, y }: { x: number; y: number } = await el.evaluate((node) => (window as any).__smooth.steady(node));
     if (!profile.touch) {
       // Pointing at it first, as a mouse does, and letting its hover settle.
       await page.mouse.move(x, y);
