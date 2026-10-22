@@ -13,6 +13,7 @@ use allthing_core::params::hash_from_param;
 use allthing_core::quotes::single_images;
 use allthing_core::ranking::{CommentSort, sort_thread};
 use allthing_core::text::truncate_title;
+use allthing_core::thread::leading_with;
 use allthing_core::time::format_date_time;
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
@@ -20,7 +21,7 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::Notes;
 use crate::api::{self, Fetched};
-use crate::components::cast::{CastSkeletons, ChannelLink};
+use crate::components::cast::{CastSkeletons, ChannelLink, after_paint};
 use crate::components::chips::{Avatar, Engagement, TimeAgo};
 use crate::components::layout::{Columns, ErrorPanel, NotFound, StaleNotice};
 use crate::components::media::{self, LinkCards, MediaGrid, VideoLinks};
@@ -179,12 +180,31 @@ fn PostPage() -> impl IntoView {
                                 view! { <p class="empty">"No replies yet."</p> }.into_any()
                             } else {
                                 let (notes, op_fid) = (notes.clone(), cast.author.fid);
+                                // The first replies, about a screen of them,
+                                // with the post, and the rest a paint after,
+                                // so the post shows sooner (drawn together,
+                                // they held the tap's page for 82 to 151 ms on
+                                // a slow phone) and what's under them on the
+                                // screen doesn't move as the rest come. All at
+                                // once where Back is putting the reader's place
+                                // back, which may be among them.
+                                let drawn = RwSignal::new(crate::nav::restoring());
+                                if !drawn.get_untracked() {
+                                    after_paint(move || {
+                                        let _ = drawn.try_set(true);
+                                    });
+                                }
                                 view! {
                                     <div class="comments">
                                         {move || {
                                             let mut replies = children.clone();
                                             sort_thread(&mut replies, sort.get());
-                                            view! { <CommentTree nodes=replies notes=notes.clone() op_fid/> }
+                                            let rest = replies.split_off(leading_with(&replies, FIRST_REPLIES));
+                                            let more = notes.clone();
+                                            view! {
+                                                <CommentTree nodes=replies notes=notes.clone() op_fid/>
+                                                {move || drawn.get().then(|| view! { <CommentTree nodes=rest.clone() notes=more.clone() op_fid/> })}
+                                            }
                                         }}
                                     </div>
                                 }
@@ -295,6 +315,10 @@ fn PostedVia(cast: Cast, notes: Notes) -> impl IntoView {
         None => ().into_any(),
     }
 }
+
+/// The replies a post draws with itself, with those under them: about a
+/// phone's screen, so what follows them is out of view when the rest come.
+const FIRST_REPLIES: usize = 6;
 
 /// Replies whose images the page waits for, with the cast's: about what the
 /// first screen shows below it.

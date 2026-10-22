@@ -433,6 +433,8 @@ impl Composer {
         self.discarding.set(false);
         self.picker.set(Picker::Closed);
         self.error.set(None);
+        // Opened in the press's own task, so the box has focus, and the
+        // keyboard held for it, in the first frame (docs/PERFORMANCE.md).
         self.open.set(true);
     }
 

@@ -29,6 +29,25 @@ use crate::util::{SOURCE_URL, can_hover, document, href, prefers_reduced_motion,
 const RECENT_EMOJI: &str = "allthing.emoji";
 const RECENT_STICKERS: &str = "allthing.stickers";
 
+/// The tiles a picker draws as it opens, about the rows in view; the other
+/// groups follow, one a frame, once that frame is painted. Drawing all 219
+/// at once, and loading all their pictures, held the click that opened it
+/// for 280 to 344 ms on a computer (docs/PERFORMANCE.md).
+const FIRST_TILES: usize = 48;
+
+/// How many of the groups, in order, the first `FIRST_TILES` tiles are in.
+fn first_groups() -> usize {
+    let mut tiles = 0;
+    Group::ALL
+        .iter()
+        .take_while(|group| {
+            let before = tiles;
+            tiles += group.emoji().count();
+            before < FIRST_TILES
+        })
+        .count()
+}
+
 thread_local! {
     /// The recently used emoji and stickers for this page, for when
     /// localStorage is blocked.
@@ -147,6 +166,8 @@ fn animate(tile: &Element, item: Item, moving: bool) {
         return;
     }
     if let Some(img) = tile.first_element_child() {
+        // Shown now, it isn't one for `load_in_view` to load any more.
+        let _ = img.remove_attribute("data-src");
         let _ = img.set_attribute("src", &href(&if moving { item.file() } else { item.still() }));
     }
 }
@@ -164,9 +185,36 @@ fn tile(emoji: &'static Emoji) -> impl IntoView {
     }
 }
 
-/// The observer that loads moving sticker tiles as they come into view in
-/// `results` (`data-src` becomes `src`), not all on opening, as
-/// `loading="lazy"` would in a scroll box this short.
+/// One of a group's emoji, as `tile`, its picture loaded as it comes into
+/// view (`load_in_view`): all 219 loading as the picker opened took 150 to
+/// 400 ms of the page's time on a slow phone, most for emoji never seen.
+fn group_tile(emoji: &'static Emoji) -> impl IntoView {
+    view! {
+        <li>
+            <button type="button" class="emoji-tile" data-code=emoji.code aria-label=emoji.label()>
+                <img data-src=href(&emoji.still()) alt="" width=emoji.width height=emoji.height/>
+            </button>
+        </li>
+    }
+}
+
+/// Draws the groups not drawn yet, one a frame, and has the pictures of
+/// those drawn load as they come into view (`watch`).
+fn draw_rest(drawn: RwSignal<usize>, watch: impl Fn() + Copy + 'static) {
+    crate::components::cast::after_paint(move || {
+        watch();
+        let Some(now) = drawn.try_get_untracked() else { return };
+        if now < Group::ALL.len() {
+            let _ = drawn.try_set(now + 1);
+            draw_rest(drawn, watch);
+        }
+    });
+}
+
+/// The observer that loads the pictures of a group's emoji and of moving
+/// stickers as they come into view in `results` (`data-src` becomes
+/// `src`), about a row ahead, not all on opening, as `loading="lazy"` would
+/// in a scroll box this short.
 type Seen = (IntersectionObserver, Closure<dyn FnMut(js_sys::Array, IntersectionObserver)>);
 
 fn load_in_view(results: &Element) -> Option<Seen> {
@@ -185,7 +233,7 @@ fn load_in_view(results: &Element) -> Option<Seen> {
     );
     let options = IntersectionObserverInit::new();
     options.set_root(Some(results));
-    options.set_root_margin("32px 0px");
+    options.set_root_margin("64px 0px");
     let observer = IntersectionObserver::new_with_options(callback.as_ref().unchecked_ref(), &options).ok()?;
     Some((observer, callback))
 }
@@ -229,6 +277,8 @@ pub fn EmojiPicker(
         tab.set(Tab::Emoji);
     }
     let query = RwSignal::new(String::new());
+    // How many groups are drawn, while they're shown (`draw_rest`).
+    let drawing = StoredValue::new(None::<RwSignal<usize>>);
     let found = Memo::new(move |_| query.with(|q| emoji::search(q)));
     let stickers = Memo::new(move |_| query.with(|q| emoji::search_stickers(q)));
     let searching = Memo::new(move |_| query.with(|q| !q.trim().is_empty()));
@@ -253,24 +303,26 @@ pub fn EmojiPicker(
     let input = NodeRef::<leptos::html::Input>::new();
     let section = NodeRef::<leptos::html::Section>::new();
     let results = NodeRef::<leptos::html::Div>::new();
-    // Moving stickers load as they come into view: whenever the stickers
-    // shown change, the new ones are watched, once drawn.
+    // Pictures that wait to come into view load then (`load_in_view`): the
+    // groups' emoji, as each group is drawn (`draw_rest`), and moving
+    // stickers, whenever those shown change.
     let seen = StoredValue::new_local(None::<Seen>);
-    Effect::new(move |_| {
-        let shown = (tab.get(), stickers.with(Vec::len));
-        let Some(root) = results.get().filter(|_| moving && shown.0 == Tab::Stickers) else { return };
+    let watch = move || {
+        let Some(root) = results.get_untracked() else { return };
         if seen.with_value(Option::is_none) {
             seen.set_value(load_in_view(&root));
         }
-        request_animation_frame(move || {
-            seen.with_value(|seen| {
-                let (Some((observer, _)), Some(root)) = (seen, results.get_untracked()) else { return };
-                let Ok(waiting) = root.query_selector_all(".sticker-tile img[data-src]") else { return };
-                for img in (0..waiting.length()).filter_map(|i| waiting.item(i)?.dyn_into::<Element>().ok()) {
-                    observer.observe(&img);
-                }
-            });
+        seen.with_value(|seen| {
+            let Some((observer, _)) = seen else { return };
+            let Ok(waiting) = root.query_selector_all("img[data-src]") else { return };
+            for img in (0..waiting.length()).filter_map(|i| waiting.item(i)?.dyn_into::<Element>().ok()) {
+                observer.observe(&img);
+            }
         });
+    };
+    Effect::new(move |_| {
+        let _ = (tab.get(), stickers.with(Vec::len), results.get());
+        request_animation_frame(watch);
     });
     on_cleanup(move || {
         seen.with_value(|seen| {
@@ -306,10 +358,21 @@ pub fn EmojiPicker(
         }
     };
     let jump = move |i: usize| {
-        if let (Some(results), Some(heading)) = (results.get_untracked(), headings().get(i)) {
-            results.set_scroll_top(heading.offset_top());
-            jumped.set_value(Some(results.scroll_top()));
-            current.set(i);
+        let go = move || {
+            if let (Some(results), Some(heading)) = (results.get_untracked(), headings().get(i)) {
+                results.set_scroll_top(heading.offset_top());
+                jumped.set_value(Some(results.scroll_top()));
+                current.set(i);
+            }
+        };
+        // A group not drawn yet is drawn now, with the rest, and gone to in
+        // the next frame.
+        match drawing.get_value() {
+            Some(drawn) if drawn.try_get_untracked().is_some_and(|groups| groups <= i) => {
+                let _ = drawn.try_set(Group::ALL.len());
+                request_animation_frame(go);
+            }
+            _ => go(),
         }
     };
     // A search shows no groups; cleared, they come back from the first.
@@ -554,12 +617,21 @@ pub fn EmojiPicker(
                                 view! { <ul class="emoji-grid">{move || found.get().into_iter().map(tile).collect_view()}</ul> }
                                     .into_any()
                             } else {
+                                // The groups in view as they show, then one
+                                // a frame.
+                                let drawn = RwSignal::new(first_groups());
+                                drawing.set_value(Some(drawn));
+                                draw_rest(drawn, watch);
                                 Group::ALL
                                     .iter()
-                                    .map(|group| {
-                                        view! {
-                                            <h4 class="emoji-section emoji-group-heading">{group.label()}</h4>
-                                            <ul class="emoji-grid">{group.emoji().map(tile).collect_view()}</ul>
+                                    .enumerate()
+                                    .map(|(i, &group)| {
+                                        let shown = Memo::new(move |_| i < drawn.get());
+                                        move || {
+                                            shown.get().then(|| view! {
+                                                <h4 class="emoji-section emoji-group-heading">{group.label()}</h4>
+                                                <ul class="emoji-grid">{group.emoji().map(group_tile).collect_view()}</ul>
+                                            })
                                         }
                                     })
                                     .collect_view()

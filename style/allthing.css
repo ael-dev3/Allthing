@@ -521,6 +521,16 @@ code {
   }
 }
 
+/* Under a dialog, the line and the wordmark's sheen stand still, out of
+   sight behind its blurred backdrop. Moving, they had the browser blur the
+   whole screen again in every frame: in the composer, with no GPU to draw
+   it, that took 540 of every 600 ms, and each key typed waited 60 to 130 ms
+   to show. */
+html:has(.modal-backdrop) .portal-line::before,
+html:has(.modal-backdrop) .wordmark {
+  animation-play-state: paused;
+}
+
 @keyframes drift {
   from {
     background-position: 0% 0;
@@ -4919,8 +4929,9 @@ p.jumbo .emoji img {
   grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 20px;
-  background: rgba(20, 24, 38, 0.36);
-  backdrop-filter: blur(3px);
+  /* Dimmed, not blurred, as a sheet is on iOS: a blur behind a dialog was
+     drawn again over the whole screen in every frame anything in it moved. */
+  background: rgba(20, 24, 38, 0.44);
   animation: fade-in 0.15s ease both;
 }
 

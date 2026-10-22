@@ -15,7 +15,8 @@ import { standIn } from "./helpers/node";
  *   - taps the sort tabs (new, top, hot);
  *   - opens a likes count (a tap previews who liked; a click opens the list);
  *   - likes a cast, unlikes it, likes it again;
- *   - opens the composer;
+ *   - opens the composer, then in it the emoji picker and the sticker
+ *     picker, and types a key in a draft;
  *   - opens a cast from the feed, and a profile, at three depths, and goes Back;
  *   - goes Back to the feed's second server page;
  *   - scrolls the feed;
@@ -34,7 +35,9 @@ import { standIn } from "./helpers/node";
  *     the page is white;
  *   - Back puts the card the reader was at within 2 px of where it was;
  *   - a press changes the pressed control's transform or opacity in the
- *     first frame after pointerdown, and moves nothing.
+ *     first frame after pointerdown, and moves nothing;
+ *   - a scroll keeps its frames: the 95th percentile of their intervals at
+ *     most 20 ms, and at most 5% of them dropped.
  *
  * A budget the app doesn't meet yet is an expected failure (`NOT_YET`), or,
  * where the app misses or meets it by less than a busy machine's noise, not
@@ -66,6 +69,9 @@ const INP_BUDGET = 100;
 const LONG_TASK = 50;
 const SHIFT_BUDGET = 0.01;
 const RESTORE_BUDGET_PX = 2;
+/** The scroll's frames: the 95th percentile of their intervals, and the share dropped (median of the runs). */
+const SCROLL_P95_MS = 20;
+const SCROLL_DROPPED = 0.05;
 
 /**
  * The least of a CPU a busy thread may get, in the median of the run's
@@ -475,6 +481,8 @@ type Measured = {
 };
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+/** `median`, for where a scenario's median has the name. */
+const middle = median;
 const round = (n: number, digits = 0) => Math.round(n * 10 ** digits) / 10 ** digits;
 
 /** What a sample says about one interaction (or a navigation with none, such as Back). */
@@ -746,6 +754,54 @@ async function composer(page: Page, profile: Profile) {
   return summarize(runs);
 }
 
+/** What a cast says as it's typed: a line with a Pepe in it, as most drafts have about as much. */
+const DRAFT = "Walked the long way home tonight :pepe_smug: and the light on the water was something else, ";
+
+/**
+ * In the composer: the emoji picker and the sticker picker, each opened by
+ * its button (and closed again), and a key typed at the end of a draft.
+ */
+async function inComposer(page: Page, profile: Profile) {
+  await page.locator(profile.touch ? ".cast-fab" : ".cast-pill").click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".compose-loading")).toHaveCount(0);
+  const picker = async (name: string, tile: string) => {
+    const button = dialog.getByRole("button", { name });
+    const runs = await repeat(async (i) => {
+      await settle(page);
+      await begin(page, `${name} ${i}`);
+      await press(page, button, profile);
+      await expect(dialog.locator(`#emoji-picker ${tile}`).first()).toBeVisible();
+      const measured = measure(await end(page, 600));
+      await button.click();
+      await expect(dialog.locator("#emoji-picker")).toHaveCount(0);
+      return measured;
+    }, itself);
+    return summarize(runs);
+  };
+  const emoji = await picker("Add an emoji", ".emoji-tile");
+  const stickers = await picker("Add a sticker", ".sticker-tile");
+  const text = dialog.locator(".compose-text");
+  await text.focus();
+  await page.keyboard.insertText(DRAFT);
+  await expect(text).toContainText("the light on the water");
+  const runs = await repeat(async (i) => {
+    await settle(page);
+    await begin(page, `key ${i}`);
+    await page.keyboard.press("abcde"[i]);
+    await expect(text).toContainText(`else, ${"abcde".slice(0, i + 1)}`);
+    return measure(await end(page, 600));
+  }, itself);
+  // Emptied, so what comes next opens a new cast as before.
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Delete");
+  await expect(text).toHaveText("");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  return { emoji, stickers, keystroke: summarize(runs) };
+}
+
 /** Open a page from the feed at three depths, then go Back: the opening, and the return. */
 async function openAndBack(page: Page, profile: Profile, kind: "cast" | "profile") {
   const depths = [0, 1.3, 2.6, 0.65, 1.95];
@@ -811,8 +867,8 @@ async function deepBack(page: Page, profile: Profile) {
 
 /**
  * A long scroll down the feed, a finger's on the phone and the wheel's on a
- * computer (3,000 px at 2,500 px/s), timing each frame by rAF. Reported, not
- * held to a budget yet.
+ * computer (6,000 px at 2,500 px/s, past the cards drawn first, so the list
+ * draws more as it goes), timing each frame by rAF.
  */
 async function scrollFeed(page: Page, profile: Profile, cdp: CDPSession) {
   const runs: ScrollRun[] = [];
@@ -832,7 +888,7 @@ async function scrollFeed(page: Page, profile: Profile, cdp: CDPSession) {
     await cdp.send("Input.synthesizeScrollGesture", {
       x: profile.width / 2,
       y: profile.height * 0.7,
-      yDistance: -3000,
+      yDistance: -6000,
       speed: 2500,
       gestureSourceType: profile.touch ? "touch" : "mouse",
     });
@@ -906,6 +962,7 @@ async function presses(page: Page, profile: Profile, cdp: CDPSession) {
   // The composer's.
   await page.locator(profile.touch ? ".cast-fab" : ".cast-pill").click();
   const composer = page.getByRole("dialog", { name: "New cast" });
+  await expect(composer).toBeVisible();
   await expect(composer.locator(".compose-loading")).toHaveCount(0);
   const title = composer.locator("#compose-title");
   await probe("emoji (composer)", composer.getByRole("button", { name: "Add an emoji" }), title);
@@ -955,6 +1012,10 @@ async function run(browser: Browser, profile: Profile): Promise<Results> {
     scenarios["likes popover"] = await timed(() => likesPopover(page, profile));
     scenarios["like"] = await timed(() => like(page, profile, calls));
     scenarios["composer"] = await timed(() => composer(page, profile));
+    const typing = await timed(() => inComposer(page, profile));
+    scenarios["emoji picker"] = typing.emoji;
+    scenarios["sticker picker"] = typing.stickers;
+    scenarios["keystroke"] = typing.keystroke;
     const castNav = await timed(() => openAndBack(page, profile, "cast"));
     scenarios["open cast"] = castNav.open;
     scenarios["back from cast"] = castNav.back;
@@ -1003,7 +1064,7 @@ function report(r: Results) {
 }
 
 /** What each kind of interaction is held to. */
-const ANSWERS = ["sort tab", "likes popover", "like", "composer", "open cast", "open profile"];
+const ANSWERS = ["sort tab", "likes popover", "like", "composer", "emoji picker", "sticker picker", "keystroke", "open cast", "open profile"];
 const NAVIGATIONS = ["sort tab", "open cast", "open profile", "back from cast", "back from profile", "back deep in the feed"];
 const BACKS = ["back from cast", "back from profile", "back deep in the feed"];
 
@@ -1109,6 +1170,13 @@ for (const profile of [PHONE, DESKTOP].filter((p) => !process.env.SMOOTH_ONLY ||
         expect(median(scenario).restorePx).toBeLessThanOrEqual(RESTORE_BUDGET_PX);
       });
     }
+    test(`scrolling keeps its frames (95th percentile at most ${SCROLL_P95_MS} ms, at most ${SCROLL_DROPPED * 100}% dropped)`, () => {
+      known(profile, "scroll", true);
+      const runs = got().scroll;
+      expect(middle(runs.map((r) => r.p95)), "the 95th percentile of a scroll's frame intervals, in ms").toBeLessThanOrEqual(SCROLL_P95_MS);
+      const dropped = runs.map((r) => r.dropped / (r.intervals.length + r.dropped || 1));
+      expect(middle(dropped), "the share of a scroll's frames dropped").toBeLessThanOrEqual(SCROLL_DROPPED);
+    });
     test("every press answers in its first frame, and moves nothing", () => {
       known(profile, "press");
       const late = got().presses.filter((p) => !p.changed || p.moved).map((p) => `${p.control}${p.moved ? " (moves)" : ""}`);
