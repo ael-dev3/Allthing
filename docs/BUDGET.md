@@ -22,7 +22,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Front page `/` | 1 (`/api/v1/home`) | index.html, boot.js, app JS + WASM, CSS, font (first visit only: hashed, immutable) |
 | Channel `/c/<id>` | 1 (`/api/v1/channel`) | none after the first visit |
 | Cast `/p/<hash>` | 1 (`/api/v1/cast`) | none |
-| Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`) | none |
+| Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`); 2 for an account with no verified wallets, which the profile itself says, so its wallets aren't asked for | none |
 | Channel directory | 1 (`/api/v1/channels`) | none |
 | Search `/search?q=` | 1 (`/api/v1/search`) | none |
 | Feed cards coming into view | 1 per run of six cards in view, or less than a screen below it (`/api/v1/engagement`: who liked and recasted them, and their replies), one at a time, at least 2 s apart, at most 8 per page view, with a mouse or on a touch screen; none with Save-Data or on 2g | none |

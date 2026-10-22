@@ -7,10 +7,11 @@ use allthing_core::api::{vote_path, wallets_path};
 use allthing_core::format::full_number;
 use allthing_core::model::Joined;
 use allthing_core::vote::VotePayload;
-use allthing_core::wallet::WalletActivity;
+use allthing_core::wallet::{ChainActivity, WalletActivity};
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::popover::Popover;
 use crate::util::now;
 
 /// When the account joined: its onchain registration, or for an account
@@ -101,9 +102,12 @@ pub fn WalletsHelp() -> impl IntoView {
 
 /// Wallet activity by chain, loaded when shown (or from `data`, as for
 /// [`VoteFact`]): it is read from many RPCs, so it has an endpoint of its
-/// own, cached for hours. `compact` (a card) keeps one height whatever
-/// comes: the bar and one line of legend, or one message, with any note
-/// folded into a word beside the section's label.
+/// own, cached for hours. It keeps one height whatever comes, the height it
+/// has while it loads, so nothing below it moves: the bar and one line of
+/// legend, or one message, with any note folded into a word. `compact` is a
+/// card's: two chains by name, the word beside the section's label. A
+/// profile's names four where there's room, two on a phone, and its word
+/// opens the notes.
 #[component]
 pub fn WalletShares(
     fid: u64,
@@ -114,19 +118,22 @@ pub fn WalletShares(
     let data = data.unwrap_or_else(|| wallet_data(fid));
     // Prefetched (see `api::prefetch_card_facts`): shown in the first frame.
     let shares = move || match data.get().or_else(|| ready.clone().map(Ok)) {
-        None if compact => view! {
+        None => view! {
             <div class="share-bar loading" aria-label="Loading wallet activity"></div>
             <div class="share-list-loading" aria-hidden="true"></div>
         }
         .into_any(),
-        None => view! { <div class="share-bar loading" aria-label="Loading wallet activity"></div> }.into_any(),
         Some(Err(_)) => {
             view! { <p class="muted small share-message">"Wallet activity is unavailable right now."</p> }.into_any()
         }
         Some(Ok(fetched)) => view! { <WalletBreakdown activity=fetched.data.as_ref().clone() compact/> }.into_any(),
     };
-    if compact { view! { <div class="share-body">{shares}</div> }.into_any() } else { shares.into_any() }
+    view! { <div class="share-body">{shares}</div> }
 }
+
+/// What an account with no verified wallets has, without asking: the
+/// endpoint would only say so (`none_text`).
+pub const NO_WALLETS: &str = "No onchain activity from verified wallets.";
 
 /// The notes a wallet breakdown may carry: why its shares are partial, or
 /// from an earlier read.
@@ -149,6 +156,31 @@ fn note_word(notes: Vec<&'static str>, partial: bool) -> Option<impl IntoView> {
     })
 }
 
+/// A profile's word for its notes, at the end of the legend's line: pointing
+/// at it, focusing it or tapping it shows them.
+fn note_button(notes: Vec<&'static str>, partial: bool) -> Option<AnyView> {
+    (!notes.is_empty()).then(|| {
+        let word = if partial { "partial" } else { "earlier counts" };
+        let notes = StoredValue::new(notes);
+        view! {
+            <Popover
+                label="About these counts"
+                trigger_label=format!("{word}: why")
+                trigger_class="share-note-button"
+                hover=true
+                fixed=true
+                trigger=move || word
+                content=move || view! {
+                    <div class="share-notes">
+                        {notes.get_value().into_iter().map(|note| view! { <p>{note}</p> }).collect_view()}
+                    </div>
+                }
+            />
+        }
+        .into_any()
+    })
+}
+
 /// Each measured chain's share of the transactions the account's verified
 /// wallets sent: a bar and its legend.
 #[component]
@@ -162,9 +194,7 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
     // An account's Solana wallets go uncounted when Solana's read fails: say so.
     let solana_unread =
         activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Solana);
-    let solana_note = move || solana_unread.then(|| view! { <p class="muted small">{SOLANA_UNREAD}</p> });
     let missed = activity.chains.iter().any(|c| c.error.is_some() && c.kind == allthing_core::wallet::ChainKind::Evm);
-    let carried_note = |carried: bool| carried.then(|| view! { <p class="muted small">{CARRIED}</p> });
     if measured.is_empty() {
         let any_read = activity.chains.iter().any(|c| c.error.is_none());
         let evm_read =
@@ -172,29 +202,23 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
         // Only Solana, unread: its note is all there is to say.
         let says_none = missed || evm_read || !solana_unread;
         let carried = activity.chains.iter().any(|c| c.error.is_none() && c.carried);
+        // One message; the rest in the note's word.
+        let message = if says_none { none_text(missed, any_read, solana_unread) } else { SOLANA_UNREAD };
+        let notes = [
+            (missed && any_read, MISSED_SOME),
+            (carried, CARRIED),
+            (solana_unread && message != SOLANA_UNREAD, SOLANA_UNREAD),
+        ];
+        let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
+        let partial = missed || solana_unread;
         if compact {
-            // One message; the rest in the note's word.
-            let message = if says_none { none_text(missed, any_read, solana_unread) } else { SOLANA_UNREAD };
-            let notes = [
-                (missed && any_read, MISSED_SOME),
-                (carried, CARRIED),
-                (solana_unread && message != SOLANA_UNREAD, SOLANA_UNREAD),
-            ];
-            let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
             return view! {
                 <p class="muted small share-message">{message}</p>
-                {note_word(notes, missed || solana_unread)}
+                {note_word(notes, partial)}
             }
             .into_any();
         }
-        let none = says_none.then(|| view! { <p class="muted small">{none_text(missed, any_read, solana_unread)}</p> });
-        return view! {
-            {none}
-            {(missed && any_read).then(|| view! { <p class="muted small">{MISSED_SOME}</p> })}
-            {carried_note(carried)}
-            {solana_note()}
-        }
-        .into_any();
+        return view! { <p class="muted small share-message">{message}" "{note_button(notes, partial)}</p> }.into_any();
     }
     // An EVM chain that couldn't be read just now is left out of the shares:
     // say so, rather than let the shares look complete.
@@ -208,57 +232,74 @@ fn WalletBreakdown(mut activity: WalletActivity, #[prop(optional)] compact: bool
             }).collect_view()}
         </div>
     };
+    let notes = [(missed, MISSED_SHARES), (carried, CARRIED), (solana_unread, SOLANA_UNREAD)];
+    let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
+    let partial = missed || solana_unread;
+    // The largest chains by name, and how many more with their share
+    // together, so the numbers shown add up to 100; the bar, and its label,
+    // have them all. The legend is one line.
+    let named = |c: &ChainActivity, class: &'static str| {
+        view! {
+            <li class=class aria-description=chain_count_note(c)>
+                <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
+                <span class="chain-name">{c.name.clone()}</span>
+                <strong class="pct">{format!("{}%", c.percent)}</strong>
+            </li>
+        }
+    };
     if compact {
-        // The two largest chains by name, and how many more with their share
-        // together, so the numbers shown add up to 100; the bar, and its
-        // label, have them all.
-        const NAMED: usize = 2;
-        let rest = &measured[NAMED.min(measured.len())..];
-        let more = (!rest.is_empty()).then(|| {
-            let listed = rest.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
-            let together: u32 = rest.iter().map(|c| c.percent).sum();
-            view! {
-                <li class="share-more" aria-description=listed>
-                    // The space keeps "+4" and "35%" apart when read out.
-                    <span class="chain-name">{format!("+{} ", rest.len())}</span>
-                    <strong class="pct">{format!("{together}%")}</strong>
-                </li>
-            }
-        });
-        let notes = [(missed, MISSED_SHARES), (carried, CARRIED), (solana_unread, SOLANA_UNREAD)];
-        let notes: Vec<_> = notes.into_iter().filter_map(|(on, text)| on.then_some(text)).collect();
+        // A card's: two by name.
         return view! {
             {bar}
             <ul class="share-list compact">
-                {measured.iter().take(NAMED).map(|c| view! {
-                    <li aria-description=chain_count_note(c)>
-                        <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
-                        <span class="chain-name">{c.name.clone()}</span>
-                        <strong class="pct">{format!("{}%", c.percent)}</strong>
-                    </li>
-                }).collect_view()}
-                {more}
+                {measured.iter().take(2).map(|c| named(c, "")).collect_view()}
+                {more(&measured, 2, "share-more")}
             </ul>
-            {note_word(notes, missed || solana_unread)}
+            {note_word(notes, partial)}
         }
         .into_any();
     }
+    // A profile's: as many by name as its line has room for, four, two or
+    // one, with or without the notes' word beside them (the style sheet
+    // leaves the others out, and the "+N"s that don't go with them). Two
+    // chains always fit by name: one is folded into a "+N" only with two
+    // more.
+    let noted = !notes.is_empty();
+    let folds = measured.len() > 2;
+    let fit = |i: usize| match i {
+        0 => "",
+        1 if folds => "snug",
+        1 => "",
+        _ => "roomy",
+    };
     view! {
         {bar}
-        <ul class="share-list">
-            {measured.iter().map(|c| view! {
-                <li aria-description=chain_count_note(c)>
-                    <span class=format!("swatch chain-{}", c.chain) aria-hidden="true"></span>
-                    <span class="chain-name">{c.name.clone()}</span>
-                    <strong class="pct">{format!("{}%", c.percent)}</strong>
-                </li>
-            }).collect_view()}
-        </ul>
-        {missed.then(|| view! { <p class="muted small">{MISSED_SHARES}</p> })}
-        {carried_note(carried)}
-        {solana_note()}
+        <div class="share-line">
+            <ul class="share-list compact" class:noted=noted>
+                {measured.iter().take(4).enumerate().map(|(i, c)| named(c, fit(i))).collect_view()}
+                {folds.then(|| more(&measured, 1, "share-more tight"))}
+                {more(&measured, 2, "share-more cramped")}
+                {more(&measured, 4, "share-more roomy")}
+            </ul>
+            {note_button(notes, partial)}
+        </div>
     }
     .into_any()
+}
+
+/// "+N" and their share together, for the chains after the first `named`.
+fn more(measured: &[ChainActivity], named: usize, class: &'static str) -> Option<impl IntoView + use<>> {
+    let rest = measured.get(named..).filter(|rest| !rest.is_empty())?;
+    let listed = rest.iter().map(|c| format!("{} {}%", c.name, c.percent)).collect::<Vec<_>>().join(", ");
+    let together: u32 = rest.iter().map(|c| c.percent).sum();
+    let count = rest.len();
+    Some(view! {
+        <li class=class aria-description=listed>
+            // The space keeps "+4" and "35%" apart when read out.
+            <span class="chain-name">{format!("+{count} ")}</span>
+            <strong class="pct">{format!("{together}%")}</strong>
+        </li>
+    })
 }
 
 /// What a breakdown with no chain to measure says.

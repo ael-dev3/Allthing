@@ -6295,6 +6295,124 @@ p.jumbo .emoji img {
   margin: -4px 0 10px;
 }
 
+/* The shares keep one height whatever comes (facts.rs, `WalletShares`):
+   the bar and one line of legend, or a message of two lines at most, so
+   the tabs and casts under the header stay where they are. */
+.profile-wallets .share-body {
+  height: 44px;
+}
+
+.profile-wallets .share-message {
+  margin: 0;
+  line-height: 22px;
+}
+
+/* An account with no verified wallets: one line, and nothing kept for a
+   chart. */
+.profile-wallets > .share-message {
+  height: 22px;
+}
+
+.share-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 20px;
+  margin-top: 12px;
+}
+
+.share-line .share-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: nowrap;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.share-line .share-list li {
+  flex: none;
+}
+
+/* As many chains by name as the line has room for, and the rest's share
+   together ("+N"): four, two or one, by the line's width, with room kept
+   for the longest names (and for the notes' word, when there is one), so
+   nothing is cut off. `snug` is the second name, `roomy` the third and
+   fourth, and `tight`, `cramped` and `roomy` the "+N" after one, two and
+   four (facts.rs, `WalletBreakdown`). */
+.share-line {
+  container-type: inline-size;
+}
+
+@container (min-width: 580px) {
+  .share-list:not(.noted) :is(.tight, .cramped) {
+    display: none;
+  }
+}
+
+@container (min-width: 640px) {
+  .share-list.noted :is(.tight, .cramped) {
+    display: none;
+  }
+}
+
+@container (min-width: 330px) and (max-width: 579.98px) {
+  .share-list:not(.noted) :is(.tight, .roomy) {
+    display: none;
+  }
+}
+
+@container (min-width: 420px) and (max-width: 639.98px) {
+  .share-list.noted :is(.tight, .roomy) {
+    display: none;
+  }
+}
+
+@container (max-width: 329.98px) {
+  .share-list:not(.noted) :is(.snug, .cramped, .roomy) {
+    display: none;
+  }
+}
+
+@container (max-width: 419.98px) {
+  .share-list.noted :is(.snug, .cramped, .roomy) {
+    display: none;
+  }
+}
+
+/* Why the shares are partial, or from an earlier read: a word that shows
+   the notes when pointed at, focused or tapped. */
+.share-note-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.share-line > .popover,
+.share-message .popover {
+  flex: none;
+}
+
+.share-notes p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.share-notes p:last-child {
+  margin-bottom: 0;
+}
+
 .wallets-button {
   font-size: 12.5px;
   color: var(--ink-2);
@@ -6394,6 +6512,17 @@ p.jumbo .emoji img {
   background: linear-gradient(90deg, var(--paper-2), #ecebe4, var(--paper-2));
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* On a profile, the vote's pill is as tall as its placeholder whatever it
+   says, so the facts keep their height as it comes. */
+.profile > .facts .vote {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .vote-none,

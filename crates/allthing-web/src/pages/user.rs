@@ -4,13 +4,14 @@
 
 use std::sync::Arc;
 
-use allthing_core::api::{UserPayload, user_path};
+use allthing_core::api::{UserPayload, user_path, wallets_path};
 use allthing_core::format::short_address;
 use allthing_core::listing::{replies_only, top_level};
 use allthing_core::model::{Joined, User};
 use allthing_core::params::username_from_param;
 use allthing_core::profile::UserCard;
 use allthing_core::ranking::{Sort, sorted};
+use allthing_core::wallet::WalletActivity;
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
 use leptos_router::hooks::{use_params_map, use_query_map};
@@ -19,7 +20,7 @@ use crate::Notes;
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons};
 use crate::components::chips::{Avatar, Count};
-use crate::components::facts::{JoinedFact, VoteFact, WALLETS_WHAT, WalletShares, WalletsHelp};
+use crate::components::facts::{JoinedFact, NO_WALLETS, VoteFact, WALLETS_WHAT, WalletShares, WalletsHelp};
 use crate::components::favorite::FavoriteButton;
 use crate::components::layout::{Columns, ErrorPanel, NotFound, SortTabs, StaleNotice};
 use crate::components::popover::Popover;
@@ -110,7 +111,7 @@ fn UserPage() -> impl IntoView {
                 });
                 view! {
                     <Columns class="profile-columns">
-                        <ProfileHeader user=user.clone() has_card=true joined=user.joined()/>
+                        <ProfileHeader user=user.clone() has_card=true joined=user.joined() addresses_known=true/>
                         <ProfileTabs path replies_tab sort/>
                         <StaleNotice stale/>
                         {crate::components::outgoing_profile(user.fid, replies_tab.into(), listed)}
@@ -143,7 +144,15 @@ fn ProfileTabs(path: String, replies_tab: Memo<bool>, sort: Memo<Sort>) -> impl 
 /// known: a profile previewed from a feed, before its payload, may only
 /// know the picture and names, and shows placeholders for the rest.
 #[component]
-fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl IntoView {
+fn ProfileHeader(
+    user: User,
+    has_card: bool,
+    joined: Option<Joined>,
+    /// Whether `user` has its verified addresses: a profile's payload
+    /// does, a preview from a feed doesn't.
+    #[prop(optional)]
+    addresses_known: bool,
+) -> impl IntoView {
     view! {
         <section class="profile" aria-label="Profile" aria-busy=(!has_card).then_some("true")>
             <div class="profile-top">
@@ -178,11 +187,13 @@ fn ProfileHeader(user: User, has_card: bool, joined: Option<Joined>) -> impl Int
             } else {
                 view! { <div class="bio"><CastText text=user.bio.clone() mentions=Vec::new()/></div> {website(&user)} }.into_any()
             }}
+            // Its facts keep their places as they come: the vote's row is
+            // always there, and the wallets' block keeps one height.
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
-                <VoteFact fid=user.fid/>
+                <VoteFact fid=user.fid always=true/>
             </dl>
-            <WalletTile user=user.clone()/>
+            <WalletTile user=user.clone() addresses_known/>
         </section>
     }
 }
@@ -272,9 +283,12 @@ fn followers(_: u64, n: u64) -> AnyView {
 
 /// Wallet activity by chain, loaded separately because it queries many RPCs,
 /// with the account's verified addresses one click away. It sits with the
-/// profile's facts.
+/// profile's facts, and keeps its height as they come: one block whatever
+/// it says, or, for an account with no verified wallets, which it can tell
+/// without asking (from the profile, or from activity a card already
+/// read), the line that says so.
 #[component]
-fn WalletTile(user: User) -> impl IntoView {
+fn WalletTile(user: User, #[prop(optional)] addresses_known: bool) -> impl IntoView {
     let fid = user.fid;
     let addresses: Vec<(&'static str, String)> = user
         .eth_addresses
@@ -282,6 +296,25 @@ fn WalletTile(user: User) -> impl IntoView {
         .map(|a| ("EVM", a.clone()))
         .chain(user.sol_addresses.iter().map(|a| ("SOL", a.clone())))
         .collect();
+    let read_before = api::ready::<WalletActivity>(&wallets_path(fid));
+    let none = if addresses_known {
+        addresses.is_empty()
+    } else {
+        read_before.as_ref().is_some_and(|read| read.data.addresses.is_empty())
+    };
+    // What the endpoint would say, kept as its answer: the cards of this
+    // account's casts, and profile cards opened here, don't ask either.
+    if addresses_known && none && read_before.is_none() {
+        let activity = WalletActivity {
+            fid,
+            addresses: Vec::new(),
+            chains: Vec::new(),
+            total: 0,
+            sources: Vec::new(),
+            fetched_at: js_sys::Date::now() as i64,
+        };
+        api::know(&wallets_path(fid), &activity);
+    }
     view! {
         <section class="wallets profile-wallets" aria-label="Wallet activity by chain">
             <div class="wallets-head">
@@ -289,7 +322,11 @@ fn WalletTile(user: User) -> impl IntoView {
                 {(!addresses.is_empty()).then(|| view! { <WalletsButton addresses=addresses.clone()/> })}
             </div>
             <p class="wallets-what muted small">{WALLETS_WHAT}</p>
-            <WalletShares fid/>
+            {if none {
+                view! { <p class="muted small share-message">{NO_WALLETS}</p> }.into_any()
+            } else {
+                view! { <WalletShares fid/> }.into_any()
+            }}
         </section>
     }
 }
