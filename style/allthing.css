@@ -746,9 +746,16 @@ code {
   box-shadow: var(--shadow);
 }
 
+/* In the feed it is laid out as its cards are (`.cast-card`): skipped out
+   of view, at the height it last had in view. Laid out in full where they
+   weren't, it was the one thing a new list moved: drawn while the cards
+   above it were still laid out at their placeholder height, it came into
+   view as they took their own, which counted as layout shift. */
 .cast-list > .poll-card {
   animation: rise 0.5s var(--ease) backwards;
   animation-delay: calc(4 * 26ms);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 224px;
 }
 
 .poll-head {

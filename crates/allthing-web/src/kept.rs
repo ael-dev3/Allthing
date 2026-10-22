@@ -29,7 +29,7 @@ const KEEP_MS: f64 = 300_000.0;
 
 /// What has an entrance on the front page: put back in the page, it would
 /// play it again.
-const ENTERED: &str = ".cast-card, .share-bar, .hidden-count";
+const ENTERED: &str = ".cast-card, .share-bar, .hidden-count, .poll-card";
 
 struct Kept {
     /// What it was drawn under: cleaned up, it's disposed of.
@@ -132,7 +132,7 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
     }
 }
 
-/// Each card in `slot` keeps the height it has. A card out of view is laid
+/// Each card in `slot` (and the poll in its feed) keeps the height it has. A card out of view is laid
 /// out at the height it last had in view, without laying out what it holds
 /// (`content-visibility: auto`), and it forgets that height out of the page:
 /// put back, each card not yet back in view was laid out as if it held
@@ -140,7 +140,7 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
 /// and moved under the reader as its cards were laid out again, one screen
 /// at a time. With the heights kept, it's as it was from its first frame.
 fn keep_heights(slot: &web_sys::Element) {
-    let Ok(cards) = slot.query_selector_all(".cast-card") else { return };
+    let Ok(cards) = slot.query_selector_all(".cast-card, .cast-list > .poll-card") else { return };
     // All read, then all kept: a height kept between two reads would have
     // the page laid out again for the next.
     let heights: Vec<_> = (0..cards.length())
