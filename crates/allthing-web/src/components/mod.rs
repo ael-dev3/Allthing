@@ -115,3 +115,19 @@ pub fn listed_hashes(
     use leptos::prelude::*;
     Signal::derive(move || casts.with(|casts| casts.iter().map(|cast| cast.hash.to_ascii_lowercase()).collect()))
 }
+
+/// Under a post, for a reader signed in: "Cast your reply", which opens
+/// Reply (`compose::ReplyPrompt`); none in the static copy, which has no
+/// sign-in.
+pub fn reply_prompt(cast: &allthing_core::model::Cast) -> leptos::prelude::AnyView {
+    use leptos::prelude::*;
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <compose::ReplyPrompt cast=cast.clone()/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = cast;
+        ().into_any()
+    }
+}

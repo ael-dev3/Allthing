@@ -111,11 +111,15 @@ fn PostPage() -> impl IntoView {
                 notes: notes.clone(),
                 meta: allthing_core::api::Meta { backend: Default::default(), fetched_at: 0, stale: false },
             });
+            // The reader's "Cast your reply" from the first frame, so it's
+            // where it will stay once the thread comes.
+            let prompt = crate::components::reply_prompt(&cast);
             let notes: Notes = Arc::new(notes);
             // The replies' placeholders only if they're slow to come.
             return view! {
                 <Columns>
                     <MainCast cast notes payload/>
+                    {prompt}
                     <section class="replies" aria-label="Replies" aria-busy="true">
                         <div class="replies-head"><h2>"Replies"</h2></div>
                         <div class="later"><CastSkeletons count=2/></div>
@@ -153,6 +157,7 @@ fn PostPage() -> impl IntoView {
                     <Columns>
                         {payload.parent.clone().map(|parent| view! { <ParentContext parent/> })}
                         <MainCast cast=cast.clone() notes=notes.clone() payload=payload.clone()/>
+                        {crate::components::reply_prompt(&cast)}
                         <StaleNotice stale/>
                         <section class="replies" aria-label="Replies">
                             <div class="replies-head">
