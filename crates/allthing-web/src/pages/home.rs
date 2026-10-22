@@ -497,6 +497,7 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
 /// topped up, where theirs end.
 fn following_note(theirs: usize, topped: usize) -> String {
     match (theirs, topped) {
+        (0, 0) => "No one you follow has cast lately.".to_owned(),
         (_, 0) => "Casts from people you follow.".to_owned(),
         (0, _) => "No one you follow has cast lately, so this shows trending casts.".to_owned(),
         (1, _) => "One cast from people you follow, then trending casts: you follow few who cast lately.".to_owned(),
