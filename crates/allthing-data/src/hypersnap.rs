@@ -37,8 +37,22 @@ fn v1(path: &str, query: &[(&str, &str)]) -> String {
     url(BASE, &format!("v1/{path}"), query)
 }
 
+/// The `time_window` Hypersnap is asked for. It ranks trending casts over 1
+/// hour, 6 hours, 24 hours and 7 days, and answers any other value with its
+/// 24-hour list (12 hours came back as casts 11 to 18 hours old), so 12 hours
+/// is asked for as 24 and cut to 12 by its casts' own times (`pages::home`).
+pub fn hypersnap_window(window: TrendingWindow) -> TrendingWindow {
+    match window {
+        TrendingWindow::TwelveHours => TrendingWindow::Day,
+        TrendingWindow::Month | TrendingWindow::Year | TrendingWindow::All => TrendingWindow::Week,
+        window => window,
+    }
+}
+
 /// Trending casts over `window`, ranked by Hypersnap; `offset` pages through
 /// the list (its cursor is a plain offset, and the list ends at 1,000 casts).
+/// Its casts may be older than `window` (see [`hypersnap_window`]): a caller
+/// keeps the ones inside it.
 pub async fn trending_casts(
     inv: &Invocation,
     limit: u32,
@@ -46,7 +60,7 @@ pub async fn trending_casts(
     window: TrendingWindow,
 ) -> Result<Vec<RawCast>, UpstreamError> {
     let (limit, offset) = (limit.to_string(), offset.to_string());
-    let window = ("time_window", window.as_str());
+    let window = ("time_window", hypersnap_window(window).as_str());
     let query: &[(&str, &str)] =
         if offset == "0" { &[("limit", &limit), window] } else { &[("limit", &limit), ("cursor", &offset), window] };
     let feed: Option<RawFeed> = get_json(inv, Upstream::Hypersnap, &v2("feed/trending", query), false).await?;
@@ -834,5 +848,15 @@ mod tests {
         let (fid, requests) = lookup("nobody.eth");
         assert_eq!(fid, None);
         assert_eq!(requests.len(), 2);
+    }
+
+    #[test]
+    fn hypersnap_is_asked_for_the_windows_it_ranks() {
+        assert_eq!(hypersnap_window(TrendingWindow::Hour).as_str(), "1h");
+        assert_eq!(hypersnap_window(TrendingWindow::SixHours).as_str(), "6h");
+        // Not a window of its own: its 24-hour list, cut to 12 hours after.
+        assert_eq!(hypersnap_window(TrendingWindow::TwelveHours).as_str(), "24h");
+        assert_eq!(hypersnap_window(TrendingWindow::Day).as_str(), "24h");
+        assert_eq!(hypersnap_window(TrendingWindow::Week).as_str(), "7d");
     }
 }

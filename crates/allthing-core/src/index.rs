@@ -74,7 +74,11 @@ impl Span {
             TrendingWindow::Month => Some(Span::Month),
             TrendingWindow::Year => Some(Span::Year),
             TrendingWindow::All => Some(Span::All),
-            TrendingWindow::Hour | TrendingWindow::Day | TrendingWindow::Week => None,
+            TrendingWindow::Hour
+            | TrendingWindow::SixHours
+            | TrendingWindow::TwelveHours
+            | TrendingWindow::Day
+            | TrendingWindow::Week => None,
         }
     }
 

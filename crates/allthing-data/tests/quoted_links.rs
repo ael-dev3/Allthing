@@ -28,7 +28,9 @@ fn inner() -> serde_json::Value {
 }
 impl Host for Provider {
     fn now(&self) -> f64 {
-        1_800_000_000_000.0
+        // 18 October 2026, 12:00 UTC: the casts below are a few hours old,
+        // inside the day's window the front page shows.
+        1_792_324_800_000.0
     }
     fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
     fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {

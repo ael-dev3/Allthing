@@ -30,7 +30,7 @@ Allthing is a Farcaster client for reading: it shows Farcaster, and the Worker p
                                            cron, every minute: the indexer
                                              one page of casts             ──────────────────▶  Hypersnap /v2
                                              → D1 allthing-index (casts, rankings); the front page
-                                               reads one ranking row for Past month, Past year and All time
+                                               reads one ranking row for 30 days and All time
 ```
 
 ## Crates
@@ -58,7 +58,7 @@ All endpoints are `GET` (`HEAD` also works), except the [sign-in](#sign-in) endp
 | `/api/v1/wallets?fid=<fid>` | `WalletActivity`: shares by chain, counts, sources | `user/bulk`, then one batched `eth_getTransactionCount` per chain |
 | `/api/v1/channels?q=<query>` | `ChannelsPayload` | `channel/trending` or `channel/search` |
 | `/api/v1/home?offset=<100…900>` | the next page of the trending pool, for infinite scroll | `feed/trending` with an offset cursor |
-| `/api/v1/home?window=1h\|7d` | the trending pool over the past hour or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter) | `feed/trending` with `time_window` |
+| `/api/v1/home?window=1h\|6h\|12h\|7d` | the trending pool over the past hour, 6 hours, 12 hours or week, for the front page's time filter (`?t=` in the page URL; 24 hours without the parameter), with only the casts posted inside the window (see **Time windows** under the index) | `feed/trending` with `time_window` (12 hours asks for 24) |
 | `/api/v1/home?window=30d\|365d\|all` | the top casts of the past month, the past year or all time, ranked from [Allthing's index](#allthings-index-past-month-past-year-all-time), with `index` saying how many casts it was ranked from and how far back they go. Until the index can rank the range, the past week's trending pool, without `index` | the span's ranking row in D1, then `casts?casts=…` for the page's 100 casts, fresh |
 | `/api/v1/latest` | `LatestPayload`: the newest ~100 top-level casts, for the front page's "new", with each shard's event cursor | `/v1/events` on shards 1 and 2 (only the events since the previous build's cursors; the newest 1,000 per shard when the previous copy is over 10 minutes old), then `casts?casts=…` once for the new casts and the listed ones' counts, and once more for the casts they quote |
 | `/api/v1/search?q=<query>` | `SearchPayload`: casts (with the casts they quote), people and channels | `cast/search` (then `casts?casts=…` to hydrate embeds and counts, and once more for quoted casts), `user/search`, `channel/search` |
@@ -148,6 +148,7 @@ Hypersnap ranks trending casts over 7 days at most, and its search ignores dates
 - **Storage.** `casts` holds each kept cast's hash, time and points; storing it again updates its points, and writes nothing if they haven't changed. `rankings` holds each span's top 1,000 casts as one JSON row, recomputed inside D1 by one statement, so the Worker never reads more than a page of casts. A ranking is due again a minute per 50 indexed casts after it was computed, between 5 minutes and 6 hours. `state` holds where each feed is, and the day's D1 usage.
 - **Limits.** The indexer estimates its D1 rows read and written and stops reading for the day at 50,000 rows written or 2,000,000 read, half of the free plan's 100,000 and 5,000,000 or less, leaving the rest to the front page. See [BUDGET.md](BUDGET.md#9-the-index-cron-and-d1).
 - **Reading.** `/api/v1/home?window=30d|365d|all` reads the span's ranking row, then the page's 100 casts in one bulk `casts?casts=…` call, so counts, text and media are fresh; deleted casts drop out, spam is filtered again and mini apps are marked. The payload's `index` (`IndexCoverage`) says how many casts the span was ranked from and the oldest one's date, and the page shows it under the time filter. Until a span has a ranking (a new index, or D1 not answering), the payload is the past week's trending pool without `index`, and the page says so. The static copy has no index: its menu leaves these ranges out.
+- **Time windows.** A trending window holds only the casts posted within it, judged by each cast's own time against the Worker's clock, before the page is cut (`TrendingWindow::holds`, the same edges in the browser, which drops what has aged out of a copy it was served). Hypersnap's `time_window` has 1 hour, 6 hours, 24 hours and 7 days; it answers 12 hours with its 24-hour list, which is cut to 12 hours. A page can hold fewer casts than a full batch, when the window holds fewer: the list then ends, and the page says so ("Only 3 casts in the past 12 hours.") instead of padding it with older casts. A copy is kept no longer than its window (`api::home_cache`).
 - **Coverage** grows as the feeds are read back: Past month and Past year fill within hours, and All time keeps deepening for days as the queued authors' histories are read. The ranking reflects what has been indexed, which the note under the filter states.
 
 ## Daily active accounts

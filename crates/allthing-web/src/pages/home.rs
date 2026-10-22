@@ -200,6 +200,8 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
     let more = RwSignal::new(kept);
     let next_offset = RwSignal::new(kept_offset);
     let loading = RwSignal::new(false);
+    // Whether the window's list has run out: a page came back empty.
+    let ended = RwSignal::new(false);
     // A failed page is tried again a few times, a little later each time:
     // the end of the list stays where the reader is waiting for it.
     let failures = StoredValue::new(0u32);
@@ -234,6 +236,9 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
             }
             if let Ok(page) = result {
                 failures.set_value(0);
+                if page.data.pool.is_empty() {
+                    ended.set(true);
+                }
                 let mut known: std::collections::HashSet<String> = more.with_untracked(|pages| {
                     pages.iter().flat_map(|page| &page.casts).map(|c| c.hash.clone()).collect()
                 });
@@ -286,9 +291,18 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
             loading.set(false);
             more.set(Vec::new());
             next_offset.set(100);
+            ended.set(false);
             failures.set_value(0);
         }
         current
+    });
+    // A list whose first page is empty has nothing more to load.
+    Effect::new(move |_| {
+        if let Some(Ok(fetched)) = data.get()
+            && fetched.data.pool.is_empty()
+        {
+            ended.set(true);
+        }
     });
 
     move || {
@@ -331,7 +345,7 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                 // over the list waits for the next sort, filter or load
                 // (`Leaning::for_list`): its cards stay under the pointer.
                 let sorted_by = StoredValue::new(None);
-                let casts = Memo::new(move |_| {
+                let casts = Memo::new(move |_| -> Vec<Cast> {
                     let order = listed.get();
                     let filter = client.get();
                     let leanings = leaning.for_list(sorted_by, (order, filter));
@@ -345,17 +359,25 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                             );
                         }
                     });
-                    match filter {
+                    let all = match filter {
                         Some(fid) => from_client(all, &notes.get(), fid),
                         None => all,
-                    }
+                    };
+                    // A copy from the edge, or the app's own, can be older than
+                    // its window: what has aged out since is left out here too.
+                    all.into_iter().filter(|cast| shown.holds(cast.ts, now_secs())).collect()
                 });
                 let chip_notes = Arc::new(payload.notes.clone());
+                let in_window: Vec<Cast> =
+                    payload.pool.iter().filter(|cast| shown.holds(cast.ts, now_secs())).cloned().collect();
                 view! {
                     <Columns class="front-columns">
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
-                        <ClientShareBar casts=crate::miniapps::as_shown(&payload.pool) notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
+                        <ClientShareBar casts=crate::miniapps::as_shown(&in_window) notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
+                        {move || (ended.get() && !window.get().is_indexed()).then(|| {
+                            view! { <p class="range-note">{window_note(shown, casts.get().len())}</p> }
+                        })}
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
@@ -558,6 +580,22 @@ fn FeedFilter(sort: Sort, following: bool) -> impl IntoView {
                 <option value=EVERYONE selected=!following>"Everyone"</option>
             </select>
         </label>
+    }
+}
+
+/// The reader's clock, in seconds since the Unix epoch, as the casts' times count.
+fn now_secs() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
+}
+
+/// What a trending window's list holds once it has run out: the casts it
+/// has, counted, rather than a list padded with older ones.
+fn window_note(window: TrendingWindow, count: usize) -> String {
+    let past = window.past();
+    match count {
+        0 => format!("No casts in {past}."),
+        1 => format!("Only 1 cast in {past}."),
+        n => format!("Only {} casts in {past}.", full_number(n as u64)),
     }
 }
 

@@ -310,6 +310,16 @@ async fn trending_channels(inv: &Invocation) -> Vec<Channel> {
     }
 }
 
+/// The time now in seconds since the Unix epoch, as the casts' times count.
+fn now_secs(inv: &Invocation) -> i64 {
+    (inv.now() / 1000.0) as i64
+}
+
+/// The casts posted within `window` at `now`; all of them for all time.
+fn within(window: TrendingWindow, now: i64, casts: Vec<Cast>) -> Vec<Cast> {
+    casts.into_iter().filter(|cast| window.holds(cast.ts, now)).collect()
+}
+
 /// Trending casts. `offset` 0 is the front page; later offsets are the
 /// next pages that infinite scroll loads. Past month, Past year and All
 /// time are ranked from Allthing's index; until it can rank them (or where
@@ -327,12 +337,14 @@ pub async fn home(
     // the poll's counts.
     let counted = async { if offset == 0 { apps_24h(&inv).await } else { None } };
     let polled = async { if offset == 0 { poll_counts(&inv).await } else { None } };
+    let now = now_secs(&inv);
     if let Some(span) = Span::of(window)
         && let Some(ranking) = ranking(&inv, span).await
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
         let (ranked, counted, poll) = join3(ranked_casts(&inv, &hashes), counted, polled).await;
         let (raw, casts) = ranked?;
+        let casts = within(window, now, casts);
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
@@ -341,16 +353,27 @@ pub async fn home(
         let payload = HomePayload { pool, notes, meta: meta(&inv), index: Some(index), apps_24h, poll };
         return Built::json(&payload, api::INDEXED_HOME_CACHE);
     }
-    let window = if window.is_indexed() { TrendingWindow::Week } else { window };
+    let shown = if window.is_indexed() { TrendingWindow::Week } else { window };
     let (trending, counted, poll) =
-        join3(hypersnap::trending_casts(&inv, POOL_SIZE, offset, window), counted, polled).await;
+        join3(hypersnap::trending_casts(&inv, POOL_SIZE, offset, shown), counted, polled).await;
     let raw = trending.map_err(Failure::upstream)?;
-    let casts = raw.iter().map(normalize::cast).collect();
+    // Hypersnap's list can hold casts older than the window (its 12-hour
+    // list is its 24-hour one), so only those posted within it are kept,
+    // before the page is cut. A page short of casts is not topped up with
+    // older ones: the list ends, and the page says how many there are.
+    let (raw, casts): (Vec<RawCast>, Vec<Cast>) = raw
+        .into_iter()
+        .map(|raw| {
+            let cast = normalize::cast(&raw);
+            (raw, cast)
+        })
+        .filter(|(_, cast)| shown.holds(cast.ts, now))
+        .unzip();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
-    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll }, api::HOME_CACHE)
+    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll }, api::home_cache(window))
 }
 
 /// A signed-in reader's front page (`allthing_core::following`): the
@@ -2263,7 +2286,8 @@ mod indexed_home_tests {
                     "hash": hash,
                     "author": { "fid": 2, "username": "two" },
                     "text": if hash == "0xc3" { "Just unlocked my DEGEN rewards" } else { "words" },
-                    "timestamp": "2026-10-01T00:00:00Z",
+                    // 47 minutes before `NOW_MS`: inside every window.
+                    "timestamp": "2026-10-14T17:00:00Z",
                 })
             };
             let body = if url.contains("/v2/farcaster/casts?") {
@@ -2287,7 +2311,7 @@ mod indexed_home_tests {
         }
     }
 
-    fn build(host: &Rc<Indexed>, offset: u32, window: TrendingWindow) -> HomePayload {
+    fn build<H: Host + 'static>(host: &Rc<H>, offset: u32, window: TrendingWindow) -> HomePayload {
         let inv = Rc::new(Invocation::new(host.clone(), 45));
         let built = home(inv, offset, window, None).now_or_never().unwrap().unwrap();
         serde_json::from_slice(&built.body).unwrap()
@@ -2344,6 +2368,72 @@ mod indexed_home_tests {
         // The week itself never asks the index.
         let host = Rc::new(Indexed { index: Some(filled()), requests: RefCell::new(Vec::new()) });
         assert_eq!(build(&host, 0, TrendingWindow::Week).index, None);
+    }
+
+    /// Hypersnap's trending list of casts posted at fixed times, and no index.
+    struct Trending {
+        casts: Vec<(&'static str, &'static str)>,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for Trending {
+        fn now(&self) -> f64 {
+            NOW_MS
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let url = request.url.clone();
+            self.requests.borrow_mut().push(url.clone());
+            let body = if url.contains("/feed/trending?") {
+                let casts: Vec<_> = self
+                    .casts
+                    .iter()
+                    .map(|(hash, timestamp)| {
+                        json!({ "hash": hash, "author": { "fid": 2, "username": "two" }, "text": "words", "timestamp": timestamp })
+                    })
+                    .collect();
+                json!({ "casts": casts })
+            } else {
+                json!({})
+            };
+            let response =
+                HttpResponse { status: 200, retry_after: None, body: Some(serde_json::to_vec(&body).unwrap()) };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn index(&self) -> Option<Rc<dyn Index>> {
+            None
+        }
+    }
+
+    #[test]
+    fn each_window_keeps_only_the_casts_posted_within_it() {
+        // NOW_MS is 14 October 2026, 17:46:40 UTC: 30 minutes, 2 hours, 5 hours and 3 days before.
+        let host = Rc::new(Trending {
+            casts: vec![
+                ("0xa1", "2026-10-14T17:16:40Z"),
+                ("0xa2", "2026-10-14T15:46:40Z"),
+                ("0xa3", "2026-10-14T12:46:40Z"),
+                ("0xa4", "2026-10-11T17:46:40Z"),
+            ],
+            requests: RefCell::new(Vec::new()),
+        });
+        let shown = |window| build(&host, 0, window).pool.into_iter().map(|cast| cast.hash).collect::<Vec<_>>();
+        assert_eq!(shown(TrendingWindow::Hour), ["0xa1"]);
+        assert_eq!(shown(TrendingWindow::SixHours), ["0xa1", "0xa2", "0xa3"]);
+        // Hypersnap has no 12-hour window: its 24-hour list, cut to 12 hours.
+        assert_eq!(shown(TrendingWindow::TwelveHours), ["0xa1", "0xa2", "0xa3"]);
+        assert_eq!(shown(TrendingWindow::Day), ["0xa1", "0xa2", "0xa3"]);
+        assert_eq!(shown(TrendingWindow::Week), ["0xa1", "0xa2", "0xa3", "0xa4"]);
+        // Without an index, all time shows the past week, as before.
+        assert_eq!(shown(TrendingWindow::All), ["0xa1", "0xa2", "0xa3", "0xa4"]);
+        let asked = host.requests.borrow();
+        assert!(asked.iter().any(|url| url.contains("time_window=1h")));
+        assert!(asked.iter().any(|url| url.contains("time_window=6h")));
+        assert!(asked.iter().any(|url| url.contains("time_window=24h")));
+        assert!(!asked.iter().any(|url| url.contains("time_window=12h")), "{asked:?}");
     }
 
     #[test]

@@ -34,8 +34,11 @@ const HEART = "M8 13.5S2.5 10 2.5 6.2A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.2C13
 const RECAST = "M4 5.5h7l-1.8-1.8M12 10.5H5l1.8 1.8M4 5.5v3M12 10.5v-3";
 const BUBBLE = "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z";
 const STAR = "M8 1.9l1.85 3.8 4.15.6-3 2.95.7 4.15L8 11.45 4.3 13.4l.7-4.15-3-2.95 4.15-.6z";
-const RANGES = [["all", "All time"], ["year", "Past year"], ["month", "Past month"], ["week", "Past week"], ["day", "Today"], ["hour", "Past hour"]];
-const PERIODS = { hour: "the past hour's", day: "today's", week: "the past week's" };
+// The menu's ranges, narrowest first (ranking.rs, `TimeRange`); "year" is only listed when it is the range shown.
+const RANGES = [["hour", "Past hour"], ["6h", "6 hours"], ["12h", "12 hours"], ["day", "24 hours"], ["week", "7 days"], ["month", "30 days"], ["all", "All time"], ["year", "Past year"]];
+const PERIODS = { hour: "the past hour's", "6h": "the past 6 hours'", "12h": "the past 12 hours'", day: "the past 24 hours'", week: "the past 7 days'" };
+/** How far back the painted windows reach, in seconds. */
+const SPANS = { hour: 3600, "6h": 21600, "12h": 43200, day: 86400, week: 604800 };
 const VIDEO_HOSTS = /^(?:www\.)?(?:m\.)?(?:youtube\.com|music\.youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com|loom\.com|streamable\.com)$/;
 /** GIF services' media hosts (embeds.rs, `is_gif_host`): Tenor's, KLIPY's and GIPHY's. */
 const GIF_HOSTS = /^(?:(?:media\d*|c)\.tenor\.com|static\d*\.klipy\.com|(?:media\d*|i)\.giphy\.com)$/;
@@ -84,9 +87,12 @@ async function paint(payload, { sort, range }) {
   if (appCame() || !Array.isArray(payload.pool)) return;
   const notes = payload.notes || {};
   const lean = leanings();
+  // A cast older than its window is left out, as the app leaves it out of a copy from the edge.
+  const now = Date.now() / 1000;
+  const inWindow = (cast) => cast.ts > now - SPANS[range];
   // Mini app casts only for a reader who shows them (miniapps.rs).
   const apps = showsMiniApps();
-  const casts = sorted(payload.pool.filter((c) => !c.parent_hash && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);
+  const casts = sorted(payload.pool.filter((c) => !c.parent_hash && inWindow(c) && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);
   // Each card is drawn once it and those above it can be, in order: one
   // with a single image once its size has come, a round trip away.
   const ready = casts.map((cast) => (drawable(cast, notes) ? sized(cast, notes) : Promise.reject(new Error("drawn otherwise"))));
@@ -217,7 +223,7 @@ function listingHead(sort, range) {
     const to = href(query ? "/?" + query : "/");
     return el("a", { href: to, "data-noscroll": true, class: sort === name ? "selected" : null, "aria-current": sort === name ? "page" : null, "aria-description": description }, name);
   };
-  const select = el("select", {}, RANGES.map(([value, label]) => el("option", { value, selected: value === range }, label)));
+  const select = el("select", {}, RANGES.filter(([value]) => value !== "year" || value === range).map(([value, label]) => el("option", { value, selected: value === range }, label)));
   return el(
     "div",
     { class: "listing-head" },

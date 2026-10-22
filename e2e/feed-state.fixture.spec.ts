@@ -4,9 +4,10 @@ import { expect, test } from "@playwright/test";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const cast = (id: number, likes: number, time: number) => ({
   hash: `0x${id.toString(16).padStart(40, "0")}`, author: { fid: 1, username: "fixture" },
-  text: `Feed fixture ${id}`, ts: 1792235681 + time, likes,
+  text: `Feed fixture ${id}`, ts: Math.floor(Date.now() / 1000) - 3600 + time, likes,
 });
-// Hours apart, so hot (which counts age) and top order each page differently.
+// Hours apart, so hot (which counts age) and top order each page differently. Their times
+// are relative to now: the page keeps only casts inside its window, and the day is the default.
 const first = [cast(1, 20, 100), cast(2, 5, 100_000)];
 const next = [cast(3, 10, 200_000), cast(4, 30, 200)];
 const meta = { backend: "hypersnap", fetched_at: Date.now() };

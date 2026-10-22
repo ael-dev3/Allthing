@@ -156,9 +156,11 @@ pub fn ClientShareBar(
         .join(", ");
     let period = match window {
         Some(TrendingWindow::Hour) => "the past hour's",
-        Some(TrendingWindow::Day) => "today's",
-        Some(TrendingWindow::Week) => "the past week's",
-        Some(TrendingWindow::Month) => "the past month's",
+        Some(TrendingWindow::SixHours) => "the past 6 hours'",
+        Some(TrendingWindow::TwelveHours) => "the past 12 hours'",
+        Some(TrendingWindow::Day) => "the past 24 hours'",
+        Some(TrendingWindow::Week) => "the past 7 days'",
+        Some(TrendingWindow::Month) => "the past 30 days'",
         Some(TrendingWindow::Year) => "the past year's",
         Some(TrendingWindow::All) => "all-time",
         None => "the newest",
