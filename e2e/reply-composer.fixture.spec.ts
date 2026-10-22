@@ -398,14 +398,29 @@ test("the bar: 32 px tools on the left, a 40 px tap on a phone; the ring and Rep
       const tools = [...bar.querySelectorAll(".compose-tool")].map((el) => [Math.round(box(el).width), Math.round(box(el).height)]);
       const ring = box(bar.querySelector(".length")!);
       const post = box(bar.querySelector(".compose-post")!);
+      const head = box(document.querySelector(".compose-head")!);
       const last = box([...bar.querySelectorAll(".compose-tool")].pop()!);
-      return { tools, ringBeforePost: ring.right <= post.left, gap: ring.left - last.right, end: Math.abs(Math.round(box(bar).right - post.right)) };
+      return {
+        tools,
+        ringBeforePost: ring.right <= post.left,
+        postInHead: post.top >= head.top && post.bottom <= head.bottom + 0.5,
+        gap: ring.left - last.right,
+        end: Math.abs(Math.round(box(bar).right - post.right)),
+        ringEnd: Math.abs(Math.round(box(bar).right - ring.right)),
+      };
     });
     for (const size of laid.tools) expect(size).toEqual([tool, tool]);
-    // The ring sits right before Reply, away from the tools, Reply at the end.
-    expect(laid.ringBeforePost).toBe(true);
     expect(laid.gap).toBeGreaterThan(40);
-    expect(laid.end).toBe(0);
+    if (touch) {
+      // On a phone, Reply is in the sheet's head, out of the keyboard's way;
+      // the ring ends the bar.
+      expect(laid.postInHead).toBe(true);
+      expect(laid.ringEnd).toBe(0);
+    } else {
+      // The ring sits right before Reply, away from the tools, Reply at the end.
+      expect(laid.ringBeforePost).toBe(true);
+      expect(laid.end).toBe(0);
+    }
     await expect(dialog.locator(".length-ring")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`bar-${width}.png`) });
     await context.close();

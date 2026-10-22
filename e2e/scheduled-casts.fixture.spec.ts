@@ -274,7 +274,7 @@ test("at 390, the clock's row and the list fit the screen", async ({ browser }, 
   expect(row.x).toBeGreaterThanOrEqual(0);
   expect(row.x + row.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await dialog.getByRole("button", { name: "Close" }).tap();
+  await dialog.getByRole("button", { name: "Cancel" }).tap();
   await page.goto("/scheduled");
   const item = (await page.locator(".scheduled-item").first().boundingBox())!;
   expect(item.x + item.width).toBeLessThanOrEqual(390);

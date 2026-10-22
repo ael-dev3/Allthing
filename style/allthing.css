@@ -5054,24 +5054,82 @@ p.jumbo .emoji img {
   max-height: min(640px, calc(100vh - 40px - min(8vh, 64px)));
 }
 
-/* On a phone, a sheet from the bottom of the screen, as wide as it, with
-   its bar and Post in the thumb's reach; it grows up as a picker opens. */
+/* Cancel, the composer's way out on a phone; × on a computer. */
+.compose-cancel {
+  display: none;
+}
+
+/* On a phone, a sheet from the bottom of the screen, as wide as it, that
+   grows up as a picker opens. It sits on the keyboard while it's up
+   (`--keyboard`, `--sheet-max`: components/compose.rs, `fit_to_keyboard`),
+   so its tools are right above it, and its head, with Cancel on the left
+   and Cast, Reply or Quote on the right, as in the Farcaster app, stays
+   in view. */
 @media (max-width: 640px) {
   .compose-modal {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--keyboard, 0px);
     width: auto;
     margin: 0;
-    max-height: calc(100% - 24px);
+    max-height: var(--sheet-max, calc(100% - 24px));
     border-radius: var(--radius) var(--radius) 0 0;
     box-shadow: 0 -24px 60px -28px rgba(27, 34, 51, 0.5);
     animation: sheet-up 0.22s var(--ease) backwards;
   }
 
+  /* The screen's foot is under the keyboard while it's up. */
   .compose-modal .compose-foot {
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    padding-bottom: max(12px, calc(12px + env(safe-area-inset-bottom) - var(--keyboard, 0px)));
+  }
+
+  /* A head 56 px tall: Cancel, and the post button from the bar; the
+     title still names the dialog for screen readers. */
+  .compose-head {
+    justify-content: flex-start;
+    box-sizing: border-box;
+    min-height: 56px;
+    padding: 10px 14px;
+  }
+
+  .compose-head h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .compose-head .modal-close {
+    display: none;
+  }
+
+  .compose-cancel {
+    display: inline-grid;
+    place-items: center;
+    height: 36px;
+    padding: 0 8px;
+    margin-left: -8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--ink);
+    font: 500 15.5px/1 var(--font-ui);
+    cursor: pointer;
+  }
+
+  .compose-modal .compose-post {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    z-index: 2;
+    box-sizing: border-box;
+    height: 36px;
+    margin: 0;
+    padding-top: 0;
+    padding-bottom: 0;
   }
 
   /* Three GIFs to a row in the wider sheet, as in the card it replaced,
@@ -5086,6 +5144,21 @@ p.jumbo .emoji img {
     opacity: 0;
     transform: translateY(48px);
   }
+}
+
+/* What holds a phone's keyboard up as the composer opens (`hold_keyboard`):
+   a text field out of sight, 16 px so iOS doesn't zoom to it. */
+.keyboard-proxy {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  pointer-events: none;
 }
 
 .compose-text:focus,

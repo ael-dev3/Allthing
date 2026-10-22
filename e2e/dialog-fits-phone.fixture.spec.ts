@@ -61,14 +61,18 @@ async function phone(browser: Browser, testInfo: TestInfo) {
   return { context, page: await context.newPage() };
 }
 
-/** The dialog's box, and its ×'s, in the viewport; and whether the × is what a tap on it reaches. */
+/**
+ * The dialog's box, and its way out's (its ×, or the composer's Cancel on a
+ * phone), in the viewport; and whether it is what a tap on it reaches.
+ */
 async function placed(dialog: Locator) {
   // Once it has come in: its entrance (`pop-in`) scales it up from 98%, so
   // a box measured on the way is up to 9 px narrower than the dialog.
   await dialog.evaluate((modal) => Promise.all(modal.getAnimations().map((a) => a.finished.catch(() => undefined))));
   return dialog.evaluate((modal) => {
     const box = modal.getBoundingClientRect();
-    const close = modal.querySelector(".modal-close")!;
+    const shown = (el: Element | null) => (el && el.getClientRects().length > 0 ? el : null);
+    const close = (shown(modal.querySelector(".modal-close")) ?? shown(modal.querySelector(".compose-cancel")))!;
     const x = close.getBoundingClientRect();
     const hit = document.elementFromPoint(x.left + x.width / 2, x.top + x.height / 2);
     return {
@@ -196,7 +200,8 @@ test("on a phone, every dialog stays within the screen, whatever it holds", asyn
     await widen(dialog);
     fits(await placed(dialog), `${name}, holding something wider than the screen`, sheet);
     await page.screenshot({ path: testInfo.outputPath(`${name.replace(/\W+/g, "-").toLowerCase()}-390.png`) });
-    await dialog.getByRole("button", { name: "Close", exact: true }).tap();
+    // The composer's sheet has Cancel where the others have ×.
+    await dialog.getByRole("button", { name: /^(Close|Cancel)$/ }).tap();
     await expect(dialog).toHaveCount(0);
   };
   // The full who-list.
