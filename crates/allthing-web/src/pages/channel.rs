@@ -91,17 +91,28 @@ fn ChannelPage() -> impl IntoView {
         };
         let path = channel_href(&key);
         match ready.get() {
-            None | Some(None) => view! {
-                <Columns>
-                    <header class="channel-hero" aria-busy="true">
-                        <div class="channel-hero-body">
-                            <h1 class="page-title">"/"{allthing_core::channels::channel_label(&key)}</h1>
-                        </div>
-                    </header>
-                    <CastSkeletons/>
-                </Columns>
+            None | Some(None) => {
+                // The sidebar has its place from the start, so the feed
+                // beside it doesn't move over when the channel comes.
+                let side = view! {
+                    <SideBox title="About this channel">
+                        <span class="sk sk-title" aria-hidden="true"></span>
+                        <span class="sk sk-title short" aria-hidden="true"></span>
+                    </SideBox>
+                }
+                .into_any();
+                view! {
+                    <Columns side>
+                        <header class="channel-hero" aria-busy="true">
+                            <div class="channel-hero-body">
+                                <h1 class="page-title">"/"{allthing_core::channels::channel_label(&key)}</h1>
+                            </div>
+                        </header>
+                        <CastSkeletons/>
+                    </Columns>
+                }
+                .into_any()
             }
-            .into_any(),
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data, stale, .. }))) => {
                 let payload: Arc<ChannelPayload> = data;

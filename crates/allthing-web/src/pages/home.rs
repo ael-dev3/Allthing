@@ -130,6 +130,10 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
             view! {
                 <Columns>
                     <Heading sort range/>
+                    // The apps the newest casts came from, as hot and top
+                    // show their trending casts': the list starts where
+                    // theirs does, so switching between them doesn't move it.
+                    <ClientShareBar casts=data.pool.clone() notes=notes.clone()/>
                     {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
                     <CastList casts notes=Signal::stored(notes)/>
