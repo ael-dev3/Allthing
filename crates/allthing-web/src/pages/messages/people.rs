@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Who the reader's Direct Casts are with. The Direct Cast API names
-//! accounts by fid only, so their names and pictures come from Hypersnap's
+//! Who the reader's messages are with. The database names accounts by fid
+//! only, so their names and pictures come from Hypersnap's
 //! `user/bulk`, which answers any origin, read by this browser for the fids
 //! it hasn't seen this visit (100 at a time). And the picker that finds a
 //! person to write to, by name, with the site's search.

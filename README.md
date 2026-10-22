@@ -89,7 +89,6 @@ More in [docs/](docs):
 - [Performance](docs/PERFORMANCE.md): targets, instant navigation, prefetching and measurements
 - [Provenance](docs/PROVENANCE.md): which client and which backend, with research and a protocol design
 - [The NS vote](docs/VOTE.md): where votes are recorded and how Allthing reads them
-- [Direct casts](docs/DIRECT_CASTS.md): how a client other than the Farcaster app can read and send them today, and what that needs
 - [Product principles](docs/PRODUCT.md), [deploying](docs/DEPLOY.md), [releasing](docs/RELEASING.md) and the [roadmap](docs/ROADMAP.md)
 
 ## Quick start

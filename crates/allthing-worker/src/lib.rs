@@ -8,9 +8,7 @@
 //! signed for later (`scheduled_casts`), and gives them to the node at
 //! their time; and it keeps the images and videos readers attach to their
 //! casts, in R2, and serves them at `/m/` (`media`). After a reader's write,
-//! the pages it changes are rebuilt on their next read (`refresh`). Where
-//! its owner turns it on, it relays a reader's Direct Casts with their own
-//! Farcaster API key, which it passes on and keeps nowhere (`dc_relay`).
+//! the pages it changes are rebuilt on their next read (`refresh`).
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
 //! Workers Static Assets without invoking this code; `/api/*` runs here,
@@ -24,7 +22,6 @@ mod app_key;
 mod attest;
 mod auth;
 mod cache;
-mod dc_relay;
 mod host;
 mod index;
 mod media;
@@ -38,7 +35,6 @@ use std::rc::Rc;
 use allthing_core::api::{API_PREFIX, ApiError, REFRESH_PATH};
 use allthing_core::app_key::writes_path;
 use allthing_core::compose::gif_key_path;
-use allthing_core::dc;
 use allthing_core::following;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
@@ -142,19 +138,6 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             return Ok(limited);
         }
         return poll::handle(req, &env).await;
-    }
-    // A signed-in reader's Direct Casts, with their own key, where
-    // Allthing's owner turned the relay on (404 otherwise): GET and PUT,
-    // never cached or kept, one subrequest.
-    let relay = dc::relay_path();
-    if let Some(rest) = url.path().strip_prefix(relay.as_str()).filter(|rest| rest.is_empty() || rest.starts_with('/'))
-    {
-        if let Some(limited) = rate_limited(&req, &env).await {
-            return Ok(limited);
-        }
-        let host = WorkerHost::new(Lifetime::Request(ctx), None, None, None);
-        let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
-        return dc_relay::handle(rest, req, &env, &url, &inv, (Date::now().as_millis() / 1000) as i64).await;
     }
     if !matches!(req.method(), Method::Get | Method::Head) {
         return error(405, "Allthing's API is read-only", None);
@@ -515,10 +498,6 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // Whether the GIF picker has KLIPY's key (the KLIPY_API_KEY
         // secret), never the key.
         "gifs": { "keyed": auth::klipy_key(env).is_some() },
-        // Whether a signed-in reader's Direct Casts may go through the
-        // Worker with their key (the DC_RELAY variable, off unless
-        // Allthing's owner turns it on).
-        "dc_relay": dc_relay::enabled(env),
         // Whether readers can approve an app key to write with (the
         // ALLTHING_FID variable and the ALLTHING_CUSTODY_KEY secret), which
         // account asks, and the custody address of the key set, to check

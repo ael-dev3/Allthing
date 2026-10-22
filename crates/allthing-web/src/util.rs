@@ -146,40 +146,25 @@ pub fn scheduled_href() -> String {
     href("/scheduled")
 }
 
-/// The reader's Direct Casts: their conversations, and one open
-/// (`?c=<conversation id>`, or `?g=<group id>`), or a new message being
-/// written (`?new=1`).
+/// Messages: the inbox, with nothing open (or, on a computer, the room).
 #[cfg(not(feature = "static-host"))]
 pub fn messages_href() -> String {
     href("/messages")
 }
 
-/// A tab of the Messages page: `chat` (the general room) or `encrypted`;
-/// none for Direct Casts.
+/// Allthing's public `#general` room, open in Messages.
 #[cfg(not(feature = "static-host"))]
-pub fn messages_tab_href(tab: Option<&str>) -> String {
-    with_query(&messages_href(), &[("tab", tab.map(str::to_owned))])
+pub fn room_href() -> String {
+    with_query(&messages_href(), &[("room", Some("general".to_owned()))])
 }
 
-/// Encrypted messages, with `fid` open, or none.
+/// The encrypted conversation with `fid`, open in Messages.
 #[cfg(not(feature = "static-host"))]
-pub fn encrypted_href(fid: Option<u64>) -> String {
-    with_query(&messages_href(), &[("tab", Some("encrypted".to_owned())), ("to", fid.map(|f| f.to_string()))])
+pub fn dm_href(fid: u64) -> String {
+    with_query(&messages_href(), &[("to", Some(fid.to_string()))])
 }
 
-/// One of the reader's conversations, open on the Messages page.
-#[cfg(not(feature = "static-host"))]
-pub fn conversation_href(conversation_id: &str) -> String {
-    with_query(&messages_href(), &[("c", Some(conversation_id.to_owned()))])
-}
-
-/// One of the reader's group chats, open on the Messages page.
-#[cfg(not(feature = "static-host"))]
-pub fn group_href(group_id: &str) -> String {
-    with_query(&messages_href(), &[("g", Some(group_id.to_owned()))])
-}
-
-/// The Messages page, writing a new message.
+/// Messages, starting an encrypted conversation.
 #[cfg(not(feature = "static-host"))]
 pub fn new_message_href() -> String {
     with_query(&messages_href(), &[("new", Some("1".to_owned()))])

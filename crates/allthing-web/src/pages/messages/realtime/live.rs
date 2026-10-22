@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The connection to Allthing's SpacetimeDB database, through the bridge
 //! (web/stdb/bridge.ts), which this adds to the page as a module script the
-//! first time a reader opens Chat or Encrypted: nothing else fetches it.
+//! first time a signed-in reader opens Messages: nothing else fetches it.
 //!
 //! Signed in as `fid`, it connects with the token this browser keeps for
 //! the account (`keys::realtime`), or none the first time, and keeps the
@@ -30,7 +30,7 @@ use crate::api::{self, Failure};
 use crate::keys::{self, KeyError, Realtime};
 
 /// The bridge's fingerprinted path, from `cargo xtask dist`; a build
-/// without it (`cargo build` alone) has no Chat or Encrypted.
+/// without it (`cargo build` alone) has no Messages.
 const BRIDGE: Option<&str> = option_env!("ALLTHING_STDB_BRIDGE");
 
 /// Where the connection is.

@@ -5,6 +5,14 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- Messages is one simple inbox on SpacetimeDB: Allthing's public `#general` room and your end-to-end encrypted conversations in one list, with the one open beside it (or in its place on a phone), a composer, and New message to start one. No tabs, and no API key to paste. The URLs are `/messages?room=general`, `/messages?to=<fid>` and `/messages?new=1`. The encryption and the Worker's attestation are unchanged.
+
+### Removed
+
+- The Farcaster Direct Casts flow in Messages: the Farcaster API key (`wc_secret_…`) setup, the key kept in IndexedDB (`allthing-dc`) and the menu's Forget Direct Cast key, the browser's calls to Farcaster's Direct Cast API, `allthing_core::dc`, and the Worker's Direct Cast relay (`/api/v1/dc/…`, `DC_RELAY`, `DC_ORIGIN`, `dc_relay` in `/api/v1/status`), with their tests and docs/DIRECT_CASTS.md. Farcaster's Direct Casts stay in the Farcaster app. The Messages part is smaller (see docs/PERFORMANCE.md).
+
 ### Added
 
 - A signed-in reader's front page ranks the casts of the people they follow. Hot and top on `/` read `/api/v1/following` (the session's account's follows, from Hypersnap's `feed/following`, cached per account and never for another reader) and rank them as before, with Show less and favorites; a **Following / Everyone** menu beside the sort tabs switches to the trending feed and its time ranges (`?feed=everyone`). Where they follow few who cast lately, up to 40 trending casts follow theirs, and a note says so. Signed out, nothing changes; early paint skips a signed-in reader's front page.

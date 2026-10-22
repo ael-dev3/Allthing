@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Messages on SpacetimeDB: the Chat and Encrypted tabs of /messages, a
-//! part of their own (`crate::split`), fetched only when a reader opens one
-//! of them, as is the SpacetimeDB bridge script after it (`live`). Direct
-//! Casts, the page's first tab, fetches neither.
+//! Messages on SpacetimeDB: the inbox of /messages, a part of its own
+//! (`crate::split`), fetched with the page, as is the SpacetimeDB bridge
+//! script after it (`live`) once a signed-in reader is on it.
 
 mod chat;
 mod encrypted;
+mod inbox;
 mod live;
 
 use std::time::Duration;
@@ -14,21 +14,13 @@ use allthing_core::time::iso_utc;
 use leptos::prelude::*;
 use leptos::wasm_split::{SplitLoaderError, wasm_split};
 
-use super::Waiting;
 use super::people::People;
 use crate::components::chips::Avatar;
 use crate::components::signin::use_session;
 use crate::util::user_href;
 use live::{Live, Phase, live};
 
-/// Which of the two tabs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tab {
-    Chat,
-    Encrypted,
-}
-
-/// The tabs' styles, added to the page once, by this part: no other page
+/// The inbox's styles, added to the page once, by this part: no other page
 /// downloads them.
 const STYLE: &str = include_str!("../../../../../../style/realtime.css");
 
@@ -44,41 +36,31 @@ fn add_style() {
     }
 }
 
-/// The tab's view: code fetched the first time it's needed.
+/// The inbox: code fetched the first time it's needed.
 #[wasm_split(realtime, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_realtime))]
-pub fn realtime(tab: Tab) -> Result<AnyView, SplitLoaderError> {
-    Ok(view! { <Realtime tab/> }.into_any())
+pub fn inbox() -> Result<AnyView, SplitLoaderError> {
+    Ok(view! { <Realtime/> }.into_any())
 }
 
 #[component]
-fn Realtime(tab: Tab) -> impl IntoView {
+fn Realtime() -> impl IntoView {
     add_style();
     let session = use_session();
     let me = session.user.get_untracked();
     let people = People::new(me);
     move || match session.user.with(|u| u.as_ref().map(|u| u.fid)) {
-        None => view! { <SignedOut tab/> }.into_any(),
-        Some(fid) => {
-            let live = live(fid);
-            match tab {
-                Tab::Chat => view! { <chat::Chat live people/> }.into_any(),
-                Tab::Encrypted => view! { <encrypted::Encrypted live people/> }.into_any(),
-            }
-        }
+        None => view! { <SignedOut/> }.into_any(),
+        Some(fid) => view! { <inbox::Inbox live=live(fid) people/> }.into_any(),
     }
 }
 
 #[component]
-fn SignedOut(tab: Tab) -> impl IntoView {
+fn SignedOut() -> impl IntoView {
     let session = use_session();
-    let what = match tab {
-        Tab::Chat => "Sign in to chat in Allthing's room",
-        Tab::Encrypted => "Sign in to send end-to-end encrypted messages",
-    };
     view! {
         <section class="dm-panel" aria-labelledby="rt-signed-out">
-            <h2 id="rt-signed-out">{what}</h2>
-            <p>"These live on Allthing's own database, not on Farcaster: nothing you send here is posted."</p>
+            <h2 id="rt-signed-out">"Sign in to see your messages"</h2>
+            <p>"Chat in Allthing's room and send end-to-end encrypted messages. They live on Allthing's own database, not on Farcaster: nothing you send here is posted."</p>
             <div class="dm-actions">
                 <button type="button" class="button primary" on:click=move |_| session.sign_in()>"Sign in"</button>
             </div>
@@ -93,7 +75,7 @@ fn Status(live: Live) -> impl IntoView {
     let phase = live.phase.clone();
     move || {
         match phase.get() {
-        Phase::Connecting => view! { <Waiting text="Connecting…"/> }.into_any(),
+        Phase::Connecting => view! { <p class="rt-status muted" role="status">"Connecting…"</p> }.into_any(),
         Phase::Verifying => view! { <p class="rt-status muted" role="status">"Verifying your Farcaster account…"</p> }.into_any(),
         Phase::Ready { verified: true } => ().into_any(),
         Phase::Ready { verified: false } => view! {
@@ -148,5 +130,24 @@ impl Clock {
 /// A time in microseconds: its ISO form, and as the page shows it.
 fn time_label(at_us: i64) -> (String, String) {
     let at = at_us / 1_000_000;
-    (iso_utc(at), super::views::short_time(at))
+    (iso_utc(at), short_time(at))
+}
+
+/// A time as a list or a message shows it, in the reader's time zone:
+/// "09:41" today, "21 Oct" this year, "21 Oct 2025" before.
+fn short_time(at: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(at as f64 * 1000.0));
+    let today = js_sys::Date::new_0();
+    let options = js_sys::Object::new();
+    let fields: &[(&str, &str)] = if date.to_date_string() == today.to_date_string() {
+        &[("hour", "2-digit"), ("minute", "2-digit"), ("hourCycle", "h23")]
+    } else if date.get_full_year() == today.get_full_year() {
+        &[("day", "numeric"), ("month", "short")]
+    } else {
+        &[("day", "numeric"), ("month", "short"), ("year", "numeric")]
+    };
+    for (key, value) in fields {
+        let _ = js_sys::Reflect::set(&options, &(*key).into(), &(*value).into());
+    }
+    date.to_locale_string("en-GB", &options).into()
 }

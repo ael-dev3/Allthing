@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Messages: the reader's Direct Casts (`allthing_core::dc`,
-//! docs/DIRECT_CASTS.md), read and sent with a Farcaster API key they make
-//! and paste here, which only their browser keeps. Signed out, or without a
-//! key, it hands them to the Farcaster app's inbox. Its code is a part of
-//! its own (`crate::split`), fetched as the page opens, or as the account
-//! menu's Messages is pointed at. The static copy has no sign-in, so it
-//! only points to the inbox.
-//!
-//! Its other tabs, Chat (Allthing's general room) and Encrypted (end-to-end
-//! encrypted messages), are on Allthing's SpacetimeDB database
-//! (`realtime`), a part of their own fetched only when one is opened. The
-//! tabs themselves are drawn by the Messages part (`views::inbox`), so the
-//! app's module, which every page loads, is as it was. `?tab=chat` and
-//! `?tab=encrypted` open them; no `tab` is Direct Casts, with its own `c`,
-//! `g` and `new`.
+//! Messages: one inbox of Allthing's own messages, on its SpacetimeDB
+//! database (`realtime`, docs/ARCHITECTURE.md#messages-on-spacetimedb): the public
+//! `#general` room and end-to-end encrypted conversations, listed together.
+//! Nothing here goes to Farcaster, and no API key is asked for. Its code is
+//! a part of its own (`crate::split`), fetched as the page opens, or as the
+//! account menu's Messages is pointed at. The static copy has no sign-in,
+//! so it only points to allthing.social.
 
 use leptos::prelude::*;
 
@@ -23,10 +15,6 @@ use crate::util::set_title;
 mod people;
 #[cfg(not(feature = "static-host"))]
 mod realtime;
-#[cfg(not(feature = "static-host"))]
-mod transport;
-#[cfg(not(feature = "static-host"))]
-mod views;
 
 #[component]
 pub fn MessagesPage() -> impl IntoView {
@@ -35,7 +23,7 @@ pub fn MessagesPage() -> impl IntoView {
         <section class="dm">
             <header class="dm-head">
                 <h1 class="page-title">"Messages"</h1>
-                <p class="dm-lede muted">"Your Direct Casts, Allthing's room and encrypted messages."</p>
+                <p class="dm-lede muted">"Allthing's room and your encrypted messages. Nothing here is posted to Farcaster."</p>
             </header>
             {inbox()}
         </section>
@@ -47,20 +35,18 @@ fn inbox() -> impl IntoView {
     view! {
         <section class="dm-panel">
             <p>
-                "Direct Casts need Allthing's sign-in, which this copy of the site doesn't have. They're at "
+                "Messages need Allthing's sign-in, which this copy of the site doesn't have. They're at "
                 <a href="https://allthing.social/messages">"allthing.social/messages"</a>
-                ", and in the Farcaster app's "
-                <a href=allthing_core::dc::INBOX_URL target="_blank" rel="noopener">"inbox"</a>
                 "."
             </p>
         </section>
     }
 }
 
-/// The conversations and the one open, from the part fetched with the page.
+/// The inbox, from the part fetched with the page.
 #[cfg(not(feature = "static-host"))]
 fn inbox() -> impl IntoView {
-    crate::split::lazy_page(|| view! { <Waiting text="Loading your messages…"/> }, views::inbox())
+    crate::split::lazy_page(|| view! { <Waiting text="Loading your messages…"/> }, realtime::inbox())
 }
 
 /// The box the page shows its conversations in, empty, while something
@@ -87,9 +73,27 @@ pub fn warm() {
         return;
     }
     leptos::task::spawn_local(async {
-        if views::preload_messages().await.is_err() {
+        if realtime::preload_realtime().await.is_err() {
             // Couldn't come: the next intent asks again.
             ASKED.with(|asked| asked.set(false));
         }
     });
+}
+
+/// The account menu's link to Messages. Pointing at it, or focusing it,
+/// fetches the page's code.
+#[cfg(not(feature = "static-host"))]
+#[component]
+pub fn MessagesMenuItem() -> impl IntoView {
+    view! {
+        <a
+            class="account-link"
+            href=crate::util::messages_href()
+            on:pointerenter=move |_| warm()
+            on:focus=move |_| warm()
+            on:touchstart=move |_| warm()
+        >
+            "Messages"
+        </a>
+    }
 }

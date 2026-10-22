@@ -9,7 +9,6 @@ pub mod clients;
 #[cfg(not(feature = "static-host"))]
 pub mod compose;
 #[cfg(not(feature = "static-host"))]
-pub mod dc_key;
 #[cfg(not(feature = "static-host"))]
 pub mod editor;
 #[cfg(not(feature = "static-host"))]

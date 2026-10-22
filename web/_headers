@@ -3,7 +3,7 @@
 # connect-src allows any https origin because HLS playlists and segments are
 # fetched straight from wherever a cast's video is hosted, never proxied.
 # wss://maincloud.spacetimedb.com is Allthing's SpacetimeDB database, which
-# Chat and Encrypted on /messages connect to (docs/ARCHITECTURE.md#messages-on-spacetimedb).
+# the Messages inbox on /messages connects to (docs/ARCHITECTURE.md#messages-on-spacetimedb).
 
 /*
   X-Content-Type-Options: nosniff
