@@ -174,8 +174,13 @@ pub struct QuotedCast {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CastPayload {
     pub thread: ThreadNode,
+    /// The casts the focused reply answers, root first and the direct parent
+    /// last, without hidden ones (`thread::without_hidden`).
     #[serde(default)]
-    pub parent: Option<Cast>,
+    pub ancestors: Vec<Cast>,
+    /// Whether casts above `ancestors` exist but couldn't be read.
+    #[serde(default)]
+    pub earlier: bool,
     #[serde(default)]
     pub quotes: Vec<QuotedCast>,
     #[serde(default)]
@@ -1429,7 +1434,8 @@ mod tests {
                     node(cast("0xliked", 7), vec![]),
                 ],
             ),
-            parent: None,
+            ancestors: vec![],
+            earlier: false,
             quotes: vec![],
             channel: None,
             notes,

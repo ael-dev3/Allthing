@@ -77,6 +77,27 @@ pub fn prune_hidden(mut node: ThreadNode) -> Option<ThreadNode> {
     Some(node)
 }
 
+/// The ancestors a post page shows as cards: up to this many (more than the
+/// chain shows in full) before it collapses.
+pub const CHAIN_COLLAPSE_ABOVE: usize = 3;
+/// The ancestors nearest the reply that stay shown when a chain collapses.
+pub const CHAIN_SHOWN_TAIL: usize = 2;
+
+/// Ancestors read nearest first, as the walk up the chain finds them, put
+/// in reading order (root first) without the hidden ones.
+pub fn chain_in_order(nearest_first: Vec<Cast>) -> Vec<Cast> {
+    let mut chain = without_hidden(nearest_first);
+    chain.reverse();
+    chain
+}
+
+/// Which ancestors of a chain of `len` are folded behind "Show N earlier"
+/// (indices into the chain, root first): the root and the last few stay
+/// shown. `None` when the whole chain shows.
+pub fn collapsed_gap(len: usize) -> Option<std::ops::Range<usize>> {
+    (len > CHAIN_COLLAPSE_ABOVE).then(|| 1..len - CHAIN_SHOWN_TAIL)
+}
+
 /// Direct replies a replies preview shows.
 pub const REPLY_PREVIEW_SIZE: usize = 10;
 
@@ -188,6 +209,33 @@ mod tests {
         assert_eq!(count_nodes(&tree.children), 4);
         let order: Vec<&str> = flatten(&tree).iter().map(|c| c.hash.as_str()).collect();
         assert_eq!(order, ["r", "a", "a1", "a2", "b"]);
+    }
+
+    #[test]
+    fn chains_read_root_first_without_hidden_casts() {
+        let mut mini = node("mini", vec![]).cast;
+        mini.mini_app = true;
+        let nearest_first = vec![node("parent", vec![]).cast, mini, node("root", vec![]).cast];
+        let chain = chain_in_order(nearest_first);
+        let order: Vec<&str> = chain.iter().map(|c| c.hash.as_str()).collect();
+        assert_eq!(order, ["root", "parent"]);
+    }
+
+    #[test]
+    fn folds_long_chains_around_the_root_and_the_last_few() {
+        assert_eq!(collapsed_gap(0), None);
+        assert_eq!(collapsed_gap(3), None);
+        // A chain of four: the root, one cast behind "Show 1 earlier", then two.
+        assert_eq!(collapsed_gap(4), Some(1..2));
+        assert_eq!(collapsed_gap(7), Some(1..5));
+        // Every cast is shown or folded behind the control: none is dropped.
+        for len in 0..12 {
+            let shown = match collapsed_gap(len) {
+                Some(gap) => len - gap.len(),
+                None => len,
+            };
+            assert_eq!(shown + collapsed_gap(len).map_or(0, |g| g.len()), len);
+        }
     }
 
     #[test]
