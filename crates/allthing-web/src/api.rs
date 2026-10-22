@@ -621,13 +621,21 @@ fn ttl(path: &str) -> f64 {
     } else if path.starts_with(CAST_PREFIX) || path.starts_with(REPLIES_PREFIX) {
         // A post's counts and replies: as fresh as the Worker keeps them.
         POST_TTL_MS
-    } else if path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH) {
+    } else if own(path) {
         // As long as the Worker keeps them fresh: the bell, asking every few
         // minutes, and the page reuse a read within it.
         NOTIFICATIONS_TTL_MS
     } else {
         CLIENT_TTL_MS
     }
+}
+
+/// A signed-in reader's own answers (`private, no-store` at the Worker):
+/// their notifications and the casts of whom they follow, kept here for a
+/// minute and forgotten when someone else signs in (`forget`).
+fn own(path: &str) -> bool {
+    path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH)
+        || path.starts_with(allthing_core::following::FOLLOWING_PATH)
 }
 
 /// A recent answer for `path`, if one is kept.
@@ -655,9 +663,8 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 /// that no HTTP cache keeps a reader's own: the app keeps them for a minute
 /// (`ttl`) and forgets them when someone else signs in (`forget`).
 fn remember(path: &str, raw: Raw, now: f64) {
-    let own = path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH);
     let worth = match raw.status {
-        _ if raw.no_store && !own => false,
+        _ if raw.no_store && !own(path) => false,
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
@@ -697,8 +704,8 @@ pub fn know<T: serde::Serialize>(path: &str, value: &T) {
 
 #[cfg(not(feature = "static-host"))]
 thread_local! {
-    /// The answers last forgotten, and when (`forget`).
-    static FORGOTTEN: RefCell<Option<(String, f64)>> = const { RefCell::new(None) };
+    /// The answers last forgotten, by prefix, and when (`forget`).
+    static FORGOTTEN: RefCell<Vec<(String, f64)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Forget the answers kept for paths that start with `prefix`: a reader's
@@ -711,7 +718,11 @@ pub fn forget(prefix: &str) {
 
 #[cfg(not(feature = "static-host"))]
 fn forget_at(prefix: &str, now: f64) {
-    FORGOTTEN.with(|f| *f.borrow_mut() = Some((prefix.to_owned(), now)));
+    FORGOTTEN.with(|f| {
+        let mut f = f.borrow_mut();
+        f.retain(|(p, _)| p != prefix);
+        f.push((prefix.to_owned(), now));
+    });
     CACHE.with(|c| c.borrow_mut().retain(|path, _| !path.starts_with(prefix)));
 }
 
@@ -720,8 +731,7 @@ fn forget_at(prefix: &str, now: f64) {
 fn forgotten(path: &str, asked: f64) -> bool {
     #[cfg(not(feature = "static-host"))]
     {
-        FORGOTTEN
-            .with(|f| f.borrow().as_ref().is_some_and(|(prefix, at)| asked <= *at && path.starts_with(prefix.as_str())))
+        FORGOTTEN.with(|f| f.borrow().iter().any(|(prefix, at)| asked <= *at && path.starts_with(prefix.as_str())))
     }
     #[cfg(feature = "static-host")]
     {

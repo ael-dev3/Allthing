@@ -72,6 +72,7 @@ impl Notifications {
             let fid = session.user.with(|user| user.as_ref().map(|user| user.fid));
             if notifications.whose() != fid {
                 api::forget(NOTIFICATIONS_PATH);
+                api::forget(allthing_core::following::FOLLOWING_PATH);
                 notifications.0.set(State { whose: fid, seen: fid.map_or(0, seen_of), ..State::default() });
             }
             if fid.is_some() {

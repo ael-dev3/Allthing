@@ -39,6 +39,7 @@ use allthing_core::api::{API_PREFIX, ApiError, REFRESH_PATH};
 use allthing_core::app_key::writes_path;
 use allthing_core::compose::gif_key_path;
 use allthing_core::dc;
+use allthing_core::following;
 use allthing_core::index::IndexerState;
 use allthing_core::latest;
 use allthing_core::media::{MEDIA_PATH, SERVED_PREFIX};
@@ -183,6 +184,10 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     if url.path() == NOTIFICATIONS_PATH {
         return notifications(&inv, &req, &env, &url).await;
     }
+    // The signed-in reader's front page: the casts of whom the session follows.
+    if url.path() == following::FOLLOWING_PATH {
+        return following_feed(&inv, &req, &env, &url).await;
+    }
     route(&inv, &url, &env).await
 }
 
@@ -210,6 +215,33 @@ async fn notifications(inv: &Rc<Invocation>, req: &Request, env: &Env, url: &Url
     let build: cache::Builder = Rc::new(move |inv, previous| {
         let cursor = cursor.clone();
         async move { pages::notifications(inv, fid, cursor, previous).await }.boxed_local()
+    });
+    answer(inv, cache_key(url, &name), build, false, false, true).await
+}
+
+/// `/api/v1/following[?cursor=]`: the signed-in reader's front page
+/// (`pages::following`), the casts of the accounts their session's account
+/// follows, never those a query names; 401 without a session. Cached at the
+/// edge per account and page (a minute fresh), so one reader's is never
+/// another's, and answered `private, no-store`.
+async fn following_feed(inv: &Rc<Invocation>, req: &Request, env: &Env, url: &Url) -> Result<Response> {
+    let Some(fid) = auth::signed_in_fid(req, env, (inv.now() / 1000.0) as i64)? else {
+        return error(401, "Sign in to see the casts of the people you follow", None);
+    };
+    let cursor = match query(url, "cursor").filter(|value| !value.is_empty()) {
+        None => None,
+        Some(value) => match following::cursor_from_param(&value) {
+            Some(cursor) => Some(cursor),
+            None => return error(400, "Expected ?cursor= as a page of the feed gives it", None),
+        },
+    };
+    let name = match &cursor {
+        Some(cursor) => format!("following?fid={fid}&cursor={cursor}"),
+        None => format!("following?fid={fid}"),
+    };
+    let build: cache::Builder = Rc::new(move |inv, previous| {
+        let cursor = cursor.clone();
+        async move { pages::following(inv, fid, cursor, previous).await }.boxed_local()
     });
     answer(inv, cache_key(url, &name), build, false, false, true).await
 }

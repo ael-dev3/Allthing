@@ -106,6 +106,8 @@ const post = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "What sh
 async function serveFeed(page: Page) {
   const modules = await serve(page);
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [post], notes: {}, meta } }));
+  // A signed-in reader's front page: the casts of whom they follow.
+  await page.route("**/api/v1/following**", (route) => route.fulfill({ json: { pool: [post], notes: {}, meta } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread: { cast: post, children: [] }, notes: {}, meta } }));
   return () => modules.filter((name) => name !== "app" && !ahead(name));
 }

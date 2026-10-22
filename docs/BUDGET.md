@@ -20,6 +20,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Page | Worker requests | Free static requests |
 |---|---|---|
 | Front page `/` | 1 (`/api/v1/home`) | index.html, boot.js, app JS + WASM, CSS, font (first visit only: hashed, immutable) |
+| Front page `/`, signed in (hot and top) | 1 (`/api/v1/following`, the reader's own; with **Everyone**, `/api/v1/home` as signed out) | as above |
 | Channel `/c/<id>` | 1 (`/api/v1/channel`) | none after the first visit |
 | Cast `/p/<hash>` | 1 (`/api/v1/cast`) | none |
 | Profile `/u/<name>` | 3 (`/api/v1/user`, `/api/v1/wallets`, `/api/v1/vote`); 2 for an account with no verified wallets, which the profile itself says, so its wallets aren't asked for | none |
@@ -105,6 +106,7 @@ Every API payload is cached at the edge with these policies (`crates/allthing-co
 | counts (likes, recasts and replies of up to 12 casts in view) | 15 s | 60 s | 1 h | none (the app keeps them 15 s) |
 | vote | 1 h | 24 h | 48 h | 10 min |
 | notifications (a signed-in reader's own, per account and page) | 60 s | 10 min | 24 h | none (`private, no-store`) |
+| following (a signed-in reader's front page, per account and page) | 60 s | 10 min | 24 h | none (`private, no-store`) |
 | not found (404) | 5 min | — | 5 min | 2 min |
 
 - **Fresh**: served from cache as is (1 subrequest, the cache read).
@@ -141,6 +143,7 @@ Each invocation gets a budget of 45 subrequests, under the cap of 50. Every `fet
 | replies | cache read 1 + conversation (depth 1) 1 + link pages ≤6 + cache write 1 (≤ 9) |
 | vote | cache read 1 + one batched Base `eth_call` pair 1 (+ 1 fallback RPC) + farcaster.xyz `user-by-fid` 1 + cache write 1 (≤ 5) |
 | notifications | cache read 1 + the page 1 and, with the first page, the reader's latest casts 1 (in parallel) + one batch of the hub's newest recasts of the liked casts that may have some ≤6 and, with the first page, the quotes of the newest casts ≤4 + link pages ≤6 (replies, mentions and quotes) + cache write 1 (≤ 20; the recorded first page took 9 upstream reads, a later page of it 8). No `user/bulk`: the people come with the notifications |
+| following | cache read 1 + `feed/following` 1, and on a first page with fewer than 30 top-level casts its next page 1 (after it: the cursor comes with the first) + on a first page still under 10, `feed/trending` 1 + as home: link pages ≤6, quoted casts ≤3, emoji reactions ≤1, origins (what the budget leaves) + cache write 1. Hypersnap joins the follows, so a follow list of any size costs the same |
 | sign-in `verify` | one batched OP Mainnet `eth_call` pair 1 (custody and auth address; + 1 fallback RPC) + the account's name and picture (`user/bulk`) 1 (≤ 3); never cached |
 | sign-in `key` | the account's keys (`signersByFid`) 1 + the account's name and picture (`user/bulk`) 1 (2); never cached. The Ed25519 signature is checked by the runtime's WebCrypto, not in WebAssembly |
 | sign-in `start`, `qr`, `signout`; a key's endorsement (`auth/signer`) and `/api/v1/signer`; a SpacetimeDB identity's attestation (`auth/attest`, signed by the runtime's WebCrypto) | 0 |
@@ -193,6 +196,8 @@ Profile cards (`notes.users`) come from objects a build has already parsed. For 
 Endorsing a reader's key signs one EIP-712 digest with secp256k1 (two with `ALLTHING_SPONSOR`): **0.074 ms** a signature natively at `opt-level = "z"` (`k256` without its precomputed tables, as the Worker builds it), so about 1 ms or less as WebAssembly. The Keccak-256 hashes around it take microseconds.
 
 An attachment's upload costs the same CPU whatever its size: the Worker hands the request's own body stream to R2 and never reads it, so none of it passes through WebAssembly. Measured on the real Worker under `wrangler dev`, its WebAssembly memory stayed at 1.31 MiB through two 45 MiB uploads, where a body read into Rust would have grown it by 45 MiB at least, and for good. The work around the stream, natively at `opt-level = "z"`: **0.0012 ms** an upload (the session's HMAC, the type and size, the quota, the name, URL and answer) and **0.0007 ms** a range served; the rest is a few runtime calls and D1's two queries. A sampling profiler attached to the local runtime isn't a measure of it: it charges the runtime's own receiving of a large body to whichever JavaScript frame ran last, about 230 ms for a 45 MiB body refused before anything touched it.
+
+A signed-in reader's front page (`/api/v1/following`) parses one or two of Hypersnap's `feed/following` pages of 100 casts (about 200 KB each, recorded for @dwr on 22 October 2026: 201 KB, 22 of them top-level), and a trending page besides when topped up, each as heavy as the trending feed above (0.74 ms natively): about **0.8 to 2.3 ms** natively, so about 2 to 6 ms as WebAssembly in the worst case of three pages, which only a reader following few active accounts reaches. The replies are normalized and dropped before the mini app check and the annotations, which then see 20 to 60 casts, fewer than home's 100. These are estimates from the measurements above, not measured on the build itself. It is per reader, so the edge cache serves only that reader's repeat visits within a minute (10 minutes stale): Hypersnap sees at most one or two `feed/following` reads per signed-in reader a minute while they browse the front page.
 
 A signed-in reader's notifications parse the most of any build per item: Hypersnap repeats each notification's person and cast whole, about 3 KB an item, so a page of 30 is about 100 KB, and a like of a cast that names ten accounts repeats their ten user objects too. Measured natively at `opt-level = "z"` on pages recorded on 21 October 2026, the whole build (parsing the page, the latest casts and the recasts read, normalizing, telling recasts from likes, grouping, the profile cards, and serializing the payload of about 10 KB) took **0.60 to 0.76 ms** for pages of 25 to 30 (98 to 146 KB in all; for the recorded page, parsing it 0.16 ms, normalizing 0.14 ms, grouping 0.10 ms) and **1.16 ms** for the heaviest page of 30 found (199 KB: likes of a cast naming ten accounts). Pages of 40 took 0.90 to 1.50 ms, which is why a page is 30. At 3 to 5 times as WebAssembly: about 2 to 4 ms, and at most about 6 ms. A later page reads no casts and no quotes.
 
