@@ -14,6 +14,8 @@ pub mod dc_key;
 pub mod editor;
 #[cfg(not(feature = "static-host"))]
 pub mod emoji_picker;
+#[cfg(not(feature = "static-host"))]
+pub mod encryption;
 pub mod facts;
 pub mod favorite;
 #[cfg(not(feature = "static-host"))]

@@ -117,3 +117,352 @@ mod tests {
         assert_eq!(der[16..], key);
     }
 }
+
+// What the app mirrors of the database: the rows the bridge
+// (web/stdb/bridge.ts) reports, as JSON, with identities and bytes as hex
+// and times in microseconds since the Unix epoch.
+
+use std::collections::BTreeMap;
+
+/// The general room, which the module seeds as its first.
+pub const GENERAL_ROOM: u64 = 1;
+/// The longest room message, in bytes (the module's limit).
+pub const MAX_CHAT_BYTES: usize = 4000;
+
+/// `user`: an identity, the FID it claims, and whether `verify_fid`
+/// verified it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UserRow {
+    pub identity: String,
+    pub fid: u64,
+    pub verified: bool,
+    pub online: bool,
+    pub last_seen: i64,
+}
+
+/// `user_key`: an identity's X25519 public key and its version.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyRow {
+    pub identity: String,
+    pub fid: u64,
+    /// 64 hex digits.
+    pub x25519_pub: String,
+    pub key_version: u32,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RoomRow {
+    pub id: u64,
+    pub name: String,
+}
+
+/// `chat_message`: a message in a room, in the clear.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ChatRow {
+    pub id: u64,
+    pub room_id: u64,
+    pub sender: String,
+    pub sender_fid: u64,
+    pub text: String,
+    pub sent_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TypingRow {
+    pub identity: String,
+    pub room_id: u64,
+    pub expires_at: i64,
+}
+
+/// A row of `my_dm_inbox` or `my_dm_outbox`: an encrypted message, of which
+/// the database knows only who, when, the key versions, the nonce and the
+/// ciphertext (hex).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DmRow {
+    pub id: u64,
+    pub sender: String,
+    pub recipient: String,
+    pub sender_key_version: u32,
+    pub recipient_key_version: u32,
+    pub nonce: String,
+    pub ciphertext: String,
+    pub sent_at: i64,
+}
+
+/// An event from the bridge: a row that came, went or changed, or the
+/// connection lost.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum Event {
+    Disconnected { error: Option<String> },
+    Insert { table: String, row: serde_json::Value },
+    Delete { table: String, row: serde_json::Value },
+    Update { table: String, row: serde_json::Value },
+}
+
+/// What a reducer call came to, as the bridge reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Called {
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Called {
+    pub fn result(self) -> Result<(), String> {
+        if self.ok { Ok(()) } else { Err(self.error.unwrap_or_else(|| "the database refused".into())) }
+    }
+}
+
+/// The app's copy of the rows it follows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Mirror {
+    pub users: BTreeMap<String, UserRow>,
+    pub keys: BTreeMap<String, KeyRow>,
+    pub rooms: BTreeMap<u64, RoomRow>,
+    pub chat: BTreeMap<u64, ChatRow>,
+    pub typing: BTreeMap<String, TypingRow>,
+    /// The reader's inbox and outbox together, by id.
+    pub dms: BTreeMap<u64, DmRow>,
+}
+
+/// One of the reader's encrypted conversations, by the other identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    pub peer: String,
+    pub last_at: i64,
+    pub count: usize,
+}
+
+impl Mirror {
+    /// Apply a row event; whether it was for a table the app follows.
+    pub fn apply(&mut self, event: &Event) -> bool {
+        let (table, row, insert) = match event {
+            Event::Insert { table, row } | Event::Update { table, row } => (table, row, true),
+            Event::Delete { table, row } => (table, row, false),
+            _ => return false,
+        };
+        fn put<K: Ord, V: serde::de::DeserializeOwned>(
+            map: &mut BTreeMap<K, V>,
+            row: &serde_json::Value,
+            insert: bool,
+            key: impl Fn(&V) -> K,
+        ) -> bool {
+            let Ok(value) = serde_json::from_value::<V>(row.clone()) else { return false };
+            let k = key(&value);
+            if insert {
+                map.insert(k, value);
+            } else {
+                map.remove(&k);
+            }
+            true
+        }
+        match table.as_str() {
+            "user" => put(&mut self.users, row, insert, |r: &UserRow| r.identity.clone()),
+            "user_key" => put(&mut self.keys, row, insert, |r: &KeyRow| r.identity.clone()),
+            "room" => put(&mut self.rooms, row, insert, |r: &RoomRow| r.id),
+            "chat_message" => put(&mut self.chat, row, insert, |r: &ChatRow| r.id),
+            "typing" => put(&mut self.typing, row, insert, |r: &TypingRow| r.identity.clone()),
+            "my_dm_inbox" | "my_dm_outbox" => put(&mut self.dms, row, insert, |r: &DmRow| r.id),
+            _ => false,
+        }
+    }
+
+    /// Whether `identity` verified the FID it claims.
+    pub fn verified(&self, identity: &str) -> bool {
+        self.users.get(identity).is_some_and(|u| u.verified)
+    }
+
+    /// The FID `identity` claims, if it registered.
+    pub fn fid_of(&self, identity: &str) -> Option<u64> {
+        self.users.get(identity).map(|u| u.fid)
+    }
+
+    /// The key to write to `fid` with: of its identities that have a key,
+    /// verified ones first, then the most recently updated.
+    pub fn key_for_fid(&self, fid: u64) -> Option<&KeyRow> {
+        self.keys
+            .values()
+            .filter(|k| self.fid_of(&k.identity) == Some(fid))
+            .max_by_key(|k| (self.verified(&k.identity), k.updated_at, k.identity.clone()))
+    }
+
+    /// The messages in `room`, oldest first.
+    pub fn room_messages(&self, room: u64) -> Vec<&ChatRow> {
+        let mut rows: Vec<&ChatRow> = self.chat.values().filter(|m| m.room_id == room).collect();
+        rows.sort_by_key(|m| (m.sent_at, m.id));
+        rows
+    }
+
+    /// Who else is typing in `room` at `now_us`.
+    pub fn typing_in(&self, room: u64, me: &str, now_us: i64) -> Vec<u64> {
+        let mut fids: Vec<u64> = self
+            .typing
+            .values()
+            .filter(|t| t.room_id == room && t.identity != me && t.expires_at > now_us)
+            .filter_map(|t| self.fid_of(&t.identity))
+            .collect();
+        fids.sort_unstable();
+        fids.dedup();
+        fids
+    }
+
+    /// How many accounts are online: distinct FIDs.
+    pub fn online(&self) -> usize {
+        let mut fids: Vec<u64> = self.users.values().filter(|u| u.online).map(|u| u.fid).collect();
+        fids.sort_unstable();
+        fids.dedup();
+        fids.len()
+    }
+
+    /// The reader's (`me`) encrypted conversations, newest first.
+    pub fn threads(&self, me: &str) -> Vec<Thread> {
+        let mut by_peer: BTreeMap<&str, Thread> = BTreeMap::new();
+        for dm in self.dms.values() {
+            let peer = if dm.sender == me { dm.recipient.as_str() } else { dm.sender.as_str() };
+            let thread = by_peer.entry(peer).or_insert(Thread { peer: peer.to_owned(), last_at: 0, count: 0 });
+            thread.last_at = thread.last_at.max(dm.sent_at);
+            thread.count += 1;
+        }
+        let mut threads: Vec<Thread> = by_peer.into_values().collect();
+        threads.sort_by(|a, b| b.last_at.cmp(&a.last_at).then_with(|| a.peer.cmp(&b.peer)));
+        threads
+    }
+
+    /// The messages between the reader (`me`) and `peer`, oldest first.
+    pub fn thread(&self, me: &str, peer: &str) -> Vec<&DmRow> {
+        let mut rows: Vec<&DmRow> = self
+            .dms
+            .values()
+            .filter(|d| (d.sender == me && d.recipient == peer) || (d.sender == peer && d.recipient == me))
+            .collect();
+        rows.sort_by_key(|d| (d.sent_at, d.id));
+        rows
+    }
+}
+
+/// The SQL the app subscribes to: everything it shows, and no other room's
+/// messages.
+pub fn subscriptions() -> Vec<String> {
+    vec![
+        "SELECT * FROM user".into(),
+        "SELECT * FROM user_key".into(),
+        "SELECT * FROM room".into(),
+        format!("SELECT * FROM chat_message WHERE room_id = {GENERAL_ROOM}"),
+        "SELECT * FROM typing".into(),
+        "SELECT * FROM my_dm_inbox".into(),
+        "SELECT * FROM my_dm_outbox".into(),
+    ]
+}
+
+/// Bytes from hex, if it is hex.
+pub fn unhex(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
+}
+
+/// Lower-case hex of `bytes`.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+    use serde_json::json;
+
+    const ME: &str = "c200000000000000000000000000000000000000000000000000000000000001";
+    const ALICE: &str = "c200000000000000000000000000000000000000000000000000000000000002";
+    const ALICE2: &str = "c200000000000000000000000000000000000000000000000000000000000003";
+
+    fn event(text: &str) -> Event {
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn dm(id: u64, sender: &str, recipient: &str, at: i64) -> serde_json::Value {
+        json!({"id": id, "sender": sender, "recipient": recipient, "sender_key_version": 1,
+            "recipient_key_version": 1, "nonce": "00", "ciphertext": "11", "sent_at": at})
+    }
+
+    #[test]
+    fn reads_the_bridges_events() {
+        assert_eq!(event(r#"{"t":"disconnected","error":null}"#), Event::Disconnected { error: None });
+        assert_eq!(
+            event(r#"{"t":"insert","table":"room","row":{"id":1,"name":"general"}}"#),
+            Event::Insert { table: "room".into(), row: json!({"id": 1, "name": "general"}) }
+        );
+        let called: Called = serde_json::from_str(r#"{"ok":false,"error":"rate limited"}"#).unwrap();
+        assert_eq!(called.result(), Err("rate limited".into()));
+        let called: Called = serde_json::from_str(r#"{"ok":true}"#).unwrap();
+        assert_eq!(called.result(), Ok(()));
+    }
+
+    #[test]
+    fn mirrors_rows_and_answers_questions() {
+        let mut m = Mirror::default();
+        let user = |identity: &str, fid: u64, verified: bool, online: bool| Event::Insert {
+            table: "user".into(),
+            row: json!({"identity": identity, "fid": fid, "verified": verified, "online": online, "last_seen": 0}),
+        };
+        assert!(m.apply(&user(ME, 1, true, true)));
+        assert!(m.apply(&user(ALICE, 2, true, true)));
+        assert!(m.apply(&user(ALICE2, 2, false, false)));
+        assert!(!m.apply(&Event::Insert { table: "elsewhere".into(), row: json!({}) }));
+        assert!(!m.apply(&Event::Insert { table: "user".into(), row: json!({"identity": 3}) }));
+        assert_eq!(m.online(), 2);
+        assert!(m.verified(ALICE) && !m.verified(ALICE2) && !m.verified("nobody"));
+
+        let key = |identity: &str, fid: u64, at: i64| Event::Insert {
+            table: "user_key".into(),
+            row: json!({"identity": identity, "fid": fid, "x25519_pub": "aa", "key_version": 1, "updated_at": at}),
+        };
+        m.apply(&key(ALICE, 2, 10));
+        m.apply(&key(ALICE2, 2, 20));
+        // The verified identity's key, though the other is newer.
+        assert_eq!(m.key_for_fid(2).unwrap().identity, ALICE);
+        m.apply(&user(ALICE2, 2, true, true));
+        assert_eq!(m.key_for_fid(2).unwrap().identity, ALICE2);
+        assert_eq!(m.key_for_fid(9), None);
+
+        for (id, sender, recipient, at) in [(1, ME, ALICE, 5), (2, ALICE, ME, 7), (3, ALICE2, ME, 6)] {
+            m.apply(&Event::Insert { table: "my_dm_inbox".into(), row: dm(id, sender, recipient, at) });
+        }
+        let threads = m.threads(ME);
+        assert_eq!(threads.iter().map(|t| (t.peer.as_str(), t.count)).collect::<Vec<_>>(), [(ALICE, 2), (ALICE2, 1)]);
+        assert_eq!(m.thread(ME, ALICE).iter().map(|d| d.id).collect::<Vec<_>>(), [1, 2]);
+        m.apply(&Event::Delete { table: "my_dm_outbox".into(), row: dm(1, ME, ALICE, 5) });
+        assert_eq!(m.thread(ME, ALICE).len(), 1);
+
+        let chat = |id: u64, room: u64, at: i64| Event::Insert {
+            table: "chat_message".into(),
+            row: json!({"id": id, "room_id": room, "sender": ALICE, "sender_fid": 2, "text": "hi", "sent_at": at}),
+        };
+        m.apply(&chat(2, 1, 20));
+        m.apply(&chat(1, 1, 10));
+        m.apply(&chat(3, 2, 5));
+        assert_eq!(m.room_messages(1).iter().map(|c| c.id).collect::<Vec<_>>(), [1, 2]);
+
+        let typing = |identity: &str, expires: i64| Event::Insert {
+            table: "typing".into(),
+            row: json!({"identity": identity, "room_id": 1, "expires_at": expires}),
+        };
+        m.apply(&typing(ALICE, 100));
+        m.apply(&typing(ME, 100));
+        m.apply(&typing(ALICE2, 50));
+        assert_eq!(m.typing_in(1, ME, 60), [2]);
+        assert_eq!(m.typing_in(1, ME, 100), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn hex_round_trips_and_subscriptions_stay_in_the_general_room() {
+        assert_eq!(unhex("00ff10"), Some(vec![0, 255, 16]));
+        assert_eq!(unhex("0"), None);
+        assert_eq!(unhex("zz"), None);
+        assert_eq!(hex(&[0, 255, 16]), "00ff10");
+        assert!(subscriptions().contains(&"SELECT * FROM chat_message WHERE room_id = 1".to_owned()));
+        assert!(subscriptions().iter().all(|q| !q.contains("dm_message ")));
+    }
+}

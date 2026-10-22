@@ -11,6 +11,12 @@
 //! (`allthing_core::dc`), in a database of its own, `allthing-dc`, one per
 //! signed-in account ([`dc_key`]). That key is a bearer token, a string the
 //! page must read to send it, so it is kept as one.
+//!
+//! And, for Messages on SpacetimeDB, one record per signed-in account in
+//! `allthing-stdb` ([`Realtime`]): the SpacetimeDB token and identity this
+//! browser connects with, and its X25519 key pair for end-to-end encrypted
+//! messages (`allthing_core::e2e`), which WebCrypto makes unexportable as
+//! it does the app key. Only its public half ever leaves the browser.
 
 use std::cell::RefCell;
 
@@ -32,6 +38,8 @@ struct Database {
 const APP_KEYS: Database = Database { name: "allthing-keys", store: "keys" };
 /// The reader's Farcaster API keys, for Direct Casts.
 const DC_KEYS: Database = Database { name: "allthing-dc", store: "keys" };
+/// SpacetimeDB identities and message keys.
+const REALTIME: Database = Database { name: "allthing-stdb", store: "identities" };
 /// The account a key made to sign in with is kept for, until the account
 /// that approves it is known.
 pub const SIGNING_IN: u64 = 0;
@@ -182,6 +190,103 @@ pub async fn forget_dc_key(fid: u64) -> Result<(), KeyError> {
     request(DC_KEYS, IdbTransactionMode::Readwrite, |store| store.delete(&JsValue::from_f64(fid as f64)))
         .await
         .map(|_| ())
+}
+
+/// What this browser keeps for an account's Messages on SpacetimeDB.
+#[derive(Clone)]
+pub struct Realtime {
+    pub fid: u64,
+    /// The SpacetimeDB token the browser connects with, once it has one.
+    pub token: Option<String>,
+    /// The identity it names, 64 hex digits.
+    pub identity: Option<String>,
+    /// The X25519 key pair: its unexportable private half, and its public
+    /// half's 32 bytes.
+    pub key: Option<(CryptoKey, [u8; 32])>,
+}
+
+/// What this browser keeps for `fid`'s Messages, if anything.
+pub async fn realtime(fid: u64) -> Result<Option<Realtime>, KeyError> {
+    let found =
+        request(REALTIME, IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64))).await?;
+    if found.is_undefined() || found.is_null() {
+        return Ok(None);
+    }
+    let text = |name: &str| field(&found, name).as_string().filter(|t| !t.is_empty());
+    let public = text("public").and_then(|p| allthing_core::stdb::unhex(&p)).and_then(|p| p.try_into().ok());
+    let private = field(&found, "private").dyn_into::<CryptoKey>().ok();
+    Ok(Some(Realtime { fid, token: text("token"), identity: text("identity"), key: private.zip(public) }))
+}
+
+/// Keep `kept`, in place of what was kept for its account.
+pub async fn keep_realtime(kept: &Realtime) -> Result<(), KeyError> {
+    let record = Object::new();
+    let set = |name: &str, value: &JsValue| {
+        let _ = Reflect::set(&record, &JsValue::from_str(name), value);
+    };
+    set("fid", &JsValue::from_f64(kept.fid as f64));
+    if let Some(token) = &kept.token {
+        set("token", &JsValue::from_str(token));
+    }
+    if let Some(identity) = &kept.identity {
+        set("identity", &JsValue::from_str(identity));
+    }
+    if let Some((private, public)) = &kept.key {
+        set("private", private);
+        set("public", &JsValue::from_str(&allthing_core::stdb::hex(public)));
+    }
+    request(REALTIME, IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
+}
+
+fn x25519() -> Object {
+    let algorithm = Object::new();
+    let _ = Reflect::set(&algorithm, &JsValue::from_str("name"), &JsValue::from_str("X25519"));
+    algorithm
+}
+
+/// A new X25519 key pair for end-to-end encrypted messages: its private
+/// half unexportable, for agreeing secrets only, and its public half.
+pub async fn x25519_generate() -> Result<(CryptoKey, [u8; 32]), KeyError> {
+    let subtle = subtle().ok_or(KeyError::Unsupported)?;
+    let usages = Array::of1(&JsValue::from_str("deriveBits"));
+    let pair = subtle.generate_key_with_object(&x25519(), false, &usages).map_err(|_| KeyError::Unsupported)?;
+    let pair = JsFuture::from(pair).await.map_err(|_| KeyError::Unsupported)?;
+    let private: CryptoKey = field(&pair, "privateKey").dyn_into().map_err(|_| KeyError::Unsupported)?;
+    let public: CryptoKey = field(&pair, "publicKey").dyn_into().map_err(|_| KeyError::Unsupported)?;
+    let raw = subtle.export_key("raw", &public).map_err(|_| KeyError::Unsupported)?;
+    let raw = Uint8Array::new(&JsFuture::from(raw).await.map_err(|_| KeyError::Unsupported)?).to_vec();
+    let raw: [u8; 32] = raw.try_into().map_err(|_| KeyError::Unsupported)?;
+    Ok((private, raw))
+}
+
+/// The X25519 secret `private` agrees with `peer`'s public key.
+pub async fn x25519_shared(private: &CryptoKey, peer: &[u8; 32]) -> Result<[u8; 32], KeyError> {
+    // Through `Reflect`, so the app's own module needs no new glue for it.
+    let subtle: JsValue = subtle().ok_or(KeyError::Unsupported)?.into();
+    let call = |name: &str, args: Array| -> Result<JsFuture, KeyError> {
+        let method = field(&subtle, name).dyn_into::<js_sys::Function>().map_err(|_| KeyError::Unsupported)?;
+        let promise = Reflect::apply(&method, &subtle, &args).map_err(failed)?;
+        Ok(JsFuture::from(promise.dyn_into::<Promise>().map_err(|_| KeyError::Unsupported)?))
+    };
+    let raw = Uint8Array::from(&peer[..]);
+    let usages = Array::new();
+    let public = call("importKey", Array::of5(&"raw".into(), &raw, &x25519(), &JsValue::TRUE, &usages))?
+        .await
+        .map_err(failed)?;
+    let algorithm = x25519();
+    let _ = Reflect::set(&algorithm, &JsValue::from_str("public"), &public);
+    let bits = call("deriveBits", Array::of3(&algorithm, private, &JsValue::from_f64(256.0)))?.await.map_err(failed)?;
+    let bits = Uint8Array::new(&bits).to_vec();
+    bits.try_into().map_err(|_| KeyError::Failed("The shared secret isn't 32 bytes".into()))
+}
+
+/// `N` random bytes from the browser's cryptographic generator.
+pub fn random<const N: usize>() -> Option<[u8; N]> {
+    let crypto: JsValue = web_sys::window()?.crypto().ok()?.into();
+    let fill = field(&crypto, "getRandomValues").dyn_into::<js_sys::Function>().ok()?;
+    let array = Uint8Array::new_with_length(N as u32);
+    fill.call1(&crypto, &array).ok()?;
+    array.to_vec().try_into().ok()
 }
 
 fn subtle() -> Option<web_sys::SubtleCrypto> {
