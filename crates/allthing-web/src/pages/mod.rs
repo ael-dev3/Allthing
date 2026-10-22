@@ -6,6 +6,7 @@ pub mod channels;
 pub mod dau;
 pub mod home;
 pub mod messages;
+pub mod notifications;
 pub mod post;
 pub mod scheduled;
 pub mod search;

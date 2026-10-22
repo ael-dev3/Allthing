@@ -117,11 +117,18 @@ test("at 1280, the reader's own profile has the feeds' Cast, in the sticky heade
   await expect(page.getByRole("button", { name: "Write a cast" })).toHaveCount(1);
   await expect(card.getByRole("button", { name: /^(Write a cast|Favorite|Show less)$/ })).toHaveCount(0);
 
-  // Before the account's picture, level with it, in the sticky header (that
-  // it stays in view all the way down is e2e/cast-button.fixture.spec.ts's).
-  const [p, a] = [(await pill.boundingBox())!, (await header.locator(".account-button").boundingBox())!];
-  expect(a.x - (p.x + p.width)).toBeGreaterThanOrEqual(0);
-  expect(a.x - (p.x + p.width)).toBeLessThan(24);
+  // Before the account's picture, with only the notifications' bell between
+  // them, level with it, in the sticky header (that it stays in view all the
+  // way down is e2e/cast-button.fixture.spec.ts's).
+  const [p, b, a] = [
+    (await pill.boundingBox())!,
+    (await header.locator(".bell").boundingBox())!,
+    (await header.locator(".account-button").boundingBox())!,
+  ];
+  expect(b.x - (p.x + p.width)).toBeGreaterThanOrEqual(0);
+  expect(b.x - (p.x + p.width)).toBeLessThan(24);
+  expect(a.x - (b.x + b.width)).toBeGreaterThanOrEqual(0);
+  expect(a.x - (b.x + b.width)).toBeLessThan(24);
   expect(Math.abs(p.y + p.height / 2 - (a.y + a.height / 2))).toBeLessThan(2);
   expect(await header.evaluate((el) => getComputedStyle(el).position)).toBe("sticky");
 

@@ -39,13 +39,15 @@ pub fn SiteHeader() -> impl IntoView {
     }
 }
 
-/// Cast, on the pages that have it, and sign-in, or who is signed in: in
-/// front of the Worker only. The static copy has no sign-in, so no Cast.
+/// Cast, on the pages that have it, and sign-in, or who is signed in with
+/// their notifications' bell: in front of the Worker only. The static copy
+/// has no sign-in, so no Cast.
 #[cfg(not(feature = "static-host"))]
 fn account() -> AnyView {
     view! {
         <div class="header-actions">
             <crate::components::compose::HeaderCast/>
+            <crate::components::notifications::Bell/>
             <crate::components::signin::Account/>
         </div>
     }

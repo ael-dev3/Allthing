@@ -132,11 +132,15 @@ test("at 1280, Cast is the sticky header's on the feeds and the reader's own pro
     const pill = header.getByRole("button", { name: "Write a cast" });
     await expect(pill, name).toBeVisible();
     await expect(pill).toHaveText("Cast");
-    // Before the account's picture, level with it.
-    const [p, a] = await Promise.all([box(pill), box(header.locator(".account-button"))]);
-    expect(p.x + p.width, name).toBeLessThanOrEqual(a.x);
-    expect(a.x - (p.x + p.width), name).toBeLessThan(24);
+    // Before the account's picture, with only the notifications' bell
+    // between them (e2e/notifications.fixture.spec.ts), level with both.
+    const [p, b, a] = await Promise.all([box(pill), box(header.locator(".bell")), box(header.locator(".account-button"))]);
+    expect(p.x + p.width, name).toBeLessThanOrEqual(b.x);
+    expect(b.x - (p.x + p.width), name).toBeLessThan(24);
+    expect(b.x + b.width, name).toBeLessThanOrEqual(a.x);
+    expect(a.x - (b.x + b.width), name).toBeLessThan(24);
     expect(Math.abs(p.y + p.height / 2 - (a.y + a.height / 2)), name).toBeLessThan(2);
+    expect(Math.abs(b.y + b.height / 2 - (a.y + a.height / 2)), name).toBeLessThan(2);
     // Well down the page, it's still in view, where it was.
     await scroll(page, 1_800);
     await expect(pill, name).toBeInViewport({ ratio: 1 });

@@ -451,6 +451,29 @@ pub fn unread(groups: &[Group], seen_at: i64) -> usize {
     groups.iter().filter(|group| group.ts > seen_at).count()
 }
 
+/// What the bell reads of a page of notifications: each group's newest
+/// time, and the page's, and nothing else. Its reader is a fraction of the
+/// whole payload's, which only the page's own code needs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct Times {
+    #[serde(default)]
+    pub groups: Vec<GroupTime>,
+    #[serde(default)]
+    pub newest: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct GroupTime {
+    pub ts: i64,
+}
+
+impl Times {
+    /// [`unread`], from the times alone.
+    pub fn unread(&self, seen_at: i64) -> usize {
+        self.groups.iter().filter(|group| group.ts > seen_at).count()
+    }
+}
+
 /// The bell's badge: the count, "9+" past nine, none at zero.
 pub fn badge(unread: usize) -> Option<String> {
     match unread {
@@ -719,6 +742,18 @@ mod tests {
         assert_eq!(unread(&groups, 0), 12);
         assert_eq!(unread(&groups, 10 * 86_400), 2);
         assert_eq!(unread(&groups, 12 * 86_400), 0);
+        // The bell reads the times alone, from the same payload.
+        let payload = NotificationsPayload {
+            groups: groups.clone(),
+            next: Some("eyJ".into()),
+            newest: 12 * 86_400,
+            notes: Annotations::default(),
+            meta: Meta::default(),
+        };
+        let times: Times = serde_json::from_str(&serde_json::to_string(&payload).unwrap()).unwrap();
+        assert_eq!((times.groups.len(), times.newest), (12, 12 * 86_400));
+        assert_eq!(times.unread(10 * 86_400), unread(&groups, 10 * 86_400));
+        assert_eq!(serde_json::from_str::<Times>("{}").unwrap(), Times::default());
         assert_eq!(badge(0), None);
         assert_eq!(badge(3).as_deref(), Some("3"));
         assert_eq!(badge(9).as_deref(), Some("9"));

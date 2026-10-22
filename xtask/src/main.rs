@@ -328,12 +328,13 @@ const SPLIT_LOADER: &str = "allthing-split.js";
 /// The parts that are pages of their own, which `index.html` starts
 /// fetching with the app when a visit starts on one (its `early-parts`
 /// script, which names them by the same words).
-const PAGE_PARTS: [&str; 5] = ["post", "user", "channel", "search", "channels"];
+const PAGE_PARTS: [&str; 6] = ["post", "user", "channel", "search", "channels", "notifications"];
 
 /// Each page part's files, under `folder`, as JSON: its own module and the
 /// code it shares with other parts, which the loader fetches alongside it.
 /// The loader names the parts that share a chunk in a comment above it
-/// (`/* post, user */`).
+/// (`/* post, user */`). A part the build doesn't have (the static copy has
+/// no notifications) isn't listed.
 fn page_parts(loader: &str, folder: &str) -> String {
     let mut chunks: Vec<(Vec<&str>, &str)> = Vec::new();
     let mut sharing: Option<Vec<&str>> = None;
@@ -351,6 +352,7 @@ fn page_parts(loader: &str, folder: &str) -> String {
     }
     let entries: Vec<String> = PAGE_PARTS
         .iter()
+        .filter(|part| loader.contains(&format!("split_{part}.wasm")))
         .map(|part| {
             let mut files = vec![format!("\"{folder}/split_{part}.wasm\"")];
             files.extend(
@@ -476,10 +478,21 @@ mod tests {
 
     #[test]
     fn lists_each_page_part_with_the_chunks_it_shares() {
-        let loader = "/* post, user */\nconst __chunk_3 = makeLoad(() => {\n/* composer, react */\nconst __chunk_4 = makeLoad(() => {\n";
-        let parts = page_parts(loader, "/assets/b");
+        let mut loader = String::from(
+            "/* post, user */\nconst __chunk_3 = makeLoad(() => {\n/* composer, react */\nconst __chunk_4 = makeLoad(() => {\n",
+        );
+        for part in ["post", "user", "channel", "search", "channels"] {
+            loader.push_str(&format!("    const src = fetch(new URL(\"./split_{part}.wasm\", import.meta.url));\n"));
+        }
+        let parts = page_parts(&loader, "/assets/b");
         assert!(parts.starts_with(r#"{"post":["/assets/b/split_post.wasm","/assets/b/chunk_3.wasm"],"user":["/assets/b/split_user.wasm","/assets/b/chunk_3.wasm"],"channel":["/assets/b/split_channel.wasm"]"#));
         assert!(!parts.contains("chunk_4"));
+        // The static copy has no notifications; the Worker's build has.
+        assert!(!parts.contains("notifications"));
+        loader.push_str("    const src = fetch(new URL(\"./split_notifications.wasm\", import.meta.url));\n");
+        assert!(
+            page_parts(&loader, "/assets/b").ends_with(r#""notifications":["/assets/b/split_notifications.wasm"]}"#)
+        );
     }
 
     /// A module of `sections`, each its id and body.

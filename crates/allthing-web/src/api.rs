@@ -19,6 +19,8 @@ use wasm_bindgen_futures::JsFuture;
 /// Long enough that going back to a feed or post is instant.
 const CLIENT_TTL_MS: f64 = 300_000.0;
 const LATEST_TTL_MS: f64 = 30_000.0;
+/// The signed-in reader's notifications (`components::notifications`).
+const NOTIFICATIONS_TTL_MS: f64 = 60_000.0;
 /// How many answers the session cache keeps.
 const CLIENT_CAPACITY: usize = 200;
 /// At most this many prefetches in flight.
@@ -605,6 +607,10 @@ fn ttl(path: &str) -> f64 {
     } else if path == allthing_core::scheduled::SCHEDULED_PATH {
         // The reader's own list, read afresh each time.
         0.0
+    } else if path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH) {
+        // As long as the Worker keeps them fresh: the bell, asking every few
+        // minutes, and the page reuse a read within it.
+        NOTIFICATIONS_TTL_MS
     } else {
         CLIENT_TTL_MS
     }
@@ -631,15 +637,18 @@ fn cached<T: DeserializeOwned>(path: &str, now: f64) -> Option<Result<Fetched<T>
 /// Keep an answer for reuse: only real data and "no such thing". Errors,
 /// busy answers, unreadable bodies and what the Worker says to keep nowhere
 /// (a preload batch it couldn't read, answered as empty) are asked for
-/// again next time.
+/// again next time. The reader's notifications are `no-store` too, but so
+/// that no HTTP cache keeps a reader's own: the app keeps them for a minute
+/// (`ttl`) and forgets them when someone else signs in (`forget`).
 fn remember(path: &str, raw: Raw, now: f64) {
+    let own = path.starts_with(allthing_core::notifications::NOTIFICATIONS_PATH);
     let worth = match raw.status {
-        _ if raw.no_store => false,
+        _ if raw.no_store && !own => false,
         200 => serde_json::from_str::<serde::de::IgnoredAny>(&raw.body).is_ok(),
         404 => true,
         _ => false,
     };
-    if worth {
+    if worth && !forgotten(path, now) {
         keep(path, raw, now);
     }
 }
@@ -670,6 +679,41 @@ pub fn know<T: serde::Serialize>(path: &str, value: &T) {
         Raw { at: now, status: 200, body: body.into(), age: 0, stale: false, retry_after: None, no_store: false },
         now,
     );
+}
+
+#[cfg(not(feature = "static-host"))]
+thread_local! {
+    /// The answers last forgotten, and when (`forget`).
+    static FORGOTTEN: RefCell<Option<(String, f64)>> = const { RefCell::new(None) };
+}
+
+/// Forget the answers kept for paths that start with `prefix`: a reader's
+/// own, when someone else signs in. An answer still on its way to a request
+/// made before then was the last reader's, and isn't kept either.
+#[cfg(not(feature = "static-host"))]
+pub fn forget(prefix: &str) {
+    forget_at(prefix, js_sys::Date::now());
+}
+
+#[cfg(not(feature = "static-host"))]
+fn forget_at(prefix: &str, now: f64) {
+    FORGOTTEN.with(|f| *f.borrow_mut() = Some((prefix.to_owned(), now)));
+    CACHE.with(|c| c.borrow_mut().retain(|path, _| !path.starts_with(prefix)));
+}
+
+/// Whether the answer for `path` to a request made at `asked` came after
+/// it was forgotten.
+fn forgotten(path: &str, asked: f64) -> bool {
+    #[cfg(not(feature = "static-host"))]
+    {
+        FORGOTTEN
+            .with(|f| f.borrow().as_ref().is_some_and(|(prefix, at)| asked <= *at && path.starts_with(prefix.as_str())))
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = (path, asked);
+        false
+    }
 }
 
 /// A recent answer for `path`, read at once, without waiting or fetching:
@@ -790,6 +834,16 @@ mod tests {
     }
 
     #[test]
+    fn the_reader_s_notifications_are_reused_though_no_http_cache_keeps_them() {
+        // `private, no-store`, for the browser's and shared caches; the bell's
+        // read is reused by the page within the minute.
+        let path = allthing_core::notifications::NOTIFICATIONS_PATH;
+        remember(path, Raw { no_store: true, ..response(200, r#"{"groups":[]}"#) }, 1000.0);
+        assert!(cached::<serde_json::Value>(path, 2000.0).is_some());
+        assert!(cached::<serde_json::Value>(path, 1000.0 + NOTIFICATIONS_TTL_MS + 1.0).is_none());
+    }
+
+    #[test]
     fn remembered_profile_cards_keep_what_a_profile_told() {
         // From the profile: dwr got his first username on 17 Jun 2021.
         let profile = UserCard {
@@ -805,6 +859,25 @@ mod tests {
         let seen = seen_card(3).unwrap();
         assert_eq!((seen.followers, seen.first_username_at), (12, Some(1_623_888_000)));
         assert_eq!(seen_card(4), None);
+    }
+
+    #[cfg(not(feature = "static-host"))]
+    #[test]
+    fn a_reader_s_forgotten_answers_are_not_kept_even_when_they_come_late() {
+        let page = response(200, r#"{"groups":[]}"#);
+        remember("/test/own?cursor=a", page.clone(), 1000.0);
+        forget_at("/test/own", 2000.0);
+        assert!(cached::<serde_json::Value>("/test/own?cursor=a", 2500.0).is_none());
+        // Asked for before someone else signed in, and come since: the last
+        // reader's.
+        remember("/test/own", page.clone(), 1500.0);
+        assert!(cached::<serde_json::Value>("/test/own", 2500.0).is_none());
+        // Asked for since.
+        remember("/test/own", page.clone(), 2100.0);
+        assert!(cached::<serde_json::Value>("/test/own", 2500.0).is_some());
+        // Nobody's own.
+        remember("/test/everyone", page, 1500.0);
+        assert!(cached::<serde_json::Value>("/test/everyone", 2500.0).is_some());
     }
 
     #[test]
