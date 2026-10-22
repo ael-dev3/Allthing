@@ -47,7 +47,9 @@ for (const width of [1280, 390]) {
     const modules: string[] = [];
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path.endsWith(".wasm")) modules.push(path.split("/")[1]);
+      // The app's own module only (allthing-<hash>.wasm), not the parts it
+      // fetches when idle (split_*.wasm, chunk_*.wasm), such as the poll's.
+      if (/\/allthing-[0-9a-f]+\.wasm$/.test(path)) modules.push(path.split("/")[1]);
     });
     await page.route("**/wasm/**", (route) => route.fulfill({ status: 429, contentType: "text/plain", body: "Too many requests" }));
     await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
