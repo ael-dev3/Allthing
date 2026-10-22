@@ -4,6 +4,12 @@
 //! this browser keeps the key (`crate::keys`), signs each like or recast
 //! with it, and hands the message to the node (`allthing_core::message`).
 //!
+//! The node taking a message isn't Farcaster having it: each write is read
+//! back from the node until its store shows it (`confirm`), and only then
+//! does what the page shows of it stand. One the node refuses, that stays
+//! out of reach, or that doesn't show in time is taken back, exactly, with
+//! a notice that says why and, where it may help, offers to try again.
+//!
 //! Here: whether the reader can ([`Writer`]), the like and recast buttons
 //! that `Engagement` shows on every cast, the dialog with the code, what
 //! the reader liked and recasted (their latest of each, from the node, and
@@ -26,7 +32,7 @@ use allthing_core::app_key::{
 use allthing_core::clients::ALLTHING_APP_FID;
 use allthing_core::compose::{cast_url, profile_url};
 use allthing_core::emoji::Emoji;
-use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, Sent, Submitted};
+use allthing_core::message::{self, Body, CastId, MessageData, NewCast, Parent, Reaction, ReadBack, Sent, Submitted};
 use allthing_core::model::UserSummary;
 use allthing_core::params::hash_from_param;
 use allthing_core::provenance::{base64_encode, hex_encode};
@@ -61,10 +67,21 @@ const RECENT: u32 = 100;
 const FRESH_MS: f64 = 300_000.0;
 const RETRIES: u32 = 3;
 const RETRY_MS: i32 = 2000;
+/// A node busy or out of reach is handed the same message again after these
+/// waits: the same bytes, which it counts once if it had them after all.
+const RESEND_MS: [i32; 3] = [1000, 2000, 4000];
+/// Once the node has taken a message, the waits before each look for it in
+/// the node's store: the node passes it on to Snapchain's validators, and
+/// has it once a block of theirs comes back with it. Blocks come about every
+/// second, and a write shows within about 6 s, the node's own lag included
+/// (measured on 21 October 2026); the last look, at 15 s, is for a node
+/// running behind, so a write that landed isn't taken back.
+const CONFIRM_MS: [i32; 6] = [500, 1000, 1500, 2000, 3000, 7000];
 /// Requests to the node or the Farcaster app's API give up after this.
 const TIMEOUT_MS: i32 = 15_000;
-/// How long a notice stays.
+/// How long a notice stays, and one with something to do in it (Retry).
 const NOTICE_MS: i32 = 6000;
+const ACTION_NOTICE_MS: i32 = 15_000;
 /// After a write goes to the Farcaster app, how often the node is asked
 /// whether the reader did it there (and at once when the page is back in
 /// view): every 3 s for a minute, then every 10 s; and for how long. A
@@ -99,6 +116,8 @@ const NODE_DOWN: &str = "Couldn't reach Farcaster's network. Check your connecti
 const UNSUPPORTED: &str = "This browser can't keep a signing key safely. Update it, or use another browser, to like and recast from Allthing.";
 const KEY_GONE: &str =
     "Allthing's key isn't on your Farcaster account anymore. Like or recast again to approve a new one.";
+/// The same, in a notice that offers the approval.
+const KEY_REMOVED: &str = "Allthing's key isn't on your Farcaster account anymore.";
 const UNLOADED: &str = "This part of Allthing couldn't load. Check the connection, or reload the page.";
 
 /// Whether the reader can like and recast here.
@@ -218,11 +237,14 @@ impl Mine {
     }
 }
 
-/// A short word for the reader, with a link to follow, perhaps.
+/// A short word for the reader, with a link to follow, perhaps, or a
+/// button that does something about it (Retry): its label, while what it
+/// does waits in `ACTION`.
 #[derive(Clone, PartialEq)]
 struct Notice {
     text: String,
     link: Option<(String, &'static str)>,
+    action: Option<&'static str>,
 }
 
 /// What a write handed to the Farcaster app asks the reader to do there.
@@ -282,6 +304,10 @@ pub struct Outgoing {
     pub replies_before: u64,
     /// Its hash, once the node has it.
     pub hash: Option<String>,
+    /// Posted from here: the node has taken it, but its store doesn't show
+    /// it yet.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// How to take back what a hand-off shows before it's done.
@@ -320,6 +346,9 @@ pub struct Writer {
 /// key, with what to look for after.
 type Pending = (Box<dyn FnOnce()>, Ask, Option<Expect>);
 
+/// What a notice's button does, with the notice it's for (its run).
+type Action = (u64, Box<dyn FnOnce()>);
+
 thread_local! {
     /// The reader's approved key.
     static KEY: RefCell<Option<Stored>> = const { RefCell::new(None) };
@@ -345,6 +374,8 @@ thread_local! {
     /// then asks at once.
     static WAKES: Cell<u64> = const { Cell::new(0) };
     static NOTICE_RUN: Cell<u64> = const { Cell::new(0) };
+    /// What the notice's button does (Retry).
+    static ACTION: RefCell<Option<Action>> = const { RefCell::new(None) };
     static TABS_CHANNEL: RefCell<Option<web_sys::BroadcastChannel>> = const { RefCell::new(None) };
     /// The hand-offs being looked for on the node, by what they are about,
     /// and the run each is.
@@ -432,7 +463,9 @@ impl Writer {
     /// Like or recast `target`, or take it back: at once with the reader's
     /// key, or once they have approved one; or in the Farcaster app, as
     /// `ask` says (`when_ready`). `shown` is its count as the reader sees
-    /// it, which theirs makes one more, or one less.
+    /// it, which theirs makes one more, or one less. The button and count
+    /// change at once and stay busy until the node's store shows the
+    /// message; then they stand, or, if it doesn't, change back exactly.
     pub fn toggle(self, target: CastId, kind: Reaction, ask: Ask, shown: u64) {
         let key = (hex_encode(&target.hash), kind);
         if self.mine.with_untracked(|m| m.busy.contains(&key)) {
@@ -457,30 +490,59 @@ impl Writer {
         spawn_local(async move {
             let body = if on { Body::ReactionAdd(kind, target) } else { Body::ReactionRemove(kind, target) };
             let outcome = sent(&stored, body, Some(format!("{kind:?} {}", key.0))).await;
+            // Signed out meanwhile: what showed went with the reader.
+            if self.fid() != Some(stored.fid) {
+                return;
+            }
             self.mine.update(|m| {
                 m.busy.remove(&key);
-                if outcome.is_err() {
-                    match before {
-                        Some(was) => m.changed.insert(key.clone(), was),
-                        None => m.changed.remove(&key),
-                    };
-                    match counted {
-                        Some(was) => m.counted.insert(key.clone(), was),
-                        None => m.counted.remove(&key),
-                    };
+                match &outcome {
+                    // There already, by another message of theirs (liked
+                    // before, or in another app): the button stays turned,
+                    // and the count is the page's, which had it.
+                    Ok(confirmed) if confirmed.already => {
+                        m.changed.remove(&key);
+                        m.counted.remove(&key);
+                        if on {
+                            m.known.insert(key.clone());
+                        } else {
+                            m.known.remove(&key);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        match before {
+                            Some(was) => m.changed.insert(key.clone(), was),
+                            None => m.changed.remove(&key),
+                        };
+                        match counted {
+                            Some(was) => m.counted.insert(key.clone(), was),
+                            None => m.counted.remove(&key),
+                        };
+                    }
                 }
             });
             match outcome {
-                Ok(_) => {
-                    remember_reacted(stored.fid, &key, on, made);
+                Ok(confirmed) => {
+                    if !confirmed.already {
+                        remember_reacted(stored.fid, &key, on, made);
+                    }
                     let wrote = Wrote { reacted_to: Some(key.0.clone()), page: page_cast(), ..Wrote::default() };
                     self.refresh(wrote, Landing::Reaction { kind, on, fid: stored.fid });
                 }
-                Err(Unsent::KeyGone) => {
-                    self.forget_key(stored.fid);
-                    self.say(KEY_GONE.to_owned());
+                Err(unsent) => {
+                    let unseen = match (kind, on) {
+                        (Reaction::Like, true) => "Your like didn't show up on Farcaster in time, so it's undone.",
+                        (Reaction::Like, false) => {
+                            "Your unlike didn't show up on Farcaster in time, so the like is back."
+                        }
+                        (Reaction::Recast, true) => "Your recast didn't show up on Farcaster in time, so it's undone.",
+                        (Reaction::Recast, false) => {
+                            "Undoing your recast didn't show up on Farcaster in time, so the recast is back."
+                        }
+                    };
+                    self.failed(stored.fid, unsent, unseen, move || self.toggle(target, kind, ask, shown));
                 }
-                Err(Unsent::Failed(message)) => self.say(message),
             }
         });
     }
@@ -536,23 +598,20 @@ impl Writer {
         }
     }
 
-    /// Post `cast` with the reader's key: its hash, or why it didn't go out.
-    pub async fn cast(self, cast: NewCast) -> Result<String, String> {
-        self.cast_in(cast, None).await
-    }
-
-    /// Post `cast`, as [`Writer::cast`]; one sent in the same `slot` as
-    /// another goes out at least a second after it (`send`).
-    async fn cast_in(self, cast: NewCast, slot: Option<String>) -> Result<String, String> {
+    /// Post `cast` with the reader's key: the message, once the node has
+    /// taken it, for [`Writer::cast_posted`] to show while it's looked for
+    /// on the node; or why it didn't go out.
+    pub async fn cast(self, cast: NewCast) -> Result<Signed, String> {
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return Err(KEY_GONE.into()) };
-        match sent(&stored, Body::CastAdd(cast), slot).await {
-            Ok(hash) => Ok(hex_encode(&hash)),
-            Err(Unsent::KeyGone) => {
+        handed_in(&stored, Body::CastAdd(cast), None).await.map_err(|unsent| match unsent {
+            Unsent::KeyGone => {
                 self.forget_key(stored.fid);
-                Err(KEY_GONE.into())
+                KEY_GONE.to_owned()
             }
-            Err(Unsent::Failed(message)) => Err(message),
-        }
+            Unsent::Refused(why) => refused(&why),
+            Unsent::Unreachable(_) | Unsent::Unseen(_) => NODE_DOWN.to_owned(),
+            Unsent::Failed(message) => message,
+        })
     }
 
     /// Sign `cast` with the reader's key for `at` (Unix seconds), its
@@ -581,6 +640,7 @@ impl Writer {
         self.notify(Notice {
             text: format!("{text} {}.", local_time(kept.at)),
             link: Some((scheduled_href(), "View")),
+            action: None,
         });
         self.rescheduled();
         Ok(kept)
@@ -610,6 +670,7 @@ impl Writer {
             self.when_ready(move || self.react(target, emoji, again), ask, Some(Expect::Reacted { target, emoji }));
             return;
         }
+        let Some(stored) = KEY.with(|k| k.borrow().clone()) else { return };
         self.mine.update(|m| {
             m.reacting.insert(hash.clone());
         });
@@ -619,26 +680,72 @@ impl Writer {
             // Each in a slot of its own: a reaction taken back and made
             // again goes out a second later at least, so it's a new reply
             // and not the one deleted, which the node won't take again.
-            let outcome = self.cast_in(reply, Some(format!("react {hash} {}", emoji.code))).await;
-            self.mine.update(|m| {
-                m.reacting.remove(&hash);
-                if let Ok(reply) = &outcome {
-                    m.emoji.entry(hash.clone()).or_default().push(emoji);
-                    m.reaction_replies.insert((hash.clone(), emoji.code), reply.clone());
-                }
-            });
-            match outcome {
-                Ok(reply) => {
-                    self.notify(Notice {
-                        text: format!("Reacted with :{}:, as a reply.", emoji.code),
-                        link: Some((cast_href(&reply), "View")),
-                    });
-                    let username = self.session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
-                    let wrote = Wrote { username, reply_to: Some(hash), page: page_cast(), ..Wrote::default() };
-                    self.refresh(wrote, Landing::Listed(reply));
-                }
-                Err(message) => self.say(message),
+            let slot = Some(format!("react {hash} {}", emoji.code));
+            let outcome = sent(&stored, Body::CastAdd(reply), slot).await;
+            self.emoji_landed(stored.fid, target, emoji, ask, outcome);
+        });
+    }
+
+    /// What became of an emoji reaction: its chip, once the node's store
+    /// shows the reply; or why not, with a way to send the same reply again.
+    fn emoji_landed(
+        self,
+        fid: u64,
+        target: CastId,
+        emoji: &'static Emoji,
+        ask: Ask,
+        outcome: Result<Confirmed, Unsent>,
+    ) {
+        if self.fid() != Some(fid) {
+            return;
+        }
+        let hash = hex_encode(&target.hash);
+        let reply = outcome.as_ref().ok().map(|confirmed| confirmed.signed.hash());
+        self.mine.update(|m| {
+            m.reacting.remove(&hash);
+            if let Some(reply) = &reply {
+                m.emoji.entry(hash.clone()).or_default().push(emoji);
+                m.reaction_replies.insert((hash.clone(), emoji.code), reply.clone());
             }
+        });
+        match outcome {
+            Ok(_) => {
+                let reply = reply.unwrap_or_default();
+                self.notify(Notice {
+                    text: format!("Reacted with :{}:, as a reply.", emoji.code),
+                    link: Some((cast_href(&reply), "View")),
+                    action: None,
+                });
+                let username = self.session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
+                let wrote = Wrote { username, reply_to: Some(hash), page: page_cast(), ..Wrote::default() };
+                self.refresh(wrote, Landing::Listed(reply));
+            }
+            // The same reply again: the node counts it once if it has it
+            // after all.
+            Err(Unsent::Unseen(signed)) => {
+                self.act("Your reaction didn't show up on Farcaster in time.".into(), "Retry", move || {
+                    self.react_again(fid, target, emoji, ask, signed)
+                })
+            }
+            Err(Unsent::Unreachable(signed)) => {
+                self.act(NODE_DOWN.into(), "Retry", move || self.react_again(fid, target, emoji, ask, signed))
+            }
+            Err(unsent) => self.failed(fid, unsent, "", move || self.react(target, emoji, ask)),
+        }
+    }
+
+    /// Hand an emoji reaction's reply to the node again, as it was signed.
+    fn react_again(self, fid: u64, target: CastId, emoji: &'static Emoji, ask: Ask, signed: Signed) {
+        let hash = hex_encode(&target.hash);
+        if !self.mine.try_update(|m| m.reacting.insert(hash)).unwrap_or(false) {
+            return;
+        }
+        spawn_local(async move {
+            let outcome = match resent(signed).await {
+                Ok(signed) => confirmed(signed).await,
+                Err(unsent) => Err(unsent),
+            };
+            self.emoji_landed(fid, target, emoji, ask, outcome);
         });
     }
 
@@ -660,32 +767,90 @@ impl Writer {
 
     /// Say that a cast went out, with a link to it.
     pub fn posted(self, hash: &str) {
-        self.notify(Notice { text: "Posted.".into(), link: Some((cast_href(hash), "View")) });
+        self.notify(Notice { text: "Posted.".into(), link: Some((cast_href(hash), "View")), action: None });
     }
 
-    /// A cast the reader posted from here with their key, `hash`: it shows
-    /// at once where it will be listed (`components::outgoing`), and on
-    /// this tab's page loads for ten minutes, until the page lists it; and
-    /// the pages that list it are refreshed.
-    pub fn cast_posted(self, mut cast: Outgoing, hash: String) {
-        self.posted(&hash);
+    /// A cast the reader posted from here with their key, which the node has
+    /// taken (`signed`): it shows at once where it will be listed
+    /// (`components::outgoing`), as posting until the node's store has it.
+    /// Then it shows as posted, on this tab's page loads too for ten minutes,
+    /// until the page lists it, and the pages that list it are refreshed.
+    /// Not shown on the node in time, it's taken back: its card goes, the
+    /// draft is back in the composer if that holds no other (`settle`), and
+    /// a notice offers to send it again, the same message.
+    pub fn cast_posted(self, mut cast: Outgoing, signed: Signed, settle: Settle) {
         let Some(user) = self.session.user.get_untracked() else { return };
+        let hash = signed.hash();
         cast.id = js_sys::Date::now() as u64;
         cast.hash = Some(hash.clone());
-        let reply_to = match &cast.sent {
-            Sent::Reply { parent, .. } => Some(parent.clone()),
-            _ => None,
-        };
-        let wrote = Wrote {
-            username: Some(user.username.clone()),
-            reply_to,
-            page: page_cast(),
-            channel: cast.channel.clone(),
-            ..Wrote::default()
-        };
-        remember_posted(user.fid, &cast);
-        self.mine.update(|m| m.outgoing.push(cast));
-        self.refresh(wrote, Landing::Listed(hash));
+        cast.pending = true;
+        self.mine.update(|m| m.outgoing.push(cast.clone()));
+        self.say("Posting…".into());
+        spawn_local(async move {
+            let outcome = confirmed(signed).await;
+            if self.fid() != Some(user.fid) {
+                return;
+            }
+            match outcome {
+                Ok(_) => {
+                    cast.pending = false;
+                    self.mine.update(|m| {
+                        if let Some(shown) = m.outgoing.iter_mut().find(|shown| shown.id == cast.id) {
+                            shown.pending = false;
+                        }
+                    });
+                    remember_posted(user.fid, &cast);
+                    self.posted(&hash);
+                    let reply_to = match &cast.sent {
+                        Sent::Reply { parent, .. } => Some(parent.clone()),
+                        _ => None,
+                    };
+                    let wrote = Wrote {
+                        username: Some(user.username.clone()),
+                        reply_to,
+                        page: page_cast(),
+                        channel: cast.channel.clone(),
+                        ..Wrote::default()
+                    };
+                    self.refresh(wrote, Landing::Listed(hash));
+                }
+                Err(unsent) => {
+                    self.mine.update(|m| m.outgoing.retain(|shown| shown.id != cast.id));
+                    settle(false);
+                    let noun = match &cast.sent {
+                        Sent::Reply { .. } => "reply",
+                        Sent::Quote { .. } => "quote",
+                        Sent::Cast { .. } | Sent::Reaction { .. } => "cast",
+                    };
+                    let unseen = format!("Your {noun} didn't show up on Farcaster in time, so it's taken back.");
+                    match unsent {
+                        Unsent::Unseen(signed) => self.act(unseen, "Retry", move || self.repost(cast, signed, settle)),
+                        unsent => self.failed(user.fid, unsent, &unseen, move || self.approve()),
+                    }
+                }
+            }
+        });
+    }
+
+    /// Hand a cast that didn't show up in time to the node again, as it was
+    /// signed: the same message, which the node counts once if it has it
+    /// after all. Taken, it shows as posting again, and the composer lets
+    /// go of the draft it had back.
+    fn repost(self, cast: Outgoing, signed: Signed, settle: Settle) {
+        let fid = signed.fid;
+        self.say("Posting…".into());
+        spawn_local(async move {
+            match resent(signed).await {
+                Ok(signed) => {
+                    settle(true);
+                    self.cast_posted(cast, signed, settle);
+                }
+                Err(Unsent::Unreachable(signed)) => {
+                    self.act(NODE_DOWN.into(), "Retry", move || self.repost(cast, signed, settle))
+                }
+                Err(unsent) => self.failed(fid, unsent, "", move || self.approve()),
+            }
+        });
     }
 
     /// What the reader posted, liked and recasted from here in this tab's
@@ -795,22 +960,34 @@ impl Writer {
         spawn_local(async move {
             let body = if on { Body::Follow(fid) } else { Body::Unfollow(fid) };
             let outcome = sent(&stored, body, Some(format!("follow {fid}"))).await;
+            if self.fid() != Some(stored.fid) {
+                return;
+            }
             self.mine.update(|m| {
                 m.follow_busy.remove(&fid);
-                if outcome.is_err() {
-                    match before {
-                        Some(was) => m.follow_changed.insert(fid, was),
-                        None => m.follow_changed.remove(&fid),
-                    };
+                match &outcome {
+                    // Followed already, by another message: the count is
+                    // the profile's, which had it.
+                    Ok(confirmed) if confirmed.already => {
+                        m.follow_changed.remove(&fid);
+                        m.follows.insert(fid, on);
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        match before {
+                            Some(was) => m.follow_changed.insert(fid, was),
+                            None => m.follow_changed.remove(&fid),
+                        };
+                    }
                 }
             });
-            match outcome {
-                Ok(_) => {}
-                Err(Unsent::KeyGone) => {
-                    self.forget_key(stored.fid);
-                    self.say(KEY_GONE.to_owned());
-                }
-                Err(Unsent::Failed(message)) => self.say(message),
+            if let Err(unsent) = outcome {
+                let unseen = if on {
+                    "Your follow didn't show up on Farcaster in time, so it's undone."
+                } else {
+                    "Your unfollow didn't show up on Farcaster in time, so you follow them again."
+                };
+                self.failed(stored.fid, unsent, unseen, move || self.toggle_follow(fid, ask));
             }
         });
     }
@@ -825,8 +1002,9 @@ impl Writer {
         self.mine.with(|m| m.deleting.contains(hash))
     }
 
-    /// Delete one of the reader's casts: once it is gone, the page shows so,
-    /// and a notice says it. Or in the Farcaster app, as `ask` says.
+    /// Delete one of the reader's casts: once the node no longer has it, the
+    /// page shows so, and a notice says it. Or in the Farcaster app, as
+    /// `ask` says.
     pub fn delete(self, hash: String, ask: Ask) {
         if self.can.get_untracked() != Can::Yes {
             let expect = self.fid().and_then(|fid| CastId::new(fid, &hash)).map(|target| Expect::Deleted { target });
@@ -841,6 +1019,9 @@ impl Writer {
         }
         spawn_local(async move {
             let outcome = sent(&stored, Body::CastRemove(target.hash), None).await;
+            if self.fid() != Some(stored.fid) {
+                return;
+            }
             self.mine.update(|m| {
                 m.deleting.remove(&hash);
             });
@@ -850,15 +1031,14 @@ impl Writer {
                         m.deleted.insert(hash.clone());
                         remember_deleted(&m.deleted);
                     });
-                    self.say("Deleted. It leaves Farcaster as the network catches up.".into());
+                    self.say("Deleted.".into());
                     let username = self.session.user.with_untracked(|u| u.as_ref().map(|u| u.username.clone()));
                     self.refresh(Wrote { username, page: page_cast(), ..Wrote::default() }, Landing::Gone(hash));
                 }
-                Err(Unsent::KeyGone) => {
-                    self.forget_key(stored.fid);
-                    self.say(KEY_GONE.to_owned());
+                Err(unsent) => {
+                    let unseen = "Deleting it didn't show up on Farcaster in time: the cast is still there.";
+                    self.failed(stored.fid, unsent, unseen, move || self.delete(hash, ask));
                 }
-                Err(Unsent::Failed(message)) => self.say(message),
             }
         });
     }
@@ -1362,21 +1542,77 @@ impl Writer {
     /// Say `message` in the notice at the foot of the screen, a polite live
     /// region, for a few seconds.
     pub fn say(self, message: String) {
-        self.notify(Notice { text: message, link: None });
+        self.notify(Notice { text: message, link: None, action: None });
     }
 
     fn notify(self, notice: Notice) {
+        self.notify_for(notice, NOTICE_MS);
+    }
+
+    /// Show `notice` for `ms`, in the place of any other: which notice it
+    /// is. The button of the one it replaces goes with it.
+    fn notify_for(self, notice: Notice, ms: i32) -> u64 {
         let run = NOTICE_RUN.with(|r| {
             r.set(r.get() + 1);
             r.get()
         });
+        ACTION.with(|a| a.borrow_mut().take());
         self.notice.set(Some(notice));
         spawn_local(async move {
-            crate::video::sleep(NOTICE_MS).await;
+            crate::video::sleep(ms).await;
             if NOTICE_RUN.with(Cell::get) == run {
                 self.notice.set(None);
+                ACTION.with(|a| a.borrow_mut().take());
             }
         });
+        run
+    }
+
+    /// A notice with a button, `label`, that does `then`.
+    fn act(self, text: String, label: &'static str, then: impl FnOnce() + 'static) {
+        let run = self.notify_for(Notice { text, link: None, action: Some(label) }, ACTION_NOTICE_MS);
+        ACTION.with(|a| *a.borrow_mut() = Some((run, Box::new(then))));
+    }
+
+    /// The notice's button pressed: what it offers, once.
+    fn take_action(self) {
+        let run = NOTICE_RUN.with(Cell::get);
+        let then = ACTION.with(|a| {
+            let mut action = a.borrow_mut();
+            match action.take() {
+                Some((by, then)) if by == run => Some(then),
+                _ => None,
+            }
+        });
+        self.notice.set(None);
+        if let Some(then) = then {
+            then();
+        }
+    }
+
+    /// Say why a write didn't go, or didn't show up on the node in time
+    /// (`unseen`, in words for the write), with what may help: trying again
+    /// (`retry`) when the node was out of reach or didn't show it, and
+    /// approving a key again when the node no longer knows the reader's,
+    /// which is forgotten (`retry` then goes through the approval).
+    fn failed(self, fid: u64, unsent: Unsent, unseen: &str, retry: impl FnOnce() + 'static) {
+        match unsent {
+            Unsent::KeyGone => {
+                self.forget_key(fid);
+                self.act(KEY_REMOVED.into(), "Approve again", retry);
+            }
+            Unsent::Unseen(_) => self.act(unseen.into(), "Retry", retry),
+            Unsent::Unreachable(_) => self.act(NODE_DOWN.into(), "Retry", retry),
+            Unsent::Refused(why) => self.say(refused(&why)),
+            Unsent::Failed(message) => self.say(message),
+        }
+    }
+
+    /// The dialog to approve a key, for a reader whose key is gone.
+    fn approve(self) {
+        if self.can.get_untracked() == Can::Approve {
+            self.connect();
+        }
     }
 
     /// Open the dialog. A key approved in another tab meanwhile is used at
@@ -1827,10 +2063,50 @@ fn key_message(error: KeyError) -> String {
     }
 }
 
-/// Why a like or a recast didn't go out.
+/// Why a write didn't go out, or didn't show up on the node.
 enum Unsent {
+    /// The node doesn't know the key: it was removed in the Farcaster app.
     KeyGone,
+    /// The node refused it, in its words: the same again won't do.
+    Refused(String),
+    /// The node was busy or out of reach, through every try.
+    Unreachable(Signed),
+    /// The node took it, but its store didn't show it in time.
+    Unseen(Signed),
+    /// The key couldn't sign, or writing's own code didn't load.
     Failed(String),
+}
+
+/// The node's refusal, for the reader.
+fn refused(why: &str) -> String {
+    format!("Farcaster didn't take it: {why}")
+}
+
+/// A message signed with the reader's key, as the node is handed it.
+#[derive(Clone)]
+pub struct Signed {
+    /// Who signed it.
+    fid: u64,
+    body: Body,
+    hash: [u8; 20],
+    /// The envelope, handed in again as it is: the same message, which the
+    /// node counts once.
+    bytes: Rc<[u8]>,
+}
+
+impl Signed {
+    /// Its hash, `0x…`.
+    pub fn hash(&self) -> String {
+        hex_encode(&self.hash)
+    }
+}
+
+/// A message the node's store shows: this very one, or, `already`, what it
+/// asks for by another of the reader's messages (a like made before, or in
+/// another app), when this one hasn't shown up.
+struct Confirmed {
+    signed: Signed,
+    already: bool,
 }
 
 /// Who `names` (mentioned as "@name") belong to, as far as the node knows:
@@ -1859,11 +2135,37 @@ pub async fn fids_of(names: &[String]) -> HashMap<String, u64> {
     out
 }
 
+/// Sign `body` with the reader's key, hand it to the node, and look for it
+/// on the node until it shows: what showed; or why it didn't go, or didn't
+/// show.
+async fn sent(stored: &Stored, body: Body, slot: Option<String>) -> Result<Confirmed, Unsent> {
+    confirmed(handed_in(stored, body, slot).await?).await
+}
+
 /// Sign `body` with the reader's key and hand it to the node, as `send`
-/// does, with writing's own code.
-async fn sent(stored: &Stored, body: Body, slot: Option<String>) -> Result<[u8; 20], Unsent> {
+/// does, with writing's own code: the message, once the node has taken it.
+async fn handed_in(stored: &Stored, body: Body, slot: Option<String>) -> Result<Signed, Unsent> {
     match sending(stored.clone(), body, slot).await {
         Ok(sending) => sending.await,
+        Err(_) => Err(Unsent::Failed(UNLOADED.into())),
+    }
+}
+
+/// Hand `signed` to the node again, as it was signed (`hand_in`).
+async fn resent(signed: Signed) -> Result<Signed, Unsent> {
+    match resending(signed).await {
+        Ok(resending) => resending.await,
+        Err(_) => Err(Unsent::Failed(UNLOADED.into())),
+    }
+}
+
+/// Look for `signed` on the node until it shows (`confirm`).
+async fn confirmed(signed: Signed) -> Result<Confirmed, Unsent> {
+    match confirming(signed.clone()).await {
+        Ok(confirming) => match confirming.await {
+            Some(already) => Ok(Confirmed { signed, already }),
+            None => Err(Unsent::Unseen(signed)),
+        },
         Err(_) => Err(Unsent::Failed(UNLOADED.into())),
     }
 }
@@ -1871,18 +2173,29 @@ async fn sent(stored: &Stored, body: Body, slot: Option<String>) -> Result<[u8; 
 /// Work done in writing's own code, to await.
 type Later<T> = Pin<Box<dyn Future<Output = T>>>;
 
-// Writing's own code (`crate::split`): signing and sending, approving a key
-// and reading the one kept, and looking for a hand-off on the node. A
-// signed-in reader's browser fetches it as soon as the page knows who they
-// are (`Writer::check`); a signed-out reader's never does.
+// Writing's own code (`crate::split`): signing and sending, and reading what
+// went back from the node, approving a key and reading the one kept, and
+// looking for a hand-off on the node. A signed-in reader's browser fetches
+// it as soon as the page knows who they are (`Writer::check`); a signed-out
+// reader's never does.
 
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible, preload(preload_writer))]
 fn sending(
     stored: Stored,
     body: Body,
     slot: Option<String>,
-) -> Result<Later<Result<[u8; 20], Unsent>>, SplitLoaderError> {
+) -> Result<Later<Result<Signed, Unsent>>, SplitLoaderError> {
     Ok(Box::pin(async move { send(&stored, body, slot.as_ref()).await }))
+}
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn resending(signed: Signed) -> Result<Later<Result<Signed, Unsent>>, SplitLoaderError> {
+    Ok(Box::pin(hand_in(signed, false)))
+}
+
+#[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
+fn confirming(signed: Signed) -> Result<Later<Option<bool>>, SplitLoaderError> {
+    Ok(Box::pin(confirm(signed)))
 }
 
 #[wasm_split(writer, wasm_split_path = ::leptos::wasm_split, fallible)]
@@ -1911,51 +2224,92 @@ fn landing(writer: Writer, reader: u64, expect: Expect, since: i64) -> Result<La
     Ok(Box::pin(async move { writer.landed(reader, &expect, since).await }))
 }
 
-/// Sign `body` with the reader's key and hand it to the node: the
-/// message's hash. A like, a recast or a follow (`slot`) that undoes
-/// another goes out at least a second after it, so it wins.
-async fn send(stored: &Stored, body: Body, slot: Option<&String>) -> Result<[u8; 20], Unsent> {
+/// Sign `body` with the reader's key and hand it to the node (`hand_in`):
+/// the message, once the node has taken it. A like, a recast or a follow
+/// (`slot`) that undoes another goes out at least a second after it, so it
+/// wins.
+async fn send(stored: &Stored, body: Body, slot: Option<&String>) -> Result<Signed, Unsent> {
     let signer = app_key::parse_public_key(&stored.key).ok_or(Unsent::KeyGone)?;
+    let now = now_secs() as i64;
+    let at = slot.map_or(now, |key| {
+        SENT_AT.with(|s| {
+            let mut sent = s.borrow_mut();
+            let at = now.max(sent.get(key).map_or(0, |last| last + 1));
+            sent.insert(key.clone(), at);
+            at
+        })
+    });
+    let data = MessageData::new(stored.fid, at, body.clone()).encode();
+    let hash = message::message_hash(&data);
+    let signature = keys::sign(stored, &hash).await.map_err(|e| Unsent::Failed(key_message(e)))?;
+    let bytes = message::envelope(&data, &hash, &signature, &signer).into();
     let fresh = stored.approved_at.is_some_and(|at| js_sys::Date::now() - at < FRESH_MS);
-    let mut wait = RETRY_MS;
-    for tried in 0..=RETRIES {
-        let now = now_secs() as i64;
-        let at = slot.map_or(now, |key| {
-            SENT_AT.with(|s| {
-                let mut sent = s.borrow_mut();
-                let at = now.max(sent.get(key).map_or(0, |last| last + 1));
-                sent.insert(key.clone(), at);
-                at
-            })
-        });
-        let data = MessageData::new(stored.fid, at, body.clone()).encode();
-        let hash = message::message_hash(&data);
-        let signature = keys::sign(stored, &hash).await.map_err(|e| Unsent::Failed(key_message(e)))?;
-        let envelope = message::envelope(&data, &hash, &signature, &signer);
-        let bytes = js_sys::Uint8Array::from(envelope.as_slice());
-        let (status, answer) = fetch("POST", &message::submit_url(), Some(("application/octet-stream", bytes.into())))
-            .await
-            .map_err(|_| Unsent::Failed(NODE_DOWN.into()))?;
-        match message::submitted(status, &answer) {
-            Submitted::Merged | Submitted::Duplicate => return Ok(hash),
-            // A key approved a moment ago may not have reached this node.
-            Submitted::UnknownKey if fresh && tried < RETRIES => {
+    hand_in(Signed { fid: stored.fid, body, hash, bytes }, fresh).await
+}
+
+/// Hand `signed` to the node's `submitMessage`: once it has taken it, or has
+/// it already (a duplicate, counted once). While the node is busy or out of
+/// reach, the same message goes again after 1, 2 and 4 s; for a key
+/// approved a moment ago (`fresh`), which may not have reached the node,
+/// again after 2, 4 and 8 s while the node doesn't know it.
+async fn hand_in(signed: Signed, fresh: bool) -> Result<Signed, Unsent> {
+    let mut busy = RESEND_MS.into_iter();
+    let (mut unknown, mut wait) = (0, RETRY_MS);
+    loop {
+        let bytes = js_sys::Uint8Array::from(&signed.bytes[..]);
+        let answer = fetch("POST", &message::submit_url(), Some(("application/octet-stream", bytes.into()))).await;
+        let outcome = match answer {
+            Ok((status, answer)) => message::submitted(status, &answer),
+            // No answer: the node may have it, or may not; the same message
+            // again is counted once either way.
+            Err(()) => Submitted::Unavailable,
+        };
+        match outcome {
+            Submitted::Accepted | Submitted::Duplicate => return Ok(signed),
+            Submitted::UnknownKey if fresh && unknown < RETRIES => {
                 crate::video::sleep(wait).await;
-                wait *= 2;
+                (unknown, wait) = (unknown + 1, wait * 2);
             }
             Submitted::UnknownKey => return Err(Unsent::KeyGone),
-            Submitted::Unavailable => return Err(Unsent::Failed(NODE_DOWN.into())),
-            Submitted::Refused(why) if why.is_empty() => return Err(Unsent::Failed(NODE_DOWN.into())),
-            Submitted::Refused(why) => return Err(Unsent::Failed(format!("Farcaster didn't take it: {why}"))),
+            Submitted::Refused(why) if !why.is_empty() => return Err(Unsent::Refused(why)),
+            // The node busy, or an answer that says nothing.
+            Submitted::Unavailable | Submitted::Refused(_) => match busy.next() {
+                Some(wait) => crate::video::sleep(wait).await,
+                None => return Err(Unsent::Unreachable(signed)),
+            },
         }
     }
-    Err(Unsent::KeyGone)
+}
+
+/// Look for `signed` in the node's store, after each of `CONFIRM_MS`'s
+/// waits, until it shows: an add by its hash, or a removal by what it takes
+/// back being gone (`message::read_back`). `Some(false)` once this very
+/// message shows; `Some(true)` when, in the end, what it asks for shows by
+/// another of the reader's messages; `None` when it didn't show in time.
+async fn confirm(signed: Signed) -> Option<bool> {
+    let url = message::read_back_url(signed.fid, &signed.body, &signed.hash);
+    let (mut already, mut last) = (false, None);
+    for wait in CONFIRM_MS {
+        crate::video::sleep(wait).await;
+        let Ok((status, answer)) = fetch("GET", &url, None).await else { continue };
+        match message::read_back(&signed.body, &signed.hash, status, &answer) {
+            Some(ReadBack::Landed) => return Some(already),
+            Some(seen) => {
+                already |= seen == ReadBack::Already;
+                last = Some(seen);
+            }
+            None => {}
+        }
+    }
+    (last == Some(ReadBack::Already)).then_some(true)
 }
 
 /// A request to the node or the Farcaster app's API: its status and body.
+/// Never from the browser's cache: what it asks may change any moment.
 async fn fetch(method: &str, url: &str, body: Option<(&str, JsValue)>) -> Result<(u16, String), ()> {
     let init = web_sys::RequestInit::new();
     init.set_method(method);
+    init.set_cache(web_sys::RequestCache::NoStore);
     if let Some((content_type, body)) = body {
         let headers = web_sys::Headers::new().map_err(|_| ())?;
         headers.set("content-type", content_type).map_err(|_| ())?;
@@ -2128,6 +2482,9 @@ pub fn WriterDialog() -> impl IntoView {
             {move || writer.notice.get().map(|notice| view! {
                 {notice.text}
                 {notice.link.map(|(href, label)| view! { " "<a href=href>{label}</a> })}
+                {notice.action.map(|label| view! {
+                    " "<button type="button" class="toast-action" on:click=move |_| writer.take_action()>{label}</button>
+                })}
             })}
         </p>
     }
@@ -2326,7 +2683,7 @@ pub fn FollowButton(fid: u64, username: String) -> impl IntoView {
                     type="button"
                     class="follow-button"
                     class:following=following
-                    class:pending=move || writer.pending_follow(fid)
+                    class:pending=move || writer.pending_follow(fid) || writer.follow_busy(fid)
                     class:unknown=move || writer.reader().is_some() && known.get().is_none()
                     aria-label=label.clone()
                     aria-pressed=move || writer.reader().is_some().then(|| following().to_string())

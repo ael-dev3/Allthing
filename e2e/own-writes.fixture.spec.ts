@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey, cast as castOf, envelope, reaction, signIn, type Envelope } from "./helpers/farcaster";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { approvedKey, cast as castOf, reaction, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * What the reader writes from Allthing with their key shows at once where
@@ -31,9 +32,10 @@ type Calls = { sent: Envelope[]; refreshed: object[] };
  * them wouldn't.
  */
 async function serve(page: Page, fresh: () => boolean) {
-  const calls: Calls = { sent: [], refreshed: [] };
   let key = "";
-  const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
+  // The node: it checks each message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid, key: () => key });
+  const calls: Calls = { sent: node.sent, refreshed: [] };
   // The reader's casts as the node has them, and what they like.
   const posted = () =>
     calls.sent
@@ -104,17 +106,9 @@ async function serve(page: Page, fresh: () => boolean) {
         : [];
     return route.fulfill({ headers: cors, json: { messages } });
   });
-  await page.route(`${NODE}/reactionById?*`, (route) =>
-    route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get reaction", error_detail: 'status: NotFound, message: "not found"' } }),
-  );
   await page.route(`${NODE}/userNameProofByName?*`, (route) =>
     route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get username proof", error_detail: 'status: NotFound, message: "Username proof not found"' } }),
   );
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    calls.sent.push(envelope(route.request().postDataBuffer()!));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return calls;
 }
 
@@ -252,6 +246,8 @@ test("a like keeps its count after a reload, while the feed's copy doesn't have 
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(count).toHaveText("3 likes");
   await expect.poll(() => calls.sent.filter((sent) => sent.type === 4).length).toBe(1);
+  // Once the node shows it.
+  await expect(like).not.toHaveAttribute("aria-busy");
   await page.reload();
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(count).toHaveText("3 likes");

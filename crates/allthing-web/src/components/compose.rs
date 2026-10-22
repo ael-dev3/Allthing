@@ -624,8 +624,9 @@ impl Composer {
                 let draft = self.draft();
                 let saved = self.saved(&draft).to_json();
                 let replaces = self.editing.get_untracked();
-                // What shows where it will be listed, once it goes out.
-                let shown = self.outgoing();
+                // What shows where it will be listed, once it goes out, and
+                // the draft, back in the composer if it doesn't show up.
+                let (shown, settle) = (self.outgoing(), self.settle());
                 spawn_local(async move {
                     let fids = fids_of(&mention_names(&draft.text)).await;
                     let cast = draft.new_cast(|name| fids.get(name).copied());
@@ -636,11 +637,11 @@ impl Composer {
                     };
                     self.posting.set(false);
                     match outcome {
-                        Ok(hash) => {
+                        Ok(signed) => {
                             self.clear();
                             self.close();
-                            if let Some(hash) = hash {
-                                writer.cast_posted(shown, hash);
+                            if let Some(signed) = signed {
+                                writer.cast_posted(shown, signed, settle);
                             }
                         }
                         Err(why) => self.error.set(Some(why)),
@@ -698,12 +699,15 @@ impl Composer {
             channel: draft.channel,
             replies_before: self.replies.get_untracked(),
             hash: None,
+            pending: false,
         }
     }
 
     /// What the composer does once the draft, handed to the Farcaster app,
-    /// is posted there (`true`): lets it go, if it still holds it. Not
-    /// posted in time, it has it back, closed and holding no other.
+    /// is posted there, or posted from here is taken by the node again
+    /// (`true`): lets it go, if it still holds it. Not posted in time, or
+    /// posted from here but not shown on the node in time, it has it back,
+    /// closed and holding no other.
     fn settle(self) -> Settle {
         let files: Vec<Attachment> =
             self.files.with_untracked(|files| files.iter().map(Attachment::kept_copy).collect());

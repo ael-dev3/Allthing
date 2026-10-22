@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey as seedKey, envelope, kept as keptFor, reaction, signIn as signInAs } from "./helpers/farcaster";
+import { approvedKey as seedKey, kept as keptFor, reaction, signIn as signInAs, type Envelope } from "./helpers/farcaster";
+import { standIn, type Answer } from "./helpers/node";
 
 /*
  * Liking and recasting from Allthing with a key the reader approves by QR
  * code. The browser's WebCrypto and IndexedDB are real; the Worker's
  * endorsement, the Farcaster app's API and the node are stand-ins (no
  * Farcaster app can approve a key here, and nothing is posted). Every
- * message handed to the node is decoded and its signature checked against
- * the key the browser had endorsed.
+ * message handed to the node is decoded, its hash and signature checked,
+ * and read back from the stand-in node's store (`helpers/node.ts`).
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
@@ -30,20 +31,19 @@ const RELAY = "https://relay.farcaster.xyz/v1";
 const CHANNEL = "210f1718-427e-46a4-99e3-2207f21f83ec";
 
 type Sent = { type: number; fid: number; at: number; network: number; reaction: number; target: { fid: number; hash: string }; signer: string };
-type Calls = { writes: number; endorse: string[]; requests: object[]; polls: number; signers: number; sent: Sent[]; reactions: string[]; signIns: number };
+type Calls = { writes: number; endorse: string[]; requests: object[]; polls: number; signers: number; readonly sent: Sent[]; reactions: string[]; signIns: number };
 type Options = {
   writes?: boolean;
   /** The Farcaster app's answer to each poll of the request. */
   poll?: (poll: number) => object;
-  /** The node's answer to each message: [status, body]. */
-  submit?: (call: number) => [number, object];
+  /** What the node does with each new message; it merges them by default. */
+  submit?: (call: number) => Answer;
   /** What the node says the reader liked. */
   liked?: string[];
 };
 
-/** A like or recast the node was given: its signature checked, its data read. */
-function decode(body: Buffer): Sent {
-  const e = envelope(body);
+/** A like or recast the node was given, its data read. */
+function decode(e: Envelope): Sent {
   return { type: e.type, fid: e.fid, at: e.at, network: e.network, ...reaction(e), signer: e.signer };
 }
 
@@ -54,8 +54,21 @@ const reacted = (hash: string, kind: "LIKE" | "RECAST") => ({
 
 async function serve(page: Page, options: Options = {}) {
   const { writes = true, poll = (n: number) => (n < 3 ? { state: "pending" } : n < 4 ? { state: "approved", userFid: me.fid } : { state: "completed", userFid: me.fid }) } = options;
-  const calls: Calls = { writes: 0, endorse: [], requests: [], polls: 0, signers: 0, sent: [], reactions: [], signIns: 0 };
   let key = "";
+  // The node: it checks each message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid, key: () => key, answer: options.submit });
+  const calls: Calls = {
+    writes: 0,
+    endorse: [],
+    requests: [],
+    polls: 0,
+    signers: 0,
+    get sent() {
+      return node.sent.map(decode);
+    },
+    reactions: [],
+    signIns: 0,
+  };
   const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   // Who liked or recasted: two people, and more for "See everyone".
@@ -123,16 +136,6 @@ async function serve(page: Page, options: Options = {}) {
     calls.reactions.push(kind);
     const messages = kind === "Like" ? (options.liked ?? [second.hash]).map((hash) => reacted(hash, "LIKE")) : [];
     return route.fulfill({ headers: cors, json: { messages } });
-  });
-  await page.route(`${NODE}/reactionById?*`, (route) =>
-    route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get reaction", error_detail: 'status: NotFound, message: "not found"' } }),
-  );
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    expect(route.request().headers()["content-type"]).toBe("application/octet-stream");
-    calls.sent.push(decode(route.request().postDataBuffer()!));
-    const [status, json] = options.submit?.(calls.sent.length) ?? [200, {}];
-    return route.fulfill({ status, headers: cors, json });
   });
   return calls;
 }
@@ -280,7 +283,9 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
   // Now what the reader liked is read: the second cast's heart fills.
   await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-  // Unlike: a removal, a second later at least, so it wins.
+  // Unlike, once the node shows the like: a removal, a second later at
+  // least, so it wins.
+  await expect(like).not.toHaveAttribute("aria-busy");
   await like.click();
   await expect.poll(() => calls.sent.length).toBe(2);
   expect(calls.sent[1]).toMatchObject({ type: 4, reaction: 1, target: { fid: 42, hash: first.hash }, signer: key });
@@ -373,24 +378,28 @@ test("on a phone, signed out, a tap on the heart opens the Farcaster app's way; 
 
 test("a key removed in the Farcaster app is forgotten, and a failed like is undone", async ({ page }) => {
   await signIn(page);
-  const calls = await serve(page, { submit: (n) => (n === 1 ? [503, { error: "unavailable" }] : [400, { error: "Failed to submit message", error_detail: 'status: InvalidArgument, message: "bad_request.validation_failure/invalid signer"' }]) });
+  // Down for a like and the three times it goes again; then the key is unknown.
+  const calls = await serve(page, { submit: (n) => (n <= 4 ? "down" : "unknown-key") });
   await page.goto("/");
   await expect(card(page, first)).toBeVisible();
   const key = await approvedKey(page, 3_600_000);
   await page.reload();
   const like = card(page, first).getByRole("button", { name: "Like", exact: true });
-  // The node is down: the like is undone, and the reader told.
+  // The node is down: the same like goes again after 1, 2 and 4 s, then
+  // it's undone, and the reader told.
   await like.click();
-  await expect(page.getByRole("status").filter({ hasText: "Couldn't reach Farcaster's network" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Couldn't reach Farcaster's network" })).toBeVisible({ timeout: 20_000 });
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(card(page, first).locator(".stat-likes .n")).toHaveText("3");
+  expect(calls.sent).toHaveLength(4);
+  expect(new Set(calls.sent.map((sent) => sent.at)).size).toBe(1);
   expect(calls.sent[0]).toMatchObject({ type: 3, signer: key });
   // The node doesn't know the key any more: it was removed.
   await like.click();
   await expect(page.getByRole("status").filter({ hasText: "Allthing's key isn't on your Farcaster account anymore" })).toBeVisible();
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect.poll(() => kept(page)).toBeNull();
-  expect(calls.sent).toHaveLength(2);
+  expect(calls.sent).toHaveLength(5);
   // So the next like asks for a new one.
   await like.click();
   await expect(page.getByRole("dialog", { name: "Approve Allthing" })).toBeVisible();

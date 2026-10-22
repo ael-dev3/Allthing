@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey, envelope, link, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { approvedKey, link, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Following, unfollowing and deleting one's own casts from Allthing, with
  * the reader's key. WebCrypto and IndexedDB are real; the node is a
  * stand-in, and nothing is posted. Every message handed to the node is
- * decoded and its signature checked.
+ * decoded, its hash and signature checked, and read back from the
+ * stand-in node's store (`helpers/node.ts`).
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
@@ -22,12 +24,23 @@ const theirs = { hash: hex(3), author: alice, text: "Not mine to delete", ts, li
 const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
 
-type Calls = { sent: Envelope[]; lookups: number };
+type Calls = { sent: Envelope[]; readonly lookups: number };
 
 /** `slow`: how long the node takes to answer a message, in ms. */
 async function serve(page: Page, { following = false, slow = 0 }: { following?: boolean; slow?: number } = {}) {
-  const calls: Calls = { sent: [], lookups: 0 };
-  const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
+  // The node: the reader's casts, and their follow of Alice if `following`.
+  const node = await standIn(page, { fid: me.fid, slow });
+  node.had.cast(me.fid, mine.hash);
+  node.had.cast(me.fid, reply.hash);
+  if (following) node.had.follow(me.fid, alice.fid);
+  const lookup = `linkById?fid=${me.fid}&target_fid=${alice.fid}&link_type=follow`;
+  const calls: Calls = {
+    sent: node.sent,
+    // Whether the reader follows Alice, asked of the node.
+    get lookups() {
+      return node.reads.filter((read) => read === lookup).length;
+    },
+  };
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [theirs, mine], notes: {}, meta } }));
   await page.route("**/api/v1/user?*", (route) => {
@@ -42,23 +55,6 @@ async function serve(page: Page, { following = false, slow = 0 }: { following?: 
   });
   await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 9152 } }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/reactionById?*`, (route) =>
-    route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get reaction", error_detail: 'status: NotFound, message: "not found"' } }),
-  );
-  await page.route(`${NODE}/linkById?*`, (route) => {
-    const url = new URL(route.request().url());
-    expect([url.searchParams.get("fid"), url.searchParams.get("target_fid"), url.searchParams.get("link_type")]).toEqual(["1234", "42", "follow"]);
-    calls.lookups += 1;
-    return following
-      ? route.fulfill({ headers: cors, json: { data: { type: "MESSAGE_TYPE_LINK_ADD", fid: me.fid, linkBody: { type: "follow", targetFid: alice.fid } } } })
-      : route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get link", error_detail: 'status: NotFound, message: "not found"' } });
-  });
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    calls.sent.push(envelope(route.request().postDataBuffer()!));
-    if (slow) await new Promise((done) => setTimeout(done, slow));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return calls;
 }
 
@@ -99,7 +95,8 @@ test("follow and unfollow from a profile, its count following along", async ({ p
   await expect.poll(() => calls.sent.length).toBe(1);
   expect([calls.sent[0].type, calls.sent[0].fid]).toEqual([5, me.fid]);
   expect(link(calls.sent[0])).toEqual({ type: "follow", target: alice.fid });
-  // Hovering Following offers Unfollow.
+  // Once the node shows it, hovering Following offers Unfollow.
+  await expect(follow).not.toHaveAttribute("aria-busy");
   await follow.hover();
   await expect(follow.locator(".unfollow-text")).toBeVisible();
   await follow.click();

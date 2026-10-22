@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey, cast as castOf, envelope, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { approvedKey, cast as castOf, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Emoji reactions. Farcaster's own reactions are only likes and recasts, so
  * an emoji reaction is a reply that is one Pepe and nothing else: React,
  * after Reply and Quote, opens the Pepe picker, and a pick goes out as that
  * reply with the reader's key. A cast's replies that are one Pepe show
- * under it as chips. The node is a stand-in, and every message handed to it
- * is decoded and its signature checked.
+ * under it as chips. The node is a stand-in: every message handed to it is
+ * decoded, its hash and signature checked, and read back from its store
+ * (`helpers/node.ts`).
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
@@ -34,19 +36,13 @@ const words = reply(5, dave, "Words, not a reaction :pepe_no:", 40);
 words.children = [reply(6, alice, ":pepe_pls:", 50, hex(5))];
 const thread = { cast: post, children: [reply(2, bob, ":pepe_heart_hug:", 10), reply(3, carol, ":pepe_heart_hug:", 20), reply(4, bob, ":pepe_no:", 30), words] };
 
-async function serve(page: Page) {
-  const sent: Envelope[] = [];
-  const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
+async function serve(page: Page): Promise<Envelope[]> {
+  // The node: it checks each message, and answers its read-backs.
+  const { sent } = await standIn(page, { fid: me.fid });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: { thread, notes: {}, meta } }));
   await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 9152 } }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/reactionById?*`, (route) => route.fulfill({ status: 400, headers: cors, json: { errCode: "not_found" } }));
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    sent.push(envelope(route.request().postDataBuffer()!));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return sent;
 }
 

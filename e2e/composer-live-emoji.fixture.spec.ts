@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { draftOf, expectDraft, selectIn, selectionIn } from "./helpers/composer";
-import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
+import { approvedKey, cast as castOf, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * In the composer, a Pepe's shortcode shows as the Pepe as soon as it is
@@ -21,21 +22,16 @@ const post = { hash: hex(1), author: alice, text: "What should I read next?", ts
 const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
 
-async function serve(page: Page) {
-  const sent: Envelope[] = [];
+async function serve(page: Page): Promise<Envelope[]> {
   let key = "";
-  const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
+  // The node: it checks each message, and answers its read-backs.
+  const { sent } = await standIn(page, { fid: me.fid, key: () => key });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: new URL(route.request().url()).searchParams.has("offset") ? [] : [post], notes: {}, meta } }));
   await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 3356318 } }));
   await page.route("**/api/v1/refresh", (route) => route.fulfill({ json: { expired: 0 } }));
   await page.route(`${NODE}/signersByFid?*`, (route) => route.fulfill({ headers: cors, json: { signers: [{ key }] } }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    sent.push(envelope(route.request().postDataBuffer()!));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return sent;
 }
 

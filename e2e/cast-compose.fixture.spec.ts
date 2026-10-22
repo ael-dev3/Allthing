@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
-import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
+import { approvedKey, cast as castOf, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn, type Answer } from "./helpers/node";
 
 /*
  * Casting, replying and quoting from Allthing with the reader's key. The
  * browser's WebCrypto and IndexedDB are real; KLIPY, the Farcaster app's API
  * and the node are stand-ins, and nothing is posted. Every message handed
- * to the node is decoded and its signature checked.
+ * to the node is decoded, its hash and signature checked, and read back
+ * from the stand-in node's store (`helpers/node.ts`).
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
@@ -41,9 +43,11 @@ const gif = (slug: string) => {
 
 type Calls = { sent: Envelope[]; names: string[]; endorse: number };
 
-async function serve(page: Page, { submit }: { submit?: (n: number) => [number, object] } = {}) {
-  const calls: Calls = { sent: [], names: [], endorse: 0 };
+async function serve(page: Page, { submit }: { submit?: (n: number) => Answer } = {}) {
   let key = "";
+  // The node: it checks each message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid, key: () => key, answer: submit });
+  const calls: Calls = { sent: node.sent, names: [], endorse: 0 };
   let polls = 0;
   const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
@@ -91,12 +95,6 @@ async function serve(page: Page, { submit }: { submit?: (n: number) => [number, 
     return name === "alice"
       ? route.fulfill({ headers: cors, json: { name, fid: alice.fid, type: "USERNAME_TYPE_FNAME" } })
       : route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get username proof", error_detail: 'status: NotFound, message: "Username proof not found"' } });
-  });
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    calls.sent.push(envelope(route.request().postDataBuffer()!));
-    const [status, json] = submit?.(calls.sent.length) ?? [200, {}];
-    return route.fulfill({ status, headers: cors, json });
   });
   return calls;
 }
@@ -218,7 +216,7 @@ test("Ctrl or Cmd and Enter posts a reply, which reads Replying… while it goes
 
 test("long casts, too-long ones, and one the network refuses", async ({ page }) => {
   await signIn(page, me);
-  const calls = await serve(page, { submit: (n) => (n === 2 ? [400, { error: "Failed to submit message", error_detail: 'status: InvalidArgument, message: "bad_request.validation_failure/text too long"' }] : [200, {}]) });
+  const calls = await serve(page, { submit: (n) => (n === 2 ? { refuse: "text too long" } : "merge") });
   await page.goto("/");
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   await approvedKey(page, me.fid, 3_600_000);

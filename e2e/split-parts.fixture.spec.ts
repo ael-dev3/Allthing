@@ -2,6 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, signIn } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Parts of the app fetched the first time they're used (allthing-web's
@@ -229,16 +230,11 @@ const reader = { fid: 1234, username: "reader", display_name: "Reader" };
 const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type" };
 
-/** Writes set up on the Worker, and a node that takes every message. */
+/** Writes set up on the Worker, and a node that takes every message, and shows it read back. */
 async function serveWrites(page: Page) {
-  const sent: number[] = [];
+  const { sent } = await standIn(page, { fid: reader.fid });
   await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 3356318 } }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/submitMessage`, (route) => {
-    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    sent.push(route.request().postDataBuffer()!.length);
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return sent;
 }
 

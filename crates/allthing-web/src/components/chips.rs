@@ -279,8 +279,10 @@ fn acting_stat(
     let busy = Memo::new(move |_| writer.busy(&key, reaction));
     let key = hash.clone();
     let shown = Memo::new(move |_| writer.shown_count(&key, reaction, n));
+    // Not done yet: handed to the Farcaster app, or sent from here and not
+    // shown on the node yet.
     let key = hash.clone();
-    let pending = Memo::new(move |_| writer.pending_reaction(&key, reaction));
+    let pending = Memo::new(move |_| writer.pending_reaction(&key, reaction) || busy.get());
     let hands_off = Memo::new(move |_| writer.hands_off());
     let shows_mine = Memo::new(move |_| writer.shows_mine());
     let lead = ViewFn::from(move || {

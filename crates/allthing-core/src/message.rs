@@ -7,6 +7,11 @@
 //! signs, with a key it can't export (WebCrypto), and hands the envelope to
 //! the node's `submitMessage`; Allthing's servers never see the key.
 //!
+//! The node taking a message isn't the network merging it: Hypersnap is a
+//! read node, which checks the message and passes it to Snapchain's
+//! validators, and its store has the message only once a block of theirs
+//! does. So each write is read back from the node after ([`read_back`]).
+//!
 //! Also here: the node's answers about the reader's own messages, which
 //! Allthing reads from the browser too (what they liked and recasted, and
 //! whether their key is registered).
@@ -347,21 +352,28 @@ pub fn submit_url() -> String {
 /// What became of a submitted message, from the node's answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Submitted {
-    Merged,
-    /// The node has it already: as good as merged.
+    /// The node took it: valid as the network stands, and passed on to
+    /// Snapchain's validators. Not merged yet: a block of theirs merges it
+    /// or drops it, and only reading it back ([`read_back`]) tells which.
+    Accepted,
+    /// The node has this very message already (merged, or on its way):
+    /// as good as taken, and counted once.
     Duplicate,
     /// The key isn't one of the account's: not registered yet, or removed.
     UnknownKey,
-    /// The node is busy or down just now.
+    /// The node is busy or down just now: the same message may go again.
     Unavailable,
     /// Refused for another reason, in the node's words.
     Refused(String),
 }
 
-/// The node's answer to `submitMessage`.
+/// The node's answer to `submitMessage`. Hypersnap answers every failure
+/// with 400, its own unavailability too, and words its gRPC status in the
+/// body: `status: Unavailable, message: "unavailable/mempool channel is
+/// full"`, `status: InvalidArgument, message: "bad_request.duplicate/…"`.
 pub fn submitted(status: u16, body: &str) -> Submitted {
     if (200..300).contains(&status) {
-        return Submitted::Merged;
+        return Submitted::Accepted;
     }
     if status == 429 || status >= 500 {
         return Submitted::Unavailable;
@@ -369,22 +381,85 @@ pub fn submitted(status: u16, body: &str) -> Submitted {
     let failure = serde_json::from_str::<Value>(body).ok();
     let field = |name: &str| failure.as_ref()?.get(name)?.as_str().map(str::to_owned);
     let detail = field("error_detail").or_else(|| field("error")).unwrap_or_default();
-    // Snapchain's codes: "bad_request.validation_failure/invalid signer",
-    // "bad_request.duplicate".
+    // Its message, without the gRPC framing around it, and Snapchain's code
+    // before it ("bad_request.validation_failure/", "unavailable/").
+    let message = detail.split("message: \"").nth(1).and_then(|m| m.split('"').next()).unwrap_or(&detail);
+    let (code, words) = match message.split_once('/') {
+        Some((code, words)) if !code.contains(' ') => (code, words),
+        _ => ("", message),
+    };
+    let node_trouble = ["status: Unavailable", "status: Internal", "status: DeadlineExceeded", "status: Unknown"]
+        .iter()
+        .any(|status| detail.contains(status));
     if detail.contains("invalid signer") || detail.contains("unknown signer") {
         Submitted::UnknownKey
-    } else if detail.contains("duplicate") {
+    } else if code == "bad_request.duplicate" || detail.contains("duplicate") {
         Submitted::Duplicate
+    } else if node_trouble || code == "unavailable" || code.starts_with("db.") || code.starts_with("internal") {
+        Submitted::Unavailable
     } else {
-        // Its message, without the gRPC framing around it or Snapchain's
-        // code before it ("bad_request.validation_failure/").
-        let message = detail.split("message: \"").nth(1).and_then(|m| m.split('"').next()).unwrap_or(&detail);
-        let message = match message.split_once('/') {
-            Some((code, words)) if code.starts_with("bad_request.") => words,
-            _ => message,
-        };
-        Submitted::Refused(message.trim().to_owned())
+        Submitted::Refused(words.trim().to_owned())
     }
+}
+
+/// What reading a message back from the node shows, once the node has
+/// taken it ([`Submitted::Accepted`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadBack {
+    /// It landed: the node's store has this very message (an add, by its
+    /// hash), or no longer has what it takes back (a removal).
+    Landed,
+    /// The node has what it asks for, by another of the reader's messages
+    /// (a like made before, or in another app): not this one, so far.
+    Already,
+    /// Not yet.
+    NotYet,
+}
+
+/// Where to read a message `fid` signed back from the node: the reaction,
+/// the follow or the cast it adds or takes back (a cast by its own hash).
+pub fn read_back_url(fid: u64, body: &Body, hash: &[u8; 20]) -> String {
+    match body {
+        Body::ReactionAdd(kind, target) | Body::ReactionRemove(kind, target) => reaction_url(fid, *kind, target),
+        Body::Follow(target) | Body::Unfollow(target) => link_url(fid, *target),
+        Body::CastAdd(_) => cast_url(&CastId { fid, hash: *hash }),
+        Body::CastRemove(target) => cast_url(&CastId { fid, hash: *target }),
+    }
+}
+
+/// What the node's answer to [`read_back_url`] says of the message `body`,
+/// whose hash is `hash`: `None` when it says nothing (the node busy, or an
+/// answer it doesn't give). The node answers what it doesn't have with a
+/// 400 that says `NotFound`.
+pub fn read_back(body: &Body, hash: &[u8; 20], status: u16, answer: &str) -> Option<ReadBack> {
+    let found = match status {
+        200 => Some(serde_json::from_str::<Value>(answer).ok()?),
+        400 | 404 if answer.contains("NotFound") => None,
+        _ => return None,
+    };
+    // What each message adds, or takes back.
+    let (adds, adding) = match body {
+        Body::ReactionAdd(..) => ("MESSAGE_TYPE_REACTION_ADD", true),
+        Body::ReactionRemove(..) => ("MESSAGE_TYPE_REACTION_ADD", false),
+        Body::Follow(_) => ("MESSAGE_TYPE_LINK_ADD", true),
+        Body::Unfollow(_) => ("MESSAGE_TYPE_LINK_ADD", false),
+        Body::CastAdd(_) => ("MESSAGE_TYPE_CAST_ADD", true),
+        Body::CastRemove(_) => ("MESSAGE_TYPE_CAST_ADD", false),
+    };
+    let Some(message) = found else {
+        return Some(if adding { ReadBack::NotYet } else { ReadBack::Landed });
+    };
+    if message.get("data")?.get("type")?.as_str()? != adds {
+        return None;
+    }
+    let ours = message.get("hash")?.as_str()?.eq_ignore_ascii_case(&hex_encode(hash));
+    Some(match (adding, ours) {
+        (true, true) => ReadBack::Landed,
+        // A cast is read by its own hash: another one isn't it.
+        (true, false) if matches!(body, Body::CastAdd(_)) => ReadBack::NotYet,
+        (true, false) => ReadBack::Already,
+        (false, _) => ReadBack::NotYet,
+    })
 }
 
 /// The account's recent reactions of one kind, newest first.
@@ -688,6 +763,7 @@ fn nested(out: &mut Vec<u8>, field: u64, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provenance::hex_decode;
 
     fn unhex(s: &str) -> Vec<u8> {
         let s: String = s.split_whitespace().collect();
@@ -950,7 +1026,7 @@ mod tests {
 
     #[test]
     fn reads_what_the_node_made_of_a_message() {
-        assert_eq!(submitted(200, "{}"), Submitted::Merged);
+        assert_eq!(submitted(200, "{}"), Submitted::Accepted);
         let unknown = r#"{"error":"Failed to submit message","error_detail":"status: InvalidArgument, message: \"bad_request.validation_failure/invalid signer\", details: [], metadata: MetadataMap { headers: {\"x-err-code\": \"bad_request.validation_failure\"} }"}"#;
         assert_eq!(submitted(400, unknown), Submitted::UnknownKey);
         let bad = unknown.replace("invalid signer", "invalid signature");
@@ -963,6 +1039,80 @@ mod tests {
         assert_eq!(submitted(502, "<html>Bad gateway</html>"), Submitted::Unavailable);
         assert_eq!(submitted(429, r#"{"error":"rate limited"}"#), Submitted::Unavailable);
         assert_eq!(submitted(400, "not json"), Submitted::Refused(String::new()));
+    }
+
+    #[test]
+    fn the_node_busy_answers_400_too() {
+        // Hypersnap's words for each, as its source (src/core/error.rs,
+        // src/network/server.rs, src/mempool/mempool.rs) makes them.
+        let answer = |status: &str, message: &str| {
+            format!(
+                r#"{{"error":"Failed to submit message","error_detail":"status: {status}, message: \"{message}\", details: [], metadata: MetadataMap {{ headers: {{}} }}"}}"#
+            )
+        };
+        for (status, message) in [
+            ("Unavailable", "unavailable/mempool channel is full"),
+            ("Unavailable", "unavailable/Error adding to mempool"),
+            ("Internal", "db.internal_error/rocksdb"),
+        ] {
+            assert_eq!(submitted(400, &answer(status, message)), Submitted::Unavailable, "{message}");
+        }
+        let merged = answer("InvalidArgument", "bad_request.duplicate/message has already been merged");
+        assert_eq!(submitted(400, &merged), Submitted::Duplicate);
+        let pooled = answer("InvalidArgument", "bad_request.duplicate/message already in the mempool");
+        assert_eq!(submitted(400, &pooled), Submitted::Duplicate);
+        let limited = answer("InvalidArgument", "bad_request.rate_limited/rate limit exceeded for FID 1234");
+        assert_eq!(submitted(400, &limited), Submitted::Refused("rate limit exceeded for FID 1234".into()));
+    }
+
+    // The node's answers below are as Hypersnap gave them on 21 October 2026.
+
+    #[test]
+    fn reads_a_message_back_from_the_node() {
+        let target = CastId::new(218_957, "0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045").unwrap();
+        let ours: [u8; 20] = hex_decode("0xbede949bb7f37473d430b7cfd1186fe30d52f9df").unwrap().try_into().unwrap();
+        let other = [7u8; 20];
+        let like = Body::ReactionAdd(Reaction::Like, target);
+        let unlike = Body::ReactionRemove(Reaction::Like, target);
+        assert_eq!(read_back_url(3, &like, &ours), reaction_url(3, Reaction::Like, &target));
+        let liked = r#"{"data":{"type":"MESSAGE_TYPE_REACTION_ADD","fid":3,"timestamp":182871013,"network":"FARCASTER_NETWORK_MAINNET","reactionBody":{"type":"REACTION_TYPE_LIKE","targetCastId":{"fid":218957,"hash":"0x5c5b64edc095ec945bb85cd7f5eb31e7ca187045"}}},"hash":"0xBEDE949bb7f37473d430b7cfd1186fe30d52f9df","hashScheme":"HASH_SCHEME_BLAKE3","signature":"R+EucLbZ7JUmllBPSQLAdRD8dJbrcOHWDhJwiBtfRkmRNLr406p4WKpHL51Fg54/Bq0yeXJls/6HC2AbEAhTBw==","signatureScheme":"SIGNATURE_SCHEME_ED25519","signer":"0xc887f5bf385a4718eaee166481f1832198938cf33e98a82dc81a0b4b81ffe33d"}"#;
+        let missing = r#"{"error":"Failed to get reaction","error_detail":"status: NotFound, message: \"cast not found\", details: [], metadata: MetadataMap { headers: {} }"}"#;
+        // A like: this very message, another like of theirs, or none yet.
+        assert_eq!(read_back(&like, &ours, 200, liked), Some(ReadBack::Landed));
+        assert_eq!(read_back(&like, &other, 200, liked), Some(ReadBack::Already));
+        assert_eq!(read_back(&like, &ours, 400, missing), Some(ReadBack::NotYet));
+        // Taking it back: done once the like is gone.
+        assert_eq!(read_back(&unlike, &other, 400, missing), Some(ReadBack::Landed));
+        assert_eq!(read_back(&unlike, &other, 200, liked), Some(ReadBack::NotYet));
+        // The node saying nothing.
+        assert_eq!(read_back(&like, &ours, 503, ""), None);
+        assert_eq!(read_back(&like, &ours, 400, "Invalid query parameters"), None);
+        assert_eq!(read_back(&like, &ours, 200, "<html>"), None);
+        assert_eq!(read_back(&like, &ours, 200, &liked.replace("REACTION_ADD", "CAST_ADD")), None);
+
+        // A cast, read by its own hash, and one taken back.
+        let quote = Body::CastAdd(NewCast { embeds: vec![Embed::Cast(target)], ..NewCast::default() });
+        let cast: [u8; 20] = hex_decode("0x0dc209f71ad2c77281e09f14cd21f5c4895d93a3").unwrap().try_into().unwrap();
+        assert_eq!(
+            read_back_url(4877, &quote, &cast),
+            format!("{NODE}/v1/castById?fid=4877&hash=0x0dc209f71ad2c77281e09f14cd21f5c4895d93a3")
+        );
+        let there = r#"{"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":4877,"timestamp":182832333,"network":"FARCASTER_NETWORK_MAINNET","castAddBody":{"embedsDeprecated":[],"mentions":[],"parentCastId":null,"parentUrl":null,"text":"Zoo!","embeds":[{"castId":{"fid":10215,"hash":"0x74366a3c2bf0345cc14b1e4c099bccb381e37172"}}],"mentionsPositions":[],"type":"CAST"}},"hash":"0x0dc209f71ad2c77281e09f14cd21f5c4895d93a3","hashScheme":"HASH_SCHEME_BLAKE3","signature":"Im3tuavZVbxcJgygaBnNBnDv5M9NAyo3878u9dmvZCT4hQt9/4fEukJnFpK4YpUHTLmLZbUAlTzGBFBcbplfBg==","signatureScheme":"SIGNATURE_SCHEME_ED25519","signer":"0xd7c23d846fc5050a948ee31a81258fd10ab25da760ed360328cd02310f50ecea"}"#;
+        let gone = r#"{"error":"Failed to get cast","error_detail":"status: NotFound, message: \"cast not found\", details: [], metadata: MetadataMap { headers: {} }"}"#;
+        assert_eq!(read_back(&quote, &cast, 200, there), Some(ReadBack::Landed));
+        assert_eq!(read_back(&quote, &cast, 400, gone), Some(ReadBack::NotYet));
+        let delete = Body::CastRemove(cast);
+        assert_eq!(read_back_url(4877, &delete, &other), read_back_url(4877, &quote, &cast));
+        assert_eq!(read_back(&delete, &other, 400, gone), Some(ReadBack::Landed));
+        assert_eq!(read_back(&delete, &other, 200, there), Some(ReadBack::NotYet));
+
+        // A follow, and an unfollow.
+        let follow = Body::Follow(2);
+        assert_eq!(read_back_url(3, &follow, &ours), link_url(3, 2));
+        let following = r#"{"data":{"type":"MESSAGE_TYPE_LINK_ADD","fid":3,"timestamp":159794223,"network":"FARCASTER_NETWORK_MAINNET","linkBody":{"type":"follow","displayTimestamp":null,"targetFid":2}},"hash":"0xe0c3"}"#;
+        assert_eq!(read_back(&follow, &ours, 200, following), Some(ReadBack::Already));
+        assert_eq!(read_back(&Body::Unfollow(2), &ours, 200, following), Some(ReadBack::NotYet));
+        assert_eq!(read_back(&Body::Unfollow(2), &ours, 400, gone), Some(ReadBack::Landed));
     }
 
     // CastAddBody { mentions = 2 (packed), parent_cast_id = 3, text = 4,

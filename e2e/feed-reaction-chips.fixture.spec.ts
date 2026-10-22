@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
-import { approvedKey, cast as castOf, envelope, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { approvedKey, cast as castOf, removed, signIn, type Envelope } from "./helpers/farcaster";
+import { standIn } from "./helpers/node";
 
 /*
  * Emoji reactions on a listing's cards. The cron keeps the replies that are
  * one Pepe from the hub's events, and a listing carries its casts' in its
  * notes, by fid with no names; a card shows them as chips under its foot,
  * as a post shows its own. A chip reacts, or takes the reader's reaction
- * back, as on a post, and never opens the post. The node is a stand-in, and
- * every message handed to it is decoded and its signature checked.
+ * back, as on a post, and never opens the post. The node is a stand-in:
+ * every message handed to it is decoded, its hash and signature checked,
+ * and read back from its store (`helpers/node.ts`).
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -38,9 +40,12 @@ const reactions = {
   ],
 };
 
-async function serve(page: Page) {
-  const sent: Envelope[] = [];
-  const preflight = (route: Route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: cors });
+async function serve(page: Page): Promise<Envelope[]> {
+  // The node, with the reader's NO sign from before: it checks each
+  // message, and answers its read-backs.
+  const node = await standIn(page, { fid: me.fid });
+  node.had.cast(me.fid, hex(12));
+  const { sent } = node;
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [reacted, quiet], notes: { reactions }, meta } }));
   await page.route("**/api/v1/cast?*", (route) => {
@@ -49,12 +54,6 @@ async function serve(page: Page) {
   });
   await page.route("**/api/v1/signer", (route) => route.fulfill({ json: { app_fid: 9152 } }));
   await page.route(`${NODE}/reactionsByFid?*`, (route) => route.fulfill({ headers: cors, json: { messages: [] } }));
-  await page.route(`${NODE}/reactionById?*`, (route) => route.fulfill({ status: 400, headers: cors, json: { errCode: "not_found" } }));
-  await page.route(`${NODE}/submitMessage`, async (route) => {
-    if (await preflight(route)) return;
-    sent.push(envelope(route.request().postDataBuffer()!));
-    return route.fulfill({ headers: cors, json: {} });
-  });
   return sent;
 }
 

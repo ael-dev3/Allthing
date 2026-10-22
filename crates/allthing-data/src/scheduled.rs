@@ -120,7 +120,7 @@ pub async fn run(inv: &Invocation, store: &dyn ScheduledStore, now: i64) -> Resu
             Some(_) if inv.remaining_subrequests() < 2 => Outcome::Unsent,
             Some(bytes) => match upstream::submit(inv, &message::submit_url(), bytes).await {
                 Ok((status, body)) => match message::submitted(status, &body) {
-                    Submitted::Merged | Submitted::Duplicate => Outcome::Posted,
+                    Submitted::Accepted | Submitted::Duplicate => Outcome::Posted,
                     Submitted::UnknownKey => Outcome::Failed(KEY_GONE.into()),
                     Submitted::Refused(why) if !why.is_empty() => {
                         Outcome::Failed(format!("Farcaster didn't take it: {why}"))
