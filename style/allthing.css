@@ -50,7 +50,16 @@
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* What comes in rises into place on a spring that settles without a
+     bounce you'd see (below), or, where `linear()` is unknown, on --ease. */
+  --spring: var(--ease);
   --page-width: 1140px;
+}
+
+@supports (animation-timing-function: linear(0, 1)) {
+  :root {
+    --spring: linear(0, 0.012, 0.045 2.3%, 0.183 5.2%, 0.725 15.8%, 0.919 21.7%, 1.009 27.4%, 1.032 32.2%, 1.027 38.7%, 1.006 51.6%, 0.998 66.2%, 1);
+  }
 }
 
 *,
@@ -135,6 +144,20 @@ a[href] {
 [data-press="down"] {
   scale: 0.96;
   opacity: 0.78;
+}
+
+/* A link pressed for a page still on its way stays pressed until the page
+   shows (nav.rs `go`); a card is tinted instead, as a list's row is. */
+[data-press="held"] {
+  scale: 0.96;
+  opacity: 0.78;
+}
+
+.cast-card[data-press="held"] {
+  scale: none;
+  opacity: 1;
+  background: #f4f2fd;
+  border-color: rgba(79, 67, 212, 0.22);
 }
 
 [data-press="up"] {
@@ -241,13 +264,15 @@ code {
   }
 }
 
-.main-nav {
+.main-nav,
+.boot-nav {
   display: flex;
   gap: 4px;
   font-size: 14px;
 }
 
-.main-nav a {
+.main-nav a,
+.boot-nav span {
   color: var(--ink-2);
   padding: 6px 11px;
   border-radius: 999px;
@@ -259,13 +284,15 @@ code {
   color: var(--ink);
 }
 
-.main-nav a[aria-current="page"] {
+.main-nav a[aria-current="page"],
+.boot-nav span[aria-current="page"] {
   color: var(--ink);
   background: rgba(255, 255, 255, 0.85);
   box-shadow: 0 0 0 1px var(--line);
 }
 
-.readonly-pill {
+.readonly-pill,
+.boot-readonly {
   margin-left: auto;
   font-size: 11.5px;
   letter-spacing: 0.04em;
@@ -277,7 +304,8 @@ code {
 }
 
 /* Sign in with Farcaster, or the signed-in account's picture and menu. */
-.sign-in-button {
+.sign-in-button,
+.boot-sign-in {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -299,6 +327,7 @@ code {
 }
 
 .sign-in-button .icon,
+.boot-sign-in .icon,
 .account-link .icon {
   width: 16px;
   height: 16px;
@@ -308,13 +337,15 @@ code {
   stroke-linecap: round;
 }
 
-.account {
+.account,
+.boot-account {
   margin-left: auto;
 }
 
 /* The signed-in account's picture: a link to their profile, whose menu
    opens on hover, keyboard focus or a tap. */
-.account-button {
+.account-button,
+.boot-account {
   display: inline-flex;
   border-radius: 50%;
 }
@@ -324,7 +355,8 @@ code {
   outline-offset: 2px;
 }
 
-.account-button .avatar {
+.account-button .avatar,
+.boot-avatar {
   display: block;
   box-shadow: 0 0 0 1px var(--line-2);
   transition: box-shadow 0.2s var(--ease);
@@ -500,23 +532,31 @@ code {
 
 /* ---------- Page frame ---------- */
 
+/* At least a screen tall under the header, so the footer is never in view
+   while a page waits for its data, to be pushed down when it comes. */
 .page {
   max-width: var(--page-width);
   margin: 0 auto;
   padding: 22px 20px 56px;
-  min-height: 70vh;
+  min-height: calc(100vh - 61px);
+  min-height: calc(100dvh - 61px);
 }
 
-.page > * {
-  animation: page-in 0.42s var(--ease) backwards;
+/* The front page, kept while another page shows (kept.rs): its element
+   is the page's as far as layout goes. */
+.kept-front {
+  display: contents;
 }
 
-@keyframes page-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-}
+/* ---------- Entrances ---------- */
+
+/* A page opened from a link or a card (nav.rs `go`) shows at once, with no
+   transition of its own: a view transition between the two pages, tried,
+   showed the next one 450 to 740 ms after the tap, against 18 to 72 ms
+   without (docs/PERFORMANCE.md). What's drawn anew on it (a post, a list's
+   cards) rises a few pixels into place on a spring-like curve, readable
+   from its first frame: the page and its cards faded in from transparent,
+   so every navigation showed frames with nothing to read. */
 
 .columns {
   display: grid;
@@ -709,8 +749,9 @@ code {
   padding: 13px 16px 11px;
   box-shadow: var(--shadow);
   transition: transform 0.28s var(--ease), box-shadow 0.28s var(--ease), border-color 0.28s var(--ease);
-  animation: rise 0.5s var(--ease) backwards;
-  animation-delay: calc(var(--i, 0) * 26ms);
+  animation: rise 0.32s var(--ease) backwards;
+  animation-timing-function: var(--spring);
+  animation-delay: calc(min(var(--i, 0), 8) * 16ms);
   /* Off-screen cards skip layout and paint, so a re-sort of a long list
      re-lays out only what is on screen. */
   content-visibility: auto;
@@ -726,9 +767,11 @@ code {
   content-visibility: visible;
 }
 
+/* Cards drawn anew rise into place, readable from their first frame: they
+   came in from transparent, so a list drawn anew showed nothing to read for
+   a few frames, and later cards stayed invisible through their delay. */
 @keyframes rise {
   from {
-    opacity: 0;
     transform: translateY(8px);
   }
 }
@@ -980,7 +1023,8 @@ code {
 /* A picture is its own size, never squeezed: `img { max-width: 100% }`
    shrank one with a link around it that gave way to a long name (22 px to
    an 8 px oval). */
-.avatar {
+.avatar,
+.boot-avatar {
   display: inline-block;
   border-radius: 50%;
   object-fit: cover;
@@ -2079,6 +2123,7 @@ p.jumbo .emoji img {
 
 .post {
   animation: rise 0.3s var(--ease) backwards;
+  animation-timing-function: var(--spring);
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -3768,9 +3813,17 @@ p.jumbo .emoji img {
   }
 }
 
-/* What makes the boot screen's header as tall as the app's, unseen. */
-.boot-holder {
-  visibility: hidden;
+/* Placeholders for the part of a page that comes after the rest (a post's
+   replies, a profile's casts): shown only if it's slow to come, after
+   250 ms, so a part that comes sooner just appears. */
+.later {
+  animation: later 0s 250ms backwards;
+}
+
+@keyframes later {
+  from {
+    visibility: hidden;
+  }
 }
 
 /* The front page's first cards, drawn before the app came (web/paint.js):
@@ -3804,14 +3857,16 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
-.search-box {
+.search-box,
+.boot-search {
   position: relative;
   flex: 1 1 220px;
   max-width: 340px;
   margin-left: auto;
 }
 
-.search-box .icon {
+.search-box .icon,
+.boot-search .icon {
   position: absolute;
   left: 11px;
   top: 50%;
@@ -3825,7 +3880,8 @@ p.jumbo .emoji img {
   pointer-events: none;
 }
 
-.search-box input {
+.search-box input,
+.boot-search input {
   width: 100%;
   font: 14px/1 var(--font-ui);
   color: var(--ink);
@@ -4597,7 +4653,8 @@ p.jumbo .emoji img {
 }
 
 /* The signed-in reader's account, at the header's end. */
-.header-actions {
+.header-actions,
+.boot-actions {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -5987,7 +6044,8 @@ p.jumbo .emoji img {
 }
 
 @media (max-width: 640px) {
-  .header-actions {
+  .header-actions,
+  .boot-actions {
     gap: 8px;
   }
 
@@ -6417,19 +6475,23 @@ p.jumbo .emoji img {
     font-size: 27px;
   }
 
-  .main-nav a {
+  .main-nav a,
+  .boot-nav span {
     padding: 5px 8px;
   }
 
-  .readonly-pill {
+  .readonly-pill,
+  .boot-readonly {
     display: none;
   }
 
-  .sign-in-button {
+  .sign-in-button,
+  .boot-sign-in {
     padding: 8px;
   }
 
-  .sign-in-label {
+  .sign-in-label,
+  .boot-sign-in-label {
     display: none;
   }
 
@@ -6549,9 +6611,15 @@ p.jumbo .emoji img {
   }
 
   /* A press only dims. */
-  [data-press="down"] {
+  [data-press="down"],
+  [data-press="held"]:not(.cast-card) {
     scale: none;
     opacity: 0.6;
+  }
+
+  /* Not motion: placeholders still wait to be needed. */
+  .later {
+    animation-delay: 250ms !important;
   }
 
   [data-press="up"] {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 /*
  * On a phone, the smallest targets take a fingertip too, as the others do
@@ -202,6 +203,8 @@ test("at 390 on a touch screen, the apps under the front page's bar take a 44 px
   const { context, page } = await phone(browser, testInfo);
   await serve(page);
   await page.goto("/");
+  // The app's legend, not the boot screen's, which it takes the place of.
+  await appCame(page);
   const legend = page.locator(".client-legend").locator("a, .client-other");
   await expect(legend).toHaveCount(5);
   // Two rows of them on a phone.
@@ -225,6 +228,7 @@ test("with a mouse, the toggle, the \"?\" and the apps are as they were", async 
   test.skip(Boolean(testInfo.project.use.hasTouch), "a mouse");
   await serve(page);
   await page.goto("/");
+  await appCame(page);
   const app = page.locator(".client-legend a").first();
   await expect(app).toBeVisible();
   expect(await app.evaluate((el) => getComputedStyle(el, "::after").content)).toBe("none");

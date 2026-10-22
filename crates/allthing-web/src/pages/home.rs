@@ -10,7 +10,7 @@ use allthing_core::model::Cast;
 use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted_for};
 use allthing_core::time::format_date;
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
+use leptos_router::hooks::{use_location, use_query_map};
 
 use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons, after_paint};
@@ -51,7 +51,14 @@ pub fn Home() -> impl IntoView {
     let query = use_query_map();
     let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
     let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
-    Effect::new(move |_| set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() }));
+    // Its title whenever it shows; kept while another page shows (kept.rs),
+    // it leaves that page's alone.
+    let location = use_location();
+    Effect::new(move |_| {
+        if crate::kept::is_front(&location.pathname.get()) {
+            set_title(if sort.get() == Sort::Hot { "" } else { sort.get().as_str() });
+        }
+    });
     // Leaving the front page before its cards are drawn: its first cards,
     // drawn before the app came, can't stay over the next page.
     on_cleanup(crate::boot::hand_over);

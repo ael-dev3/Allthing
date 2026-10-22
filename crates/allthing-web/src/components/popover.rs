@@ -273,6 +273,16 @@ pub fn Popover(
             now
         });
     }
+    // Another page: one on a page kept while another shows (the front page,
+    // kept.rs) closes, as one on a page left goes with it.
+    let pathname = leptos_router::hooks::use_location().pathname;
+    Effect::new(move |seen: Option<String>| {
+        let now = pathname.get();
+        if seen.is_some_and(|seen| seen != now) {
+            close();
+        }
+        now
+    });
     let idle = move || idle.is_some_and(|idle| idle.get());
     let hovering = move || hover && can_hover() && !idle();
     let open_delay = if links { LINKS_OPEN_DELAY } else { OPEN_DELAY };

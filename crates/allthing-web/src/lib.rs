@@ -7,6 +7,7 @@ mod boot;
 mod components;
 #[cfg(feature = "static-host")]
 mod host;
+mod kept;
 #[cfg(not(feature = "static-host"))]
 mod keys;
 mod leanings;
@@ -32,7 +33,6 @@ use crate::components::who::{WhoDialog, WhoList};
 use crate::pages::channel::channel_page;
 use crate::pages::channels::channels_page;
 use crate::pages::dau::DauPage;
-use crate::pages::home::Home;
 use crate::pages::messages::MessagesPage;
 use crate::pages::post::post_page;
 use crate::pages::scheduled::ScheduledPage;
@@ -80,8 +80,10 @@ fn App() -> impl IntoView {
             <a class="skip-link" href="#main">"Skip to content"</a>
             <SiteHeader/>
             <main id="main" class="page">
+                // The front page, kept while another page shows (`kept`).
+                <kept::KeptFront/>
                 <Routes fallback=|| view! { <NotFound/> }>
-                    <Route path=path!("/") view=Home/>
+                    <Route path=path!("/") view=|| ()/>
                     // Pages whose code is fetched on first use (`split`).
                     <Route path=path!("/c/:key") view=|| split::page(channel_page())/>
                     <Route path=path!("/c") view=|| split::page(channel_page())/>
@@ -101,6 +103,7 @@ fn App() -> impl IntoView {
             <WhoDialog/>
             {sign_in_dialog()}
             <nav::ScrollMemory/>
+            <nav::InstantLinks/>
         </Router>
     }
 }

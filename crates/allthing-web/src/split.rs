@@ -36,22 +36,26 @@ where
 ///   (opening a post is how most visits go on from a feed), and as a card
 ///   is pointed at or touched (`CastCard`);
 /// - a profile's, a channel's, search's and the channels' as a link to
-///   one is pointed at, touched or focused, anywhere on the page, and
-///   search's as the search box is.
+///   one is pointed at, touched, pressed or focused, anywhere on the page,
+///   and search's as the search box is; the data of a post or a channel a
+///   link opens comes then too (`prefetch_page_data`).
 ///
 /// A visit that starts on one of them has `index.html` fetch its code with
 /// the app. On a slow or metered connection only intent fetches anything.
 pub fn preload_pages() {
     let intent = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(|event: web_sys::Event| {
         let Some(el) = event.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { return };
-        if let Some(path) = el.closest("a[href]").ok().flatten().and_then(|link| link.get_attribute("href")) {
+        if let Some(link) = el.closest("a[href]").ok().flatten()
+            && let Some(path) = link.get_attribute("href")
+        {
             preload_page(&path);
+            prefetch_page_data(&event, link, &path);
         } else if el.closest("form[role=search]").ok().flatten().is_some() {
             // Search's results, as the search box is used.
             preload_page("/search");
         }
     });
-    for name in ["pointerover", "touchstart", "focusin"] {
+    for name in ["pointerover", "pointerdown", "touchstart", "focusin"] {
         let _ = document().add_event_listener_with_callback_and_bool(name, intent.as_ref().unchecked_ref(), true);
     }
     intent.forget();
@@ -61,9 +65,56 @@ pub fn preload_pages() {
     set_timeout(|| idle(|| preload_page(&crate::util::href("/p/"))), POST_AFTER);
 }
 
+/// How long a mouse rests on a link before the data of the page it opens is
+/// fetched: passing over a link isn't meaning to open it.
+const HOVER_INTENT: Duration = Duration::from_millis(100);
+
+/// The data of a post or a channel a link opens, ahead of the press that
+/// opens it, through the prefetches' cap: at once for a touch, a press or
+/// keyboard focus, and once a mouse has rested on the link for
+/// `HOVER_INTENT`. (Cards fetch their post's as they're pointed at.) Not a
+/// profile's: a name pointed at or tapped opens the account's card, which
+/// never reads the profile's payload, and a profile opened from a feed
+/// shows its header at once anyway (`api::seen_person`).
+fn prefetch_page_data(event: &web_sys::Event, link: web_sys::Element, href: &str) {
+    let page = href.strip_prefix(crate::util::BASE).unwrap_or(href);
+    if !["/p/", "/c/"].iter().any(|prefix| page.starts_with(prefix)) {
+        return;
+    }
+    let Some(read) = crate::nav::page_read(href) else { return };
+    let pointer = js_sys::Reflect::get(event, &"pointerType".into()).ok().and_then(|t| t.as_string());
+    let hovered = event.type_() == "pointerover" && pointer.as_deref() == Some("mouse");
+    if !hovered {
+        crate::api::prefetch(&read.api);
+        return;
+    }
+    set_timeout(
+        move || {
+            if link.matches(":hover").unwrap_or(false) {
+                crate::api::prefetch(&read.api);
+            }
+        },
+        HOVER_INTENT,
+    );
+}
+
 thread_local! {
     /// The pages whose code has been asked for, by `PAGES` index.
     static ASKED: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    /// Of those, the pages whose code has come.
+    static CAME: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the page at `path` shows at once as far as its code goes: it
+/// isn't a part of its own, or its code, asked for, has come. (Not asked
+/// for here, it's fetched as the page opens, with its placeholder.) A link
+/// pressed asks for it, so `nav::go` waits for it as for the page's data:
+/// a channel's data that came before its code opened it on the placeholder
+/// of a page whose code hadn't come, for a frame or more.
+pub fn page_came(path: &str) -> bool {
+    let Some(part) = page_part(path) else { return true };
+    let bit = 1u8 << part;
+    ASKED.with(std::cell::Cell::get) & bit == 0 || CAME.with(std::cell::Cell::get) & bit != 0
 }
 
 /// The page whose code a link to `path` needs, if it's one of the parts.
@@ -99,6 +150,8 @@ pub fn preload_page(path: &str) {
         // Couldn't come: the next intent asks again.
         if fetched.is_err() {
             ASKED.with(|a| a.set(a.get() & !bit));
+        } else {
+            CAME.with(|c| c.set(c.get() | bit));
         }
     });
 }

@@ -18,6 +18,8 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole("alert")).toContainText("Something went wrong");
     await expect(page.getByRole("alert")).not.toContainText("Unexpected data");
     await page.getByRole("link", { name: "Allthing, home", exact: true }).click();
+    // The front page opens once the press has shown (nav.rs), not in the click.
+    await expect(page).toHaveURL(/\/$/);
     const box = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
     await box.fill("recovery");
     await box.press("Enter");

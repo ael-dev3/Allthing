@@ -112,12 +112,13 @@ fn PostPage() -> impl IntoView {
                 meta: allthing_core::api::Meta { backend: Default::default(), fetched_at: 0, stale: false },
             });
             let notes: Notes = Arc::new(notes);
+            // The replies' placeholders only if they're slow to come.
             return view! {
                 <Columns>
                     <MainCast cast notes payload/>
                     <section class="replies" aria-label="Replies" aria-busy="true">
                         <div class="replies-head"><h2>"Replies"</h2></div>
-                        <CastSkeletons count=2/>
+                        <div class="later"><CastSkeletons count=2/></div>
                     </section>
                 </Columns>
             }
@@ -136,16 +137,17 @@ fn PostPage() -> impl IntoView {
                 let notes: Notes = Arc::new(payload.notes.clone());
                 api::remember_cards(&notes.users);
                 let mut cast = payload.thread.cast.clone();
-                let mut replies = payload.thread.children.clone();
-                sort_thread(&mut replies, sort.get());
+                // Sorted below, where only the replies follow the sort: a
+                // tab redraws them, not the whole post.
+                let children = payload.thread.children.clone();
                 // One count of the replies, in the post's row and over them:
                 // its direct replies, as its card in the feeds says, and never
                 // fewer than are listed (the data source's count can lag). The
                 // replies to those replies are under them, not in the count.
-                cast.replies = cast.replies.max(replies.len() as u64);
+                cast.replies = cast.replies.max(children.len() as u64);
                 let path = cast_href(&hash);
                 let mut in_thread = std::collections::HashSet::from([cast.hash.to_ascii_lowercase()]);
-                thread_hashes(&replies, &mut in_thread);
+                thread_hashes(&children, &mut in_thread);
                 let (count, _) = crate::components::chips::replies_shown(&cast.hash, cast.replies);
                 view! {
                     <Columns>
@@ -155,21 +157,33 @@ fn PostPage() -> impl IntoView {
                         <section class="replies" aria-label="Replies">
                             <div class="replies-head">
                                 <h2>{move || if count.get() == 1 { "Reply" } else { "Replies" }}<span class="num">{move || full_number(count.get())}</span></h2>
+                                // Another sort takes the place of this one in the
+                                // history, so Back leaves the post.
                                 <nav class="sort-tabs" aria-label="Sort replies">
                                     {CommentSort::ALL
                                         .into_iter()
                                         .map(|option| {
                                             let href = with_query(&path, &[("sort", (option != CommentSort::Top).then(|| option.as_str().to_owned()))]);
-                                            view! { <a href=href data-noscroll="" class:selected=option == sort.get()>{option.as_str()}</a> }
+                                            view! { <a href=href data-noscroll="" prop:replace=true class:selected=move || option == sort.get()>{option.as_str()}</a> }
                                         })
                                         .collect_view()}
                                 </nav>
                             </div>
                             {crate::components::outgoing_replies(in_thread)}
-                            {if replies.is_empty() {
+                            {if children.is_empty() {
                                 view! { <p class="empty">"No replies yet."</p> }.into_any()
                             } else {
-                                view! { <div class="comments"><CommentTree nodes=replies notes=notes.clone() op_fid=cast.author.fid/></div> }.into_any()
+                                let (notes, op_fid) = (notes.clone(), cast.author.fid);
+                                view! {
+                                    <div class="comments">
+                                        {move || {
+                                            let mut replies = children.clone();
+                                            sort_thread(&mut replies, sort.get());
+                                            view! { <CommentTree nodes=replies notes=notes.clone() op_fid/> }
+                                        }}
+                                    </div>
+                                }
+                                .into_any()
                             }}
                         </section>
                     </Columns>

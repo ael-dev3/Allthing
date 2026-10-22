@@ -566,7 +566,9 @@ async function end(page: Page, ms = 1100): Promise<Sample> {
 /**
  * A press where it shows, without scrolling first, as a reader's: on the
  * phone a finger down for 80 ms, on a computer a mouse that comes to rest on
- * the target for 250 ms before it clicks (which is when hovering prefetches).
+ * the target for 250 ms (which is when hovering prefetches) and clicks, its
+ * button down for 80 ms. (Down and up at once, as this did before, the click
+ * waited for the frame that showed the press, as no reader's does.)
  */
 async function press(page: Page, target: Locator, profile: Profile) {
   await expect(target).toBeVisible();
@@ -585,6 +587,7 @@ async function press(page: Page, target: Locator, profile: Profile) {
     await page.mouse.move(x, y, { steps: 4 });
     await page.waitForTimeout(250);
     await page.mouse.down();
+    await page.waitForTimeout(80);
     await page.mouse.up();
   }
 }
@@ -968,32 +971,13 @@ const BACKS = ["back from cast", "back from profile", "back deep in the feed"];
 
 /**
  * Budgets the app doesn't meet yet, by profile and check, with what it
- * measured (the median of three, in four runs on main at 32407b7 and
- * 87beef5, 21 October 2026, on a busy 4-core machine). Each runs as an expected failure
- * (`test.fail`): CI stays green, and a change that meets one fails CI until
- * it takes its line out of here.
+ * measured. Each runs as an expected failure (`test.fail`): CI stays green,
+ * and a change that meets one fails CI until it takes its line out of here.
+ * Opening a cast or a profile in the tap's own task, and the frames with
+ * nothing to read as a page or a list came in from transparent, were here
+ * until perf/instant-nav (docs/PERFORMANCE.md#smoothness).
  */
-const NOT_YET: Record<string, string> = {
-  // Opening a post or a profile draws the page in the tap's own task.
-  "390 open cast INP": "136–216 ms",
-  "390 open cast long task": "93–168 ms",
-  "390 open profile INP": "184–232 ms",
-  "390 open profile long task": "136–206 ms",
-  // The page drawn anew fades in from transparent (`.page > *`), and so do
-  // a list's cards (`rise`), so for a few frames there's nothing to read.
-  "390 sort tab blank": "4–6 frames",
-  "390 open cast blank": "5–6 frames",
-  "390 open profile blank": "4–6 frames",
-  "390 back from cast blank": "2 frames",
-  "390 back from profile blank": "2 frames",
-  "390 back deep in the feed blank": "2 frames",
-  "1280 sort tab blank": "4–8 frames",
-  "1280 open cast blank": "5 frames",
-  "1280 open profile blank": "4–6 frames",
-  "1280 back from cast blank": "6–7 frames",
-  "1280 back from profile blank": "5–7 frames",
-  "1280 back deep in the feed blank": "5–7 frames",
-};
+const NOT_YET: Record<string, string> = {};
 
 /**
  * Budgets the app misses, or only just meets, by less than a busy
@@ -1002,11 +986,10 @@ const NOT_YET: Record<string, string> = {
  * room to spare.
  */
 const TOO_CLOSE: Record<string, string> = {
-  // As at 390 px, but by less: the page is drawn in the click's own task.
-  "1280 open cast INP": "64–115 ms over eight runs",
-  "1280 open cast long task": "0–81 ms over six runs",
-  "1280 open profile INP": "64–96 ms over eight runs",
-  "1280 open profile long task": "0–72 ms over six runs",
+  // A tap on a name opens the account's card first, which is drawn in the
+  // tap's own task (popover.rs); its "View profile" then opens the profile.
+  "390 open profile INP": "80–112 ms over five runs of five",
+  "390 open profile long task": "0–59 ms over five runs of five",
 };
 
 /** Whether the profile's run is recorded in a trace, which slows it: its numbers are for reading, not for budgets. */
