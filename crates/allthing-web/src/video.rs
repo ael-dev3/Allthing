@@ -173,6 +173,17 @@ pub fn known_size(url: &str) -> Option<(u32, u32)> {
         .or_else(|| FILE_SIZES.with(|s| s.borrow().get(url).copied()))
 }
 
+/// A video's poster, asking for nothing: the one its playlist gave, if this
+/// page has loaded it (at the height an inline video's poster is, so the
+/// browser has it), or Cloudflare Stream's, which sits beside its manifest.
+#[cfg(not(feature = "static-host"))]
+pub fn known_poster(url: &str) -> Option<String> {
+    const HEIGHT: u32 = 720;
+    STREAMS
+        .with(|s| s.borrow().get(url).and_then(|stream| stream.poster(HEIGHT)))
+        .or_else(|| hls::stream_thumbnail(url, HEIGHT))
+}
+
 pub fn remember_file_size(url: &str, width: u32, height: u32) {
     FILE_SIZES.with(|s| {
         let mut sizes = s.borrow_mut();

@@ -26,6 +26,7 @@ use crate::util::{document, href, prefers_reduced_motion};
 /// `files` takes what is pasted as files (a screenshot); a copy or a cut is
 /// the draft's text, shortcodes and all; undo and redo go by the draft (the
 /// box is drawn again, which a browser's own undo can't follow).
+/// `described_by` names what a screen reader hears with it.
 #[component]
 pub fn ComposeText(
     node_ref: NodeRef<Div>,
@@ -33,6 +34,7 @@ pub fn ComposeText(
     caret: StoredValue<Option<(usize, usize)>>,
     label: &'static str,
     #[prop(optional)] files: Option<Callback<web_sys::DataTransfer, bool>>,
+    #[prop(optional)] described_by: Option<&'static str>,
 ) -> impl IntoView {
     let edits = StoredValue::new(Edits::default());
     // Where the caret was after the last change: where undoing it goes.
@@ -124,6 +126,7 @@ pub fn ComposeText(
             role="textbox"
             aria-multiline="true"
             aria-label=label
+            aria-describedby=described_by
             data-placeholder=label
             spellcheck="true"
             on:beforeinput=move |ev: web_sys::InputEvent| match ev.input_type().as_str() {
