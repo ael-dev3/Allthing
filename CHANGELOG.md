@@ -21,6 +21,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - Pressed conversation rows keep their preview text and timestamps readable while the press animation dims the row, including on its selected background.
+- The smoothness fixture locates the first feed card below both front-page tab rows before measuring navigation; its existing timing, frame and scroll-restoration budgets are unchanged.
 
 - Messages connects under the site’s existing Content Security Policy. SpacetimeDB’s product and sum codecs now use cached closures instead of compiling JavaScript strings; the SDK version is guarded at build time, and a browser test exercises the actual bundled connection, row decoding, account verification and chat sending under the production policy.
 
