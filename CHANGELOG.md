@@ -22,6 +22,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Reply-composer geometry checks wait for its entrance animation before measuring exact thumbnail and tool sizes, while retaining first-frame focus and layout-shift checks.
+
 - Pressed conversation rows keep their preview text and timestamps readable while the press animation dims the row, including on its selected background.
 - The smoothness fixture locates the first feed card below both front-page tab rows before measuring navigation; its existing timing, frame and scroll-restoration budgets are unchanged.
 
