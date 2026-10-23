@@ -75,7 +75,8 @@ pub fn QuoteCard(
     let body_cast = cast.clone();
     let body = move || {
         let cast = &body_cast;
-        if cast.hidden_for(crate::miniapps::shown()) {
+        let shown = !cast.mini_app || crate::miniapps::shown();
+        if cast.hidden_for(shown) {
             // No label on the cast itself: a mini app is a format, said as such.
             let note = if cast.spam { "Quoted cast hidden" } else { "Quoted cast hidden: mini app" };
             view! { <p class="quote-hidden">{note}</p> }.into_any()

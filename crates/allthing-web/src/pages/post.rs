@@ -145,12 +145,13 @@ fn PostPage() -> impl IntoView {
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data: payload, stale, .. }))) => {
                 let payload: Arc<CastPayload> = payload;
-                // The reader's choice about mini apps: their replies and ancestors pruned
-                // as they chose, the page drawn again when it changes.
-                let show_apps = crate::miniapps::shown();
+                // Only a thread with mini app replies or ancestors needs
+                // rebuilding when that preference changes. Ordinary posts
+                // keep their body, media and composer mounted.
                 let payload = if allthing_core::thread::flatten(&payload.thread).iter().skip(1).any(|c| c.mini_app)
                     || payload.ancestors.iter().any(|c| c.mini_app)
                 {
+                    let show_apps = crate::miniapps::shown();
                     let mut thread = payload.thread.clone();
                     thread.children = std::mem::take(&mut thread.children)
                         .into_iter()

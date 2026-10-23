@@ -157,14 +157,18 @@ for (const size of sizes) {
       expect(reads, "changing Settings uses the carried post, without refetching it").toBe(1);
       await page.goto(`/p/${hash(1)}`);
       const ordinaryBody = post.locator(".post-text");
+      const ordinaryQuoteBody = post.locator("blockquote.quote .quote-text");
       await expect(ordinaryBody).toHaveText("An ordinary post");
+      await expect(ordinaryQuoteBody).toHaveText("A plain quoted cast");
       await ordinaryBody.evaluate((element) => (window as any).__ordinaryBody = element);
+      await ordinaryQuoteBody.evaluate((element) => (window as any).__ordinaryQuoteBody = element);
       for (const _ of [false, true]) {
         await (await settings(page)).toggle.click();
         await page.keyboard.press("Escape");
         await expect(ordinaryBody).toHaveText("An ordinary post");
         expect(await ordinaryBody.evaluate((element) => element === (window as any).__ordinaryBody)).toBe(true);
-        await expect(post.locator("blockquote.quote")).toContainText("A plain quoted cast");
+        await expect(ordinaryQuoteBody).toHaveText("A plain quoted cast");
+        expect(await ordinaryQuoteBody.evaluate((element) => element === (window as any).__ordinaryQuoteBody)).toBe(true);
         await expect(post.locator(".mini-app-note, .mini-app-link")).toHaveCount(0);
       }
       expect(reads).toBe(2);
