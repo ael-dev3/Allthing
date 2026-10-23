@@ -1164,9 +1164,14 @@ test.describe("hosting", () => {
 
   test("static assets are long-cached and the API is edge-cached", async ({ request }) => {
     const index = await request.get("/");
-    const asset = /\/assets\/allthing-[0-9a-f]+\.wasm/.exec(await index.text())?.[0];
-    expect(asset).toBeTruthy();
-    const wasm = await request.get(asset!);
+    // The boot module comes from /wasm on Workers, or /assets on a static
+    // host. Discover its exact fingerprinted path, excluding idle splits;
+    // multiple main-module references must still fail this contract.
+    const modules = (await index.text()).match(/\/(?:assets|wasm)\/allthing-[0-9a-f]+\.wasm(?=["'\s<>])/g) ?? [];
+    expect(modules).toHaveLength(1);
+    const wasm = await request.get(modules[0]);
+    expect(wasm.status()).toBe(200);
+    expect(wasm.headers()["content-type"]).toBe("application/wasm");
     expect(wasm.headers()["cache-control"]).toContain("immutable");
     await request.get("/api/v1/home");
     const second = await request.get("/api/v1/home");
