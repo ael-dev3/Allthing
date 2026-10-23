@@ -68,20 +68,32 @@ pub fn CastCard(
     // it was: it doesn't rise into place again.
     let entrance = if crate::nav::restoring() { "; animation: none" } else { "" };
     let node = NodeRef::<leptos::html::Article>::new();
+    // On the front page: whether it was seen before this visit, and
+    // watched for being seen now (`crate::seen`).
+    let front = crate::seen::on_front();
+    let seen_before = front && crate::seen::seen_before(&cast.hash);
+    let marked = move || seen_before && crate::seen::enabled();
     Effect::new(move |_| {
         if let Some(element) = node.get() {
             watch_for_prefetch(&element);
+            if front {
+                crate::seen::watch(&element);
+            }
         }
     });
     on_cleanup(move || {
         if let Some(element) = node.get_untracked() {
             unwatch(&element);
+            if front {
+                crate::seen::unwatch(&element);
+            }
         }
     });
     view! {
         <article
             class="cast-card"
             class:deleted=gone
+            class:seen=marked
             node_ref=node
             data-hash=cast.hash.clone()
             data-fid=cast.author.fid
@@ -109,6 +121,7 @@ pub fn CastCard(
                 </span>
                 <ChannelLink cast=cast.clone()/>
                 <OriginChip hash=cast.hash.clone() notes=notes.clone()/>
+                {move || marked().then(|| view! { <span class="seen-mark">"Seen"</span> })}
             </header>
             {parent.map(|p| view! { <p class="replying-to">"replying to "<a href=cast_href(&p)>"a cast"</a></p> })}
             {(!cast.text.trim().is_empty()).then(|| view! {

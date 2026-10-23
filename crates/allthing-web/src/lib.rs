@@ -17,6 +17,7 @@ mod nav;
 mod pages;
 mod preload;
 mod press;
+mod seen;
 mod split;
 mod util;
 mod video;

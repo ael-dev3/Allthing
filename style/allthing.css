@@ -7797,6 +7797,32 @@ p.jumbo .emoji img {
   font-weight: 600;
 }
 
+/* Seen casts on the front page (`seen.rs`): still there, but quieter,
+   with a word in their meta row. Not the card's opacity, which would fade
+   its popovers too. */
+.cast-card.seen .cast-text,
+.cast-card.seen .quote-text,
+.cast-card.seen > .cast-meta .display-name {
+  color: var(--ink-3);
+}
+
+.cast-card.seen .media-grid,
+.cast-card.seen .link-card {
+  opacity: 0.75;
+}
+
+.seen-mark {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
 @media (pointer: coarse) {
   .mini-apps-switch {
     min-height: 44px;

@@ -92,7 +92,10 @@ async function paint(payload, { sort, range }) {
   const inWindow = (cast) => cast.ts > now - SPANS[range];
   // Mini app casts only for a reader who shows them (miniapps.rs).
   const apps = showsMiniApps();
-  const casts = sorted(payload.pool.filter((c) => !c.parent_hash && inWindow(c) && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);
+  // Casts seen on an earlier visit are marked, and in hot listed after the rest (seen.rs).
+  const seen = seenBefore();
+  const ranked = sorted(payload.pool.filter((c) => !c.parent_hash && inWindow(c) && (apps || !c.mini_app)), sort, lean);
+  const casts = (sort === "hot" ? unseenFirst(ranked, seen) : ranked).slice(0, CARDS);
   // Each card is drawn once it and those above it can be, in order: one
   // with a single image once its size has come, a round trip away.
   const ready = casts.map((cast) => (drawable(cast, notes) ? sized(cast, notes) : Promise.reject(new Error("drawn otherwise"))));
@@ -105,7 +108,7 @@ async function paint(payload, { sort, range }) {
       return;
     }
     if (appCame()) return;
-    const card = castCard(cast, notes, i, lean.favorites.has(cast.author.fid));
+    const card = castCard(cast, notes, i, lean.favorites.has(cast.author.fid), seen.has(cast.hash));
     if (!card) return;
     if (!list) {
       list = el("div", { class: "cast-list" });
@@ -158,6 +161,19 @@ function showsMiniApps() {
     return false;
   }
 }
+
+/** The casts seen before this visit, or none if the reader turned marking them off (seen.rs). */
+function seenBefore() {
+  try {
+    if (localStorage.getItem("allthing.seen-marks") === "0") return new Set();
+    return new Set((localStorage.getItem("allthing.seen") || "").split(/\s+/).filter((h) => /^0x[0-9a-fA-F]{1,64}$/.test(h)));
+  } catch {
+    return new Set();
+  }
+}
+
+/** The casts not seen first, each part in its order (allthing_core::seen::unseen_first). */
+const unseenFirst = (casts, seen) => [...casts.filter((c) => !seen.has(c.hash)), ...casts.filter((c) => seen.has(c.hash))];
 
 /** The reader's favorites and those they see less of (leanings.rs). */
 function leanings() {
@@ -320,7 +336,7 @@ function shareBar(payload, notes, range) {
 
 // A card (cast.rs, CastCard), or nothing for one the app draws otherwise.
 
-function castCard(cast, notes, i, favorite) {
+function castCard(cast, notes, i, favorite, seen) {
   if (!cast || !cast.hash || !cast.author || typeof cast.ts !== "number" || !drawable(cast, notes)) return null;
   const link = castHref(cast.hash);
   const text = typeof cast.text === "string" ? cast.text : "";
@@ -329,7 +345,7 @@ function castCard(cast, notes, i, favorite) {
     "article",
     {
       style: `--i: ${Math.min(i, 16)}`,
-      class: "cast-card",
+      class: seen ? "cast-card seen" : "cast-card",
       "data-hash": cast.hash,
       "data-fid": cast.author.fid,
       "data-ts": cast.ts,
@@ -339,7 +355,7 @@ function castCard(cast, notes, i, favorite) {
       "data-replies": cast.replies || 0,
     },
     el("p", { class: "deleted-note" }, "You deleted this cast."),
-    meta(cast, notes, link, favorite),
+    meta(cast, notes, link, favorite, seen),
     text.trim() ? el("div", { class: "cast-text" }, castText(text, cast.mentions || [])) : null,
     images.length ? mediaGrid(cast, images) : null,
     linkCards(cast, text),
@@ -389,7 +405,7 @@ function hostOf(url) {
 /** Whether a link plays as a video facade (allthing_core::video, `detect`): any on those hosts. */
 const isVideoLink = (url) => VIDEO_HOSTS.test(hostOf(url) || "");
 
-function meta(cast, notes, link, favorite) {
+function meta(cast, notes, link, favorite, seen) {
   const channel = cast.channel ? el("span", { class: "in-channel" }, "in ", el("a", { class: "channel-name", href: channelHref(cast.channel.id) }, "/" + cast.channel.label)) : null;
   return el(
     "header",
@@ -404,6 +420,7 @@ function meta(cast, notes, link, favorite) {
     ),
     channel,
     origin(cast.hash, notes),
+    seen ? el("span", { class: "seen-mark" }, "Seen") : null,
   );
 }
 

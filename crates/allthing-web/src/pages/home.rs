@@ -65,6 +65,8 @@ pub fn Home() -> impl IntoView {
     on_cleanup(crate::boot::hand_over);
     // Allthing's poll, beside the feed or in it, whichever list it shows.
     crate::components::provide_poll();
+    // Its cards record being seen, and mark those seen on an earlier visit.
+    crate::seen::provide_marks();
     // The tab tapped shows as chosen in the next frame, and the feed follows
     // in a task of its own once that frame is painted: a tap is answered at
     // once, even where drawing the cards takes a while (docs/PERFORMANCE.md).
@@ -349,11 +351,11 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                     let order = listed.get();
                     let filter = client.get();
                     let leanings = leaning.for_list(sorted_by, (order, filter));
-                    let mut all = sorted_for(&pool, order, &leanings);
+                    let mut all = crate::seen::hot_order(sorted_for(&pool, order, &leanings), order);
                     more.with(|pages| {
                         for page in pages {
                             all.extend(
-                                sorted_for(&page.casts, order, &leanings)
+                                crate::seen::hot_order(sorted_for(&page.casts, order, &leanings), order)
                                     .into_iter()
                                     .filter(|c| !first_hashes.contains(&c.hash)),
                             );
@@ -479,17 +481,17 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
                 let order = listed.get();
                 let filter = client.get();
                 let leanings = leaning.for_list(sorted_by, (order, filter));
-                let mut all = sorted_for(&pool, order, &leanings);
+                let mut all = crate::seen::hot_order(sorted_for(&pool, order, &leanings), order);
                 more.with(|pages| {
                     for page in pages {
                         all.extend(
-                            sorted_for(&page.casts, order, &leanings)
+                            crate::seen::hot_order(sorted_for(&page.casts, order, &leanings), order)
                                 .into_iter()
                                 .filter(|c| !first_hashes.contains(&c.hash)),
                         );
                     }
                 });
-                all.extend(sorted_for(&topped, order, &leanings));
+                all.extend(crate::seen::hot_order(sorted_for(&topped, order, &leanings), order));
                 match filter {
                     Some(fid) => from_client(all, &notes.get(), fid),
                     None => all,
