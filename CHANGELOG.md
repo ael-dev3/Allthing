@@ -5,6 +5,14 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.
+
+### Fixed
+
+- `scripts/attest-key.mjs` writes a public key that compiles: its pattern stopped at the `;` inside the placeholder `[0; 32]`, leaving `[0x…]; 32];` in `attest_key.rs`. It now replaces the whole array, also once a key is pinned over several lines.
+
 ## [0.5.0] - 2026-10-22
 
 ### Added
