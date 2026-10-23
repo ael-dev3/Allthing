@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { appCame } from "./helpers/app";
 
 /** Waits until the images on screen have loaded, so nothing shifts under the pointer. */
 async function settleImages(page: Page) {
@@ -708,6 +709,7 @@ test.describe("threads and navigation", () => {
 
   test("the whole card opens the post, but selecting text or clicking links does not", async ({ page }) => {
     await page.goto(at("/"));
+    await appCame(page);
     const card = textCards(page).first();
     await expect(card).toBeVisible();
     const hash = await card.getAttribute("data-hash");
@@ -1163,6 +1165,7 @@ test.describe("threads and navigation", () => {
       await page.route((url) => url.pathname + url.search === api, (route) => route.fulfill({ json: payload }));
       await page.goto(at(path));
       await expect(page.locator(shown).first()).toBeVisible();
+      await appCame(page);
       // The inline script ran (CSP allowed it) and the app took its response:
       // the page's one data request is the one the script made.
       expect(await page.evaluate(() => "__allthingEarly" in window)).toBe(false);

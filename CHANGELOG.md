@@ -39,6 +39,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
 - Browser regressions use past timestamps relative to the page’s own clock, wait for restored seen rows and the latest presence-cache expiry, and preserve their ordering, privacy, navigation and timing checks, including a deliberately delayed count refresh.
 - Browser checks recover read posts through Show seen posts, distinguish media uploads from analytics XHRs, control typeahead's input intervals and settle initial fixture resources before measuring reply-sheet shifts. Live checks observe pagination retries, available wallet data and the deployed inline-fetch/CSP contract without changing their timing limits.
+- The roadmap lists the participating and Messages features already delivered, and the architecture's static-test command matches CI.
 - Startup checks distinguish the main WebAssembly module from idle-loaded parts, and range navigation waits for the actual New feed response.
 - Local macOS builds find worker-build's cached WebAssembly optimizer. SDK wire-format and strict-CSP browser checks cover Messages; feed-ranking, reply-composer and smoothness fixtures exercise the updated UI without changing their budgets.
 - The attestation-key helper replaces the complete Rust key array, including multiline values, so a generated key compiles.

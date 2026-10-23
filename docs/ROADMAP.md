@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Roadmap
 
-Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); details per release are in the [changelog](../CHANGELOG.md). Allthing reads; the owner has since scoped a second phase, one feature at a time: Sign In With Farcaster by QR code first, then a post and reply composer.
+Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); details per release are in the [changelog](../CHANGELOG.md). Allthing supports reading, participating through a reader-approved Farcaster key, and its own Messages.
 
 ## Done
 
@@ -27,20 +27,28 @@ Milestones, not dates. Releases use SemVer ([RELEASING.md](RELEASING.md)); detai
   - [x] mini app filtering;
   - [x] a simpler interface;
   - [x] a release process.
-- **Since 0.3.0, unreleased** ([changelog](../CHANGELOG.md#unreleased)):
+- **Reading improvements since 0.3.0** ([changelog](../CHANGELOG.md)):
   - [x] a Reddit-style time filter on the front page;
   - [x] each cast's whole text in feeds, and media at its own shape;
   - [x] video sound that stays on once the reader turns it on;
   - [x] spam, and mini apps on their own domains, left out;
   - [x] a plainer interface, without Neynar scores, the Channels sidebar or "Updated N min ago";
   - [x] browser regression tests on every pull request.
+- **Participating and Messages**:
+  - [x] one Farcaster approval to sign in and write, with the key kept in the browser;
+  - [x] casts, replies, quotes, likes, recasts, follows and deletes;
+  - [x] a composer with attachments, GIFs, stickers, emoji and scheduled casts;
+  - [x] notifications and verified Farcaster accounts in Messages, with end-to-end encrypted DMs.
+- **0.5.1 release candidate** ([changelog](../CHANGELOG.md#051---2026-10-23)):
+  - [x] For you and Following tabs, each with hot, new, top and every time range;
+  - [x] browser-local seen-post history with Show seen posts and reset controls;
+  - [x] mini app controls in Settings and a responsive Home/online-count header;
+  - [x] fresh short-range casts and a shared public Home snapshot for cold data centers.
 
 ## Next
 
-- **Phase 2: participating.** Sign In With Farcaster by QR code through the Farcaster app ([ARCHITECTURE.md](ARCHITECTURE.md#sign-in)); next, a post and reply composer with a GIF picker (search and trending, from a free GIF API). Posting needs a signer the account approves in the Farcaster app, and that scope comes with the composer.
-
 - **A second backend.** Read the same casts from a Snapchain node (or a second Hypersnap operator). Show which backends returned a cast, and let readers pick the source. Reconcile by message hash, not by text.
-- **Smaller app.** The WebAssembly module is about 410 KB compressed, mostly the Leptos runtime and `serde_json`. Candidates: a leaner JSON decoder for payloads, splitting rarely used views, and trimming web-sys features.
+- **Smaller app.** Rarely used views already load as separate WebAssembly parts. Further candidates include a leaner JSON decoder, more selective splitting and trimming web-sys features; measurements belong in [PERFORMANCE.md](PERFORMANCE.md).
 - **Solana activity.** Find a keyless source of Solana address history that allows browser or Worker requests, or document a key-based option that keeps the key out of the repository.
 - **Reading controls kept in the browser.** Local mutes and filters, saved posts, and remembered collapse state.
 - **Ingress provenance.** Prototype phase 2 of [PROVENANCE.md](PROVENANCE.md), signed ingress receipts, against a Hypersnap fork, and show receipts when nodes publish them.
