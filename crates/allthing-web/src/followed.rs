@@ -11,7 +11,9 @@
 //! The set is renewed whenever the Following tab's first page comes, and,
 //! once it is older than [`STALE_MS`], by one background read of that page
 //! after For you is drawn ([`refresh`], through `api::prefetch`), which also
-//! makes the Following tab instant. The list on screen isn't re-sorted when
+//! makes the Following tab instant; that read is tried at most once per
+//! [`STALE_MS`], and while it fails For you ranks by the set last kept, or
+//! without the lift. The list on screen isn't re-sorted when
 //! it lands; the next one drawn uses it (docs/BUDGET.md). `web/paint.js`
 //! reads the same key.
 
@@ -21,6 +23,9 @@ use allthing_core::following::{FOLLOWING_PATH, FollowingPayload, followed_author
 use serde::{Deserialize, Serialize};
 
 const KEY: &str = "allthing.followed";
+/// When [`refresh`] last asked for the set (ms since the epoch), so a read
+/// that fails isn't tried again on every page before [`STALE_MS`] passes.
+const TRIED_KEY: &str = "allthing.followed-tried";
 
 /// A set older than this is renewed in the background.
 pub const STALE_MS: f64 = 10.0 * 60.0 * 1000.0;
@@ -68,7 +73,11 @@ pub fn refresh(reader: u64) {
 
 fn refresh_trying(reader: u64, left: u32) {
     let fresh = read().is_some_and(|kept| kept.reader == reader && js_sys::Date::now() - kept.at < STALE_MS);
-    if fresh {
+    let tried = storage()
+        .and_then(|s| s.get_item(TRIED_KEY).ok().flatten())
+        .and_then(|t| t.parse::<f64>().ok())
+        .is_some_and(|at| js_sys::Date::now() - at < STALE_MS);
+    if fresh || tried {
         return;
     }
     let started = crate::api::prefetch_then(FOLLOWING_PATH, move |body| {
@@ -76,6 +85,11 @@ fn refresh_trying(reader: u64, left: u32) {
             remember(reader, &page);
         }
     });
+    if started != crate::api::Prefetch::Full
+        && let Some(storage) = storage()
+    {
+        let _ = storage.set_item(TRIED_KEY, &js_sys::Date::now().to_string());
+    }
     if started == crate::api::Prefetch::Full && left > 0 {
         leptos::prelude::set_timeout(
             move || refresh_trying(reader, left - 1),
