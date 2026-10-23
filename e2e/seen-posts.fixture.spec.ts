@@ -58,6 +58,29 @@ for (const width of [1280, 390]) {
   });
 }
 
+test("a sort paints its selected tab before suppressing the previous generation's read cards", async ({ page }) => {
+  await serve(page);
+  await page.goto("/");
+  await expect(page.locator("#app .cast-card[data-hash]")).toHaveCount(25);
+  await expect.poll(() => hashes(page)).toContain(hash(1));
+  const firstFrame = await page.evaluate(() => new Promise<{ retained: boolean; selected: boolean; count: number }>((resolve) => {
+    const old = document.querySelector("#app .cast-card[data-hash]")!;
+    const tab = document.querySelector<HTMLAnchorElement>('#app .sort-tabs a[href*="sort=top"]')!;
+    // Queue this before the router handles the click. The first animation
+    // frame observes the tap's answer; the old list's cleanup comes later.
+    tab.addEventListener("click", () => requestAnimationFrame(() => resolve({
+      retained: old.isConnected,
+      selected: document.querySelector("#app .sort-tabs a.selected")?.textContent === "top",
+      count: document.querySelectorAll("#app .cast-card[data-hash]").length,
+    })), { once: true, capture: true });
+    tab.click();
+  }));
+  expect(firstFrame).toEqual({ retained: true, selected: true, count: 25 });
+  // Deferring cleanup still applies reading history to the next generation.
+  await expect(card(page, 1)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show seen posts", exact: true })).toBeVisible();
+});
+
 test("a card taller than two screens counts after a full viewport dwell, not from a sliver", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   // Enough preceding rows to place the card below 800 document pixels:
