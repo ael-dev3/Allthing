@@ -83,17 +83,25 @@ for (const size of [
         };
         requestAnimationFrame(frame);
       }, before.hash);
+      const frames = () => page.evaluate(() => (window as Window & { __frames?: Frame[] }).__frames!);
+      // The sampler must have the page being left, even when navigation
+      // can complete before its next frame on a fast retained route.
+      await expect.poll(async () => (await frames()).some((f) => f.path === "/" && f.top !== null),
+        { timeout: 3000, message: "a frame of the front page before leaving" }).toBe(true);
       await page.locator(`#app .cast-card[data-hash="${before.hash}"] .cast-text`).click();
       await expect(page.locator("#app .post")).toBeVisible();
       // None of the front page is in the post's page.
       await expect(page.locator("#app .cast-list .cast-card")).toHaveCount(0);
+      // DOM visibility can precede a paint. Record the post before Back,
+      // rather than letting both route changes fit between sampled frames.
+      await expect.poll(async () => (await frames()).findIndex((f) => f.path === `/p/${before.hash}` && f.top === null),
+        { timeout: 3000, message: "a frame of the post before Back" }).toBeGreaterThan(0);
       await page.goBack();
       await expect(page).toHaveURL(/\/$/);
       const after = () => page.evaluate((hash) => {
         const card = document.querySelector(`#app .cast-card[data-hash="${hash}"]`) as HTMLElement & { kept?: boolean };
         return { same: card.kept === true, top: card.getBoundingClientRect().top, count: document.querySelectorAll("#app .cast-card").length };
       }, before.hash);
-      const frames = () => page.evaluate(() => (window as Window & { __frames?: Frame[] }).__frames!);
       // Where the reader left the card: its last frame before the post. Not
       // where it was before the click, which can scroll the page first: a
       // card not yet still as Playwright checks it is scrolled into view

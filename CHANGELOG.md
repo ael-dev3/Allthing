@@ -31,6 +31,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Back-navigation checks wait for sampled Home and post frames before returning, preserving their exact retained-card, restored-height, position and request assertions.
+
 - CI runs functional browser fixtures with two workers, followed by smoothness measurements alone with one. Both phases run and keep separate reports even after a failure, under the same checks and timing limits.
 - Video keyboard checks verify a held Space press on the original pointer-focused control before release, retaining bounded input and media diagnostics on failure.
 - Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
