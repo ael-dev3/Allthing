@@ -184,6 +184,24 @@ function headingTop(picker: Locator, name: string) {
 test("the groups' bar brings a group to the top, and marks the one in view as the grid scrolls", async ({ page }) => {
   await serve(page);
   const { dialog } = await compose(page);
+  // Keep Food as the last drawn group: its heading is already mounted, but
+  // later groups have not supplied the scroll room needed to put it at the top.
+  // This slow progressive-paint state must work without a second click.
+  await page.evaluate(() => {
+    const frame = window.requestAnimationFrame.bind(window);
+    const held: Array<() => void> = [];
+    window.requestAnimationFrame = (callback) => frame((time) => {
+      if (document.querySelectorAll(".emoji-group-heading").length === 8) {
+        held.push(() => callback(time));
+      } else {
+        callback(time);
+      }
+    });
+    (window as any).releaseEmojiFrames = () => {
+      window.requestAnimationFrame = frame;
+      held.splice(0).forEach((callback) => callback());
+    };
+  });
   await dialog.getByRole("button", { name: "Add an emoji" }).click();
   const picker = dialog.getByRole("region", { name: "Pepe emoji" });
   const bar = picker.getByRole("group", { name: "Groups" });
@@ -191,8 +209,20 @@ test("the groups' bar brings a group to the top, and marks the one in view as th
   const marked = (name: string) => expect(bar.getByRole("button", { name, exact: true })).toHaveAttribute("aria-current", "true");
   // Each button's face is its group's first emoji, still.
   await expect(bar.getByRole("button", { name: "Food and drink" }).locator("img")).toHaveAttribute("src", /pepe_tea\.still\.webp$/);
+  await expect(picker.locator(".emoji-group-heading")).toHaveCount(8);
+  const geometry = await grid.evaluate((grid) => {
+    const heading = [...grid.querySelectorAll("h4")].find((h) => h.textContent === "Food and drink")!;
+    return {
+      groups: grid.querySelectorAll("h4").length, offsetTop: heading.offsetTop,
+      scrollTop: grid.scrollTop, maxScrollTop: grid.scrollHeight - grid.clientHeight,
+      headingTop: heading.getBoundingClientRect().top - grid.getBoundingClientRect().top,
+    };
+  });
+  await test.info().attach("partial-group-geometry", { contentType: "application/json", body: JSON.stringify(geometry) });
+  expect(geometry.offsetTop).toBeGreaterThan(geometry.maxScrollTop);
   await bar.getByRole("button", { name: "Food and drink" }).click();
   await expect.poll(() => headingTop(picker, "Food and drink")).toBe(0);
+  await page.evaluate(() => (window as any).releaseEmojiFrames());
   await marked("Food and drink");
   await expect(bar.locator("[aria-current]")).toHaveCount(1);
   // Scrolled by hand, the mark follows the heading that has reached the top.

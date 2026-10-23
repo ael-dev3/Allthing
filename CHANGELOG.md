@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Choosing an emoji group while the picker is still drawing reaches its heading on the first click, including a group at the temporary bottom of the list.
 - Sort tabs show their selected state before the next feed hides read cards, keeping reading-history cleanup out of the tap handler.
 - Future-dated casts cannot outrank the present in For you or Following, including All time and early paint. Cached newest-cast payloads and index rankings exclude future timestamps before selecting their visible rows. Source reads use the clock when they finish, so casts posted while a response arrives are retained. Ingest retains up to five seconds of source clock skew in the existing buffer; implausible dates are discarded, and retained rows appear only when their timestamp is reached.
 - A directly opened mini app post follows Show mini app casts immediately in both directions, without a reload or refetch. Hiding it removes its body and embedded content while retaining its Open in Farcaster link; ordinary posts and ordinary quotes keep their content and media mounted.

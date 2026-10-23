@@ -365,10 +365,15 @@ pub fn EmojiPicker(
                 current.set(i);
             }
         };
-        // A group not drawn yet is drawn now, with the rest, and gone to in
-        // the next frame.
+        // An already drawn group can still be at the temporary bottom, with
+        // too little trailing content to reach the top. Draw the rest before
+        // jumping when the heading is missing or would be clamped there.
+        let can_align = match (results.get_untracked(), headings().get(i)) {
+            (Some(results), Some(heading)) => heading.offset_top() <= results.scroll_height() - results.client_height(),
+            _ => false,
+        };
         match drawing.get_value() {
-            Some(drawn) if drawn.try_get_untracked().is_some_and(|groups| groups <= i) => {
+            Some(drawn) if drawn.try_get_untracked().is_some_and(|groups| groups < Group::ALL.len()) && !can_align => {
                 let _ = drawn.try_set(Group::ALL.len());
                 request_animation_frame(go);
             }
