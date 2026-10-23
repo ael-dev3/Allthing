@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A directly opened mini app post follows Show mini app casts immediately in both directions, without a reload or refetch. Hiding it removes its body and embedded content while retaining its Open in Farcaster link; ordinary posts keep their content.
+
 - Short time ranges include newly posted casts even while Hypersnap's trending list lags behind. Every sort keeps the chosen range, and the end-of-range note appears below the list without moving cards down.
 - Following prefetches its own feed when changing sort or range, stops automatic paging at the time limit, and resumes from that cursor for a wider range. A fully seen or filtered feed offers Load more posts after ten payloads rather than reading indefinitely.
 - Changing accounts replaces the feed and ranking snapshot, and late answers from the previous account cannot refill its cache. Presence no longer counts an anonymous and signed-in visit twice; hiding or signing out also removes the public name from cached lists.

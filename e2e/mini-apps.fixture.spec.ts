@@ -124,6 +124,52 @@ for (const size of sizes) {
       await expect(withPlain.locator(".mini-app-link, .mini-app-badge")).toHaveCount(0);
     });
 
+    test("a direct mini app body follows Settings both ways without a reload", async ({ page }) => {
+      await serve(page);
+      let reads = 0;
+      const direct = { ...app, embeds: [{ kind: "link", url: "https://game.example/", title: "Game details" }] };
+      await page.route("**/api/v1/cast?*", (route) => {
+        reads++;
+        const selected = new URL(route.request().url()).searchParams.get("hash") === app.hash ? direct : cast(1, "An ordinary post");
+        return route.fulfill({ json: { thread: { cast: selected, children: [] }, quotes: [{ hash: plainQuoted.hash, cast: plainQuoted }], notes: {}, meta } });
+      });
+      await page.goto(`/p/${app.hash}`);
+      const post = page.locator("#app .post");
+      await expect(post.locator(".mini-app-note")).toBeVisible();
+      await expect(post.locator(".post-text, .link-card")).toHaveCount(0);
+      // Keep the real mini app's escape link even while its body is hidden.
+      await expect(post.locator(".mini-app-link")).toHaveCount(1);
+      for (const on of [true, false, true]) {
+        const { toggle } = await settings(page);
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-checked", String(on));
+        await page.keyboard.press("Escape");
+        if (on) {
+          await expect(post.locator(".post-text")).toHaveText("Play my game", { timeout: 2000 });
+          await expect(post.locator(".link-card")).toContainText("Game details");
+          await expect(post.locator("blockquote.quote")).toContainText("A plain quoted cast");
+          await expect(post.locator(".mini-app-note")).toHaveCount(0);
+        } else {
+          await expect(post.locator(".post-text, .link-card, blockquote.quote")).toHaveCount(0);
+          await expect(post.locator(".mini-app-note")).toBeVisible();
+        }
+      }
+      expect(reads, "changing Settings uses the carried post, without refetching it").toBe(1);
+      await page.goto(`/p/${hash(1)}`);
+      const ordinaryBody = post.locator(".post-text");
+      await expect(ordinaryBody).toHaveText("An ordinary post");
+      await ordinaryBody.evaluate((element) => (window as any).__ordinaryBody = element);
+      for (const _ of [false, true]) {
+        await (await settings(page)).toggle.click();
+        await page.keyboard.press("Escape");
+        await expect(ordinaryBody).toHaveText("An ordinary post");
+        expect(await ordinaryBody.evaluate((element) => element === (window as any).__ordinaryBody)).toBe(true);
+        await expect(post.locator("blockquote.quote")).toContainText("A plain quoted cast");
+        await expect(post.locator(".mini-app-note, .mini-app-link")).toHaveCount(0);
+      }
+      expect(reads).toBe(2);
+    });
+
     test("a thread leaves out mini app replies unless they are shown", async ({ page }) => {
       await serve(page);
       await page.goto(`/p/${hash(1)}`);
