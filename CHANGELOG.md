@@ -32,6 +32,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Live Worker checks pace API traffic between tests, within the existing per-IP limit, and retain bounded request counts and sanitized failed-response diagnostics. Interaction timings, assertions and retry counts are unchanged.
+
 - Back-navigation checks wait for sampled Home and post frames before returning, preserving their exact retained-card, restored-height, position and request assertions.
 
 - CI runs functional browser fixtures with two workers, followed by smoothness measurements alone with one. Both phases run and keep separate reports even after a failure, under the same checks and timing limits.

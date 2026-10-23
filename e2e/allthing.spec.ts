@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { appCame } from "./helpers/app";
+import { livePacing } from "./helpers/live-pacing";
 
 /** Waits until the images on screen have loaded, so nothing shifts under the pointer. */
 async function settleImages(page: Page) {
@@ -60,6 +61,7 @@ async function expectClearOfHeader(page: Page, panel: Locator) {
 const SHOTS = process.env.E2E_SCREENSHOT_DIR ?? "docs/screenshots";
 const LIVE = Boolean(process.env.E2E_BASE_URL);
 const PAGES = Boolean(process.env.E2E_PAGES);
+livePacing(LIVE && !PAGES ? process.env.E2E_BASE_URL : undefined);
 // The static copy is served under a sub-path, like https://ael-dev3.github.io/Allthing/.
 const BASE_PATH = process.env.E2E_BASE_PATH ?? (PAGES ? "/Allthing" : "");
 const at = (path: string) => BASE_PATH + path;
