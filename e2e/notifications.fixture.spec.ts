@@ -144,14 +144,14 @@ test("the bell counts what's new, and the page groups it as Farcaster does and m
   await expect(bell(page)).toHaveAccessibleName("Notifications, 3 unread");
   await expect(bell(page).locator(".bell-badge")).toHaveText("3");
   await expect(bell(page)).toHaveAttribute("href", "/notifications");
-  // Beside the account's picture, in the header, after Cast: the pill stays
-  // where it is on every page (e2e/cast-button.fixture.spec.ts).
+  // Settings, Cast, the bell and the account keep their order. Cast keeps
+  // its place on every page (e2e/cast-button.fixture.spec.ts).
   const header = page.locator(".header-actions");
-  await expect(header.locator(":scope > *")).toHaveCount(3);
+  await expect(header.locator(":scope > *")).toHaveCount(4);
   const order = await header.locator(":scope > *").evaluateAll((els) =>
-    els.map((el) => (el.matches(".header-cast") ? "cast" : el.matches(".bell") ? "bell" : el.querySelector(".account-button") ? "account" : el.className)),
+    els.map((el) => (el.matches(".settings") ? "settings" : el.matches(".header-cast") ? "cast" : el.matches(".bell") ? "bell" : el.querySelector(".account-button") ? "account" : el.className)),
   );
-  expect(order).toEqual(["cast", "bell", "account"]);
+  expect(order).toEqual(["settings", "cast", "bell", "account"]);
   await shot(page.locator(".site-header"), "bell-1280", testInfo);
 
   await page.mouse.move(5, 400);
@@ -449,8 +449,9 @@ test("at 390 on a touch screen it fits, and its targets take a fingertip", async
   await appCame(page);
   await expect(bell(page)).toHaveAccessibleName("Notifications, 12 unread");
   await expect(page.locator(".bell-badge")).toHaveText("9+");
-  // The header holds the wordmark, Home, search, the bell and the picture.
-  for (const el of [".wordmark", ".main-nav a", ".search-box", ".bell", ".account-button"]) {
+  // The first row keeps Home and all account controls; search gets a full
+  // row below, with room to read and type rather than an almost empty pill.
+  for (const el of [".wordmark", ".main-nav a", ".search-box", ".settings-button", ".bell", ".account-button"]) {
     await expect(page.locator(el).first(), el).toBeInViewport({ ratio: 1 });
   }
   // Search keeps room for its whole placeholder, with 8 px to spare (CI's
@@ -463,16 +464,28 @@ test("at 390 on a touch screen it fits, and its targets take a fingertip", async
     return inside - pen.measureText(input.placeholder).width;
   });
   expect(room).toBeGreaterThanOrEqual(8);
+  const search = (await page.locator(".search-box").boundingBox())!;
+  const controls = (await page.locator(".header-actions").boundingBox())!;
+  expect(search.y).toBeGreaterThanOrEqual(controls.y + controls.height + 8);
+  expect(search.width).toBeGreaterThanOrEqual(350);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await shot(page.locator(".site-header"), "bell-390", testInfo);
-  // The bell and the picture each take a 44 px tap, neither the other's.
+  // Settings, the bell and the picture each take a 44 px tap, without
+  // meeting the next control's band.
   const box = (await bell(page).boundingBox())!;
   const band = await bell(page).evaluate((el) => {
     const after = getComputedStyle(el, "::after");
     return [parseFloat(after.width), parseFloat(after.height)];
   });
   expect(Math.min(...band)).toBeGreaterThanOrEqual(44);
-  // Fixed sizes (36 px, a 12 px gap, 32 px), so no font moves them: the
-  // bell's 44 px band ends before the picture's begins.
+  const settings = (await page.locator(".settings-button").boundingBox())!;
+  const settingsBand = await page.locator(".settings-button").evaluate((el) => {
+    const after = getComputedStyle(el, "::after");
+    return [parseFloat(after.width), parseFloat(after.height)];
+  });
+  expect(Math.min(...settingsBand)).toBeGreaterThanOrEqual(44);
+  expect(settings.x + settings.width / 2 + settingsBand[0] / 2).toBeLessThanOrEqual(box.x + box.width / 2 - band[0] / 2);
+  // Fixed sizes and gaps, so font metrics cannot move these bands together.
   const picture = (await page.locator(".account-button").boundingBox())!;
   const bellRight = box.x + box.width / 2 + band[0] / 2;
   const pictureLeft = picture.x + picture.width / 2 - 22;

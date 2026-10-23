@@ -2936,8 +2936,9 @@ p.jumbo .emoji img {
    is laid out as a box, so a line's layout is as it was (a band, ::after,
    would be clipped by the name and the handle, which clip what leaves
    them for their ellipsis). A second line, when the meta wraps, is as tall
-   as the first, 6 px under it (4 px with a mouse), so their taps don't
-   meet; and a reply's words, or the post's buttons, start 2 px further
+   as the first, 6 px under it (4 px with a mouse, and more for a reply's
+   collapse button below), so their taps don't meet. A reply's words, or
+   the post's buttons, start 2 px further
    down, clear of the taps above them. After the lines' own rules, so
    their gaps give way. */
 @media (pointer: coarse) {
@@ -2977,6 +2978,12 @@ p.jumbo .emoji img {
   .comment-head,
   .post-meta {
     padding-bottom: 2px;
+  }
+
+  /* A wrapped app link also clears the collapse button's 44 px band,
+     which reaches farther down than the other meta links' 25 px taps. */
+  .comment-head {
+    row-gap: 14px;
   }
 }
 
@@ -8007,6 +8014,7 @@ p.jumbo .emoji img {
 
 /* The header's Settings: a round button like the bell, and its panel. */
 .settings-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8132,9 +8140,32 @@ p.jumbo .emoji img {
     font-size: 14.5px;
   }
 
+  /* Home, the online count and the account's controls keep their room.
+     Search has its own row rather than shrinking below its placeholder.
+     The early header uses the same rows before the app is ready. */
   .header-inner {
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 10px 14px 8px;
+  }
+
+  .header-nav,
+  .boot-nav {
+    min-height: 36px;
+    align-items: center;
+  }
+
+  .header-actions,
+  .boot-actions {
+    flex: none;
+  }
+
+  .search-box,
+  .boot-search {
+    order: 1;
+    flex-basis: 100%;
+    max-width: none;
+    margin-left: 0;
   }
 
   .wordmark {
@@ -9968,10 +9999,16 @@ p.jumbo .emoji img {
   pointer-events: none;
 }
 
-/* On a touch screen, the bell takes a fingertip's 44 px, as the picture
-   beside it does, and the two are far enough apart that neither takes the
-   other's tap. */
+/* On a touch screen, Settings and the bell take a fingertip's 44 px, as
+   the picture beside them does. The gaps keep their tap bands apart. */
 @media (pointer: coarse) {
+  .settings-button::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+  }
+
   .bell::after {
     content: "";
     position: absolute;
@@ -9979,7 +10016,7 @@ p.jumbo .emoji img {
     border-radius: 50%;
   }
 
-  .header-actions:has(.bell) {
+  .header-actions {
     gap: 12px;
   }
 }

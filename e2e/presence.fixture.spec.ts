@@ -181,15 +181,16 @@ test.describe("in front of the Worker", () => {
       // Home stays as it was, at every width.
       await expect(page.getByRole("link", { name: "Home", exact: true })).toBeVisible();
       {
-        // A dot and the count, after Home, with room to spare before the search box.
+        // A dot and the count after Home, clear of search on either row.
         await expect(chip).toBeVisible();
         await expect(chip).toHaveAccessibleName("12 readers online");
         await expect(chip).toHaveText("12", { useInnerText: true });
         const box = (await chip.boundingBox())!;
         const [hx, , hw] = before.home!;
-        const [sx] = before.search!;
+        const [sx, sy] = before.search!;
         expect(box.x).toBeGreaterThanOrEqual(hx + hw + 4);
-        expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
+        if (width <= 640) expect(box.y + box.height + 8).toBeLessThanOrEqual(sy);
+        else expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
         expect(box.height).toBeLessThanOrEqual(before.header![3]);
         // 920 is the exact compact breakpoint; the next pixel is full size.
         const leftPadding = await chip.evaluate((el) => getComputedStyle(el).paddingLeft);
@@ -455,7 +456,8 @@ test.describe("in front of the Worker", () => {
         expect(laid.searchWith, where).toBe(laid.searchWithout);
         expect(laid.scroll, where).toBeLessThanOrEqual(width);
         expect(laid.chip.x, where).toBeGreaterThanOrEqual(laid.home.right + 4);
-        expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
+        if (width <= 640) expect(laid.chip.bottom + 8, where).toBeLessThanOrEqual(laid.search.y);
+        else expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
       }
       await context.close();
     }

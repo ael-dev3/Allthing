@@ -7,6 +7,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- On phones, header search has a full-width second row, leaving Home, the online count, Settings and account controls in view. A wrapped reply's app link clears its collapse button's full tap area.
+
 - Front-page feeds remember casts actually read for a second with at least half its possible viewport exposure visible in a foreground tab, including cards taller than the screen. Later feed generations leave these posts out, with Show seen posts below the list and Reset seen posts in Settings. History stays in this browser, separate for each signed-in FID and signed-out reader, bounded to 2,000 hashes for 30 days across four readers. Current cards stay put while read, and direct posts, profiles and threads remain complete.
 
 - Show mini app casts moved out of the feed into a Settings panel in the header (for every reader, signed in or not): the "N mini app casts hidden" line is removed, and the account menu no longer repeats the switch. A shown mini app cast quoted in another cast now carries its "Open in Farcaster" link inside the quote card; no other cast or quote shows mini app chrome. Quoted mini apps follow the switch in place; early cards end before a shown mini app so the app takes over without replacing it with different markup.
