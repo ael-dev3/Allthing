@@ -54,6 +54,16 @@ async function serve(page: Page) {
 const order = (page: Page) =>
   page.locator("#app .cast-list .cast-card:not(.skeleton)").evaluateAll((cards) => cards.map((card) => card.querySelector(".cast-text")?.textContent?.trim()));
 
+// Reading the first screen (including its screenshot) intentionally marks
+// casts seen. On the next generation, use the reader's actual control to
+// restore those rows before checking their personalized ranking.
+async function showSeenForRanking(page: Page) {
+  await expect(page.locator("#boot")).toHaveCount(0);
+  await expect(page.locator("#app .cast-list, #app .seen-notice").first()).toBeVisible();
+  const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+  if (await show.isVisible()) await show.click();
+}
+
 for (const width of [1280, 390]) {
   test(`For you and Following are tabs, For you lifting whom the reader follows, at width ${width}`, async ({ browser }, testInfo) => {
     const phone = width === 390;
@@ -84,17 +94,20 @@ for (const width of [1280, 390]) {
     // Next time, ann's cast is lifted to the top of hot, with no new read.
     await page.reload();
     await expect(forYou).toHaveAttribute("aria-current", "page");
+    await showSeenForRanking(page);
     await expect.poll(() => order(page)).toEqual(["Followed cast", "Stranger trending"]);
     expect(asked.following).toBe(1);
 
     // The keyboard reaches the tabs: Following, keeping the sort.
     await page.goto("/?sort=top&t=week");
+    await showSeenForRanking(page);
     await following.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/[?&]feed=following/);
     await expect(page).toHaveURL(/[?&]sort=top/);
     await expect(page).toHaveURL(/[?&]t=week/);
     await expect(following).toHaveAttribute("aria-current", "page");
+    await showSeenForRanking(page);
     await expect.poll(() => order(page)).toEqual(["Followed cast"]);
     // The sort tabs and the time range keep the tab.
     await expect(page.locator(".sort-tabs a", { hasText: "hot" })).toHaveAttribute("href", /feed=following/);
@@ -104,6 +117,7 @@ for (const width of [1280, 390]) {
     await page.keyboard.press("Enter");
     await expect(page).not.toHaveURL(/feed=/);
     await expect(forYou).toHaveAttribute("aria-current", "page");
+    await showSeenForRanking(page);
     await context.close();
   });
 }

@@ -23,7 +23,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 - Following stops automatic pagination once its source reaches the selected time limit, and retains that cursor so a wider range resumes correctly. A fully seen or otherwise filtered feed reads at most ten payloads before offering Load more posts; each explicit press permits ten more.
 
-- Local macOS builds discover worker-build's cached `wasm-opt` under `Library/Caches`, so the browser modules receive the same optimization as CI. An explicit optimizer or one on PATH takes precedence, and cached binaries for other architectures are skipped.
+- Local macOS Worker and static Pages builds discover worker-build's cached `wasm-opt` under `Library/Caches`, so the browser modules receive the same optimization as CI. An explicit optimizer or one on PATH takes precedence, and cached binaries for other architectures are skipped.
 
 - Both front-page tabs keep the time selector in New and apply the selected range consistently. New stays strictly chronological even for favorites and accounts shown less. Changing the signed-in account replaces its feed and ranking snapshot; background follow reads and their ten-minute retry cap are scoped to that account, and late answers from the old account cannot refill its private cache.
 - The online count stays visible beside Home on phones, with its space reserved before loading. Showing oneself or signing in replaces the browser's anonymous presence instead of counting it twice; hiding or signing out removes the public name, including from later cached responses at other locations. Beat jitter only delays the advertised interval by up to 30 seconds, within the online grace, instead of beating too early or expiring a reader too soon.
