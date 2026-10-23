@@ -14,7 +14,8 @@ import { NOW } from "./fixture-time";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = (NOW - 19);
+// Leave room for Newest below: every fixture cast is in the past 24 hours.
+const ts = NOW - 3 * 3600;
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const person = (fid: number, username: string) => ({ fid, username, display_name: username[0].toUpperCase() + username.slice(1), follower_count: 10, following_count: 5, bio: "" });
 const ann = person(1, "ann");
