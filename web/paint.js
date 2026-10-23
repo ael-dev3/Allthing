@@ -70,23 +70,39 @@ if (plan) {
 function front(path) {
   const query = new URLSearchParams(location.search);
   if (location.pathname !== "/" || query.has("client")) return null;
-  // A signed-in reader's front page is the casts of whom they follow
-  // (/api/v1/following), under a header with a feed menu: the app draws it.
-  if (/(?:^|;\s*)__Host-allthing-user=/.test(document.cookie)) return null;
+  // A signed-in reader's Following tab (/api/v1/following): the app draws it.
+  // Their For you is drawn here, under the same tabs as the app's.
+  const reader = signedIn();
+  if (reader !== null && query.get("feed") === "following") return null;
   const sort = query.get("sort") === "top" ? "top" : query.get("sort") === "new" ? "new" : "hot";
   const range = RANGES.some(([value]) => value === query.get("t")) ? query.get("t") : "day";
   // "new" is the event stream's; the index's ranges say what they were ranked from.
   if (sort === "new" || !(range in PERIODS)) return null;
-  return path.startsWith("/api/v1/home") ? { sort, range } : null;
+  return path.startsWith("/api/v1/home") ? { sort, range, reader } : null;
+}
+
+/** The signed-in reader's fid from the cookie the app reads too (siwf.rs, `user_from_cookie`): 0 when it can't be read, null signed out. */
+function signedIn() {
+  const m = /(?:^|;\s*)__Host-allthing-user=([^;]*)/.exec(document.cookie);
+  if (!m || !m[1]) return null;
+  try {
+    return Number(JSON.parse(decodeURIComponent(m[1])).fid) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** Not once the app, or boot.js's panel saying it couldn't load, is there. */
 const appCame = () => !boot.isConnected || document.getElementById("app")?.hasChildNodes();
 
-async function paint(payload, { sort, range }) {
+/** Whether a reader is signed in, for the cards' buttons. */
+let reading = false;
+
+async function paint(payload, { sort, range, reader }) {
   if (appCame() || !Array.isArray(payload.pool)) return;
+  reading = reader !== null;
   const notes = payload.notes || {};
-  const lean = leanings();
+  const lean = leanings(reader);
   // A cast older than its window is left out, as the app leaves it out of a copy from the edge.
   const now = Date.now() / 1000;
   const inWindow = (cast) => cast.ts > now - SPANS[range];
@@ -109,7 +125,7 @@ async function paint(payload, { sort, range }) {
     if (!card) return;
     if (!list) {
       list = el("div", { class: "cast-list" });
-      const content = el("div", { class: "content" }, listingHead(sort, range), shareBar(payload, notes, range), list);
+      const content = el("div", { class: "content" }, listingHead(sort, range, reader !== null), shareBar(payload, notes, range), list);
       const main = el("main", { class: "page" }, el("div", { class: "columns single" }, content));
       main.inert = true;
       boot.querySelector(".boot-glow")?.remove();
@@ -134,6 +150,9 @@ const newestFirst = (a, b) => b.ts - a.ts || (a.hash < b.hash ? -1 : a.hash > b.
 /** A favorite's casts weigh 25 times their points, and those of an account the reader sees less of a 25th (`FAVORITE_WEIGHT`, `SHOW_LESS_WEIGHT`). */
 const FAVORITE_WEIGHT = 25;
 const SHOW_LESS_WEIGHT = 1 / FAVORITE_WEIGHT;
+/** For you lifts the casts of whom the reader follows: 20 times their points in hot, 6 in top (`FOLLOWED_HOT_WEIGHT`, `FOLLOWED_TOP_WEIGHT`), times a favorite's, and none for one seen less of. */
+const FOLLOWED_HOT_WEIGHT = 20;
+const FOLLOWED_TOP_WEIGHT = 6;
 
 /** How many days the casts span, from the oldest to the newest, and one at least (`span_days`). */
 function spanDays(casts) {
@@ -143,7 +162,9 @@ function spanDays(casts) {
 }
 
 function sorted(casts, sort, lean) {
-  const weight = (c) => (lean.favorites.has(c.author.fid) ? FAVORITE_WEIGHT : lean.less.has(c.author.fid) ? SHOW_LESS_WEIGHT : 1);
+  const base = (c) => (lean.favorites.has(c.author.fid) ? FAVORITE_WEIGHT : lean.less.has(c.author.fid) ? SHOW_LESS_WEIGHT : 1);
+  const lift = sort === "top" ? FOLLOWED_TOP_WEIGHT : FOLLOWED_HOT_WEIGHT;
+  const weight = (c) => base(c) * (base(c) >= 1 && lean.followed.has(c.author.fid) ? lift : 1);
   const days = spanDays(casts);
   // In top, the points plus one times the weight; in hot, the weight's log added once for each day the casts span. On a tie, the heavier first.
   const key = sort === "top" ? (c) => (points(c) + 1) * weight(c) : (c) => hotScore(points(c), c.ts) + (weight(c) === 1 ? 0 : Math.log10(weight(c)) * days);
@@ -159,8 +180,8 @@ function showsMiniApps() {
   }
 }
 
-/** The reader's favorites and those they see less of (leanings.rs). */
-function leanings() {
+/** The reader's favorites and those they see less of (leanings.rs), and whom they follow, kept for their fid (followed.rs). */
+function leanings(reader) {
   const fids = (key) => {
     try {
       return new Set((JSON.parse(localStorage.getItem(key) || "[]") || []).map((a) => a.fid));
@@ -168,7 +189,14 @@ function leanings() {
       return new Set();
     }
   };
-  return { favorites: fids("allthing.favorites"), less: fids("allthing.show-less") };
+  let followed = new Set();
+  try {
+    const kept = JSON.parse(localStorage.getItem("allthing.followed") || "null");
+    if (reader && kept && kept.reader === reader && Array.isArray(kept.fids)) followed = new Set(kept.fids);
+  } catch {
+    // None, then.
+  }
+  return { favorites: fids("allthing.favorites"), less: fids("allthing.show-less"), followed };
 }
 
 // Markup.
@@ -215,7 +243,7 @@ const userHref = (name) => href("/u/" + encodeURIComponent(name));
 const castHref = (hash) => href("/p/" + hash);
 const channelHref = (id) => (/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? href("/c/" + id) : href("/c?id=" + encodeURIComponent(id)));
 
-function listingHead(sort, range) {
+function listingHead(sort, range, signedIn) {
   // The range kept unless it's today's (home.rs, `SortTabs`' path).
   // What each does is read out, as the app's tabs say it: no native tooltip.
   const tab = (name, description) => {
@@ -228,6 +256,8 @@ function listingHead(sort, range) {
     "div",
     { class: "listing-head" },
     el("h1", { class: "visually-hidden" }, "Trending on Farcaster"),
+    // A signed-in reader's tabs (home.rs, `FeedTabs`): For you is the one drawn here.
+    signedIn ? feedTabs(sort, range) : null,
     el(
       "div",
       { class: "sort-row" },
@@ -235,6 +265,16 @@ function listingHead(sort, range) {
       el("label", { class: "time-filter" }, el("span", { class: "visually-hidden" }, "Time range"), select),
     ),
   );
+}
+
+function feedTabs(sort, range) {
+  const query = (feed) => [sort === "hot" ? null : "sort=" + sort, range === "day" ? null : "t=" + range, feed ? "feed=" + feed : null].filter(Boolean).join("&");
+  const tab = (label, feed) => {
+    const q = query(feed);
+    const current = !feed;
+    return el("a", { href: href(q ? "/?" + q : "/"), "data-noscroll": true, class: current ? "selected" : null, "aria-current": current ? "page" : null }, label);
+  };
+  return el("nav", { class: "feed-tabs", "aria-label": "Feed" }, tab("For you", null), tab("Following", "following"));
 }
 
 /** What to call an app, and its profile's key (allthing_core::clients). */
@@ -810,7 +850,8 @@ function count(n, one, many) {
 
 function reaction(kind, n) {
   const [path, one, many, label] = kind === "likes" ? [HEART, " like", " likes", "Like"] : [RECAST, " recast", " recasts", "Recast"];
-  const act = el("button", { class: "act", type: "button", "aria-label": label, "aria-haspopup": "dialog" }, icon(path));
+  // Signed in, a toggle, not yet pressed (chips.rs, `aria-pressed`), as where Allthing hands the like to the Farcaster app.
+  const act = el("button", { class: "act", type: "button", "aria-label": label, "aria-pressed": reading ? "false" : null, "aria-haspopup": "dialog" }, icon(path));
   const shown =
     n > 0
       ? el("button", { class: "popover-trigger stat-count", type: "button", "aria-label": `${compactNumber(n)}${n === 1 ? one : many}: show who`, "aria-expanded": "false" }, count(n, one, many))

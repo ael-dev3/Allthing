@@ -6,6 +6,7 @@ mod api;
 mod boot;
 mod components;
 mod counts;
+mod followed;
 #[cfg(feature = "static-host")]
 mod host;
 mod kept;

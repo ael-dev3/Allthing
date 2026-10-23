@@ -8,6 +8,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - The "Only N casts in …" note sits under a range's list, where it ends, not above it: it came once the list had ended and moved every card down (a layout shift at 1280).
+- The front page has two tabs for a signed-in reader, as on X: **For you** and **Following**, links in place of the Following / Everyone menu, each 44 px tall. For you, the default, is the trending pool with the casts of the accounts you follow lifted: 20 times their points in hot and 6 in top (`FOLLOWED_HOT_WEIGHT`, `FOLLOWED_TOP_WEIGHT`), and new stays in time order. Following (`?feed=following`) is only their casts, in hot, new and top and over the time range, with no trending casts topping it up any more. Old `?feed=everyone` links open For you. For you costs no extra request while it is drawn: it ranks by the accounts kept from your last Following page, renewed by one background read at most every 10 minutes. Signed out, the front page has no tabs, as before; early paint draws a signed-in reader's For you, tabs and all.
 
 - Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.
 

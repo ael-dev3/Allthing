@@ -378,9 +378,8 @@ pub async fn home(
 
 /// A signed-in reader's front page (`allthing_core::following`): the
 /// top-level casts of the accounts `fid` follows, newest first, for the app to
-/// rank. A first page with few reads Hypersnap's next page too, and one that
-/// still has fewer than `TOP_UP_BELOW` is topped up with trending casts, in
-/// `topped_up`. Mini apps and spam are left out of both.
+/// rank. A first page with few reads Hypersnap's next page too. Only their
+/// casts: no trending casts top it up. Mini apps and spam are left out.
 pub async fn following(
     inv: Rc<Invocation>,
     fid: u64,
@@ -401,19 +400,10 @@ pub async fn following(
         raw.extend(more);
         next = after;
     }
-    let mut topping = Vec::new();
-    if following::wants_top_up(first, theirs.len())
-        && let Ok(trending) = hypersnap::trending_casts(&inv, POOL_SIZE, 0, TrendingWindow::Day).await
-    {
-        topping = following::top_up(&theirs, trending.iter().map(normalize::cast).collect());
-        raw.extend(trending);
-    }
-    let mine: HashSet<String> = theirs.iter().map(|c| c.hash.clone()).collect();
-    let all = drop_hidden(&inv, theirs.into_iter().chain(topping).collect(), &mut notes, &known_links, true).await;
-    let quoted = annotate_listing(&inv, &mut notes, &all, ORIGIN_AUTHORS, &known_links).await;
-    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&all, &notes.quotes));
-    let (pool, topped_up): (Vec<Cast>, Vec<Cast>) = all.into_iter().partition(|c| mine.contains(&c.hash));
-    let payload = FollowingPayload { pool, notes, meta: meta(&inv), next, topped_up };
+    let pool = drop_hidden(&inv, theirs, &mut notes, &known_links, true).await;
+    let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
+    let payload = FollowingPayload { pool, notes, meta: meta(&inv), next };
     Built::json(&payload, following::FOLLOWING_CACHE)
 }
 

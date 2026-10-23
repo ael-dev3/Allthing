@@ -263,6 +263,10 @@ pub fn sorted(casts: &[Cast], sort: Sort) -> Vec<Cast> {
 pub struct Leanings {
     pub favorites: BTreeSet<u64>,
     pub less: BTreeSet<u64>,
+    /// Accounts the reader follows, for the front page's For you: their
+    /// casts rise in hot and top ([`FOLLOWED_HOT_WEIGHT`],
+    /// [`FOLLOWED_TOP_WEIGHT`]) and keep their time in new. Empty elsewhere.
+    pub followed: BTreeSet<u64>,
 }
 
 /// A favorite's cast weighs in hot and top as if it had 25 times its points.
@@ -299,6 +303,28 @@ pub const SHOW_LESS_WEIGHT: f64 = 1.0 / FAVORITE_WEIGHT;
 /// end of the list. A favorite's casts stay in time order.
 pub const SHOW_LESS_NEW_SECS: i64 = 6 * 3600;
 
+/// In For you's hot, a cast by an account the reader follows weighs as if
+/// it had 20 times its points.
+///
+/// Why 20: For you is the trending pool with the reader's own circle lifted
+/// well into it, as X's is. Its log, 1.3, is worth about 16 hours of
+/// freshness for each day the list spans ([`HOT_HALF_LIFE_SECS`]), nearly
+/// a favorite's 17½: a followed account's cast from this morning ranks with
+/// the newest of everyone's, yet one from yesterday still yields to a fresh
+/// cast that is far busier. In 120 casts over a day, a typical account's
+/// median place goes from about 60th to about 6th, in hot and in top
+/// (`following_lifts_a_typical_account_in_hot`). A favorite one follows
+/// weighs both ([`FAVORITE_WEIGHT`] times this); one the reader sees less
+/// of gets no lift.
+pub const FOLLOWED_HOT_WEIGHT: f64 = 20.0;
+
+/// In For you's top, a followed account's cast weighs 6 times its points:
+/// less than in hot, because top is the reader asking for the busiest casts
+/// of the range, and 6 is enough to put a typical followed cast (about 45
+/// points on 21 October 2026) above everyone's busiest of the day (270),
+/// without lifting a cast nobody reacted to over busy ones.
+pub const FOLLOWED_TOP_WEIGHT: f64 = 6.0;
+
 /// How many days `casts` span, from the oldest to the newest, and one at
 /// least: in hot and new a leaning moves a cast by its move for a day as
 /// many times, so as far down, or up, a list of a week as of a day.
@@ -310,7 +336,25 @@ pub fn span_days(casts: &[Cast]) -> f64 {
 
 impl Leanings {
     pub fn is_empty(&self) -> bool {
-        self.favorites.is_empty() && self.less.is_empty()
+        self.favorites.is_empty() && self.less.is_empty() && self.followed.is_empty()
+    }
+
+    /// [`Leanings::weight`] in `sort`, with the lift of a followed account:
+    /// [`FOLLOWED_HOT_WEIGHT`] in hot and [`FOLLOWED_TOP_WEIGHT`] in top,
+    /// times a favorite's, and none for an account the reader sees less of.
+    /// In new nothing rises: the list stays in time order.
+    pub fn weight_in(&self, cast: &Cast, sort: Sort) -> f64 {
+        let base = self.weight(cast);
+        let lift = match sort {
+            _ if base < 1.0 || !self.followed.contains(&cast.author.fid) => 1.0,
+            Sort::Hot => FOLLOWED_HOT_WEIGHT,
+            Sort::Top => FOLLOWED_TOP_WEIGHT,
+            Sort::New => 1.0,
+        };
+        match sort {
+            Sort::New => base.min(1.0),
+            Sort::Hot | Sort::Top => base * lift,
+        }
     }
 
     /// How much more, or less, `cast` weighs for this reader in hot and top.
@@ -341,11 +385,9 @@ pub fn sorted_for(casts: &[Cast], sort: Sort, leanings: &Leanings) -> Vec<Cast> 
     if leanings.is_empty() {
         return sorted(casts, sort);
     }
-    // In new, a favorite's casts are in time order like anyone's.
-    let weight = |cast: &Cast| match sort {
-        Sort::New => leanings.weight(cast).min(1.0),
-        Sort::Hot | Sort::Top => leanings.weight(cast),
-    };
+    // In new, a favorite's and a followed account's casts are in time order
+    // like anyone's.
+    let weight = |cast: &Cast| leanings.weight_in(cast, sort);
     let days = span_days(casts);
     let key = |cast: &Cast, weight: f64| match sort {
         Sort::Top => (points(cast) + 1) as f64 * weight,
@@ -593,7 +635,7 @@ mod tests {
         assert_eq!(leanings.weight(&casts[0]), SHOW_LESS_WEIGHT);
         assert_eq!(leanings.weight(&casts[1]), 1.0);
         // An account kept as both counts as a favorite, in new too.
-        let both = Leanings { favorites: BTreeSet::from([1]), less: BTreeSet::from([1]) };
+        let both = Leanings { favorites: BTreeSet::from([1]), less: BTreeSet::from([1]), ..Leanings::default() };
         assert_eq!(both.weight(&casts[0]), FAVORITE_WEIGHT);
         assert_eq!(sorted_for(&casts, Sort::New, &both), sorted(&casts, Sort::New));
     }
@@ -684,6 +726,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn following_lifts_a_typical_account_in_hot() {
+        let followed = Leanings { followed: BTreeSet::from([TYPICAL]), ..Leanings::default() };
+        let list = casts_over(1);
+        let n = list.len() as f64;
+        let before = median_place(&sorted(&list, Sort::Hot), TYPICAL);
+        let hot = median_place(&sorted_for(&list, Sort::Hot, &followed), TYPICAL);
+        let top_before = median_place(&sorted(&list, Sort::Top), TYPICAL);
+        let top = median_place(&sorted_for(&list, Sort::Top, &followed), TYPICAL);
+        println!("For you, 1 day of {n}: hot {before} to {hot}, top {top_before} to {top}");
+        // Hot: from the middle into the first tenth or so.
+        assert!(hot <= 0.12 * n, "hot: {before} to {hot}");
+        // Top: well up too, into the first quarter.
+        assert!(top <= 0.25 * n, "top: {top_before} to {top}");
+        // Every cast is still there.
+        assert_eq!(sorted_for(&list, Sort::Hot, &followed).len(), list.len());
+    }
+
+    #[test]
+    fn new_stays_chronological_for_followed_accounts() {
+        let casts = vec![
+            by(1, cast("old-followed", 90, 0, 0, "2026-10-17T00:00:00Z")),
+            by(2, cast("newest", 0, 0, 0, "2026-10-17T02:00:00Z")),
+            by(1, cast("middle-followed", 50, 0, 0, "2026-10-17T01:00:00Z")),
+        ];
+        let followed = Leanings { followed: BTreeSet::from([1]), ..Leanings::default() };
+        let favorite_too = Leanings { favorites: BTreeSet::from([1]), ..followed.clone() };
+        for leanings in [&followed, &favorite_too] {
+            assert_eq!(order(sorted_for(&casts, Sort::New, leanings)), ["newest", "middle-followed", "old-followed"]);
+            assert_eq!(leanings.weight_in(&casts[0], Sort::New), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_followed_cast_beats_a_busier_strangers_in_hot_and_top() {
+        // A stranger's cast with five times the points, as fresh.
+        let casts = vec![
+            by(2, cast("stranger", 100, 0, 0, "2026-10-17T00:00:00Z")),
+            by(1, cast("followed", 20, 0, 0, "2026-10-17T00:00:00Z")),
+        ];
+        let followed = Leanings { followed: BTreeSet::from([1]), ..Leanings::default() };
+        assert_eq!(order(sorted(&casts, Sort::Hot)), ["stranger", "followed"]);
+        for sort in [Sort::Hot, Sort::Top] {
+            assert_eq!(order(sorted_for(&casts, sort, &followed)), ["followed", "stranger"], "{sort:?}");
+        }
+        assert_eq!(followed.weight_in(&casts[1], Sort::Hot), FOLLOWED_HOT_WEIGHT);
+        assert_eq!(followed.weight_in(&casts[1], Sort::Top), FOLLOWED_TOP_WEIGHT);
+        assert_eq!(followed.weight_in(&casts[0], Sort::Hot), 1.0);
+        // A favorite one follows weighs both; one seen less of gets no lift.
+        let favorite = Leanings { favorites: BTreeSet::from([1]), ..followed.clone() };
+        assert_eq!(favorite.weight_in(&casts[1], Sort::Hot), FAVORITE_WEIGHT * FOLLOWED_HOT_WEIGHT);
+        let less = Leanings { less: BTreeSet::from([1]), ..followed };
+        assert_eq!(less.weight_in(&casts[1], Sort::Hot), SHOW_LESS_WEIGHT);
     }
 
     #[test]

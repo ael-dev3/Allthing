@@ -645,6 +645,52 @@ html.header-still .wordmark {
   box-shadow: 0 1px 2px rgba(27, 34, 51, 0.08), 0 0 0 1px var(--line);
 }
 
+/* The front page's two feeds, For you and Following, as X's: links across
+   the column, each a 44 px tall target at any width, the chosen one bold
+   over an accent bar. paint.js draws the same. */
+.feed-tabs {
+  display: flex;
+  flex: 1 0 100%;
+  border-bottom: 1px solid var(--line);
+}
+
+.feed-tabs a {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  color: var(--ink-2);
+  font-size: 15px;
+  position: relative;
+  transition: color 0.2s var(--ease);
+}
+
+.feed-tabs a:hover {
+  color: var(--ink);
+}
+
+.feed-tabs a.selected {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.feed-tabs a.selected::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  width: 56px;
+  height: 3px;
+  margin-left: -28px;
+  border-radius: 3px;
+  background: var(--accent, var(--ink));
+}
+
+.feed-tabs a:focus-visible {
+  outline-offset: -3px;
+}
+
 .sort-row {
   display: inline-flex;
   flex-wrap: wrap;

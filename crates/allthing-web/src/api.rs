@@ -234,6 +234,16 @@ pub fn prefetch(path: &str) {
     start_prefetch(path, |_, _| {});
 }
 
+/// [`prefetch`], running `landed` with the body of a good answer (status 200)
+/// when it comes, and nothing when it doesn't. Whether it started.
+pub fn prefetch_then(path: &str, landed: impl FnOnce(&str) + 'static) -> Prefetch {
+    start_prefetch(path, move |raw, _| {
+        if let Some(raw) = raw.filter(|raw| raw.status == 200) {
+            landed(&raw.body);
+        }
+    })
+}
+
 /// [`prefetch`], running `landed` with the answer (if any) and the time it
 /// came, before it is kept.
 fn start_prefetch(path: &str, landed: impl FnOnce(Option<&Raw>, f64) + 'static) -> Prefetch {
