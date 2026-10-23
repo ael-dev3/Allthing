@@ -481,5 +481,10 @@ test("the real Worker endorses keys only for a session, from Allthing, and draws
     expect(refused.status(), url).toBe(400);
   }
   const status = await (await request.get("/api/v1/status")).json();
-  expect(status.writes).toEqual({ ready: readiness === "true" });
+  expect(status.writes).toEqual(readiness === "true" ? {
+    ready: true,
+    app_fid: 3356318,
+    address: expect.stringMatching(/^0x[0-9a-fA-F]{40}$/),
+    sponsored: expect.any(Boolean),
+  } : { ready: false });
 });
