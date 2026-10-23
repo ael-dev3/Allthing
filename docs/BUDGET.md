@@ -38,7 +38,7 @@ The browser app is static. A page view runs the Worker for its one API call and 
 | Opening a post already prefetched | **0** | none: client cache |
 | Changing sort | **0** between hot and top: the payload holds the whole pool and the browser re-ranks it locally; **1** for "new" (`/api/v1/latest`, reused for 30 s) | none |
 | Loading more front-page casts | 1 per upstream batch of up to 100 (`/api/v1/home?offset=`) | none |
-| Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `6h`, `12h`, `7d`, `30d` or `all`) | none |
+| Changing the time range | 1 per window not loaded yet (`/api/v1/home?window=1h`, `6h`, `12h`, `7d`, `30d` or `all`); the first page of a window up to 7 days also reads the stored newest casts (one D1 read), since Hypersnap's trending runs hours behind | none |
 | Back/forward within 5 min | **0** | none: in-memory client cache |
 | Being signed in | **0**: the header reads who is signed in from a cookie (its bell's reads are the next row) | none |
 | The bell, for a signed-in reader | 1 (`/api/v1/notifications`) when the app starts, then 1 every 3 minutes while the page is in view, and 1 when it comes back into view or its window regains focus. A read under a minute old is reused and one on its way is shared, so at most 1 a minute: about 20 an hour for a tab left in view, none while it is hidden. The static copy has no bell | none |
