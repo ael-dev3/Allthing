@@ -320,6 +320,68 @@ fn within(window: TrendingWindow, now: i64, casts: Vec<Cast>) -> Vec<Cast> {
     casts.into_iter().filter(|cast| window.holds(cast.ts, now)).collect()
 }
 
+/// A public first-page Day Home copy shared across data centers. Version the
+/// name when its payload or filtering contract changes; never store a reader's feed.
+pub const HOME_SNAPSHOT: &str = "home-day-v1";
+/// Bound parsing and copying on the Worker's cold path. Larger normal builds
+/// still serve, but do not replace the last good shared copy.
+const HOME_SNAPSHOT_MAX_BYTES: usize = 1024 * 1024;
+
+#[cfg(test)]
+mod home_snapshot_tests;
+
+fn fresh_home_snapshot(stored: Snapshot, now_ms: f64) -> Option<Built> {
+    let age = now_ms - stored.built;
+    if !stored.built.is_finite()
+        || stored.built <= 0.0
+        || !(0.0..f64::from(api::HOME_CACHE.fresh) * 1000.0).contains(&age)
+        || stored.body.len() > HOME_SNAPSHOT_MAX_BYTES
+    {
+        return None;
+    }
+    let mut payload: HomePayload = serde_json::from_str(&stored.body).ok()?;
+    if payload.meta.fetched_at <= 0
+        || payload.meta.fetched_at as f64 != stored.built
+        || payload.meta.backend != Backend::Hypersnap
+        || payload.meta.stale
+        || payload.index.is_some()
+    {
+        return None;
+    }
+    let before = payload.pool.len();
+    payload.pool.retain(|cast| TrendingWindow::Day.holds(cast.ts, (now_ms / 1000.0) as i64));
+    let body = if payload.pool.len() == before {
+        stored.body.into_bytes()
+    } else {
+        keep_shown(&mut payload.notes, &payload.pool);
+        let named = listed_accounts(&payload.pool, &payload.notes.quotes);
+        payload.notes.keep_users(BTreeMap::new(), named);
+        serde_json::to_vec(&payload).ok()?
+    };
+    Some(Built { body, status: 200, policy: api::HOME_CACHE, fetched_at: Some(stored.built) })
+}
+
+fn shared_home_may_replace(previous: Option<&[u8]>, now_ms: f64) -> bool {
+    let Some(body) = previous else { return true };
+    if body.len() > HOME_SNAPSHOT_MAX_BYTES {
+        return false;
+    }
+    // The cache retains a Home body for a day, but blocks on rebuilding it
+    // after ten minutes. Check only bounded metadata; do not decode its pool
+    // twice. A normal stale-while-revalidate build must still reach upstream.
+    #[derive(serde::Deserialize)]
+    struct Previous {
+        meta: Meta,
+    }
+    let Ok(Previous { meta }) = serde_json::from_slice::<Previous>(body) else { return false };
+    let age = now_ms - meta.fetched_at as f64;
+    meta.backend == Backend::Hypersnap
+        && !meta.stale
+        && meta.fetched_at > 0
+        && age.is_finite()
+        && age >= f64::from(api::HOME_CACHE.stale) * 1000.0
+}
+
 /// Trending casts. `offset` 0 is the front page; later offsets are the
 /// next pages that infinite scroll loads. Past month, Past year and All
 /// time are ranked from Allthing's index; until it can rank them (or where
@@ -331,6 +393,26 @@ pub async fn home(
     window: TrendingWindow,
     previous: Option<Rc<Vec<u8>>>,
 ) -> Result<Built, Failure> {
+    let shared = offset == 0 && window == TrendingWindow::Day;
+    // Missing or provably expired retained edges may start from another data
+    // center. Ordinary stale-while-revalidate refreshes still build normally.
+    if shared
+        && inv.remaining_subrequests() > 2
+        && shared_home_may_replace(previous.as_deref().map(Vec::as_slice), inv.now())
+        && let Some(copy) = stored(&inv, HOME_SNAPSHOT).await
+        && let Some(built) = fresh_home_snapshot(copy, inv.now())
+    {
+        return Ok(built);
+    }
+    // Reserve the write before annotation batches size themselves to the
+    // remaining budget. Their existing reserve still keeps the edge-cache put.
+    let persist = if shared {
+        // Leave normal source/counter/reaction reads and the cache put room
+        // even when a caller starts with a scarce budget.
+        inv.index().filter(|_| inv.remaining_subrequests() >= 7 && inv.take_subrequests(1))
+    } else {
+        None
+    };
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
     // Only the first page heads the list with the client bar, and carries
@@ -392,7 +474,27 @@ pub async fn home(
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));
-    Built::json(&HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll }, api::home_cache(window))
+    let payload = HomePayload { pool, notes, meta: meta(&inv), index: None, apps_24h, poll };
+    let mut built = Built::json(&payload, api::home_cache(window))?;
+    if persist.is_some() {
+        // Admitting an edge or shared copy must not make the source younger.
+        built.fetched_at = Some(payload.meta.fetched_at as f64);
+    }
+    if let Some(index) = persist
+        && built.body.len() <= HOME_SNAPSHOT_MAX_BYTES
+    {
+        // JSON serialization produced UTF-8; persistence is best-effort and
+        // never changes the successful response or rewrites a retrieved copy.
+        if let Ok(body) = String::from_utf8(built.body.clone()) {
+            let snapshot = Snapshot { built: payload.meta.fetched_at as f64, body };
+            // Already charged above, and kept alive by this invocation. This
+            // optional persistence must not delay the valid Home response.
+            inv.wait_until(async move {
+                let _ = index.save_snapshot(HOME_SNAPSHOT, snapshot).await;
+            });
+        }
+    }
+    Ok(built)
 }
 
 /// A signed-in reader's front page (`allthing_core::following`): the

@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A data center with no default 24-hour Home copy, or an expired retained one, can use a fresh public copy shared by another data center, preserving its original age and current time bounds, instead of waiting for the full upstream build. Missing or invalid copies retain the normal fallback, ordinary background refreshes still build normally, and other ranges and private feeds are unchanged.
 - CI rejects browser tests that pass only on retry, so a flaky run cannot appear as a clean release check.
 - Choosing an emoji group while the picker is still drawing reaches its heading on the first click, including a group at the temporary bottom of the list.
 - Sort tabs show their selected state before the next feed hides read cards, keeping reading-history cleanup out of the tap handler.
