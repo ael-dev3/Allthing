@@ -22,7 +22,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
-- Feed-ranking checks restore read posts through Show seen posts even when the filtered list is empty.
+- Feed-ranking checks restore read posts through Show seen posts even when the filtered list is empty or a delayed navigation is still loading.
 
 - Reply-composer geometry checks wait for its entrance animation before measuring exact thumbnail and tool sizes, while retaining first-frame focus and layout-shift checks.
 

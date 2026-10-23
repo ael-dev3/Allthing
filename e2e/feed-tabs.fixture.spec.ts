@@ -57,11 +57,17 @@ const order = (page: Page) =>
 // Reading the first screen (including its screenshot) intentionally marks
 // casts seen. On the next generation, use the reader's actual control to
 // restore those rows before checking their personalized ranking.
-async function showSeenForRanking(page: Page) {
+async function expectRanking(page: Page, expected: string[], checked?: () => void) {
   await expect(page.locator("#boot")).toHaveCount(0);
-  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
   const show = page.getByRole("button", { name: "Show seen posts", exact: true });
-  if (await show.isVisible()) await show.click();
+  await expect.poll(async () => {
+    // Navigation may keep the previous rows until its payload arrives. Restore
+    // read posts when the new generation's notice appears, not just once before it.
+    if (await show.isVisible()) await show.click();
+    const ranked = await order(page);
+    checked?.();
+    return ranked;
+  }).toEqual(expected);
 }
 
 for (const width of [1280, 390]) {
@@ -94,21 +100,19 @@ for (const width of [1280, 390]) {
     // Next time, ann's cast is lifted to the top of hot, with no new read.
     await page.reload();
     await expect(forYou).toHaveAttribute("aria-current", "page");
-    await showSeenForRanking(page);
-    await expect.poll(() => order(page)).toEqual(["Followed cast", "Stranger trending"]);
+    await expectRanking(page, ["Followed cast", "Stranger trending"]);
     expect(asked.following).toBe(1);
 
     // The keyboard reaches the tabs: Following, keeping the sort.
     await page.goto("/?sort=top&t=week");
-    await showSeenForRanking(page);
+    await expectRanking(page, ["Stranger trending", "Followed cast"]);
     await following.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/[?&]feed=following/);
     await expect(page).toHaveURL(/[?&]sort=top/);
     await expect(page).toHaveURL(/[?&]t=week/);
     await expect(following).toHaveAttribute("aria-current", "page");
-    await showSeenForRanking(page);
-    await expect.poll(() => order(page)).toEqual(["Followed cast"]);
+    await expectRanking(page, ["Followed cast"]);
     // The sort tabs and the time range keep the tab.
     await expect(page.locator(".sort-tabs a", { hasText: "hot" })).toHaveAttribute("href", /feed=following/);
     await expect(page.getByRole("combobox", { name: "Time range" })).toBeVisible();
@@ -117,10 +121,50 @@ for (const width of [1280, 390]) {
     await page.keyboard.press("Enter");
     await expect(page).not.toHaveURL(/feed=/);
     await expect(forYou).toHaveAttribute("aria-current", "page");
-    await showSeenForRanking(page);
+    await expectRanking(page, ["Stranger trending", "Followed cast"]);
     await context.close();
   });
 }
+
+test("ranking recovery waits for a delayed Following generation's seen notice", async ({ page }) => {
+  await signIn(page, me);
+  // A fresh follow set prevents a background read from filling the API cache
+  // before the navigation whose first response this test deliberately holds.
+  await page.addInitScript(() => localStorage.setItem("allthing.followed", JSON.stringify({ reader: 1234, at: Date.now(), fids: [1] })));
+  await serve(page);
+  await page.goto("/?sort=top&t=week");
+  await expect.poll(() => order(page)).toEqual(["Stranger trending", "Followed cast"]);
+  // Let real viewport dwell record the followed cast; do not seed or clear history.
+  await expect.poll(() => page.evaluate(() => {
+    const history = JSON.parse(localStorage.getItem("allthing.seen.v1") ?? '{"scopes":[]}');
+    return history.scopes.find((scope: { name: string }) => scope.name === "fid:1234")?.posts.map((cast: { hash: string }) => cast.hash) ?? [];
+  })).toContain(followed.hash);
+  let release!: () => void;
+  let requested = false;
+  const held = new Promise<void>((done) => { release = done; });
+  await page.route("**/api/v1/following**", async (route) => {
+    requested = true;
+    await held;
+    await route.fulfill({ json: { pool: [followed], notes: {}, meta }, headers: PRIVATE });
+  });
+  try {
+    const navigation = page.getByRole("navigation", { name: "Feed" }).getByRole("link", { name: "Following" }).click();
+    await expect.poll(() => requested, { message: "Following navigation requests its delayed payload" }).toBe(true);
+    // There is no recovery control until the destination's payload arrives.
+    await expect(page.getByRole("button", { name: "Show seen posts", exact: true })).toHaveCount(0);
+    let checked = false;
+    let recovered = false;
+    const recovery = expectRanking(page, ["Followed cast"], () => { checked = true; }).then(() => { recovered = true; });
+    await expect.poll(() => checked).toBe(true);
+    expect(recovered).toBe(false);
+    release();
+    await navigation;
+    await recovery;
+    await expect(page.getByRole("button", { name: "Show seen posts", exact: true })).toHaveCount(0);
+  } finally {
+    release();
+  }
+});
 
 test("an old link to everyone's feed opens For you", async ({ page }) => {
   await signIn(page, me);
