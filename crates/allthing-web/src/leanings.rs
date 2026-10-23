@@ -110,7 +110,7 @@ impl Leaning {
 
     /// The reader's leanings, for sorting a feed.
     pub fn leanings(self) -> Leanings {
-        Leanings { favorites: self.favorites.fids(), less: self.less.fids() }
+        Leanings { favorites: self.favorites.fids(), less: self.less.fids(), ..Leanings::default() }
     }
 
     /// The leanings to sort a list on screen by, under `key` (its order, its

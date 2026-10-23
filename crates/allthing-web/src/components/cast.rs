@@ -44,6 +44,7 @@ pub fn CastCard(
     notes: Notes,
     #[prop(optional)] index: usize,
     #[prop(optional)] show_parent: bool,
+    #[prop(optional)] track_seen: bool,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     // Quoted casts the payload carries show as cards; others as links.
@@ -68,14 +69,19 @@ pub fn CastCard(
     // it was: it doesn't rise into place again.
     let entrance = if crate::nav::restoring() { "; animation: none" } else { "" };
     let node = NodeRef::<leptos::html::Article>::new();
+    let seen = crate::seen::use_seen();
     Effect::new(move |_| {
         if let Some(element) = node.get() {
+            if track_seen {
+                crate::seen::watch(&element, seen);
+            }
             watch_for_prefetch(&element);
         }
     });
     on_cleanup(move || {
         if let Some(element) = node.get_untracked() {
             unwatch(&element);
+            crate::seen::unwatch(&element);
         }
     });
     view! {
@@ -142,6 +148,9 @@ const INSET_AFTER: usize = 4;
 /// (the next server page) a little before the reader reaches the end.
 #[component]
 pub fn CastList(
+    /// Hide prior seen casts only on the front page; direct/profile/thread lists stay complete.
+    #[prop(optional)]
+    hide_seen: bool,
     #[prop(into)] casts: Signal<Vec<Cast>>,
     #[prop(into)] notes: Signal<Notes>,
     #[prop(optional)] show_parent: bool,
@@ -155,13 +164,16 @@ pub fn CastList(
     inset: Option<fn() -> AnyView>,
 ) -> impl IntoView {
     // Mini app casts, which payloads keep marked, are left out unless the
-    // reader chose to see them (`crate::miniapps`); the note over the list
-    // says how many, with the switch.
+    // reader chose to see them in the Settings panel (`crate::miniapps`).
     let all = casts;
-    let apps = Memo::new(move |_| all.with(|c| c.iter().filter(|c| c.mini_app && !c.spam).count()));
+    let seen_feed = crate::seen::Feed::new(hide_seen);
+    let hidden_seen = Memo::new(move |_| {
+        let show_apps = crate::miniapps::shown();
+        all.with(|casts| casts.iter().filter(|cast| !cast.hidden_for(show_apps) && seen_feed.hides(&cast.hash)).count())
+    });
     let casts: Signal<Vec<Cast>> = Memo::new(move |_| {
         let show = crate::miniapps::shown();
-        all.with(|c| c.iter().filter(|c| !c.hidden_for(show)).cloned().collect::<Vec<_>>())
+        all.with(|c| c.iter().filter(|c| !c.hidden_for(show) && !seen_feed.hides(&c.hash)).cloned().collect::<Vec<_>>())
     })
     .into();
     // Back to a list shows as many cards as before, so the reader's place
@@ -316,14 +328,13 @@ pub fn CastList(
     };
 
     view! {
-        <crate::miniapps::MiniAppsNote count=apps/>
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
             <div class="cast-list" node_ref=list>
                 <For
                     each=items
                     key=|(key, _)| key.clone()
                     children=move |(_, item)| match item {
-                        Some((index, cast)) => view! { <CastCard cast notes=notes.get_untracked() index show_parent/> }.into_any(),
+                        Some((index, cast)) => view! { <CastCard cast notes=notes.get_untracked() index show_parent track_seen=hide_seen/> }.into_any(),
                         None => inset.map(|inset| inset()).into_any(),
                     }
                 />
@@ -332,6 +343,7 @@ pub fn CastList(
             // on its way.
             <Show when=move || ready.get() == 0><CastSkeletons/></Show>
         </Show>
+        <crate::seen::SeenNotice feed=seen_feed hidden=hidden_seen empty=Signal::derive(move || casts.with(Vec::is_empty))/>
         <div class="feed-sentinel" node_ref=sentinel aria-hidden="true"></div>
     }
 }

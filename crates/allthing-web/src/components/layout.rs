@@ -28,15 +28,32 @@ pub fn SiteHeader() -> impl IntoView {
         <header class="site-header">
             <div class="header-inner">
                 <Wordmark/>
-                <nav class="main-nav" aria-label="Main">
-                    <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
-                </nav>
+                <div class="header-nav">
+                    <nav class="main-nav" aria-label="Main">
+                        <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
+                    </nav>
+                    {presence()}
+                </div>
                 <SearchBox/>
                 {account()}
             </div>
             <div class="portal-line" aria-hidden="true"></div>
         </header>
     }
+}
+
+/// Who is reading Allthing now, after Home: placed so that it moves
+/// nothing as it comes, with space reserved on narrow headers too.
+/// In front of the Worker only.
+#[cfg(not(feature = "static-host"))]
+fn presence() -> AnyView {
+    view! { <crate::components::presence::PresenceChip/> }.into_any()
+}
+
+/// The static copy has no Worker to beat to.
+#[cfg(feature = "static-host")]
+fn presence() -> AnyView {
+    ().into_any()
 }
 
 /// Cast, on the pages that have it, and sign-in, or who is signed in with
@@ -46,6 +63,7 @@ pub fn SiteHeader() -> impl IntoView {
 fn account() -> AnyView {
     view! {
         <div class="header-actions">
+            <crate::miniapps::Settings/>
             <crate::components::compose::HeaderCast/>
             <crate::components::notifications::Bell/>
             <crate::components::signin::Account/>
@@ -58,9 +76,12 @@ fn account() -> AnyView {
 #[cfg(feature = "static-host")]
 fn account() -> AnyView {
     view! {
-        <span class="readonly-pill" aria-description="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
-            "read-only"
-        </span>
+        <div class="header-actions">
+            <crate::miniapps::Settings/>
+            <span class="readonly-pill" aria-description="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
+                "read-only"
+            </span>
+        </div>
     }
     .into_any()
 }

@@ -5,8 +5,9 @@
 //! same database keeps the daily active accounts' sets
 //! (`allthing_data::activity::ActivityStore`), readers' scheduled casts
 //! (`allthing_data::scheduled::ScheduledStore`, and `crate::scheduled_casts`),
-//! what readers' attachments take (`crate::media`), and the votes in
-//! Allthing's poll (`crate::poll`).
+//! what readers' attachments take (`crate::media`), the votes in
+//! Allthing's poll (`crate::poll`), and who is reading now
+//! (`crate::presence`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 8] = [
+const SCHEMA: [&str; 9] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
@@ -35,6 +36,7 @@ const SCHEMA: [&str; 8] = [
     include_str!("../../../migrations/0006_reactions.sql"),
     include_str!("../../../migrations/0007_media.sql"),
     include_str!("../../../migrations/0008_poll.sql"),
+    include_str!("../../../migrations/0009_presence.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -174,6 +176,25 @@ const KEEP_VOTE: &str = "INSERT OR IGNORE INTO poll_votes (poll, voter, choice) 
 /// How many voted each way in poll ?1: two rows.
 const POLL_COUNTS: &str = "SELECT choice, n FROM poll_counts WHERE poll = ?1";
 
+/// A visitor's beat: their row, written at most once a minute (or when
+/// they show or hide themselves).
+const PRESENCE_BEAT: &str = "INSERT INTO presence (visitor, fid, seen) VALUES (?1, ?2, ?3) \
+    ON CONFLICT(visitor) DO UPDATE SET fid = excluded.fid, seen = excluded.seen \
+    WHERE presence.seen < excluded.seen - 60 OR presence.fid IS NOT excluded.fid";
+/// A reader's row by name, when they hide themselves.
+const PRESENCE_FORGET: &str = "DELETE FROM presence WHERE visitor = ?1";
+/// Cached names must still be public in D1, including when another edge
+/// location processed the reader's hide request. At most twelve key reads.
+const PRESENCE_PUBLIC: &str = "SELECT fid, 0 AS online FROM presence \
+    WHERE visitor IN (SELECT 'f:' || value FROM json_each(?1)) AND seen >= ?2";
+/// Rows past keeping (seen before ?1).
+const PRESENCE_PRUNE: &str = "DELETE FROM presence WHERE seen < ?1";
+/// Who was seen since ?1, in one pass over the table: how many (`online`,
+/// on each row), and ?2 rows at most, those shown by name first, most
+/// recent first. A count and a list apart would read the table twice.
+const PRESENCE_SEEN: &str = "SELECT fid, COUNT(*) OVER () AS online FROM presence WHERE seen >= ?1 \
+    ORDER BY fid IS NULL, seen DESC LIMIT ?2";
+
 thread_local! {
     /// Whether this isolate has made sure the tables exist.
     static SCHEMA_READY: Cell<bool> = const { Cell::new(false) };
@@ -276,6 +297,12 @@ struct UsageRow {
 struct CountRow {
     choice: String,
     n: f64,
+}
+
+#[derive(Deserialize)]
+struct SeenRow {
+    fid: Option<f64>,
+    online: f64,
 }
 
 #[derive(Deserialize)]
@@ -715,6 +742,82 @@ impl D1Index {
         let total = self.db.prepare(ADD_MEDIA).bind(&["all".into(), size.clone()]).map_err(failed)?;
         let day = self.db.prepare(ADD_MEDIA).bind(&[day_row(now).into(), size]).map_err(failed)?;
         self.db.batch(vec![record, total, day]).await.map_err(failed)?;
+        Ok(())
+    }
+}
+
+/// Who is reading now, for `crate::presence`.
+impl D1Index {
+    /// Record `visitor`'s beat at `now` (Unix seconds), as `fid` when they
+    /// are shown by name, in one batch, which first drops `forget`, the
+    /// previous named or anonymous row when visibility changes. With `recount`, the
+    /// window's start and the oldest second kept, the same batch also drops
+    /// rows past keeping and counts who was seen in the window, with the
+    /// readers shown by name (`SHOWN` at most, most recent first): two
+    /// passes over the table, which has no index on `seen`.
+    pub async fn presence(
+        &self,
+        visitor: &str,
+        fid: Option<u64>,
+        forget: Option<&str>,
+        now: i64,
+        recount: Option<(i64, i64)>,
+        cached_fids: &[u64],
+    ) -> Result<Option<(u64, Vec<u64>)>, IndexError> {
+        ensure_schema(&self.db).await?;
+        let mut statements = Vec::with_capacity(5);
+        if let Some(forget) = forget {
+            statements.push(self.db.prepare(PRESENCE_FORGET).bind(&[forget.into()]).map_err(failed)?);
+        }
+        let fid = fid.map_or(JsValue::NULL, |fid| number(fid as f64));
+        statements
+            .push(self.db.prepare(PRESENCE_BEAT).bind(&[visitor.into(), fid, number(now as f64)]).map_err(failed)?);
+        let Some((since, kept)) = recount else {
+            let position = statements.len();
+            statements.push(
+                self.db
+                    .prepare(PRESENCE_PUBLIC)
+                    .bind(&[
+                        serde_json::to_string(cached_fids).map_err(|err| IndexError(err.to_string()))?.into(),
+                        number(
+                            (now - i64::from(allthing_core::presence::online_window(allthing_core::presence::MAX_NEXT)))
+                                as f64,
+                        ),
+                    ])
+                    .map_err(failed)?,
+            );
+            let results = self.db.batch(statements).await.map_err(failed)?;
+            let public = results[position].results::<SeenRow>().map_err(failed)?;
+            return Ok(Some((0, public.into_iter().filter_map(|row| row.fid).map(|fid| fid as u64).collect())));
+        };
+        let written = statements.len() + 1;
+        statements.push(self.db.prepare(PRESENCE_PRUNE).bind(&[number(kept as f64)]).map_err(failed)?);
+        statements.push(
+            self.db
+                .prepare(PRESENCE_SEEN)
+                .bind(&[number(since as f64), number(allthing_core::presence::SHOWN as f64)])
+                .map_err(failed)?,
+        );
+        let seen = match self.db.batch(statements).await.map_err(failed)?.into_iter().nth(written) {
+            Some(result) => result.results::<SeenRow>().map_err(failed)?,
+            None => Vec::new(),
+        };
+        let online = seen.first().map_or(0, |row| row.online as u64);
+        let fids = seen.iter().filter_map(|row| row.fid).map(|fid| fid as u64).collect();
+        Ok(Some((online, fids)))
+    }
+
+    /// Sign-out still has the authenticated session, so it can remove the
+    /// named row before clearing that session. Cached responses recheck it.
+    pub async fn forget_presence(&self, fid: u64) -> Result<(), IndexError> {
+        ensure_schema(&self.db).await?;
+        self.db
+            .prepare(PRESENCE_FORGET)
+            .bind(&[allthing_core::presence::named_visitor(fid).into()])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
         Ok(())
     }
 }

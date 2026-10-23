@@ -68,7 +68,7 @@ cargo xtask strip-worker
 
 # 5. The browser app, optimized with the wasm-opt worker-build fetched.
 if [ -z "${WASM_OPT_BIN:-}" ]; then
-  WASM_OPT_BIN="$(ls "${XDG_CACHE_HOME:-$HOME/.cache}"/worker-build/wasm-opt-*/bin/wasm-opt 2>/dev/null | head -n 1 || true)"
+  WASM_OPT_BIN="$(bash scripts/find-wasm-opt.sh)"
 fi
 export WASM_OPT_BIN
 log "Building the browser app"

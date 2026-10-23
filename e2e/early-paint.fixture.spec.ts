@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page, type Request } from "@playwright/test";
+import { signIn } from "./helpers/farcaster";
 
 /*
  * The front page's first cards, drawn by web/paint.js from the early fetch
@@ -307,6 +308,48 @@ test("top's first cards come in top's order, with the time range the address nam
   expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
 });
 
+for (const width of [1280, 390]) {
+  test(`a signed-in reader's For you comes early under the app's tabs, whom they follow lifted, at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const held = await hold(page);
+    // Only casts inside the day's window, so the share bar counts the same casts as the app's.
+    await serve(page, { ...payload, pool: pool.filter((c) => c.ts > now - 20 * HOUR) });
+    await page.route("**/api/v1/notifications**", (route) => route.fulfill({ json: { groups: [], meta }, headers: { "cache-control": "private, no-store" } }));
+    await signIn(page, { fid: 1234, username: "reader", display_name: "Reader" });
+    // The reader follows dee, as kept from their Following tab (followed.rs).
+    await page.addInitScript(() => localStorage.setItem("allthing.followed", JSON.stringify({ reader: 1234, at: Date.now(), fids: [4] })));
+    await page.goto("/");
+    const boot = page.locator("#boot");
+    // Hot, dee followed: dee's quiet pair, 20 times its 5 points, goes first.
+    await expect(boot.locator(".cast-card").first()).toHaveAttribute("data-hash", pair.hash);
+    await expect(boot.getByRole("link", { name: "For you", includeHidden: true })).toHaveAttribute("aria-current", "page");
+    await expect(boot.locator(".feed-tabs a")).toHaveCount(2);
+    await moduleIn(page, held);
+    await settled(page, "#boot");
+    const early = await shown(page, "#boot");
+    held.js("continue");
+    await expect(boot).toHaveCount(0);
+    await expect(page.locator("#app .cast-card").first()).toBeVisible();
+    // The app's tabs and cards, in the same boxes: nothing moves.
+    expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+  });
+}
+
+test("a signed-in reader's Following tab isn't drawn early: the app draws it", async ({ page }) => {
+  const held = await hold(page);
+  await serve(page);
+  await page.route("**/api/v1/following**", (route) => route.fulfill({ json: { pool: [pair], notes: {}, meta }, headers: { "cache-control": "private, no-store" } }));
+  await signIn(page, { fid: 1234, username: "reader", display_name: "Reader" });
+  const early = page.waitForResponse((response) => response.url().includes("/api/v1/following"));
+  await page.goto("/?feed=following");
+  await early;
+  await page.waitForTimeout(300);
+  await expect(page.locator("#boot .cast-card")).toHaveCount(0);
+  held.wasm("continue");
+  held.js("continue");
+  await expect(page.locator("#boot")).toHaveCount(0);
+});
+
 test("an account seen less of is lower in the first cards too, as in the app", async ({ page }) => {
   const held = await hold(page);
   await serve(page);
@@ -347,6 +390,30 @@ test("a card with Pepe reactions keeps its box: the early card has the row their
   await expect(page.locator(`#app .cast-card[data-hash="${favorite.hash}"] .reaction-chip`)).toHaveCount(1);
   expect((await boxes("#app")).slice(0, early.length)).toEqual(early);
 });
+
+for (const where of ["cast", "quote"]) {
+  test(`shown mini app ${where} waits for the app instead of changing the early card`, async ({ page }) => {
+    const held = await hold(page);
+    await page.addInitScript(() => localStorage.setItem("allthing.show-mini-apps", "1"));
+    const cast = where === "cast"
+      ? { ...favorite, mini_app: true }
+      : { ...favorite, embeds: [{ kind: "cast", hash: hiddenQuote.hash, fid: bob.fid }] };
+    await serve(page, { ...payload, pool: [cast] });
+    const response = page.waitForResponse((response) => response.url().includes("/api/v1/home"));
+    await page.goto("/");
+    await response;
+    // Let paint.js consume the early response while the app stays held.
+    await page.waitForTimeout(300);
+    await expect(page.locator("#boot")).not.toHaveAttribute("data-painted", "");
+    await expect(page.locator("#boot .cast-card")).toHaveCount(0);
+    held.wasm("continue");
+    held.js("continue");
+    await expect(page.locator("#boot")).toHaveCount(0);
+    const card = page.locator(`#app .cast-card[data-hash="${cast.hash}"]`);
+    await expect(card).toBeVisible();
+    await expect(card.locator(".mini-app-link")).toHaveCount(1);
+  });
+}
 
 for (const path of ["/?sort=new", "/?client=9152", "/?t=month", "/?t=all", "/c/books", "/u/ann"]) {
   test(`nothing is drawn early for ${path}`, async ({ page }) => {

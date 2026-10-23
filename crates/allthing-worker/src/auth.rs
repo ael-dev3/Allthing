@@ -99,7 +99,10 @@ pub async fn handle(name: &str, mut req: Request, env: &Env, inv: Rc<Invocation>
         // A signed-in reader's SpacetimeDB identity, attested for the
         // module's `verify_fid` (`crate::attest`).
         "attest" => crate::attest::attest(&mut req, env, now).await,
-        "signout" => json(&serde_json::json!({}), &[&clear(SESSION_COOKIE), &clear(USER_COOKIE)]),
+        "signout" => {
+            crate::presence::sign_out(&req, env, now).await;
+            json(&serde_json::json!({}), &[&clear(SESSION_COOKIE), &clear(USER_COOKIE)])
+        }
         "start" | "verify" | "key" => {
             let Some(secret) = session_secret(env) else {
                 return error(503, "Sign-in isn't set up on this server yet", None);
@@ -412,6 +415,9 @@ fn qr_code(text: &str) -> Option<QrCode> {
     Some(QrCode { size: (width + 2 * QUIET) as u32, path })
 }
 
+/// HMAC-SHA256 of `value` for `purpose` under `secret`: the purpose, a line
+/// break and the value, so a MAC made for one purpose never passes for
+/// another's.
 pub(crate) fn mac(secret: &[u8], purpose: &str, value: &str) -> Hmac<Sha256> {
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).expect("HMAC takes keys of any length");
     mac.update(purpose.as_bytes());

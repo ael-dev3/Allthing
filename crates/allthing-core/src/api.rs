@@ -718,6 +718,11 @@ pub fn page_read(path: &str, query: &str) -> Option<PageRead> {
     };
     let read = |api: String| Some(PageRead { api, cast: None, user: None });
     if path.is_empty() || path == "/" {
+        // Every sort and range of Following reuses the same private
+        // payload. Navigation must not fetch (or wait for) For you's data.
+        if param(crate::following::FEED_PARAM).as_deref() == Some(crate::following::FOLLOWING) {
+            return read(crate::following::following_path(None));
+        }
         return read(if Sort::parse(param("sort").as_deref(), Sort::Hot) == Sort::New {
             latest_path()
         } else {
@@ -1015,7 +1020,7 @@ mod tests {
         assert_eq!((profile.api.as_str(), profile.user.as_deref()), ("/api/v1/user?name=dwr", Some("dwr")));
         assert_eq!(page_read("/u/balajis.eth", "?tab=replies").unwrap().api, "/api/v1/user?name=balajis.eth");
         assert_eq!(page_read("/c/Books", "").unwrap().api, "/api/v1/channel?id=books");
-        // The front page: hot and top read the trending page of their range; new, the newest casts.
+        // For you: hot/top read the trending range; new, the newest casts.
         assert_eq!(page_read("/", "").unwrap().api, home_page_path(0, TrendingWindow::Day));
         assert_eq!(page_read("", "?sort=top&t=week").unwrap().api, home_page_path(0, TrendingWindow::Week));
         assert_eq!(page_read("/", "sort=new&t=week").unwrap().api, latest_path());
@@ -1025,6 +1030,25 @@ mod tests {
             [("/search", ""), ("/search", "?q=%20"), ("/p/0x12", ""), ("/u/", ""), ("/dau", ""), ("/scheduled", "")]
         {
             assert_eq!(page_read(path, query), None, "{path}{query}");
+        }
+    }
+
+    #[test]
+    fn following_navigation_reads_its_own_payload_for_every_sort_and_range() {
+        for sort in Sort::ALL {
+            for range in TimeRange::ALL {
+                let query = format!("?feed=following&sort={}&t={}", sort.as_str(), range.as_str());
+                let read = page_read("/", &query).unwrap();
+                assert_eq!(read.api, crate::following::following_path(None), "{query}");
+                assert!(read.cast.is_none() && read.user.is_none());
+            }
+        }
+        assert_eq!(page_read("", "feed=following").unwrap().api, crate::following::following_path(None));
+        assert_eq!(page_read("/", "sort=new&feed=follow%69ng").unwrap().api, crate::following::following_path(None));
+        // Old Everyone links and unknown tab values still name For you.
+        for feed in ["everyone", "unknown", ""] {
+            let query = format!("feed={feed}&sort=new&t=week");
+            assert_eq!(page_read("/", &query).unwrap().api, latest_path());
         }
     }
 

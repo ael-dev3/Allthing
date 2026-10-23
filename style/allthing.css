@@ -290,6 +290,200 @@ code {
   box-shadow: 0 0 0 1px var(--line);
 }
 
+/* Who is reading Allthing now (components/presence.rs): a dot and a count
+   after Home, out of the flow, so nothing moves as it comes, and Home stays
+   as it is. Both headers reserve its space before the answer arrives,
+   including the desktop side of the 920px compact breakpoint. */
+.header-nav,
+.boot-nav {
+  padding-right: 70px;
+  flex: none;
+}
+
+.header-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.header-nav > .presence {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 58px;
+  align-items: center;
+  animation: presence-count 0.6s var(--ease) backwards;
+}
+
+.popover-trigger.presence-chip {
+  height: 26px;
+  padding: 0 9px 0 8px;
+  gap: 6px;
+  border-radius: 999px;
+  font: 500 12.5px/1 var(--font-ui);
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+.popover-trigger.presence-chip:hover,
+.popover-trigger.presence-chip[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--ink-2);
+}
+
+.presence-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #1f9d63;
+  box-shadow: 0 0 0 3px rgba(31, 157, 99, 0.14);
+}
+
+/* A new count fades in, once. */
+.presence-count {
+  font-variant-numeric: tabular-nums;
+  animation: presence-count 0.6s var(--ease) backwards;
+}
+
+@keyframes presence-count {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Keep Home and the compact dot/count on phones too. The early header
+   reserves the same width, so hydration and the first count move nothing. */
+@media (max-width: 920px) {
+  .header-nav,
+  .boot-nav {
+    padding-right: 58px;
+    flex: none;
+  }
+
+  .header-nav > .presence {
+    width: 52px;
+  }
+
+  .popover-trigger.presence-chip {
+    padding: 0 7px 0 6px;
+    gap: 5px;
+  }
+}
+
+.popover-panel.presence-panel {
+  width: 236px;
+  padding: 12px 12px 10px;
+}
+
+.presence-head {
+  margin: 0;
+  font: 600 13px/1.35 var(--font-ui);
+  color: var(--ink);
+}
+
+.presence-readers {
+  display: grid;
+  grid-template-columns: repeat(6, 24px);
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presence-readers a {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.presence-readers .avatar {
+  display: block;
+}
+
+.presence-readers a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.presence-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  height: 18px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.presence-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* "Show me here": a small switch, on while the reader is shown by name. */
+.presence-me {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  font: 500 13px/1 var(--font-ui);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.presence-me:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.presence-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--line-2);
+  transition: background-color 0.2s var(--ease);
+}
+
+.presence-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.25);
+  transition: transform 0.2s var(--ease);
+}
+
+.presence-me[aria-checked="true"] .presence-switch {
+  background: var(--accent);
+}
+
+.presence-me[aria-checked="true"] .presence-switch::after {
+  transform: translateX(12px);
+}
+
 .readonly-pill,
 .boot-readonly {
   margin-left: auto;
@@ -643,6 +837,52 @@ html.header-still .wordmark {
   color: var(--ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(27, 34, 51, 0.08), 0 0 0 1px var(--line);
+}
+
+/* The front page's two feeds, For you and Following, as X's: links across
+   the column, each a 44 px tall target at any width, the chosen one bold
+   over an accent bar. paint.js draws the same. */
+.feed-tabs {
+  display: flex;
+  flex: 1 0 100%;
+  border-bottom: 1px solid var(--line);
+}
+
+.feed-tabs a {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  color: var(--ink-2);
+  font-size: 15px;
+  position: relative;
+  transition: color 0.2s var(--ease);
+}
+
+.feed-tabs a:hover {
+  color: var(--ink);
+}
+
+.feed-tabs a.selected {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.feed-tabs a.selected::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  width: 56px;
+  height: 3px;
+  margin-left: -28px;
+  border-radius: 3px;
+  background: var(--accent, var(--ink));
+}
+
+.feed-tabs a:focus-visible {
+  outline-offset: -3px;
 }
 
 .sort-row {
@@ -1480,6 +1720,7 @@ p.jumbo .emoji img {
    (below). */
 @media (pointer: coarse) {
   .main-nav a,
+  .presence-chip,
   .sign-in-button,
   .sort-tabs a,
   .tabs a,
@@ -1501,6 +1742,7 @@ p.jumbo .emoji img {
   }
 
   .main-nav a::after,
+  .presence-chip::after,
   .sign-in-button::after,
   .sort-tabs a::after,
   .tabs a::after,
@@ -4235,6 +4477,7 @@ p.jumbo .emoji img {
   flex: 1 1 220px;
   max-width: 340px;
   margin-left: auto;
+  min-width: 0;
 }
 
 .search-box .icon,
@@ -7762,15 +8005,49 @@ p.jumbo .emoji img {
   transform: translateX(12px);
 }
 
-.mini-apps-note {
-  display: flex;
-  flex-wrap: wrap;
+/* The header's Settings: a round button like the bell, and its panel. */
+.settings-button {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 4px 12px;
-  margin: 0 0 8px;
-  padding: 2px 4px;
-  font-size: 13px;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--ink-2);
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-button:hover {
+  color: var(--ink);
+  border-color: rgba(79, 67, 212, 0.35);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.settings-button .icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.settings .popover-panel {
+  left: auto;
+  right: 0;
+  width: min(250px, 86vw);
+  padding: 10px 6px 6px;
+}
+
+.settings-title {
+  margin: 0 8px 6px;
+  font: 600 13px/1.2 var(--font-ui);
+  color: var(--ink-3);
 }
 
 .mini-app-link {
@@ -7856,7 +8133,7 @@ p.jumbo .emoji img {
   }
 
   .header-inner {
-    gap: 14px;
+    gap: 10px;
     padding: 10px 14px 8px;
   }
 
@@ -10092,3 +10369,12 @@ p.jumbo .emoji img {
   opacity: 0.7;
   cursor: progress;
 }
+
+/* Reading history controls stay below the feed, out of its cards' way. */
+.seen-notice {
+  margin: 20px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.seen-notice p { margin: 0 0 6px; }

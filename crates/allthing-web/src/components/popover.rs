@@ -85,8 +85,9 @@ pub fn Popover(
     /// module notes.
     #[prop(optional)]
     links: bool,
-    /// With `links`: keyboard focus on them does not open the panel (in a
-    /// dialog that keeps focus to itself, for one).
+    /// Keyboard focus on the trigger does not open the panel: with `links`,
+    /// in a dialog that keeps focus to itself, for one; or a button that
+    /// Enter and Space open, as a press would.
     #[prop(optional)]
     no_focus_open: bool,
     /// Place the panel against the viewport rather than inside the page's
@@ -319,7 +320,7 @@ pub fn Popover(
         let keyboard = button.get_untracked().is_some_and(|b| b.matches(":focus-visible").unwrap_or(false));
         // Escape returns focus here while the closing animation runs.
         // That focus must not open the panel again.
-        if hover && keyboard && state.get_untracked() == State::Closed {
+        if hover && keyboard && !no_focus_open && state.get_untracked() == State::Closed {
             open();
         }
     };

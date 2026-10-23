@@ -6,7 +6,7 @@ import { expect, test, type Page } from "@playwright/test";
  * front page: a day of 120 casts, 6 of them by a typical account whose
  * median place starts in the middle of hot, top and new. Seen less of, its
  * casts drop by at least 40% of the list in hot and top, into the last
- * quarter, and by at least a fifth in new; as a favorite, they rise as far
+ * quarter, while New stays chronological; as a favorite, they rise as far
  * in hot and top, into the first quarter, and new stays in time order.
  * Every cast is still listed. The casts are made as allthing_core::ranking's
  * `a_day_of_casts` makes them for `leanings_move_a_typical_account_far`.
@@ -117,7 +117,7 @@ async function lean(page: Page, button: "Show less" | "Favorite") {
   await expect(pressed).toHaveAttribute("aria-pressed", "true");
 }
 
-test("Show less drops a typical account's casts from the middle of hot and top into the last quarter, and a fifth or more down new", async ({ page }) => {
+test("Show less drops a typical account's casts from the middle of hot and top into the last quarter, while New stays chronological", async ({ page }) => {
   await serve(page);
   const before = await measure(page);
   await lean(page, "Show less");
@@ -131,7 +131,7 @@ test("Show less drops a typical account's casts from the middle of hot and top i
     expect(after.places[sort] - before.places[sort], `${sort}: down by 40% of the list`).toBeGreaterThanOrEqual(0.4 * n);
     expect(after.places[sort], `${sort}: in the last quarter`).toBeGreaterThan(0.75 * n);
   }
-  expect(after.places.new - before.places.new, "new: down by a fifth of the list").toBeGreaterThanOrEqual(0.2 * n);
+  expect(after.lists.new, "new: in time order, as before").toEqual(before.lists.new);
 });
 
 test("Favorite raises a typical account's casts from the middle of hot and top into the first quarter, and new stays in time order", async ({ page }) => {
