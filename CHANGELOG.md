@@ -7,6 +7,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Notifications coalesce refreshes from opening the page and regaining focus. Marking the list seen does not queue another read: only changed notification times refresh its rows, so a delayed duplicate cannot start after the tab is hidden.
+
 - On phones, header search has a full-width second row, leaving Home, the online count, Settings and account controls in view. A wrapped reply's app link clears its collapse button's full tap area.
 
 - Front-page feeds remember casts actually read for a second with at least half its possible viewport exposure visible in a foreground tab, including cards taller than the screen. Later feed generations leave these posts out, with Show seen posts below the list and Reset seen posts in Settings. History stays in this browser, separate for each signed-in FID and signed-out reader, bounded to 2,000 hashes for 30 days across four readers. Current cards stay put while read, and direct posts, profiles and threads remain complete.

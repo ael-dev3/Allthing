@@ -243,7 +243,8 @@ test("someone else signing in, in another tab, sees none of the last reader's no
   expect(asked).toBe(1);
 });
 
-test("in view, the bell asks every 3 minutes and when back in view; an open page adds what's new above its rows", async ({ page }) => {
+/** Drive visibility without relying on which browser tab macOS has focused. */
+async function visibility(page: Page) {
   await page.addInitScript(() => {
     let hidden = false;
     Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: () => hidden });
@@ -253,6 +254,10 @@ test("in view, the bell asks every 3 minutes and when back in view; an open page
       document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
     };
   });
+}
+
+test("in view, the bell asks every 3 minutes and when back in view; an open page adds what's new above its rows", async ({ page }) => {
+  await visibility(page);
   await page.clock.install();
   await ready(page);
   let answer = first;
@@ -286,6 +291,48 @@ test("in view, the bell asks every 3 minutes and when back in view; an open page
   expect(asked).toBe(2);
   await page.evaluate(() => (window as any).__setHidden(false));
   await expect.poll(() => asked).toBe(3);
+});
+
+test("marking notifications seen in another tab does not reread the list while hidden after its cache expires", async ({ page }) => {
+  await visibility(page);
+  await page.clock.install();
+  await ready(page);
+  let asked = 0;
+  let release: () => void = () => {};
+  const initial = new Promise<void>((done) => (release = done));
+  await page.route("**/api/v1/notifications", async (route) => {
+    asked += 1;
+    await initial;
+    return route.fulfill({ json: first, headers: { "cache-control": "private, no-store" } });
+  });
+  await page.goto("/notifications");
+  await expect.poll(() => asked).toBe(1);
+  // Opening the page and focus events can all ask while the same first
+  // response is pending. They must share the refresh without late waiters.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  release();
+  await expect(rows(page)).toHaveCount(7);
+  await expect(bell(page)).toHaveAccessibleName("Notifications, 0 unread");
+  expect(asked).toBe(1);
+
+  await page.evaluate(() => (window as any).__setHidden(true));
+  // Past both the one-minute cache and a polling interval. A seen-time
+  // storage event changes bell state but none of the notification times.
+  await page.clock.fastForward("03:01");
+  await page.evaluate(({ key, fid, seen }) => {
+    const value = JSON.stringify({ [fid]: seen });
+    localStorage.setItem(key, value);
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: value, storageArea: localStorage }));
+  }, { key: SEEN, fid: me.fid, seen: first.newest + 60 });
+  await page.waitForTimeout(300);
+  expect(asked).toBe(1);
+  await expect(rows(page)).toHaveCount(7);
+  // A genuine return to the page still refreshes expired data.
+  await page.evaluate(() => (window as any).__setHidden(false));
+  await expect.poll(() => asked).toBe(2);
 });
 
 test("the tabs show all, mentions (and quotes that mention you), and replies, from the URL", async ({ page }, testInfo) => {
@@ -370,14 +417,15 @@ test("signed out, there's no bell, and the page asks to sign in", async ({ page 
 });
 
 test("a read that fails says why, and Try again reads again", async ({ page }) => {
-  const calls = await ready(page, SEEN_BEFORE, { failFirst: 2 });
+  const calls = await ready(page, SEEN_BEFORE, { failFirst: 1 });
   await page.goto("/notifications");
   const failed = page.locator(".notif-error[role=alert]");
   await expect(failed).toContainText("Farcaster data source is busy");
   await expect(page.locator(".bell-badge")).toHaveCount(0);
+  expect(calls.first).toBe(1);
   await failed.getByRole("button", { name: "Try again" }).click();
   await expect(rows(page)).toHaveCount(7);
-  expect(calls.first).toBeGreaterThanOrEqual(3);
+  expect(calls.first).toBe(2);
 });
 
 test("nothing yet, per tab", async ({ page }) => {

@@ -42,6 +42,9 @@ struct State {
     times: Option<Arc<Times>>,
     /// Why the last read failed, if it did and nothing was read since.
     failed: Option<Failure>,
+    /// One refresh at a time, including calls from the page opening and
+    /// from focus while the initial read is still in flight.
+    loading: bool,
     /// The newest time `whose` has seen (Unix seconds), 0 for never.
     seen: i64,
 }
@@ -135,23 +138,29 @@ impl Notifications {
     /// Read the first page again for the reader signed in, unless a read
     /// within a minute can be reused or is on its way (`api::get`).
     pub fn refresh(self) {
-        let Some(fid) = self.whose() else { return };
+        let Some(fid) = self.0.with_untracked(|state| state.whose.filter(|_| !state.loading)) else { return };
+        // Coalesce before spawning: a second caller otherwise waits in
+        // api::get for the first read. A throttled tab can resume that
+        // waiter after the cache has expired and start a redundant read.
+        self.0.update(|state| state.loading = true);
         spawn_local(async move {
             let read = api::get::<Times>(NOTIFICATIONS_PATH).await;
             // Signed out, or someone else, meanwhile.
             if self.whose() != Some(fid) {
                 return;
             }
-            match read {
-                // The same times again redraw nothing.
-                Ok(fetched)
-                    if self.0.with_untracked(|s| s.failed.is_none() && s.times.as_deref() == Some(&*fetched.data)) => {}
-                Ok(fetched) => self.0.update(|state| {
-                    state.times = Some(fetched.data);
-                    state.failed = None;
-                }),
-                Err(failure) => self.0.update(|state| state.failed = Some(failure)),
-            }
+            self.0.update(|state| {
+                state.loading = false;
+                match read {
+                    // The same times again redraw nothing.
+                    Ok(fetched) if state.failed.is_none() && state.times.as_deref() == Some(&*fetched.data) => {}
+                    Ok(fetched) => {
+                        state.times = Some(fetched.data);
+                        state.failed = None;
+                    }
+                    Err(failure) => state.failed = Some(failure),
+                }
+            });
         });
     }
 
