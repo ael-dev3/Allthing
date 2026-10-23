@@ -29,7 +29,7 @@ if (seed.length !== 32 || pub.length !== 32) throw new Error("unexpected Ed25519
 
 const source = readFileSync(FILE, "utf8");
 const bytes = [...pub].map((b) => `0x${b.toString(16).padStart(2, "0")}`).join(", ");
-const next = source.replace(/pub const ATTEST_PUBLIC_KEY: \[u8; 32\] = [^;]+;/, `pub const ATTEST_PUBLIC_KEY: [u8; 32] = [${bytes}];`);
+const next = source.replace(/pub const ATTEST_PUBLIC_KEY: \[u8; 32\] = \[[^\]]*\];/, `pub const ATTEST_PUBLIC_KEY: [u8; 32] = [${bytes}];`);
 if (next === source && !source.includes(bytes)) throw new Error(`no ATTEST_PUBLIC_KEY in ${FILE}`);
 writeFileSync(FILE, next);
 
