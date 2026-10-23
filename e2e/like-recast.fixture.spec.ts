@@ -239,7 +239,7 @@ test("on a server that endorses no keys, a signed-in reader likes and recasts in
 
 /** Revisit the posts through the reader's recovery control before checking keys. */
 async function showSeen(page: Page) {
-  await expect(page.locator("#app .cast-list")).toBeVisible();
+  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
   const show = page.getByRole("button", { name: "Show seen posts", exact: true });
   if (await show.isVisible()) await show.click();
 }
