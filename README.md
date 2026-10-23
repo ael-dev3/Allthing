@@ -114,7 +114,7 @@ bash scripts/check.sh                       # version, CSP hashes, changelog lin
 npx playwright install chromium             # once
 npx playwright test '\.fixture\.spec\.ts$'  # deterministic browser regressions, as CI runs them
 npx playwright test                         # everything, including live Farcaster data
-E2E_BASE_URL=https://allthing.social npx playwright test         # against production
+E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test # production
 bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test   # the static copy
 ```
 

@@ -54,7 +54,7 @@ Scopes are optional, for example `feat(profile): …`, `fix(worker): …` or `pe
    ```sh
    gh release create vX.Y.Z --title "Allthing X.Y.Z" --notes-file <(awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
    ```
-6. Workers Builds deploys the merge. Check that `https://allthing.social/version` reports `X.Y.Z` and the merge commit. Then run `E2E_BASE_URL=https://allthing.social npx playwright test`.
+6. Workers Builds deploys the merge. Check that `https://allthing.social/version` reports `X.Y.Z` and the merge commit. Then run `E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test`. The readiness contract defaults to `false` for local development without a custody secret; deployments that endorse keys set it explicitly to `true` (`true` and `false` are the only accepted values).
 
 ## Hotfixes
 

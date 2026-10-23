@@ -444,6 +444,10 @@ test("an approval from another account is refused, and signing out forgets the k
 });
 
 test("the real Worker endorses keys only for a session, from Allthing, and draws only Farcaster's links", async ({ request, baseURL }) => {
+  // Development has no custody secret. A deployment that endorses keys
+  // explicitly opts into the opposite exact readiness contract.
+  const readiness = process.env.E2E_EXPECT_WRITES_READY ?? "false";
+  expect(readiness, "E2E_EXPECT_WRITES_READY must be true or false").toMatch(/^(true|false)$/);
   const writes = await request.get("/api/v1/signer");
   expect(writes.status()).toBe(401);
   expect(writes.headers()["cache-control"]).toBe("no-store");
@@ -477,5 +481,5 @@ test("the real Worker endorses keys only for a session, from Allthing, and draws
     expect(refused.status(), url).toBe(400);
   }
   const status = await (await request.get("/api/v1/status")).json();
-  expect(status.writes).toEqual({ ready: false });
+  expect(status.writes).toEqual({ ready: readiness === "true" });
 });
