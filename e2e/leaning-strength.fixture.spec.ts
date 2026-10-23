@@ -74,6 +74,10 @@ const SORTS = Object.keys(FEEDS) as Sort[];
  * end comes near): each card's hash and account. */
 async function listed(page: Page, sort: Sort) {
   await page.goto(FEEDS[sort]);
+  await expect(page.locator("#app .cast-list")).toBeVisible();
+  // Compare ranking with the complete pool through the reader's real control.
+  const seen = page.getByRole("button", { name: "Show seen posts", exact: true });
+  if (await seen.isVisible()) await seen.click();
   const cards = page.locator("#app .cast-list .cast-card:not(.skeleton)");
   await expect(cards.first()).toBeVisible();
   await expect
