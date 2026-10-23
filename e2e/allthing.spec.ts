@@ -1156,7 +1156,13 @@ test.describe("threads and navigation", () => {
       // replace the content whose single request is being checked. The live
       // feed, profile and channel cases above still exercise real data.
       const cast = { hash: GALLERY_CAST, author: { fid: 1234, username: "inline-fixture", display_name: "Inline fixture" }, text: "The inline response", ts: Math.floor(Date.now() / 1000) - 1 };
-      const listing = { pool: [cast], notes: {}, meta: { backend: "hypersnap", fetched_at: Date.now() } };
+      // Fill a normal first page: a one-row fixture immediately reaches the
+      // infinite-scroll sentinel and legitimately requests the next page.
+      const pool = Array.from({ length: 100 }, (_, index) => ({
+        ...cast, hash: `0x${(index + 1).toString(16).padStart(40, "0")}`,
+        text: `${cast.text} ${index + 1}`, ts: cast.ts - index,
+      }));
+      const listing = { pool, notes: {}, meta: { backend: "hypersnap", fetched_at: Date.now() } };
       const payload = page_ === "post" ? { thread: { cast, children: [] }, notes: {}, meta: listing.meta }
         : page_ === "profile" ? { ...listing, user: { fid: 1234, username: "dwr", display_name: "Inline profile" } }
         : page_ === "channel" ? { ...listing, channel: { id: "farcaster", name: "Farcaster", parent_url: "https://farcaster.xyz/~/channel/farcaster" } }
