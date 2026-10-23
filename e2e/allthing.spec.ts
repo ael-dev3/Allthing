@@ -6,7 +6,11 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 /** Waits until the images on screen have loaded, so nothing shifts under the pointer. */
 async function settleImages(page: Page) {
   await page.evaluate(async () => {
-    const pending = [...document.images].filter((img) => !img.complete);
+    await document.fonts.ready;
+    const pending = [...document.images].filter((img) => {
+      const box = img.getBoundingClientRect();
+      return !img.complete && box.width > 0 && box.bottom > 0 && box.top < innerHeight;
+    });
     await Promise.race([
       Promise.all(
         pending.map(
@@ -125,8 +129,10 @@ test.describe("front page", () => {
     await expect(card.locator(".stat-likes .n")).toHaveText(/^\d[\d,.km]*$/);
     await expect(card.locator(".stat-recasts")).toContainText(/recasts?/);
     await expect(card.locator(".stat-replies")).toContainText(/repl(y|ies)/);
-    await expect(page.locator('[aria-label*="downvote" i], .downvote, .arrow.down')).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /vote/i })).toHaveCount(0);
+    await expect(page.locator('.engagement [aria-label*="downvote" i], .engagement .downvote, .engagement .arrow.down')).toHaveCount(0);
+    // Public authors and image descriptions may themselves contain "vote".
+    // This checks the engagement controls, not those user-provided names.
+    await expect(page.locator(".engagement").getByRole("button", { name: /^(?:upvote|downvote|vote)\b/i })).toHaveCount(0);
 
     // Who, when, where, and via which app; no scores beside names.
     await expect(card.locator(".user-chip .avatar").first()).toBeVisible();
@@ -209,11 +215,17 @@ test.describe("front page", () => {
   });
 
   test("a feed page that fails to load is tried again", async ({ page }) => {
-    // The second page fails once, as a Worker error would.
+    // A first page now mixes trending and newest casts, so it can already
+    // contain more than 100. Observe the failed request and its recovered
+    // row directly instead of treating a card count as proof of a retry.
     let failed = 0;
-    await page.route(/\/api\/v1\/home\?offset=100$/, async (route: Route) => {
+    const recovered = `0x${"fe".repeat(20)}`;
+    await page.route((url) => url.pathname === "/api/v1/home" && url.searchParams.get("offset") === "100", async (route: Route) => {
       if (failed++ === 0) return route.fulfill({ status: 500, json: { error: "upstream failed" } });
-      await route.fallback();
+      return route.fulfill({ json: {
+        pool: [{ hash: recovered, author: { fid: 1234, username: "retry-fixture" }, text: "The recovered page", ts: Math.floor(Date.now() / 1000) - 1 }],
+        notes: {}, meta: { backend: "hypersnap", fetched_at: Date.now() },
+      } });
     });
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
@@ -221,12 +233,15 @@ test.describe("front page", () => {
       .poll(
         async () => {
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-          return page.locator(".cast-card").count();
+          return failed;
         },
         { timeout: 30_000, intervals: [600] },
       )
-      .toBeGreaterThan(100);
-    expect(failed).toBeGreaterThanOrEqual(2);
+      .toBeGreaterThanOrEqual(2);
+    await expect(page.locator(`.cast-list > .cast-card[data-hash="${recovered}"]`)).toBeVisible();
+    const hashes = await page.locator(".cast-list > .cast-card[data-hash]").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-hash")));
+    expect(hashes.filter((hash) => hash === recovered)).toHaveLength(1);
+    expect(new Set(hashes).size).toBe(hashes.length);
   });
 
   test("each page view costs one API call", async ({ page }) => {
@@ -577,6 +592,10 @@ test.describe("profiles", () => {
     await expect(profile.getByText(/Neynar/)).toHaveCount(0);
     // Only "Voted yes", "Voted no" or "Didn't vote", never the old wordings.
     await expect(page.getByText(/Voted to (stay|leave)|Stay vote revoked|Did not vote|checking…/)).toHaveCount(0);
+    const vitalikWallets = PAGES ? null : page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/v1/wallets" && url.searchParams.get("fid") === "5650";
+    });
     await page.goto(at("/u/vitalik.eth"));
     await expect(page.locator(".profile .vote-fact .vote")).toHaveText("Didn't vote");
     // Registered before the ID registry's move to OP Mainnet: joined when
@@ -588,7 +607,32 @@ test.describe("profiles", () => {
     const wallets = page.locator(".profile .profile-wallets");
     await expect(wallets.locator(".share-bar")).toBeVisible();
     await expect(wallets.locator(".share-list li").first()).toContainText(/%/);
-    await expect(wallets.locator(".share-list")).toContainText("Base");
+    // Public RPCs can be unavailable, and the UI deliberately labels partial
+    // data. Check the chains the page actually received, not a fixed chain.
+    // The static copy reads RPCs itself; its deterministic share fixtures
+    // verify the complete/partial mapping without a Worker response.
+    if (!PAGES) {
+      const response = await vitalikWallets!;
+      expect(response.status()).toBe(200);
+      const activity = await response.json();
+      expect(activity.fid).toBe(5650);
+      const measured = activity.chains.filter((chain: { error?: string; count: number }) => !chain.error && chain.count > 0);
+      const label = (await wallets.locator(".share-bar").getAttribute("aria-label"))!;
+      const shares = label.split(", ").map((entry) => {
+        const match = /^(.+) (\d+)%$/.exec(entry);
+        expect(match).not.toBeNull();
+        return { name: match![1], percent: Number(match![2]) };
+      });
+      expect(shares.length).toBeGreaterThan(0);
+      expect(shares.reduce((total, share) => total + share.percent, 0)).toBe(100);
+      for (const share of shares) {
+        expect(measured.map((chain: { name: string }) => chain.name)).toContain(share.name);
+        expect(share.percent).toBeGreaterThan(0);
+      }
+      await expect(wallets.locator(".share-list")).toContainText(shares[0].name);
+      const partial = activity.chains.some((chain: { error?: string }) => Boolean(chain.error));
+      await expect(wallets.getByRole("button", { name: "partial: why", exact: true })).toHaveCount(partial ? 1 : 0);
+    }
     await expect(page.getByText(/How this is measured|Solana: Not measured|No activity on|Posts via|Verified addresses/)).toHaveCount(0);
     await expect(page.locator(".side")).toHaveCount(0);
     await expect(firstCard(page)).toBeVisible();
@@ -793,6 +837,9 @@ test.describe("threads and navigation", () => {
     await page.goto(at(`/p/${NESTED_THREAD}`));
     const foot = page.locator(".post .engagement");
     await expect(foot).toBeVisible();
+    // Scroll before settling: that exposes the lazy media around the actual
+    // hover target, rather than only the page's initial viewport.
+    await foot.locator(".stat-likes").scrollIntoViewIfNeeded();
     await settleImages(page);
     await foot.locator(".stat-likes").hover();
     const likes = page.getByRole("dialog", { name: "Liked by" });
@@ -1102,6 +1149,18 @@ test.describe("threads and navigation", () => {
       page.on("console", (m) => /Content Security Policy/.test(m.text()) && violations.push(m.text()));
       const calls: string[] = [];
       page.on("request", (r) => r.url().includes("/api/v1/") && calls.push(new URL(r.url()).pathname + new URL(r.url()).search));
+      // This is an inline-fetch/CSP/normalization contract. Keep the deployed
+      // HTML and headers, with a fixed payload so an upstream 503 cannot
+      // replace the content whose single request is being checked. The live
+      // feed, profile and channel cases above still exercise real data.
+      const cast = { hash: GALLERY_CAST, author: { fid: 1234, username: "inline-fixture", display_name: "Inline fixture" }, text: "The inline response", ts: Math.floor(Date.now() / 1000) - 1 };
+      const listing = { pool: [cast], notes: {}, meta: { backend: "hypersnap", fetched_at: Date.now() } };
+      const payload = page_ === "post" ? { thread: { cast, children: [] }, notes: {}, meta: listing.meta }
+        : page_ === "profile" ? { ...listing, user: { fid: 1234, username: "dwr", display_name: "Inline profile" } }
+        : page_ === "channel" ? { ...listing, channel: { id: "farcaster", name: "Farcaster", parent_url: "https://farcaster.xyz/~/channel/farcaster" } }
+        : listing;
+      await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
+      await page.route((url) => url.pathname + url.search === api, (route) => route.fulfill({ json: payload }));
       await page.goto(at(path));
       await expect(page.locator(shown).first()).toBeVisible();
       // The inline script ran (CSP allowed it) and the app took its response:
