@@ -20,6 +20,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Pressed conversation rows keep their preview text and timestamps readable while the press animation dims the row, including on its selected background.
+
 - Messages connects under the site’s existing Content Security Policy. SpacetimeDB’s product and sum codecs now use cached closures instead of compiling JavaScript strings; the SDK version is guarded at build time, and a browser test exercises the actual bundled connection, row decoding, account verification and chat sending under the production policy.
 
 - Following sort links and time-range changes prefetch their existing private feed, rather than fetching and waiting for unrelated For you home/latest payloads.

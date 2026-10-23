@@ -9594,6 +9594,13 @@ p.jumbo .emoji img {
   white-space: nowrap;
 }
 
+/* The shared press feedback dims the whole row to 78%. Keep its secondary
+   text dark enough for the selected/hover tint throughout that feedback. */
+.dm-row[data-press] .dm-row-last,
+.dm-row[data-press] .dm-row-time {
+  color: var(--ink);
+}
+
 .dm-pane {
   display: flex;
   flex-direction: column;
