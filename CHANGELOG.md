@@ -22,6 +22,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Feed-ranking checks restore read posts through Show seen posts even when the filtered list is empty.
+
 - Reply-composer geometry checks wait for its entrance animation before measuring exact thumbnail and tool sizes, while retaining first-frame focus and layout-shift checks.
 
 - Pressed conversation rows keep their preview text and timestamps readable while the press animation dims the row, including on its selected background.

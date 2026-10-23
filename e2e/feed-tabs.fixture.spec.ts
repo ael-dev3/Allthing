@@ -59,7 +59,7 @@ const order = (page: Page) =>
 // restore those rows before checking their personalized ranking.
 async function showSeenForRanking(page: Page) {
   await expect(page.locator("#boot")).toHaveCount(0);
-  await expect(page.locator("#app .cast-list, #app .seen-notice").first()).toBeVisible();
+  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
   const show = page.getByRole("button", { name: "Show seen posts", exact: true });
   if (await show.isVisible()) await show.click();
 }
