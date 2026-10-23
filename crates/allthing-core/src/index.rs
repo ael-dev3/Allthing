@@ -166,7 +166,7 @@ pub fn candidates(raw: &[RawCast], metas: &[RankingMeta], now: i64) -> Vec<Cast>
                 + RECAST_WEIGHT * count(reactions.and_then(|x| x.recasts_count))
                 + count(r.replies.as_ref().and_then(|x| x.count));
             let ts = r.timestamp.as_deref().and_then(parse_rfc3339).unwrap_or(0);
-            points >= floor(metas, ts, now).min(NOTABLE_POINTS)
+            TrendingWindow::All.holds(ts, now) && points >= floor(metas, ts, now).min(NOTABLE_POINTS)
         })
         .map(normalize::cast)
         .collect()
@@ -179,7 +179,9 @@ pub fn worth_indexing(casts: &[Cast], metas: &[RankingMeta], now: i64) -> Vec<En
     let mut seen = HashSet::new();
     casts
         .iter()
-        .filter(|c| !c.is_reply() && !c.spam && points(c) >= floor(metas, c.ts, now))
+        .filter(|c| {
+            !c.is_reply() && !c.spam && TrendingWindow::All.holds(c.ts, now) && points(c) >= floor(metas, c.ts, now)
+        })
         .filter(|c| seen.insert(c.hash.as_str()))
         .map(|c| Entry(c.hash.clone(), c.ts, points(c)))
         .collect()
@@ -489,7 +491,8 @@ mod tests {
                 {"hash":"0x02","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":5}},
                 {"hash":"0x03","parent_hash":"0x01","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":900}},
                 {"hash":"0x04","parent_hash":"","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":260}},
-                {"hash":"0x05","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":100}}
+                {"hash":"0x05","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":100}},
+                {"hash":"0xfuture","timestamp":"2061-09-12T00:03:58Z","reactions":{"likes_count":1000000}}
             ]"#,
         )
         .unwrap();
@@ -499,6 +502,12 @@ mod tests {
         // A full month: only casts over its floor, or notable ones.
         assert_eq!(hashes(candidates(&raw, &metas(150, 300, 600), now)), ["0x04"]);
         assert_eq!(hashes(candidates(&raw, &metas(400, 400, 600), now)), ["0x04"]);
+    }
+
+    #[test]
+    fn future_dated_casts_are_not_indexed_even_when_their_points_would_rank() {
+        let casts = vec![cast("0xfuture", 1, NOW + 1, 1_000_000), cast("0xnow", 1, NOW, 30)];
+        assert_eq!(worth_indexing(&casts, &[], NOW), [Entry("0xnow".into(), NOW, 30)]);
     }
 
     #[test]

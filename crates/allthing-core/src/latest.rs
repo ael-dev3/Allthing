@@ -154,13 +154,15 @@ pub fn to_hydrate(added: &[Added], listed: &[Cast], removed: &[String], limit: u
 }
 
 /// The newest `keep` casts of `listed` and `fresh` (newly read, so they
-/// replace listed copies), without `removed` ones.
-pub fn newest(listed: Vec<Cast>, fresh: Vec<Cast>, removed: &[String], keep: usize) -> Vec<Cast> {
+/// replace listed copies), without `removed` or future-dated ones. Filter before
+/// truncation so an invalid future timestamp cannot take a real cast's slot.
+pub fn newest(listed: Vec<Cast>, fresh: Vec<Cast>, removed: &[String], keep: usize, now: i64) -> Vec<Cast> {
     let fresh_hashes: HashSet<String> = fresh.iter().map(|c| c.hash.clone()).collect();
     let mut all: Vec<Cast> = fresh
         .into_iter()
         .chain(listed.into_iter().filter(|c| !fresh_hashes.contains(&c.hash)))
         .filter(|c| !removed.contains(&c.hash))
+        .filter(|c| TrendingWindow::All.holds(c.ts, now))
         .collect();
     all.sort_by(|a, b| b.ts.cmp(&a.ts).then_with(|| a.hash.cmp(&b.hash)));
     all.truncate(keep);
@@ -342,8 +344,16 @@ mod tests {
     fn keeps_the_newest_casts_with_fresh_counts_and_without_removed_ones() {
         let listed = vec![cast("0xa", 30, 1), cast("0xb", 20, 1), cast("0xc", 10, 1)];
         let fresh = vec![cast("0xd", 40, 0), cast("0xb", 20, 7)];
-        let kept = newest(listed, fresh, &["0xa".into()], 3);
+        let kept = newest(listed, fresh, &["0xa".into()], 3, 40);
         let summary: Vec<(&str, u64)> = kept.iter().map(|c| (c.hash.as_str(), c.likes)).collect();
         assert_eq!(summary, [("0xd", 0), ("0xb", 7), ("0xc", 1)]);
+    }
+
+    #[test]
+    fn future_dated_fresh_and_cached_casts_cannot_take_a_newest_slot() {
+        let listed = vec![cast("0xoldfuture", 2_893_718_638, 999), cast("0xold", 20, 1)];
+        let fresh = vec![cast("0xnewfuture", 41, 999), cast("0xnow", 40, 1)];
+        let hashes: Vec<_> = newest(listed, fresh, &[], 2, 40).into_iter().map(|c| c.hash).collect();
+        assert_eq!(hashes, ["0xnow", "0xold"]);
     }
 }

@@ -189,10 +189,10 @@ impl TrendingWindow {
     /// Whether a cast posted at `ts` is inside the window at `now` (both in
     /// seconds since the Unix epoch, which has no time zone). The window
     /// starts just after `now − span`: a cast exactly that old is out, and
-    /// one a second newer is in. A cast newer than `now`, from a clock a
-    /// little ahead, is in.
+    /// one a second newer is in. Future-dated casts are out in every range,
+    /// including all time; a clock ahead becomes eligible when `now` catches up.
     pub fn holds(self, ts: i64, now: i64) -> bool {
-        self.span_secs().is_none_or(|span| ts > now - span)
+        ts <= now && self.span_secs().is_none_or(|span| ts > now - span)
     }
 
     /// The window in words, for a note under the list.
@@ -498,6 +498,7 @@ mod tests {
             (TrendingWindow::Day, 86_400),
             (TrendingWindow::Week, 604_800),
             (TrendingWindow::Month, 2_592_000),
+            (TrendingWindow::Year, 31_536_000),
         ] {
             assert_eq!(window.span_secs(), Some(span), "{window:?}");
             assert!(!window.holds(now - span, now), "{window:?} exact boundary is out");
@@ -505,12 +506,18 @@ mod tests {
             assert!(!window.holds(now - span - 1, now), "{window:?} one second outside is out");
             assert!(window.holds(now, now), "{window:?} now is in");
         }
-        // A cast from a clock a little ahead is in, not dropped.
-        assert!(TrendingWindow::Hour.holds(now + 5, now));
+        // No unbounded clock-skew allowance: even a slightly early cast waits
+        // until its timestamp is reached, rather than outranking the present.
+        for window in TrendingWindow::ALL {
+            for future in [now + 1, now + 5, 2_893_718_638, i64::MAX] {
+                assert!(!window.holds(future, now), "{window:?} future {future} is out");
+            }
+            assert!(window.holds(now + 5, now + 5), "{window:?} eligible when the clock catches up");
+        }
     }
 
     #[test]
-    fn a_window_for_all_time_holds_every_cast() {
+    fn a_window_for_all_time_has_no_lower_bound_but_excludes_the_future() {
         assert_eq!(TrendingWindow::All.span_secs(), None);
         assert!(TrendingWindow::All.holds(0, 1_792_000_000));
         assert!(TrendingWindow::All.holds(i64::MIN / 2, 1_792_000_000));

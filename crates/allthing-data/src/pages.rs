@@ -315,7 +315,7 @@ fn now_secs(inv: &Invocation) -> i64 {
     (inv.now() / 1000.0) as i64
 }
 
-/// The casts posted within `window` at `now`; all of them for all time.
+/// The casts posted within `window` at `now`; all time still excludes the future.
 fn within(window: TrendingWindow, now: i64, casts: Vec<Cast>) -> Vec<Cast> {
     casts.into_iter().filter(|cast| window.holds(cast.ts, now)).collect()
 }
@@ -406,6 +406,7 @@ pub async fn following(
     let first = cursor.is_none();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
+    let now = now_secs(&inv);
     let top_level = |raw: &[RawCast]| raw.iter().map(normalize::cast).filter(|c| !c.is_reply()).collect::<Vec<_>>();
     let (mut raw, mut next) =
         hypersnap::following_feed(&inv, fid, cursor.as_deref()).await.map_err(Failure::upstream)?;
@@ -417,6 +418,9 @@ pub async fn following(
         raw.extend(more);
         next = after;
     }
+    // Keep the existing page-read decision: validation must not fetch another
+    // upstream page merely to replace rows with invalid future timestamps.
+    let theirs = within(TrendingWindow::All, now, theirs);
     let pool = drop_hidden(&inv, theirs, &mut notes, &known_links, true).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
@@ -503,7 +507,16 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
         && warm.as_ref().is_none_or(|p| stored.built > built_at(p))
     {
         if inv.now() - stored.built < SNAPSHOT_SERVE_MS {
-            let body = stored.body.into_bytes();
+            let mut payload: LatestPayload = serde_json::from_str(&stored.body)
+                .map_err(|e| Failure::internal(&format!("invalid newest-casts snapshot: {e}")))?;
+            let before = payload.pool.len();
+            payload.pool.retain(|cast| TrendingWindow::All.holds(cast.ts, now_secs(&inv)));
+            // Preserve the exact stored bytes on the common unchanged path.
+            let body = if payload.pool.len() == before {
+                stored.body.into_bytes()
+            } else {
+                serde_json::to_vec(&payload).map_err(|e| Failure::internal(&e.to_string()))?
+            };
             return Ok(Built { body, status: 200, policy: api::LATEST_CACHE, fetched_at: Some(stored.built) });
         }
         warm = serde_json::from_str(&stored.body).ok();
@@ -595,7 +608,7 @@ async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<B
     let fresh = raw.iter().map(normalize::cast).filter(|c| c.parent_hash.is_none()).collect();
     let known_links = std::mem::take(&mut notes.links);
     let fresh = drop_hidden(inv, fresh, &mut notes, &known_links, true).await;
-    let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize);
+    let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize, now_secs(inv));
     let quoted = annotate_listing(inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(inv) }, api::LATEST_CACHE)
@@ -1732,6 +1745,38 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_stored_latest_copy_excludes_future_rows_without_more_reads() {
+        let stored = stored_copy(40_000.0);
+        let before;
+        {
+            let mut copy = stored.copy.borrow_mut();
+            let snapshot = copy.as_mut().unwrap();
+            let mut payload: LatestPayload = serde_json::from_str(&snapshot.body).unwrap();
+            let present: Cast = serde_json::from_value(serde_json::json!({
+                "hash": "0xpresent", "author": { "fid": 7, "username": "seven" }, "text": "present",
+                "ts": (NOW / 1000.0) as i64, "likes": 1
+            }))
+            .unwrap();
+            payload.pool.push(present.clone());
+            before = payload.pool.len();
+            let mut future = present;
+            future.hash = "0xfuture".into();
+            future.ts = (NOW / 1000.0) as i64 + 1;
+            payload.pool.insert(0, future);
+            snapshot.body = serde_json::to_string(&payload).unwrap();
+        }
+        let hub = Rc::new(Hub { stored: Some(stored.clone()), ..Default::default() });
+        let inv = Rc::new(Invocation::new(hub.clone(), 45));
+        let built = latest(inv, None).now_or_never().unwrap().unwrap();
+        let payload: LatestPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(payload.pool.len(), before);
+        assert!(payload.pool.iter().all(|cast| cast.ts <= (NOW / 1000.0) as i64));
+        assert_eq!(built.fetched_at, Some(NOW - 40_000.0));
+        assert_eq!(stored.reads.get(), 1);
+        assert!(hub.requests.borrow().is_empty());
+    }
+
+    #[test]
     fn an_older_copy_of_the_crons_is_built_on_from_its_cursors() {
         let mut hub = Hub { stored: Some(stored_copy(120_000.0)), ..Default::default() };
         hub.events.insert(("1".into(), "13".into()), page(&[add(13, "0xd3", 110, false)]));
@@ -2393,7 +2438,7 @@ mod indexed_home_tests {
         fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
             let url = request.url.clone();
             self.requests.borrow_mut().push(url.clone());
-            let body = if url.contains("/feed/trending?") {
+            let body = if url.contains("/feed/trending?") || url.contains("/feed/following?") {
                 let casts: Vec<_> = self
                     .casts
                     .iter()
@@ -2424,6 +2469,8 @@ mod indexed_home_tests {
                 ("0xa2", "2026-10-14T15:46:40Z"),
                 ("0xa3", "2026-10-14T12:46:40Z"),
                 ("0xa4", "2026-10-11T17:46:40Z"),
+                ("0xf1", "2026-10-14T17:46:41Z"),
+                ("0xf2", "2061-09-12T00:03:58Z"),
             ],
             requests: RefCell::new(Vec::new()),
         });
@@ -2441,6 +2488,23 @@ mod indexed_home_tests {
         assert!(asked.iter().any(|url| url.contains("time_window=6h")));
         assert!(asked.iter().any(|url| url.contains("time_window=24h")));
         assert!(!asked.iter().any(|url| url.contains("time_window=12h")), "{asked:?}");
+    }
+
+    #[test]
+    fn following_payloads_exclude_future_casts_without_changing_page_reads() {
+        let host = Rc::new(Trending {
+            casts: vec![
+                ("0xpresent", "2026-10-14T17:46:40Z"),
+                ("0xfuture", "2026-10-14T17:46:41Z"),
+                ("0xfar", "2061-09-12T00:03:58Z"),
+            ],
+            requests: RefCell::new(Vec::new()),
+        });
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let built = following(inv, 7, Some("later".into()), None).now_or_never().unwrap().unwrap();
+        let payload: FollowingPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(payload.pool.iter().map(|cast| cast.hash.as_str()).collect::<Vec<_>>(), ["0xpresent"]);
+        assert_eq!(host.requests.borrow().iter().filter(|url| url.contains("/feed/following?")).count(), 1);
     }
 
     #[test]

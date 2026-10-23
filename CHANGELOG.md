@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Future-dated casts cannot outrank the present in For you or Following, including All time and early paint. Cached newest-cast payloads and index rankings exclude future timestamps before selecting their visible rows.
 - A directly opened mini app post follows Show mini app casts immediately in both directions, without a reload or refetch. Hiding it removes its body and embedded content while retaining its Open in Farcaster link; ordinary posts keep their content.
 
 - Short time ranges include newly posted casts even while Hypersnap's trending list lags behind. Every sort keeps the chosen range, and the end-of-range note appears below the list without moving cards down.

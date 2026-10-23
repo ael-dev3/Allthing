@@ -205,6 +205,22 @@ async function moduleIn(page: Page, held: Awaited<ReturnType<typeof hold>>) {
     .toBe(true);
 }
 
+test("future dates never appear in early paint or after the app takes over", async ({ page }) => {
+  const held = await hold(page);
+  const future = { ...favorite, hash: hex(900), ts: 2_893_718_638, likes: 1_000_000, embeds: [] };
+  await serve(page, { ...payload, pool: [future, ...pool] });
+  await favorites(page);
+  await page.goto("/");
+  const boot = page.locator("#boot");
+  await expect.poll(() => boot.locator(".cast-card").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-hash")))).toEqual(painted);
+  await expect(boot.locator(`[data-hash="${future.hash}"]`)).toHaveCount(0);
+  await moduleIn(page, held);
+  held.js("continue");
+  await expect(boot).toHaveCount(0);
+  await expect(page.locator("#app .cast-card").first()).toBeVisible();
+  await expect(page.locator(`#app [data-hash="${future.hash}"]`)).toHaveCount(0);
+});
+
 for (const width of [1280, 390]) {
   test(`the front page's first cards come before the app, as it draws them, and its own take their places at width ${width}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 });

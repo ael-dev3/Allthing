@@ -106,9 +106,9 @@ async function paint(payload, { sort, range, reader }) {
   reading = reader !== null;
   const notes = payload.notes || {};
   const lean = leanings(reader);
-  // A cast older than its window is left out, as the app leaves it out of a copy from the edge.
-  const now = Date.now() / 1000;
-  const inWindow = (cast) => cast.ts > now - SPANS[range];
+  // The same inclusive present and exclusive lower edge as TrendingWindow::holds.
+  const now = Math.floor(Date.now() / 1000);
+  const inWindow = (cast) => cast.ts <= now && cast.ts > now - SPANS[range];
   // Mini app casts only for a reader who shows them (miniapps.rs).
   const apps = showsMiniApps();
   const casts = sorted(payload.pool.filter((c) => !c.parent_hash && inWindow(c) && (apps || !c.mini_app)), sort, lean).slice(0, CARDS);

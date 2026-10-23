@@ -16,6 +16,9 @@ const cast = (n: number, age: number, likes = 0) => ({
 });
 const pool = [1800, 3 * 3600, 9 * 3600, 18 * 3600, 2 * 86400, 15 * 86400, 100 * 86400, 400 * 86400]
   .map((age, i) => cast(i + 1, age, i * 10));
+// Upstreams and old cached payloads can contain invalid future dates. They
+// must never dominate Hot/Top/New, even in All time or Following.
+pool.push(cast(9, -86400, 1_000_000), { ...cast(10, 0, 1_000_000), ts: 2_893_718_638 });
 const order = (page: Page) => page.locator("#app .cast-list .cast-card:not(.skeleton)")
   .evaluateAll((cards) => cards.map((card) => card.querySelector(".cast-text")?.textContent?.trim()));
 
@@ -54,7 +57,7 @@ for (const width of [1280, 390]) {
           const selector = page.getByRole("combobox", { name: "Time range" });
           await expect(selector).toBeVisible();
           await expect(selector).toHaveValue(range);
-          const expected = pool.filter((c) => now - c.ts < span).map((c) => c.text);
+          const expected = pool.filter((c) => c.ts <= now && now - c.ts < span).map((c) => c.text);
           await expect.poll(async () => (await order(page)).toSorted()).toEqual(expected.toSorted());
           if (sort === "new") expect(await order(page)).toEqual(expected);
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -75,21 +78,40 @@ async function switchReader(page: Page, user: typeof me | null) {
   }, user);
 }
 
-test("Following hot ranks within its window before applying favorites", async ({ page }) => {
+for (const feed of ["For you", "Following"]) {
+  test(`${feed} hot ranks within its window before applying favorites`, async ({ page }) => {
+    await signIn(page, me);
+    await serve(page);
+    await page.addInitScript(() => localStorage.setItem("allthing.favorites", JSON.stringify([{ fid: 1, username: "author1" }])));
+    const quietFavorite = cast(1, 50 * 60);
+    const busyRecent = cast(2, 10 * 60, 100);
+    const outside = cast(3, 400 * 86400);
+    const future = { ...cast(4, 0), ts: 2_893_718_638 };
+    for (const path of ["home", "following"]) await page.route(`**/api/v1/${path}**`, (route) => route.fulfill({
+      json: { pool: [future, outside, quietFavorite, busyRecent], notes: {}, meta }, headers: privateHeaders,
+    }));
+    await page.goto(`/?t=hour${feed === "Following" ? "&feed=following" : ""}`);
+    // In an hour's pool, 25x a quiet cast's weight cannot beat 100 points
+    // posted more recently. Including an old or future cast before ranking
+    // scales that lift by its entire span, sending the favorite to the top.
+    await expect.poll(() => order(page)).toEqual([busyRecent.text, quietFavorite.text]);
+  });
+}
+
+test("Following crosses a cached future-only page to reach the present", async ({ page }) => {
   await signIn(page, me);
   await serve(page);
-  await page.addInitScript(() => localStorage.setItem("allthing.favorites", JSON.stringify([{ fid: 1, username: "author1" }])));
-  const quietFavorite = cast(1, 50 * 60);
-  const busyRecent = cast(2, 10 * 60, 100);
-  const outside = cast(3, 400 * 86400);
-  await page.route("**/api/v1/following**", (route) => route.fulfill({
-    json: { pool: [outside, quietFavorite, busyRecent], notes: {}, meta }, headers: privateHeaders,
-  }));
+  const asked: number[] = [];
+  const future = { ...cast(40, 0), ts: 2_893_718_638 };
+  const present = cast(41, 60);
+  await page.route("**/api/v1/following**", (route) => {
+    const cursor = Number(new URL(route.request().url()).searchParams.get("cursor") || 0);
+    asked.push(cursor);
+    return route.fulfill({ json: { pool: cursor === 0 ? [future] : [present], next: cursor === 0 ? "1" : null, notes: {}, meta }, headers: privateHeaders });
+  });
   await page.goto("/?feed=following&t=hour");
-  // In an hour's pool, 25x a quiet cast's weight cannot beat 100 points
-  // posted more recently. Including the old cast before ranking scales
-  // that lift by 400 days, incorrectly sending the favorite to the top.
-  await expect.poll(() => order(page)).toEqual([busyRecent.text, quietFavorite.text]);
+  await expect.poll(() => order(page)).toEqual([present.text]);
+  expect(asked).toEqual([0, 1]);
 });
 
 test("Following crosses empty pages, stops at an old tail, and resumes when the range widens", async ({ page }) => {
