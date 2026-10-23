@@ -27,7 +27,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Following prefetches its own feed when changing sort or range, stops automatic paging at the time limit, and resumes from that cursor for a wider range. A fully seen or filtered feed offers Load more posts after ten payloads rather than reading indefinitely.
 - Changing accounts replaces the feed and ranking snapshot, and late answers from the previous account cannot refill its cache. Presence no longer counts an anonymous and signed-in visit twice; hiding or signing out also removes the public name from cached lists.
 - Messages connects under the existing Content Security Policy without permitting JavaScript evaluation. Pressed conversation rows keep their previews and timestamps readable.
-- Notifications coalesce refreshes from opening the page and regaining focus. Marking the list read no longer queues a duplicate request that could start after the tab is hidden.
+- Notifications share the bell's initial read even when it finishes before the page's code arrives. A failure remains visible for Try again, and a fresh answer is reused. Opening the page, regaining focus and marking the list read no longer queue duplicate reads behind an in-flight refresh or after the tab is hidden.
 - A wrapped reply's app link clears the collapse button's full tap area.
 
 ### Development
@@ -38,6 +38,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Video keyboard checks verify a held Space press on the original pointer-focused control before release, retaining bounded input and media diagnostics on failure.
 - Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
 - Browser regressions use past timestamps relative to the page’s own clock, wait for restored seen rows and the latest presence-cache expiry, and preserve their ordering, privacy, navigation and timing checks, including a deliberately delayed count refresh.
+- Browser checks recover read posts through Show seen posts, distinguish media uploads from analytics XHRs, control typeahead's input intervals and settle initial fixture resources before measuring reply-sheet shifts. Live checks observe pagination retries, available wallet data and the deployed inline-fetch/CSP contract without changing their timing limits.
 - Startup checks distinguish the main WebAssembly module from idle-loaded parts, and range navigation waits for the actual New feed response.
 - Local macOS builds find worker-build's cached WebAssembly optimizer. SDK wire-format and strict-CSP browser checks cover Messages; feed-ranking, reply-composer and smoothness fixtures exercise the updated UI without changing their budgets.
 - The attestation-key helper replaces the complete Rust key array, including multiline values, so a generated key compiles.
