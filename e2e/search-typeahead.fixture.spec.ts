@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { NOW } from "./fixture-time";
+import { appCame } from "./helpers/app";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
@@ -27,8 +28,33 @@ async function serve(page: Page) {
 test("suggestions appear as you type: people, channels and posts", async ({ page }) => {
   const queries = await serve(page);
   await page.goto("/");
+  await appCame(page);
   const box = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
-  await box.pressSequentially("fixt", { delay: 40 });
+  // Keep real keyboard/input events, but control the gaps: a busy host can
+  // otherwise turn a requested 40 ms gap into a genuine 250 ms pause.
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart + 1000);
+  await box.evaluate((input: HTMLInputElement) => {
+    (window as any).__searchInputs = [];
+    input.addEventListener("input", (event) => {
+      (window as any).__searchInputs.push({ value: input.value, trusted: event.isTrusted, at: Date.now() });
+    });
+  });
+  for (const [i, character] of [..."fixt"].entries()) {
+    if (i) await page.clock.runFor(40);
+    await box.pressSequentially(character);
+  }
+  const inputs = await page.evaluate(() => (window as any).__searchInputs as { value: string; trusted: boolean; at: number }[]);
+  expect(inputs.map((input) => input.value)).toEqual(["f", "fi", "fix", "fixt"]);
+  expect(inputs.every((input) => input.trusted)).toBe(true);
+  expect(inputs.slice(1).map((input, i) => input.at - inputs[i].at)).toEqual([40, 40, 40]);
+  expect(queries).toEqual([]);
+  await page.clock.runFor(249);
+  expect(queries).toEqual([]);
+  await page.clock.runFor(1);
+  await expect.poll(() => queries).toEqual(["fixt"]);
+  await page.clock.resume();
   const list = page.getByRole("listbox", { name: "Suggestions" });
   await expect(list).toBeVisible();
   // One look-up once typing pauses, not one per key.

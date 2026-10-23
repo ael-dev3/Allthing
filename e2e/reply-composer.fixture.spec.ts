@@ -73,12 +73,30 @@ async function openPost(page: Page, signedIn = true) {
   await page.goto(`/p/${post.hash}`);
   await expect(page.locator(".post")).toBeVisible();
   await expect(page.locator(".comment")).toHaveCount(1);
+  // The assertion measures opening Reply, after the underlying fixture is
+  // ready. Do not fold late initial fonts/images or entrance layout into it.
+  // Composer media remains untouched: shifts after the press still count.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const images = [...document.images].filter((image) => {
+      const box = image.getBoundingClientRect();
+      return image.complete || (box.width > 0 && box.bottom > 0 && box.top < innerHeight);
+    });
+    await Promise.all(images.map((image) => image.decode().catch(() => undefined)));
+    await Promise.all(document.getAnimations()
+      .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime ?? Infinity))
+      .map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
   await page.evaluate(() => {
-    const w = window as unknown as { __shifts: { value: number; at: number; sources: string[] }[] };
+    const w = window as unknown as { __shifts: { value: number; at: number; sources: object[] }[] };
     w.__shifts = [];
     new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as unknown as { value: number; startTime: number; sources?: { node?: Element }[] }[]) {
-        w.__shifts.push({ value: entry.value, at: entry.startTime, sources: (entry.sources ?? []).map((s) => s.node?.className ?? "?") });
+      for (const entry of list.getEntries() as unknown as { value: number; startTime: number; sources?: { node?: Element; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly }[] }[]) {
+        const rect = (r: DOMRectReadOnly) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
+        w.__shifts.push({ value: entry.value, at: entry.startTime, sources: (entry.sources ?? []).slice(0, 5).map((s) => ({
+          tag: s.node?.tagName ?? "?", classes: s.node?.getAttribute?.("class") ?? "", previous: rect(s.previousRect), current: rect(s.currentRect),
+        })) });
       }
     }).observe({ type: "layout-shift" });
   });
@@ -149,13 +167,17 @@ async function barMs(page: Page) {
 /** How much moved after `at` (a frame's time), in a second's watching: CLS's sum, input or not. */
 async function shiftAfter(page: Page, at: number) {
   await page.waitForTimeout(1000);
-  return page.evaluate(
+  const measured = await page.evaluate(
     (at) =>
-      (window as unknown as { __shifts: { value: number; at: number; sources: string[] }[] }).__shifts
-        .filter((s) => s.at > at)
-        .reduce((sum, s) => sum + s.value, 0),
+      (window as unknown as { __shifts: { value: number; at: number; sources: object[] }[] }).__shifts
+        .filter((s) => s.at > at),
     at,
   );
+  const total = measured.reduce((sum, shift) => sum + shift.value, 0);
+  if (total >= 0.01) await test.info().attach("reply-layout-shifts.json", {
+    body: JSON.stringify({ after: at, total, shifts: measured.slice(-32) }), contentType: "application/json",
+  });
+  return total;
 }
 
 /** Accessibility problems axe finds in `scope`, once what animates in has. */
