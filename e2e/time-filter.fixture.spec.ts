@@ -40,6 +40,14 @@ async function serve(page: Page, { index = true } = {}) {
     const coverage = indexed.includes(window) ? { index: { casts: 12345, since, ranked_at: Date.now() } } : {};
     return route.fulfill({ json: { pool: offset ? [] : pool(window), meta, ...coverage } });
   });
+  await page.route("**/api/v1/latest", async (route) => {
+    calls.push("/api/v1/latest");
+    // New reads its own source. Keep it delayed and distinguishable from
+    // the previous trending rows, so carried controls cannot pass the test.
+    await new Promise((done) => setTimeout(done, 100));
+    const newest = pool("7d").map((cast, i) => ({ ...cast, hash: `0x${"7".repeat(39)}${i}`, text: `Newest cast ${i}` }));
+    return route.fulfill({ json: { pool: newest, notes: {}, cursors: [], meta } });
+  });
   return calls;
 }
 
@@ -94,6 +102,11 @@ test("the time filter picks the window and is kept in the URL", async ({ page })
   await page.getByRole("navigation", { name: "Sort", exact: true }).getByRole("link", { name: "new", exact: true }).click();
   await expect(page).toHaveURL(/[?&]t=week/);
   await expect(page).toHaveURL(/[?&]sort=new/);
+  // Wait for New's own payload, rather than checking the carried range
+  // before an unhandled source response can replace the previous view.
+  await expect(cards.first()).toContainText("Newest cast");
+  await expect(cards).toHaveCount(3);
+  expect(calls).toContain("/api/v1/latest");
   await expect(range).toBeVisible();
   await expect(range).toHaveValue("week");
 });
