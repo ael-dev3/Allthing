@@ -46,6 +46,8 @@ let state = "";
 const printed: string[] = [];
 /** What the stand-in node was asked. */
 const asked: string[] = [];
+/** A response finishes after any edge-cache write that beat requested. */
+let lastBeatAt = 0;
 
 /** A session cookie as the Worker's sign-in sets it. */
 function session(fid: number) {
@@ -67,7 +69,9 @@ async function beat(body: object | string, { cookie = "", origin = ORIGIN as str
   if (origin !== null) headers.origin = origin;
   if (cookie) headers.cookie = cookie;
   const response = await fetch(`${ORIGIN}/api/v1/presence`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
-  return { status: response.status, cache: response.headers.get("cache-control"), json: await response.json() };
+  const json = await response.json();
+  lastBeatAt = Date.now();
+  return { status: response.status, cache: response.headers.get("cache-control"), json };
 }
 
 /** A query on the Worker's local D1. Not run synchronously: that would
@@ -133,13 +137,12 @@ test.afterAll(async () => {
 });
 
 test.describe("on", () => {
-  /** When this location last counted. */
-  let counted = 0;
-  /** Wait until the next beat recounts. */
+  /** A public or visibility-changing beat may refresh the cached answer.
+   * Wait from the latest response, a safe upper bound on that cache write,
+   * rather than from the first count before those later beats arrived. */
   const recount = async () => {
-    const wait = counted + RECOUNT_MS - Date.now();
+    const wait = lastBeatAt + RECOUNT_MS - Date.now();
     if (wait > 0) await new Promise((done) => setTimeout(done, wait));
-    counted = Date.now();
   };
 
   test.beforeAll(async () => {
@@ -153,7 +156,6 @@ test.describe("on", () => {
     const [a, b, signedIn, forged, readable] = [id(), id(), id(), id(), id()];
 
     // The first beat counts: one here, no one named, beat again in four minutes.
-    counted = Date.now();
     const first = await beat({ id: a, hidden: false });
     expect(first.status).toBe(200);
     expect(first.cache).toBe("no-store");
@@ -165,7 +167,12 @@ test.describe("on", () => {
     // location counted a moment ago.)
     expect((await beat({ id: b })).status).toBe(200);
     // A signed-in reader, named by their session cookie.
-    expect((await beat({ id: signedIn }, { cookie: session(reader.fid) })).status).toBe(200);
+    // The public beat starts a new edge-cache window even when earlier
+    // beats were already counted. Keep it away from that first boundary.
+    await new Promise((done) => setTimeout(done, 2_000));
+    const named = await beat({ id: signedIn }, { cookie: session(reader.fid) });
+    expect(named.status).toBe(200);
+    expect(named.json.online).toBe(3);
     // Never by what the browser says: a fid in the beat, or the readable user cookie.
     expect((await beat({ id: forged, fid: 7, username: "forged" })).status).toBe(200);
     const userCookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify({ fid: 8, username: "claimed" }))}`;
