@@ -154,6 +154,7 @@ for (const phone of [false, true]) {
     await serve(page);
     await page.goto("/");
     await appCame(page);
+    await expect.poll(() => order(page)).toEqual(casts.map((c) => c.hash));
     const before = await order(page);
     expect(before).toEqual(casts.map((c) => c.hash));
 
@@ -195,7 +196,13 @@ for (const phone of [false, true]) {
     // The next load of the feed takes the new order: alice's cast sinks.
     await page.goto("/");
     await appCame(page);
-    await expect.poll(() => order(page)).toEqual([casts[1].hash, casts[2].hash, casts[0].hash]);
+    await expect.poll(async () => {
+      // Reading the open card and its screenshot can mark the feed seen.
+      // Restore its rows through the real control when this generation arrives.
+      const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+      if (await show.isVisible()) await show.click();
+      return order(page);
+    }).toEqual([casts[1].hash, casts[2].hash, casts[0].hash]);
 
     // And pressing again takes it back.
     const again = await open(page, alice, phone);
