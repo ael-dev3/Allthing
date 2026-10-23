@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-data"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "allthing-core",
  "futures",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-web"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "allthing-core",
  "allthing-data",
@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "allthing-worker"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "allthing-core",
  "allthing-data",
@@ -2753,7 +2753,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "allthing-core",
  "wasm_split_cli_support",
