@@ -130,6 +130,9 @@ export function livePacing(baseURL: string | undefined) {
       bad_responses: bad.map(stripped),
     }, null, 2) });
     recent.splice(0, recent.length, ...recent.filter((at) => at > now - WINDOW_MS));
+    if (!failure && answers.some(({ response }) => response.status() === 429)) {
+      failure = new Error("The live suite hit the API rate limit; inspect live-api-window before continuing");
+    }
     if (failure) throw failure;
   });
 }
