@@ -5,45 +5,41 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-23
+
 ### Changed
 
-- Notifications coalesce refreshes from opening the page and regaining focus. Marking the list seen does not queue another read: only changed notification times refresh its rows, so a delayed duplicate cannot start after the tab is hidden.
-
-- On phones, header search has a full-width second row, leaving Home, the online count, Settings and account controls in view. A wrapped reply's app link clears its collapse button's full tap area.
-
-- Front-page feeds remember casts actually read for a second with at least half its possible viewport exposure visible in a foreground tab, including cards taller than the screen. Later feed generations leave these posts out, with Show seen posts below the list and Reset seen posts in Settings. History stays in this browser, separate for each signed-in FID and signed-out reader, bounded to 2,000 hashes for 30 days across four readers. Current cards stay put while read, and direct posts, profiles and threads remain complete.
-
-- Show mini app casts moved out of the feed into a Settings panel in the header (for every reader, signed in or not): the "N mini app casts hidden" line is removed, and the account menu no longer repeats the switch. A shown mini app cast quoted in another cast now carries its "Open in Farcaster" link inside the quote card; no other cast or quote shows mini app chrome. Quoted mini apps follow the switch in place; early cards end before a shown mini app so the app takes over without replacing it with different markup.
-
-- The "Only N casts in …" note sits under a range's list, where it ends, not above it: it came once the list had ended and moved every card down (a layout shift at 1280).
-- The front page has two tabs for a signed-in reader, as on X: **For you** and **Following**, links in place of the Following / Everyone menu, each 44 px tall. For you, the default, is the trending pool with the casts of the accounts you follow lifted: 20 times their points in hot and 6 in top (`FOLLOWED_HOT_WEIGHT`, `FOLLOWED_TOP_WEIGHT`), and new stays in time order. Following (`?feed=following`) is only their casts, in hot, new and top and over the time range, with no trending casts topping it up any more. Old `?feed=everyone` links open For you. For you costs no extra request while it is drawn: it ranks by the accounts kept from your last Following page, renewed by one background read at most every 10 minutes. Signed out, the front page has no tabs, as before; early paint draws a signed-in reader's For you, tabs and all.
-
-- Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.
+- **For you and Following.** Signed-in readers have two front-page tabs, each with hot, new and top and every time range. For you lifts casts from accounts you follow; Following shows their casts only. New stays chronological, including with Favorite and Show less.
+- **Seen posts.** Later front-page visits leave out casts you read for a second in a visible tab, including cards taller than the screen. Show seen posts brings them back, and Reset seen posts clears the history in Settings. History stays in this browser, separate for each reader: at most 2,000 hashes for 30 days, across four readers. Cards stay put while you read; direct posts, profiles and threads stay complete.
+- **Mini apps in Settings.** Show mini app casts is in the header's Settings panel for every reader, replacing the feed's hidden-cast count and switch. Only casts and quotes that contain mini apps show their Open in Farcaster links, and quoted mini apps follow the setting immediately.
+- **A clearer header.** Phone search has a full-width second row, keeping Home, the online count, Settings and account controls in view. The online count reserves its space on desktop and stays beside Home on phones.
+- **Verified Messages.** Messages verifies the signed-in Farcaster account before it can chat or send messages. The Worker's attestation key is pinned in the SpacetimeDB module, which rejects forged and expired attestations.
 
 ### Fixed
 
-- Feed-ranking checks restore read posts through Show seen posts even when the filtered list is empty or a delayed navigation is still loading.
+- CI rejects browser tests that pass only on retry, so a flaky run cannot appear as a clean release check.
+- Choosing an emoji group while the picker is still drawing reaches its heading on the first click, including a group at the temporary bottom of the list.
+- Sort tabs show their selected state before the next feed hides read cards, keeping reading-history cleanup out of the tap handler.
+- Future-dated casts cannot outrank the present in For you or Following, including All time and early paint. Cached newest-cast payloads and index rankings exclude future timestamps before selecting their visible rows. Source reads use the clock when they finish, so casts posted while a response arrives are retained. Ingest retains up to five seconds of source clock skew in the existing buffer; implausible dates are discarded, and retained rows appear only when their timestamp is reached.
+- A directly opened mini app post follows Show mini app casts immediately in both directions, without a reload or refetch. Hiding it removes its body and embedded content while retaining its Open in Farcaster link; ordinary posts and ordinary quotes keep their content and media mounted.
+- Short time ranges include newly posted casts even while Hypersnap's trending list lags behind. Every sort keeps the chosen range, and the end-of-range note appears below the list without moving cards down.
+- Following prefetches its own feed when changing sort or range, stops automatic paging at the time limit, and resumes from that cursor for a wider range. A fully seen or filtered feed offers Load more posts after ten payloads rather than reading indefinitely.
+- Changing accounts replaces the feed and ranking snapshot, and late answers from the previous account cannot refill its cache. Presence no longer counts an anonymous and signed-in visit twice; hiding or signing out also removes the public name from cached lists.
+- Messages connects under the existing Content Security Policy without permitting JavaScript evaluation. Pressed conversation rows keep their previews and timestamps readable.
+- Notifications coalesce refreshes from opening the page and regaining focus. Marking the list read no longer queues a duplicate request that could start after the tab is hidden.
+- A wrapped reply's app link clears the collapse button's full tap area.
 
-- Reply-composer geometry checks wait for its entrance animation before measuring exact thumbnail and tool sizes, while retaining first-frame focus and layout-shift checks.
+### Development
 
-- Pressed conversation rows keep their preview text and timestamps readable while the press animation dims the row, including on its selected background.
-- The smoothness fixture locates the first feed card below both front-page tab rows before measuring navigation; its existing timing, frame and scroll-restoration budgets are unchanged.
+- Back-navigation checks wait for sampled Home and post frames before returning, preserving their exact retained-card, restored-height, position and request assertions.
 
-- Messages connects under the site’s existing Content Security Policy. SpacetimeDB’s product and sum codecs now use cached closures instead of compiling JavaScript strings; the SDK version is guarded at build time, and a browser test exercises the actual bundled connection, row decoding, account verification and chat sending under the production policy.
-
-- Following sort links and time-range changes prefetch their existing private feed, rather than fetching and waiting for unrelated For you home/latest payloads.
-- The desktop online count reserves its width before loading, including at 921 px with Settings present, so the search box cannot overlap it. Phone layouts keep the compact dot and count at the 920 px breakpoint.
-
-- Following stops automatic pagination once its source reaches the selected time limit, and retains that cursor so a wider range resumes correctly. A fully seen or otherwise filtered feed reads at most ten payloads before offering Load more posts; each explicit press permits ten more.
-
-- Local macOS Worker and static Pages builds discover worker-build's cached `wasm-opt` under `Library/Caches`, so the browser modules receive the same optimization as CI. An explicit optimizer or one on PATH takes precedence, and cached binaries for other architectures are skipped.
-
-- Both front-page tabs keep the time selector in New and apply the selected range consistently. New stays strictly chronological even for favorites and accounts shown less. Changing the signed-in account replaces its feed and ranking snapshot; background follow reads and their ten-minute retry cap are scoped to that account, and late answers from the old account cannot refill its private cache.
-- The online count stays visible beside Home on phones, with its space reserved before loading. Showing oneself or signing in replaces the browser's anonymous presence instead of counting it twice; hiding or signing out removes the public name, including from later cached responses at other locations. Beat jitter only delays the advertised interval by up to 30 seconds, within the online grace, instead of beating too early or expiring a reader too soon.
-
-
-- `scripts/attest-key.mjs` writes a public key that compiles: its pattern stopped at the `;` inside the placeholder `[0; 32]`, leaving `[0x…]; 32];` in `attest_key.rs`. It now replaces the whole array, also once a key is pinned over several lines.
-- Every time range up to 7 days holds the casts just posted. Hypersnap's trending lists run 4 to 6 hours behind (its past hour's list was 5 to 6 hours old, so Past hour could come back empty), so a range's first page adds the newest casts the cron stores each minute, kept to the range.
+- CI runs functional browser fixtures with two workers, followed by smoothness measurements alone with one. Both phases run and keep separate reports even after a failure, under the same checks and timing limits.
+- Video keyboard checks verify a held Space press on the original pointer-focused control before release, retaining bounded input and media diagnostics on failure.
+- Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
+- Browser regressions use past timestamps relative to the page’s own clock, wait for restored seen rows and the latest presence-cache expiry, and preserve their ordering, privacy, navigation and timing checks, including a deliberately delayed count refresh.
+- Startup checks distinguish the main WebAssembly module from idle-loaded parts, and range navigation waits for the actual New feed response.
+- Local macOS builds find worker-build's cached WebAssembly optimizer. SDK wire-format and strict-CSP browser checks cover Messages; feed-ranking, reply-composer and smoothness fixtures exercise the updated UI without changing their budgets.
+- The attestation-key helper replaces the complete Rust key array, including multiline values, so a generated key compiles.
 
 ## [0.5.0] - 2026-10-22
 
@@ -595,7 +591,8 @@ Released before tagging began; the link points to its last commit, `e521cd1`.
 
 - A read-only Next.js prototype with live Hypersnap data, on GitHub Pages.
 
-[Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ael-dev3/Allthing/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ael-dev3/Allthing/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ael-dev3/Allthing/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ael-dev3/Allthing/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ael-dev3/Allthing/compare/v0.2.0...v0.3.0

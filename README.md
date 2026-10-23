@@ -20,7 +20,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 
 **Live at [allthing.social](https://allthing.social).**
 
-![The Allthing front page: trending Farcaster casts with their likes, recasts and replies, the app each one was posted from, and Allthing's poll](docs/screenshots/home.webp)
+![Allthing's Following feed with For you and Following tabs, sorting and time ranges, Settings, the online count and Allthing's poll](docs/screenshots/home.webp)
 
 <p align="center">
   <img src="docs/screenshots/profile.webp" alt="A profile: bio, website, followers and following, join date, NS vote and wallet activity by chain" width="49%">
@@ -114,7 +114,7 @@ bash scripts/check.sh                       # version, CSP hashes, changelog lin
 npx playwright install chromium             # once
 npx playwright test '\.fixture\.spec\.ts$'  # deterministic browser regressions, as CI runs them
 npx playwright test                         # everything, including live Farcaster data
-E2E_BASE_URL=https://allthing.social npx playwright test         # against production
+E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test # production
 bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test   # the static copy
 ```
 

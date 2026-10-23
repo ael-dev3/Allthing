@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::Cast;
 use crate::normalize::{self, RawCast};
-use crate::ranking::{RECAST_WEIGHT, TrendingWindow, points};
+use crate::ranking::{RECAST_WEIGHT, TrendingWindow, may_ingest_timestamp, points};
 use crate::time::parse_rfc3339;
 
 const DAY: i64 = 86_400;
@@ -166,7 +166,7 @@ pub fn candidates(raw: &[RawCast], metas: &[RankingMeta], now: i64) -> Vec<Cast>
                 + RECAST_WEIGHT * count(reactions.and_then(|x| x.recasts_count))
                 + count(r.replies.as_ref().and_then(|x| x.count));
             let ts = r.timestamp.as_deref().and_then(parse_rfc3339).unwrap_or(0);
-            points >= floor(metas, ts, now).min(NOTABLE_POINTS)
+            may_ingest_timestamp(ts, now) && points >= floor(metas, ts, now).min(NOTABLE_POINTS)
         })
         .map(normalize::cast)
         .collect()
@@ -179,7 +179,7 @@ pub fn worth_indexing(casts: &[Cast], metas: &[RankingMeta], now: i64) -> Vec<En
     let mut seen = HashSet::new();
     casts
         .iter()
-        .filter(|c| !c.is_reply() && !c.spam && points(c) >= floor(metas, c.ts, now))
+        .filter(|c| !c.is_reply() && !c.spam && may_ingest_timestamp(c.ts, now) && points(c) >= floor(metas, c.ts, now))
         .filter(|c| seen.insert(c.hash.as_str()))
         .map(|c| Entry(c.hash.clone(), c.ts, points(c)))
         .collect()
@@ -489,7 +489,8 @@ mod tests {
                 {"hash":"0x02","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":5}},
                 {"hash":"0x03","parent_hash":"0x01","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":900}},
                 {"hash":"0x04","parent_hash":"","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":260}},
-                {"hash":"0x05","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":100}}
+                {"hash":"0x05","timestamp":"2026-10-01T00:00:00Z","reactions":{"likes_count":100}},
+                {"hash":"0xfuture","timestamp":"2061-09-12T00:03:58Z","reactions":{"likes_count":1000000}}
             ]"#,
         )
         .unwrap();
@@ -499,6 +500,34 @@ mod tests {
         // A full month: only casts over its floor, or notable ones.
         assert_eq!(hashes(candidates(&raw, &metas(150, 300, 600), now)), ["0x04"]);
         assert_eq!(hashes(candidates(&raw, &metas(400, 400, 600), now)), ["0x04"]);
+    }
+
+    #[test]
+    fn only_small_clock_skew_is_worth_indexing_not_implausible_future_dates() {
+        let casts = vec![
+            cast("0xskew", 1, NOW + 5, 30),
+            cast("0xfuture", 1, NOW + 6, 1_000_000),
+            cast("0xfar", 1, 2_893_718_638, 1_000_000),
+            cast("0xnow", 1, NOW, 30),
+        ];
+        assert_eq!(
+            worth_indexing(&casts, &[], NOW),
+            [Entry("0xskew".into(), NOW + 5, 30), Entry("0xnow".into(), NOW, 30)]
+        );
+    }
+
+    #[test]
+    fn only_small_clock_skew_is_normalized_as_an_index_candidate() {
+        let raw: Vec<RawCast> = serde_json::from_str(
+            r#"[
+            {"hash":"0xskew","timestamp":"2026-10-02T00:00:05Z","reactions":{"likes_count":30}},
+            {"hash":"0xfuture","timestamp":"2026-10-02T00:00:06Z","reactions":{"likes_count":1000000}},
+            {"hash":"0xfar","timestamp":"2061-09-12T00:03:58Z","reactions":{"likes_count":1000000}}
+        ]"#,
+        )
+        .unwrap();
+        let now = parse_rfc3339("2026-10-02T00:00:00Z").unwrap();
+        assert_eq!(candidates(&raw, &[], now).iter().map(|cast| cast.hash.as_str()).collect::<Vec<_>>(), ["0xskew"]);
     }
 
     #[test]

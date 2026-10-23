@@ -383,23 +383,26 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                     let mut leanings = leaning.for_list(sorted_by, (order, filter));
                     // For you: the casts of whom the reader follows lifted.
                     leanings.followed = followed.get_value();
-                    let mut all = sorted_for(&pool, order, &leanings);
+                    // Cached out-of-range or future casts must not inflate
+                    // span_days and distort the remaining casts' leaning weights.
+                    let now = now_secs();
+                    let within = |casts: &[Cast]| -> Vec<Cast> {
+                        casts.iter().filter(|cast| shown.holds(cast.ts, now)).cloned().collect()
+                    };
+                    let mut all = sorted_for(&within(&pool), order, &leanings);
                     more.with(|pages| {
                         for page in pages {
                             all.extend(
-                                sorted_for(&page.casts, order, &leanings)
+                                sorted_for(&within(&page.casts), order, &leanings)
                                     .into_iter()
                                     .filter(|c| !first_hashes.contains(&c.hash)),
                             );
                         }
                     });
-                    let all = match filter {
+                    match filter {
                         Some(fid) => from_client(all, &notes.get(), fid),
                         None => all,
-                    };
-                    // A copy from the edge, or the app's own, can be older than
-                    // its window: what has aged out since is left out here too.
-                    all.into_iter().filter(|cast| shown.holds(cast.ts, now_secs())).collect()
+                    }
                 });
                 let chip_notes = Arc::new(payload.notes.clone());
                 let in_window: Vec<Cast> =
@@ -466,7 +469,8 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
             }
             match result {
                 Ok(page) => {
-                    if let Some(newest) = page.data.pool.iter().map(|c| c.ts).max() {
+                    let now = now_secs();
+                    if let Some(newest) = page.data.pool.iter().filter(|c| c.ts <= now).map(|c| c.ts).max() {
                         tail.set(Some(newest));
                     }
                     let mut known: std::collections::HashSet<String> = more
@@ -514,7 +518,10 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
                 crate::followed::remember(fid, &payload);
             }
             next.set(payload.next.clone());
-            tail.set(payload.pool.iter().map(|c| c.ts).max());
+            // Future dates cannot establish that the source page is already
+            // older than the window; an invalid-only page behaves like an empty one.
+            let now = now_secs();
+            tail.set(payload.pool.iter().filter(|c| c.ts <= now).map(|c| c.ts).max());
             let first_notes = payload.notes.clone();
             let notes = Memo::new(move |_| {
                 let mut notes = first_notes.clone();

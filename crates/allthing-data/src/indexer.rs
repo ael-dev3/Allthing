@@ -207,7 +207,7 @@ pub(crate) mod tests {
             let casts = self.casts.borrow();
             let mut inside: Vec<Entry> = casts
                 .iter()
-                .filter(|(_, (ts, _))| *ts >= cutoff)
+                .filter(|(_, (ts, _))| *ts >= cutoff && TrendingWindow::All.holds(*ts, (now_ms / 1000.0) as i64))
                 .map(|(h, (ts, p))| Entry(h.clone(), *ts, *p))
                 .collect();
             let total = inside.len() as u64;

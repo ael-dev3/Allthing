@@ -33,6 +33,31 @@ test.beforeEach(async ({ page }) => {
       body: readFileSync(path.join(fixtures, file)), contentType: type, headers: { "access-control-allow-origin": "*" },
     });
   });
+  // Retain a short trusted-input/media timeline if the keyboard transition
+  // fails, so native activation can be distinguished from a focus/state change.
+  await page.addInitScript(() => {
+    const events: Array<Record<string, unknown>> = [];
+    (window as any).soundInput = events;
+    const record = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target && !target.closest(".post .video")) return;
+      queueMicrotask(() => {
+        const player = document.querySelector(".post .video");
+        const video = player?.querySelector("video");
+        events.push({
+          at: performance.now(), type: event.type, trusted: event.isTrusted, prevented: event.defaultPrevented,
+          key: (event as KeyboardEvent).key, detail: (event as MouseEvent).detail,
+          target: target?.className, active: document.activeElement?.className, focused: document.hasFocus(),
+          label: player?.querySelector(".video-sound")?.textContent,
+          muted: video?.muted, paused: video?.paused, sound: localStorage.getItem("allthing.sound"),
+        });
+        if (events.length > 64) events.shift();
+      });
+    };
+    for (const kind of ["pointerdown", "pointerup", "touchend", "keydown", "keypress", "keyup", "click", "focus", "blur", "volumechange", "playing", "pause"]) {
+      window.addEventListener(kind, record, true);
+    }
+  });
   // The reply's video sits far below, so only one is in view at a time.
   await page.addInitScript(() => {
     document.addEventListener("DOMContentLoaded", () => {
@@ -61,20 +86,36 @@ for (const width of [1280, 390]) {
       const before = await page.evaluate(() => window.scrollY);
       const source = await video.getAttribute("src");
       await activateVisible(sound, hasTouch);
+      let failed = true;
       try {
         await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 2000 }).toBe(before);
         const enabled = player.getByRole("button", { name: "Sound on · tap to mute", exact: true });
         await expect(enabled).toBeFocused();
         await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
         expect(await page.evaluate(() => localStorage.getItem("allthing.sound"))).toBe("on");
-        // Keyboard activation still works after pointer focus.
-        await page.keyboard.press("Space");
+        // Hold Space on the pointer-focused control until its keydown has
+        // been processed, then release it for the native button activation.
+        // Do not refocus: the same node must keep focus throughout.
+        const pointerFocused = await enabled.elementHandle();
+        await page.keyboard.down("Space");
+        try {
+          await expect(enabled).toBeFocused();
+          expect(await enabled.evaluate((button, original) => button === original, pointerFocused)).toBe(true);
+          await expect(enabled).toHaveAttribute("data-press", "down");
+          await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
+        } finally {
+          await page.keyboard.up("Space");
+        }
         await expect(sound).toBeFocused();
         await expect.poll(() => video.evaluate((v) => v.muted && !v.paused)).toBe(true);
         expect(await page.evaluate(() => localStorage.getItem("allthing.sound"))).toBeNull();
         expect(await page.evaluate(() => window.scrollY)).toBe(before);
         expect(await video.getAttribute("src")).toBe(source);
+        failed = false;
       } finally {
+        if (failed) {
+          await info.attach("sound-input", { contentType: "application/json", body: JSON.stringify(await page.evaluate(() => (window as any).soundInput), null, 2) });
+        }
         await page.screenshot({ path: info.outputPath(`video-sound-focus-${width}.png`) });
       }
     });

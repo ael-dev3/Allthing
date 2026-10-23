@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::Cast;
 use crate::provenance::base64_decode;
-use crate::ranking::TrendingWindow;
+use crate::ranking::{TrendingWindow, may_ingest_timestamp};
 
 /// The shards that hold users' messages (shard 0 holds none).
 pub const SHARDS: [u32; 2] = [1, 2];
@@ -154,13 +154,16 @@ pub fn to_hydrate(added: &[Added], listed: &[Cast], removed: &[String], limit: u
 }
 
 /// The newest `keep` casts of `listed` and `fresh` (newly read, so they
-/// replace listed copies), without `removed` ones.
-pub fn newest(listed: Vec<Cast>, fresh: Vec<Cast>, removed: &[String], keep: usize) -> Vec<Cast> {
+/// replace listed copies), without `removed` or implausible future dates. A
+/// five-second source skew may stay in this existing buffer; serving is stricter.
+/// Reject beyond that allowance before the cut so invalid dates cannot fill it.
+pub fn newest(listed: Vec<Cast>, fresh: Vec<Cast>, removed: &[String], keep: usize, now: i64) -> Vec<Cast> {
     let fresh_hashes: HashSet<String> = fresh.iter().map(|c| c.hash.clone()).collect();
     let mut all: Vec<Cast> = fresh
         .into_iter()
         .chain(listed.into_iter().filter(|c| !fresh_hashes.contains(&c.hash)))
         .filter(|c| !removed.contains(&c.hash))
+        .filter(|c| may_ingest_timestamp(c.ts, now))
         .collect();
     all.sort_by(|a, b| b.ts.cmp(&a.ts).then_with(|| a.hash.cmp(&b.hash)));
     all.truncate(keep);
@@ -342,8 +345,16 @@ mod tests {
     fn keeps_the_newest_casts_with_fresh_counts_and_without_removed_ones() {
         let listed = vec![cast("0xa", 30, 1), cast("0xb", 20, 1), cast("0xc", 10, 1)];
         let fresh = vec![cast("0xd", 40, 0), cast("0xb", 20, 7)];
-        let kept = newest(listed, fresh, &["0xa".into()], 3);
+        let kept = newest(listed, fresh, &["0xa".into()], 3, 40);
         let summary: Vec<(&str, u64)> = kept.iter().map(|c| (c.hash.as_str(), c.likes)).collect();
         assert_eq!(summary, [("0xd", 0), ("0xb", 7), ("0xc", 1)]);
+    }
+
+    #[test]
+    fn only_small_clock_skew_can_stay_in_the_existing_newest_buffer() {
+        let listed = vec![cast("0xoldfuture", 2_893_718_638, 999), cast("0xold", 20, 1)];
+        let fresh = vec![cast("0xskew", 45, 999), cast("0xnewfuture", 46, 999), cast("0xnow", 40, 1)];
+        let hashes: Vec<_> = newest(listed, fresh, &[], 3, 40).into_iter().map(|c| c.hash).collect();
+        assert_eq!(hashes, ["0xskew", "0xnow", "0xold"]);
     }
 }

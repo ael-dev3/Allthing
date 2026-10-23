@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { perfDiagnosticsProbe, perfResponses, readPerfDiagnostics } from "./helpers/perf-diagnostics";
 
 /*
  * Performance budget (docs/PERFORMANCE.md), measured in the browser:
@@ -47,20 +48,40 @@ async function lcp(page: Page): Promise<number> {
 }
 
 test.describe("performance budget", () => {
-  test("home LCP stays under 1.5 s (cold, median of 3)", async ({ browser }) => {
+  test("home LCP stays under 1.5 s (cold, median of 3)", async ({ browser }, testInfo) => {
     const samples: number[] = [];
-    for (let i = 0; i < 3; i++) {
-      const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-      const page = await context.newPage();
-      await page.addInitScript(firstCastProbe);
-      await page.goto("/");
-      await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible();
-      await page.waitForTimeout(300);
-      // The page's largest content is the feed: count it from when the first
-      // cast appears, even if the browser's LCP entry picked something earlier.
-      const firstCast = await page.evaluate(() => (window as any).__firstCast as number);
-      samples.push(Math.max(await lcp(page), firstCast));
-      await context.close();
+    const diagnostics: unknown[] = [];
+    try {
+      for (let i = 0; i < 3; i++) {
+        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        try {
+          const page = await context.newPage();
+          const responses = perfResponses(page);
+          await page.addInitScript(firstCastProbe);
+          await page.addInitScript(perfDiagnosticsProbe);
+          try {
+            await page.goto("/");
+            await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible();
+            await page.waitForTimeout(300);
+            // Keep the existing budget: the later of browser LCP and first cast.
+            const firstCast = await page.evaluate(() => (window as any).__firstCast as number);
+            const browserLcp = await lcp(page);
+            const value = Math.max(browserLcp, firstCast);
+            samples.push(value);
+            const detail = { sample: i + 1, value, firstCast, browserLcp, ...await readPerfDiagnostics(page, responses) };
+            diagnostics.push(detail);
+            console.log(`LCP diagnostic ${JSON.stringify(detail)}`);
+          } catch (error) {
+            // Capture the last pipeline state even if readiness itself fails.
+            const detail = { sample: i + 1, incomplete: true, ...await readPerfDiagnostics(page, responses).catch(() => ({ responses })) };
+            diagnostics.push(detail);
+            console.log(`LCP diagnostic ${JSON.stringify(detail)}`);
+            throw error;
+          }
+        } finally { await context.close(); }
+      }
+    } finally {
+      await testInfo.attach("home-lcp-diagnostics.json", { body: JSON.stringify({ budget: LCP_BUDGET, samples: diagnostics }, null, 2), contentType: "application/json" });
     }
     const value = median(samples);
     console.log(`LCP samples ${samples.map((s) => s.toFixed(0)).join(", ")} ms; median ${value.toFixed(0)} ms`);

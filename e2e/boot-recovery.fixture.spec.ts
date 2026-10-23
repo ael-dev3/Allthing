@@ -67,13 +67,19 @@ for (const width of [1280, 390]) {
     const modules: { path: string, status: number, type: string | undefined }[] = [];
     page.on("response", (response) => {
       const path = new URL(response.url()).pathname;
-      if (path.endsWith(".wasm")) modules.push({ path, status: response.status(), type: response.headers()["content-type"] });
+      // As in the fallback case, count exactly one main module, including
+      // any unexpected /assets fallback. Idle split/shared modules are separate.
+      if (/\/(?:assets|wasm)\/allthing-[0-9a-f]+\.wasm$/.test(path)) modules.push({ path, status: response.status(), type: response.headers()["content-type"] });
     });
     await page.route("**/api/v1/**", (route) => route.fulfill({ json: {
       pool: [], meta: { backend: "hypersnap", fetched_at: Date.now() },
     } }));
+    // Exercise the ordering where valid idle modules finish before the main
+    // module assertions, rather than relying on the header appearing first.
+    const idlePoll = page.waitForResponse((response) => /\/split_poll\.wasm$/.test(new URL(response.url()).pathname));
     await page.goto("/");
     await expect(page.getByRole("combobox", { name: "Search casts, people and channels", exact: true })).toBeVisible();
+    expect((await idlePoll).status()).toBe(200);
     expect(modules).toHaveLength(1);
     expect(modules[0].path).toMatch(/^\/wasm\/allthing-[0-9a-f]+\.wasm$/);
     expect(modules[0].status).toBe(200);

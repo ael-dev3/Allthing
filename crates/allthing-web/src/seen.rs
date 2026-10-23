@@ -184,6 +184,25 @@ impl Feed {
     pub fn new(enabled: bool) -> Self {
         let seen = use_seen();
         let url = use_url();
+        // A query selects a new feed generation. As with Home's ranking,
+        // wait for the selected tab to paint before filtering its cards:
+        // suppressing just-read rows can dispose most of the old list when
+        // progressive drawing restarts, which must not block the tap.
+        let query = RwSignal::new(url.with_untracked(|url| url.search().to_owned()));
+        Effect::new(move |_| {
+            if !enabled {
+                return;
+            }
+            let current = url.get();
+            if crate::kept::is_front(current.path()) && current.search() != query.get_untracked() {
+                crate::components::cast::after_paint(move || {
+                    let Some(current) = url.try_get_untracked() else { return };
+                    if crate::kept::is_front(current.path()) {
+                        let _ = query.try_set(current.search().to_owned());
+                    }
+                });
+            }
+        });
         let previous = StoredValue::new(Snapshot::default());
         let snapshot = Memo::new(move |_| {
             if !enabled {
@@ -192,10 +211,7 @@ impl Feed {
             let before = previous.get_value();
             // Home is kept, detached, while reading a post/profile. Preserve
             // that generation for Back, rather than shortening its scroll.
-            let query = url.with(|url| {
-                if crate::kept::is_front(url.path()) { url.search().to_owned() } else { before.key.2.clone() }
-            });
-            let key = (seen.scope.get(), seen.epoch.get(), query);
+            let key = (seen.scope.get(), seen.epoch.get(), query.get());
             if key == before.key {
                 return before;
             }

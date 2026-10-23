@@ -145,12 +145,13 @@ fn PostPage() -> impl IntoView {
             Some(Some(Err(failure))) => view! { <ErrorPanel failure/> }.into_any(),
             Some(Some(Ok(Fetched { data: payload, stale, .. }))) => {
                 let payload: Arc<CastPayload> = payload;
-                // The reader's choice about mini apps: their replies and ancestors pruned
-                // as they chose, the page drawn again when it changes.
-                let show_apps = crate::miniapps::shown();
+                // Only a thread with mini app replies or ancestors needs
+                // rebuilding when that preference changes. Ordinary posts
+                // keep their body, media and composer mounted.
                 let payload = if allthing_core::thread::flatten(&payload.thread).iter().skip(1).any(|c| c.mini_app)
                     || payload.ancestors.iter().any(|c| c.mini_app)
                 {
+                    let show_apps = crate::miniapps::shown();
                     let mut thread = payload.thread.clone();
                     thread.children = std::mem::take(&mut thread.children)
                         .into_iter()
@@ -296,12 +297,7 @@ async fn newer_replies(hash: &str, want: u64) {
 }
 
 #[component]
-fn MainCast(mut cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
-    // A mini app cast, for a reader who leaves them out: who and when, and
-    // that it is one (spam comes emptied already).
-    if crate::miniapps::hides(&cast) {
-        cast.strip_hidden();
-    }
+fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
     // Whether the reader liked and recasted this cast, which may be older
     // than their latest likes and recasts.
     #[cfg(not(feature = "static-host"))]
@@ -319,6 +315,41 @@ fn MainCast(mut cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl Int
     let href = user_href(&author.username);
     let gone = crate::components::deleted(&cast.hash);
     let (pfp, name, username) = (author.pfp_url.clone(), author.name().to_owned(), author.username.clone());
+    // Keep the carried content intact so Settings can reveal it again. Only
+    // mini app bodies track this preference; ordinary posts keep their media.
+    let body_cast = cast.clone();
+    let body_notes = notes.clone();
+    let body_payload = payload.clone();
+    let body = move || {
+        let cast = &body_cast;
+        let shown = !cast.mini_app || crate::miniapps::shown();
+        if cast.hidden_for(shown) {
+            let note = if cast.spam {
+                "Post hidden: Allthing leaves out posts with links to vercel.app apps, gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions."
+            } else {
+                "Mini app post hidden: Allthing does not run mini apps or frames."
+            };
+            view! {
+                <p class="mini-app-note">{note}</p>
+                {(!cast.spam).then(|| view! { <crate::miniapps::MiniAppsSwitch class="in-note"/> })}
+            }
+            .into_any()
+        } else {
+            view! {
+                <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div>
+                <MediaGrid cast=cast.clone()/>
+                <VideoLinks cast=cast.clone()/>
+                <LinkCards cast=cast.clone()/>
+                {body_payload.quotes.iter().map(|quote| match &quote.cast {
+                    Some(q) => view! {
+                        <QuoteCard cast=q.clone() max_chars=POST_QUOTE_CHARS author_card=body_notes.users.get(&q.author.fid).cloned() notes=Some(body_notes.clone())/>
+                    }.into_any(),
+                    None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
+                }).collect_view()}
+            }
+            .into_any()
+        }
+    };
     view! {
         <article class="post" class:deleted=gone>
             <p class="deleted-note">"You deleted this cast."</p>
@@ -334,30 +365,8 @@ fn MainCast(mut cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl Int
                     </div>
                 </ProfileHover>
             </header>
-            {if crate::miniapps::hides(&cast) {
-                let note = if cast.spam {
-                    "Post hidden: Allthing leaves out posts with links to vercel.app apps, gig-bot, DEGEN reward or airdrop bait, and DEGEN staking promotions."
-                } else {
-                    "Mini app post hidden: Allthing does not run mini apps or frames."
-                };
-                view! {
-                    <p class="mini-app-note">{note}</p>
-                    {(!cast.spam).then(|| view! { <crate::miniapps::MiniAppsSwitch class="in-note"/> })}
-                }
-                .into_any()
-            } else {
-                view! { <div class="post-text"><CastText text=cast.text.clone() mentions=cast.mentions.clone()/></div> }.into_any()
-            }}
-            <MediaGrid cast=cast.clone()/>
-            <VideoLinks cast=cast.clone()/>
-            <LinkCards cast=cast.clone()/>
+            {body}
             <crate::miniapps::MiniAppLink cast=cast.clone()/>
-            {payload.quotes.iter().map(|quote| match &quote.cast {
-                Some(q) => view! {
-                    <QuoteCard cast=q.clone() max_chars=POST_QUOTE_CHARS author_card=notes.users.get(&q.author.fid).cloned() notes=Some(notes.clone())/>
-                }.into_any(),
-                None => view! { <a class="quote-chip" href=cast_href(&quote.hash)>"↳ quoted cast unavailable"</a> }.into_any(),
-            }).collect_view()}
             <p class="post-meta">
                 <time datetime=allthing_core::time::iso_utc(cast.ts)>{format_date_time(cast.ts)}</time>
                 " · "<TimeAgo ts=cast.ts/>

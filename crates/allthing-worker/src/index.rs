@@ -49,9 +49,10 @@ const STORE: &str = "INSERT INTO casts (hash, ts, points) \
 /// Rank span ?1 (casts from ?2 on, Unix seconds) as of ?3 (Unix ms): its top
 /// ?4 casts, how many it has, its oldest, and its floor once full.
 const RERANK: &str = "WITH top AS (\
-      SELECT hash, ts, points FROM casts WHERE ts >= ?2 ORDER BY points DESC, ts DESC LIMIT ?4) \
+      SELECT hash, ts, points FROM casts WHERE ts >= ?2 AND ts <= CAST(?3 / 1000 AS INTEGER) ORDER BY points DESC, ts DESC LIMIT ?4) \
     REPLACE INTO rankings (name, built, total, oldest, floor, body) \
-    SELECT ?1, ?3, (SELECT COUNT(*) FROM casts WHERE ts >= ?2), (SELECT MIN(ts) FROM casts WHERE ts >= ?2), \
+    SELECT ?1, ?3, (SELECT COUNT(*) FROM casts WHERE ts >= ?2 AND ts <= CAST(?3 / 1000 AS INTEGER)), \
+      (SELECT MIN(ts) FROM casts WHERE ts >= ?2 AND ts <= CAST(?3 / 1000 AS INTEGER)), \
       CASE WHEN COUNT(*) >= ?4 THEN MIN(points) ELSE 0 END, json_group_array(json_array(hash, ts, points)) \
     FROM top";
 
