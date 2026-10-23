@@ -152,6 +152,14 @@ const UNSENT: &str = "UPDATE scheduled SET state = 'waiting', done_at = NULL WHE
 /// Drop casts that went out, or didn't, before ?1.
 const DROP_DONE: &str = "DELETE FROM scheduled WHERE state IN ('posted', 'failed') AND done_at < ?1";
 const SAVE_SNAPSHOT: &str = "REPLACE INTO snapshots (name, built, body) VALUES (?1, ?2, ?3)";
+/// Concurrent public Home builds must not replace a newer present copy.
+/// A poisoned future-built row can be repaired, judged at SQL execution time
+/// rather than a Worker clock captured before another build could complete.
+/// SQLite's UTC 'now' is stable within one step: https://www.sqlite.org/lang_datefunc.html.
+const SAVE_HOME_SNAPSHOT: &str = "INSERT INTO snapshots (name, built, body) VALUES (?1, ?2, ?3) \
+    ON CONFLICT(name) DO UPDATE SET built = excluded.built, body = excluded.body \
+    WHERE excluded.built > snapshots.built OR snapshots.built > \
+    CAST(strftime('%s', 'now') AS INTEGER) * 1000 + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER)";
 /// What reader ?1 has uploaded since ?2 (Unix seconds): how many files, how
 /// many bytes and when the oldest came; everyone's uploads on the UTC day
 /// whose row is ?3; and the bytes stored in all. Reads the reader's index
@@ -444,9 +452,17 @@ impl Index for D1Index {
     fn save_snapshot(&self, name: &'static str, snapshot: Snapshot) -> LocalBoxFuture<'static, Result<(), IndexError>> {
         let db = self.db.clone();
         async move {
-            ensure_schema(&db).await?;
+            let sql = if name == allthing_data::pages::HOME_SNAPSHOT {
+                // The deployed migration owns this table. Keep a request's
+                // reserved write to exactly one statement; missing schema just
+                // makes this optional save fail without affecting its response.
+                SAVE_HOME_SNAPSHOT
+            } else {
+                ensure_schema(&db).await?;
+                SAVE_SNAPSHOT
+            };
             let args = [name.into(), number(snapshot.built.floor()), snapshot.body.into()];
-            db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?.run().await.map_err(failed)?;
+            db.prepare(sql).bind(&args).map_err(failed)?.run().await.map_err(failed)?;
             Ok(())
         }
         .boxed_local()
