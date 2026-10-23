@@ -26,6 +26,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure. Their timing limits, cold contexts and sample count are unchanged.
 - Local macOS builds find worker-build's cached WebAssembly optimizer. SDK wire-format and strict-CSP browser checks cover Messages; feed-ranking, reply-composer and smoothness fixtures exercise the updated UI without changing their budgets.
 - The attestation-key helper replaces the complete Rust key array, including multiline values, so a generated key compiles.
 
