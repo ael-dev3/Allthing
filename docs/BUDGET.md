@@ -85,6 +85,8 @@ A reader who opens posts they hovered spends nothing extra; idle viewport prefet
 
 The production performance CI job checks `/version` before measuring a deployment: one Worker request every 10 seconds until the commit is live, for at most 30 minutes (at most 180 requests per run), with no upstream calls. Workers Builds usually makes a commit live 6 to 16 minutes after the push, so a run usually checks 30 to 90 times.
 
+**Messages CSP compatibility:** the closure-based SDK codec adapter adds 449 Brotli bytes (2,111 raw bytes) to the Messages-only JavaScript bundle in the measured build. It adds no requests, subscriptions, upstream subrequests or server cache keys; connection and attestation budgets above are unchanged.
+
 **Seen posts:** reading history adds no API endpoint, request, upstream subrequest or per-reader server cache key. Hashes and timestamps stay in localStorage (at most 2,000 per reader, 30 days, four readers), with writes batched after a 500 ms delay. One shared viewport observer schedules one one-second timer per eligible card; scroll/resize checks only intersecting cards once per animation frame, with no polling loop or fetch marks reading. Existing infinite scroll may reach its next page earlier when prior-seen rows are omitted, under the same page limit and request budgets. Early paint skips browsers with local history instead of drawing a different first screen from the app.
 
 ## 2. Edge cache: one upstream fetch serves everyone nearby

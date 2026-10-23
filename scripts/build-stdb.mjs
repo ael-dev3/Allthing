@@ -8,6 +8,12 @@
 //
 //   node scripts/build-stdb.mjs <out.js>
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
+
+// The CSP codec adapter is verified against this SDK's BSATN factories.
+// Fail clearly on upgrades, rather than silently restoring runtime codegen.
+const sdk = JSON.parse(await readFile(new URL("../package.json", import.meta.resolve("spacetimedb")), "utf8"));
+if (sdk.version !== "2.13.0") throw new Error(`Review web/stdb/csp-codec.ts before upgrading SpacetimeDB ${sdk.version}`);
 
 const out = process.argv[2];
 if (!out) {

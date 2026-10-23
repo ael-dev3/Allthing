@@ -20,6 +20,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Messages connects under the site’s existing Content Security Policy. SpacetimeDB’s product and sum codecs now use cached closures instead of compiling JavaScript strings; the SDK version is guarded at build time, and a browser test exercises the actual bundled connection, row decoding, account verification and chat sending under the production policy.
+
 - Following sort links and time-range changes prefetch their existing private feed, rather than fetching and waiting for unrelated For you home/latest payloads.
 - The desktop online count reserves its width before loading, including at 921 px with Settings present, so the search box cannot overlap it. Phone layouts keep the compact dot and count at the 920 px breakpoint.
 
