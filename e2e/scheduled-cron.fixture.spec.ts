@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { approvedKey, cast as castOf, envelope } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * A scheduled cast going out at its minute, end to end, on the real Worker:
@@ -38,7 +39,7 @@ const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
-const post = { hash: `0x${"1".repeat(40)}`, author: { fid: 42, username: "alice" }, text: "What should I read next?", ts: 1792235681, likes: 3, replies: 0 };
+const post = { hash: `0x${"1".repeat(40)}`, author: { fid: 42, username: "alice" }, text: "What should I read next?", ts: (NOW - 19), likes: 3, replies: 0 };
 const now = () => Math.floor(Date.now() / 1000);
 
 let worker: ChildProcess | undefined;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * Show mini app casts: payloads carry mini app casts, marked, and the app
@@ -14,7 +15,7 @@ const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const user = (fid: number, username: string) => ({ fid, username, display_name: username });
 const hash = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const cast = (n: number, text: string, extra: object = {}) => ({
-  hash: hash(n), author: user(100 + n, `caster${n}`), text, ts: 1792235681 - n * 60, likes: 10 - n, recasts: 0, replies: 0, ...extra,
+  hash: hash(n), author: user(100 + n, `caster${n}`), text, ts: (NOW - 19) - n * 60, likes: 10 - n, recasts: 0, replies: 0, ...extra,
 });
 const app = cast(2, "Play my game", { mini_app: true, embeds: [{ kind: "link", url: "https://game.example/" }] });
 const pool = [cast(1, "An ordinary cast"), app, cast(3, "Another ordinary cast")];

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft, selectIn, selectionIn } from "./helpers/composer";
+import { NOW } from "./fixture-time";
 
 /*
  * The composer's emoji picker: Allthing's Pepe pack, searched, picked into
@@ -13,7 +14,7 @@ test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
-const cast = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "Say it with a Pepe", ts: 1792235681, likes: 3, replies: 0 };
+const cast = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "Say it with a Pepe", ts: (NOW - 19), likes: 3, replies: 0 };
 /** The pack's groups, in order (`allthing_core::emoji::Group`). */
 const GROUPS = ["Classics", "Reactions", "Happy", "Love", "Sad and scared", "Music and party", "Hi and bye", "Food and drink", "Doing things", "Dressed up", "Signs"];
 

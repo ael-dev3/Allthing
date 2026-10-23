@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * The source on GitHub: the footer's Source link, with GitHub's mark, on
@@ -12,7 +13,7 @@ const SOURCE = "https://github.com/ael-dev3/Allthing";
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
-const cast = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "gm", ts: 1792235681, likes: 1, recasts: 0, replies: 0 };
+const cast = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "gm", ts: (NOW - 19), likes: 1, recasts: 0, replies: 0 };
 
 /** One cast for the feed; GitHub itself is never reached, as a tab opened
  * on it gets a stand-in. */

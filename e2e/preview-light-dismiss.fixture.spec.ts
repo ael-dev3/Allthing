@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { approvedKey, signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * A panel a tap opened is dismissed lightly: the first tap outside it only
@@ -17,7 +18,7 @@ import { approvedKey, signIn } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const dave = { fid: 7, username: "dave", display_name: "Dave" };

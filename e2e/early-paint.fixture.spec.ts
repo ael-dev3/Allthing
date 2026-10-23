@@ -49,9 +49,10 @@ const busy = {
   hash: hex(3),
   author: cat,
   text: "Worth a read",
-  ts: now - 40.5 * HOUR,
-  likes: 12_345,
-  recasts: 1_200,
+  // Inside the 24 hours the front page shows, below ann's in hot.
+  ts: now - 23.5 * HOUR,
+  likes: 900,
+  recasts: 100,
   replies: 1,
   embeds: [
     { kind: "link", url: "https://example.org/essay", title: "An essay", image_url: "https://imagedelivery.net/fixture/thumb/original" },
@@ -297,7 +298,7 @@ test("top's first cards come in top's order, with the time range the address nam
   await expect(boot.locator(".cast-card")).toHaveCount(6);
   expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual([busy, favorite, rich, pair, quoting, later].map((c) => c.hash));
   await expect(boot.locator(".sort-tabs a.selected")).toHaveText("top");
-  await expect(boot.locator(".time-filter option[selected]")).toHaveText("Past week");
+  await expect(boot.locator(".time-filter option[selected]")).toHaveText("7 days");
   await moduleIn(page, held);
   await settled(page, "#boot");
   const early = await shown(page, "#boot");
@@ -312,12 +313,11 @@ test("an account seen less of is lower in the first cards too, as in the app", a
   await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }])));
   await page.goto("/");
   const boot = page.locator("#boot");
-  // Hot, seeing less of ann: the list spans 1.6 days, so ann's busiest cast
-  // is as if 17½ hours older for each, 28½ in all, and goes below dee's
-  // quiet ones, 8½ hours older (at 17½ hours, it would come 5th).
+  // Hot, seeing less of ann: her cast, second without it, is as if hours
+  // older and goes below dee's quiet ones, 5th, as in the app.
   await expect(boot.locator(".cast-card")).toHaveCount(6);
   expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual(
-    [busy, favorite, pair, later, rest[0], rest[1]].map((c) => c.hash),
+    [busy, favorite, pair, later, rich, rest[0]].map((c) => c.hash),
   );
   await moduleIn(page, held);
   await settled(page, "#boot");

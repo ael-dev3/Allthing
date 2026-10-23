@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
@@ -9,18 +10,18 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 // A long unbroken token must wrap inside the card on a phone.
 const quotedWords = "Words from the quoted cast, signed 0x" + "f".repeat(64);
 const quoted = {
-  hash: hash(0xa1), text: quotedWords, ts: 1792230000,
+  hash: hash(0xa1), text: quotedWords, ts: (NOW - 5700),
   author: { fid: 2, username: "quoted-author", display_name: "Quoted Author", pfp_url: "https://media.example/pfp.png" },
   embeds: [{ kind: "image", url: "https://media.example/quoted.png" }],
 };
-const spam = { hash: hash(0xa3), author: { fid: 4, username: "spammer" }, text: "", ts: 1792230000, spam: true };
+const spam = { hash: hash(0xa3), author: { fid: 4, username: "spammer" }, text: "", ts: (NOW - 5700), spam: true };
 const missing = hash(0xa2);
 const quoting = { hash: hash(1), author: { fid: 1, username: "fixture" }, text: "Outer cast that quotes another",
-  ts: 1792235681, likes: 30, embeds: [{ kind: "cast", hash: quoted.hash, fid: 2 }] };
+  ts: (NOW - 19), likes: 30, embeds: [{ kind: "cast", hash: quoted.hash, fid: 2 }] };
 const unloaded = { hash: hash(2), author: { fid: 1, username: "fixture" }, text: "Outer cast whose quote is not in the payload",
-  ts: 1792235600, likes: 20, embeds: [{ kind: "cast", hash: missing, fid: 3 }] };
+  ts: (NOW - 100), likes: 20, embeds: [{ kind: "cast", hash: missing, fid: 3 }] };
 const quotingSpam = { hash: hash(3), author: { fid: 1, username: "fixture" }, text: "Outer cast that quotes spam",
-  ts: 1792235500, likes: 10, embeds: [{ kind: "cast", hash: spam.hash, fid: 4 }] };
+  ts: (NOW - 200), likes: 10, embeds: [{ kind: "cast", hash: spam.hash, fid: 4 }] };
 const posts: Record<string, object> = {
   [quoted.hash]: { thread: { cast: quoted }, meta },
   [quoting.hash]: { thread: { cast: quoting }, quotes: [{ hash: quoted.hash, cast: quoted }], meta },

@@ -34,7 +34,7 @@ const card = (n: number, text: string, embeds: object[] = []) => ({
   hash: hex(n),
   author,
   text,
-  ts: now - 600 - n * 60,
+  ts: now - 600 - (n % 100) * 60,
   // Hot and new both list them in this order.
   likes: 1000 - n,
   recasts: 0,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -9,7 +10,7 @@ const user = (fid: number, username: string, display_name: string) =>
   ({ fid, username, display_name, pfp_url: `https://media.example/pfp-${fid}.png` });
 const cast = (n: number, text: string) => ({
   hash: `0x${n.toString(16).padStart(40, "0")}`, author: user(100 + n, `caster${n}`, `Caster ${n}`), text,
-  ts: 1792235681 - n * 60, likes: n,
+  ts: (NOW - 19) - n * 60, likes: n,
 });
 const pinned = cast(1, "Welcome to the fixture channel: read the rules first");
 // The pinned cast is also among the channel's recent casts.

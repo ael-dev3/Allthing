@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
+import { NOW } from "./fixture-time";
 
 /*
  * The composer and its GIF picker. KLIPY is a stand-in (no key is in the
@@ -12,7 +13,7 @@ import { expectDraft } from "./helpers/composer";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const bob = { fid: 7, username: "bob", display_name: "Bob" };

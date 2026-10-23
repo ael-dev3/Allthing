@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
@@ -9,7 +10,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/home", (route) => route.fulfill({ json: {
     pool: Array.from({ length: 15 }, (_, i) => ({
       hash: `0x${i.toString(16).padStart(40, "0")}`, author: { fid: 1, username: "fixture" },
-      text: `Reaction dialog fixture ${i}`, ts: 1792235681 - i, likes: 10,
+      text: `Reaction dialog fixture ${i}`, ts: (NOW - 19) - i, likes: 10,
     })), meta: { backend: "hypersnap", fetched_at: Date.now() },
   } }));
   await page.route("**/api/v1/reactions?*", (route) => route.fulfill({ json: {

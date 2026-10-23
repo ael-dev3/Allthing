@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { isoAgo } from "./fixture-time";
 
 test.skip(!process.env.E2E_PAGES, "uses the browser payload builder");
 
@@ -17,7 +18,7 @@ for (const width of [1280, 390]) {
         if (url.pathname.endsWith("/feed/trending")) {
           return route.fulfill({ json: { casts: url.searchParams.has("cursor") ? [] : [{
             hash: `0x${"a".repeat(40)}`, author: { fid: 1, username: "ordinary" }, text,
-            timestamp: "2026-10-18T10:00:00Z", embeds: [{ url: link }],
+            timestamp: isoAgo(3_600), embeds: [{ url: link }],
           }] }, headers: { "access-control-allow-origin": "*" } });
         }
         return route.fulfill({ status: 404, json: {}, headers: { "access-control-allow-origin": "*" } });

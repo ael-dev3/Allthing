@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const long = `${"The first paragraph runs on well past where a title would stop. ".repeat(5)}\nA second line.\n\nThe last paragraph links https://example.com/page and ends here.`;
 const casts = [
-  { hash: `0x${"1".repeat(40)}`, author: { fid: 1, username: "fixture" }, text: long, ts: 1792235681, likes: 3 },
-  { hash: `0x${"2".repeat(40)}`, author: { fid: 1, username: "fixture" }, text: "", ts: 1792235680, likes: 2,
+  { hash: `0x${"1".repeat(40)}`, author: { fid: 1, username: "fixture" }, text: long, ts: (NOW - 19), likes: 3 },
+  { hash: `0x${"2".repeat(40)}`, author: { fid: 1, username: "fixture" }, text: "", ts: (NOW - 20), likes: 2,
     embeds: [{ kind: "image", url: "https://media.example/photo.png" }] },
 ];
 

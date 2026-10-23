@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hash = (i: number) => `0x${(i + 1).toString(16).padStart(40, "0")}`;
 const pool = Array.from({ length: 25 }, (_, i) => ({
-  hash: hash(i), author: { fid: 1, username: "fixture" }, text: `Client share fixture ${i}`, ts: 1792235681 - i, likes: 25 - i,
+  hash: hash(i), author: { fid: 1, username: "fixture" }, text: `Client share fixture ${i}`, ts: (NOW - 19) - i, likes: 25 - i,
 }));
 // 15 casts from the Farcaster app (its account is still named Warpcast), 6
 // from Base App, 4 from another app.
@@ -29,7 +30,7 @@ async function serve(page: Page, known: number, { indexed = false } = {}) {
 test("the front page shows which apps today's trending casts were posted from", async ({ page }) => {
   await serve(page, 25);
   await page.goto("/");
-  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
+  const share = page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts" });
   await expect(share).toBeVisible();
   await expect(share.locator(".client-legend li")).toHaveText(["Farcaster 60%", "Base App 24%", "Other client 16%"]);
   await expect(share.getByRole("img")).toHaveAttribute("aria-label", "Farcaster 60%, Base App 24%, Other client 16%");
@@ -45,19 +46,19 @@ test("the bar names the time range it covers", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Apps posting the past hour's trending casts" })).toBeVisible();
   // Before the index can rank the past month, the list is the past week's.
   await page.goto("/?sort=top&t=month");
-  await expect(page.getByRole("region", { name: "Apps posting the past week's trending casts" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Apps posting the past 7 days' trending casts" })).toBeVisible();
 });
 
 test("the bar names a range ranked from the index", async ({ page }) => {
   await serve(page, 25, { indexed: true });
   await page.goto("/?sort=top&t=month");
-  await expect(page.getByRole("region", { name: "Apps posting the past month's trending casts" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Apps posting the past 30 days' trending casts" })).toBeVisible();
 });
 
 test("with few casts' apps known, the bar shares them among all the casts, and counts the rest as not known", async ({ page }) => {
   await serve(page, 10);
   await page.goto("/");
-  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
+  const share = page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts" });
   // 10 from the Farcaster app of 25: 40%, not 100%.
   await expect(share.locator(".client-legend li")).toHaveText(["Farcaster 40%", "15 not known"]);
   await expect(share.locator(".share-bar .seg-unknown")).toHaveCount(1);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { approvedKey, signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * Cancelling a scheduled cast on /scheduled. "Yes, cancel it" takes the
@@ -21,7 +22,7 @@ const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
-const post = { hash: hex(1), author: alice, text: "What should I read next?", ts: 1792235681, likes: 3, replies: 0 };
+const post = { hash: hex(1), author: alice, text: "What should I read next?", ts: (NOW - 19), likes: 3, replies: 0 };
 const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
 const now = () => Math.floor(Date.now() / 1000);

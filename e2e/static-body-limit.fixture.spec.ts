@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { isoAgo } from "./fixture-time";
 
 test.skip(!process.env.E2E_PAGES, "requires the static-host payload builder");
 
@@ -59,7 +60,7 @@ async function provider(page: Page, mode: string) {
       return route.fulfill({ status: 404, json: {}, headers: { "access-control-allow-origin": "*" } });
     }
     const cast = { hash: `0x${"a".repeat(40)}`, author: { fid: 1, username: "fixture" },
-      text: "Static body fixture", timestamp: "2026-10-18T10:00:00Z",
+      text: "Static body fixture", timestamp: isoAgo(3_600),
       embeds: mode === "json" ? [] : [{ url: `https://cap.example/${mode}` }] };
     return route.fulfill({ json: { casts: url.searchParams.has("cursor") ? [] : [cast],
       // Uncapped JSON must still be read completely before parsing.

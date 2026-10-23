@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * A write handed to the Farcaster app, as on allthing.social (where the
@@ -18,7 +19,7 @@ test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker to hand
 const NODE = "https://haatz.quilibrium.com/v1";
 const cors = { "access-control-allow-origin": "*" };
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

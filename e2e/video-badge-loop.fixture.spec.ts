@@ -2,6 +2,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
@@ -16,7 +17,7 @@ async function videoPost(page: Page, extinf = "2.000000") {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
     thread: {
-      cast: { hash, author: { fid: 1, username: "fixture" }, text: "Video fixture", ts: 1792235681,
+      cast: { hash, author: { fid: 1, username: "fixture" }, text: "Video fixture", ts: (NOW - 19),
         embeds: [{ kind: "video", url: "https://media.example/clip.m3u8" }] },
       children: [],
     },

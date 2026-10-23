@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * Search results are in the feeds' column: at 1280 the page, its people,
@@ -17,8 +18,8 @@ const people = [
 ];
 const channels = [{ id: "fixtures", name: "Fixtures", parent_url: "https://farcaster.xyz/~/channel/fixtures" }];
 const casts = [
-  { hash: `0x${"c".repeat(40)}`, author: { fid: 2, username: "fixer" }, text: "A fixture cast about search", ts: 1792235681, likes: 3, recasts: 1, replies: 0 },
-  { hash: `0x${"d".repeat(40)}`, author: { fid: 3, username: "fixture.eth" }, text: "Another cast about search", ts: 1792235621, likes: 1, recasts: 0, replies: 0 },
+  { hash: `0x${"c".repeat(40)}`, author: { fid: 2, username: "fixer" }, text: "A fixture cast about search", ts: (NOW - 19), likes: 3, recasts: 1, replies: 0 },
+  { hash: `0x${"d".repeat(40)}`, author: { fid: 3, username: "fixture.eth" }, text: "Another cast about search", ts: (NOW - 79), likes: 1, recasts: 0, replies: 0 },
 ];
 
 async function serve(page: Page) {

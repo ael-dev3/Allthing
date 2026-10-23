@@ -2,6 +2,7 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { approvedKey, link, removed, signIn, type Envelope } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
+import { NOW } from "./fixture-time";
 
 /*
  * Following, unfollowing and deleting one's own casts from Allthing, with
@@ -14,7 +15,7 @@ import { standIn } from "./helpers/node";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice", follower_count: 120, following_count: 30, bio: "Reading" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
+import { NOW } from "./fixture-time";
 
 /*
  * Allthing's stickers: larger Pepes, picked in the composer's Stickers tab
@@ -11,7 +12,7 @@ import { expectDraft } from "./helpers/composer";
 
 const STICKERS = "https://allthing.social/assets/stickers/v1";
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

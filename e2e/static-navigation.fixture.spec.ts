@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { isoAgo } from "./fixture-time";
 
 /*
  * The static copy lives under /Allthing. What the app opens itself, rather
@@ -21,7 +22,7 @@ async function serve(page: Page) {
         json: {
           casts: url.searchParams.has("cursor") ? [] : [{
             hash, author: { fid: 1, username: "fixture" }, text: "A cast to open",
-            timestamp: "2026-10-18T10:00:00Z", embeds: [], replies: { count: 2 }, reactions: { likes_count: 1, recasts_count: 0 },
+            timestamp: isoAgo(3_600), embeds: [], replies: { count: 2 }, reactions: { likes_count: 1, recasts_count: 0 },
           }],
         },
         headers: { "access-control-allow-origin": "*" },

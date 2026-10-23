@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { appCame } from "./helpers/app";
+import { NOW, isoAgo } from "./fixture-time";
 
 /*
  * A feed card's replies come with its run's popover batch
@@ -16,7 +17,7 @@ import { appCame } from "./helpers/app";
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hash = (i: number) => `0x${i.toString(16).padStart(40, "0")}`;
-const ts = 1792235681;
+const ts = (NOW - 19);
 // Likes, recasts and replies of eight casts, newest first. Their text is
 // long, so only cards of the first run of six (one batch) can be in view.
 // Cast 0 counts a third reply, spam, which the Worker leaves out; cast 2
@@ -199,7 +200,7 @@ test.describe("in the static copy", () => {
     // Hypersnap's conversation of a cast with five direct replies: the most
     // liked are spam, a mini app by its address and one by its page.
     const raw = (n: number, likes: number, text: string, embeds: string[] = []) => ({
-      hash: `0x${n.toString(16).padStart(40, "c")}`, parent_hash: cast, text, timestamp: "2026-10-18T10:00:00Z",
+      hash: `0x${n.toString(16).padStart(40, "c")}`, parent_hash: cast, text, timestamp: isoAgo(3_600),
       author: { fid: 300 + n, username: `replier${n}`, display_name: `Replier ${n}` },
       embeds: embeds.map((url) => ({ url })), reactions: { likes_count: likes, recasts_count: 0 }, replies: { count: 0 },
     });
@@ -216,7 +217,7 @@ test.describe("in the static copy", () => {
       if (url.pathname.endsWith("/feed/trending")) {
         return route.fulfill({ json: { casts: url.searchParams.has("cursor") ? [] : [{
           hash: cast, author: { fid: 1, username: "fixture" }, text: "A cast with replies",
-          timestamp: "2026-10-18T10:00:00Z", embeds: [], replies: { count: 5 }, reactions: { likes_count: 1, recasts_count: 0 },
+          timestamp: isoAgo(3_600), embeds: [], replies: { count: 5 }, reactions: { likes_count: 1, recasts_count: 0 },
         }] }, headers: cors });
       }
       if (url.pathname.endsWith("/cast/conversation") && url.searchParams.get("reply_depth") === "1") {

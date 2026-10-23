@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, signIn } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
+import { NOW } from "./fixture-time";
 
 /*
  * Parts of the app fetched the first time they're used (allthing-web's
@@ -100,7 +101,7 @@ test("a part that can't be fetched loads the page again once, then offers to try
 // too.
 
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
-const post = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "What should I read next?", ts: 1792235681, likes: 3, recasts: 0, replies: 0 };
+const post = { hash: `0x${"1".padStart(40, "0")}`, author: alice, text: "What should I read next?", ts: (NOW - 19), likes: 3, recasts: 0, replies: 0 };
 
 /** A feed of one cast and its post page; the WebAssembly fetched past the app's own. */
 async function serveFeed(page: Page) {

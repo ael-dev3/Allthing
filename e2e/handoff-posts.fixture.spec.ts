@@ -2,6 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * A cast, a reply, a quote or a Pepe reaction handed to the Farcaster app,
@@ -17,7 +18,7 @@ const NODE = "https://haatz.quilibrium.com/v1";
 const EPOCH = 1_609_459_200;
 const cors = { "access-control-allow-origin": "*" };
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

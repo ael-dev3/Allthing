@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * A profile shows the account's website under its bio: a link out, with a
@@ -14,7 +15,7 @@ import { expect, test, type Browser, type Locator, type Page, type TestInfo } fr
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const REL = "noopener noreferrer nofollow ugc";
 const longHref = `https://www.example.com/${"a-rather-long-path/".repeat(10)}end/`;
