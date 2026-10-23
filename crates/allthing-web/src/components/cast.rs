@@ -155,10 +155,12 @@ pub fn CastList(
     inset: Option<fn() -> AnyView>,
 ) -> impl IntoView {
     // Mini app casts, which payloads keep marked, are left out unless the
-    // reader chose to see them (`crate::miniapps`); the note over the list
-    // says how many, with the switch.
+    // reader chose to see them (`crate::miniapps`); the Settings panel says
+    // how many, with the switch.
     let all = casts;
     let apps = Memo::new(move |_| all.with(|c| c.iter().filter(|c| c.mini_app && !c.spam).count()));
+    Effect::new(move |_| crate::miniapps::set_in_feed(apps.get()));
+    on_cleanup(|| crate::miniapps::set_in_feed(0));
     let casts: Signal<Vec<Cast>> = Memo::new(move |_| {
         let show = crate::miniapps::shown();
         all.with(|c| c.iter().filter(|c| !c.hidden_for(show)).cloned().collect::<Vec<_>>())
@@ -316,7 +318,6 @@ pub fn CastList(
     };
 
     view! {
-        <crate::miniapps::MiniAppsNote count=apps/>
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
             <div class="cast-list" node_ref=list>
                 <For

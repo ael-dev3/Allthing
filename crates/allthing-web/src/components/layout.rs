@@ -46,6 +46,7 @@ pub fn SiteHeader() -> impl IntoView {
 fn account() -> AnyView {
     view! {
         <div class="header-actions">
+            <crate::miniapps::Settings/>
             <crate::components::compose::HeaderCast/>
             <crate::components::notifications::Bell/>
             <crate::components::signin::Account/>
@@ -58,9 +59,12 @@ fn account() -> AnyView {
 #[cfg(feature = "static-host")]
 fn account() -> AnyView {
     view! {
-        <span class="readonly-pill" aria-description="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
-            "read-only"
-        </span>
+        <div class="header-actions">
+            <crate::miniapps::Settings/>
+            <span class="readonly-pill" aria-description="This copy of Allthing only reads public Farcaster data. It has no sign-in and never posts.">
+                "read-only"
+            </span>
+        </div>
     }
     .into_any()
 }

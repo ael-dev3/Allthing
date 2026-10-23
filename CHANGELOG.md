@@ -7,6 +7,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Show mini app casts moved out of the feed into a Settings panel in the header (for every reader, signed in or not): the "N mini app casts hidden" line and its switch no longer sit over the list, and the account menu no longer repeats the switch. A shown mini app cast quoted in another cast now carries its "Open in Farcaster" link inside the quote card; no other cast or quote shows mini app chrome.
+
 - The "Only N casts in …" note sits under a range's list, where it ends, not above it: it came once the list had ended and moved every card down (a layout shift at 1280).
 
 - Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.

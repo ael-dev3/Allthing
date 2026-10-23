@@ -5,7 +5,9 @@
 //! see them, then show each with a link to open it in Farcaster. Spam stays
 //! hidden either way (`Cast::hidden_for`). The choice is kept in this
 //! browser's localStorage (`allthing.show-mini-apps`), read by web/paint.js
-//! too, and the reader's other tabs follow it (the `storage` event).
+//! too, and the reader's other tabs follow it (the `storage` event). The
+//! switch, and how many mini app casts the list in view holds, live in the
+//! header's Settings panel (`Settings`), not in the feed.
 
 use allthing_core::model::Cast;
 use leptos::prelude::*;
@@ -31,6 +33,14 @@ thread_local! {
         });
         shown
     };
+    /// How many mini app casts the list in view holds (spam not counted):
+    /// set by `CastList`, said in the Settings panel.
+    static IN_FEED: ArcRwSignal<usize> = ArcRwSignal::new(0);
+}
+
+/// Say how many mini app casts the list in view holds.
+pub fn set_in_feed(count: usize) {
+    IN_FEED.with(|c| c.set(count));
 }
 
 /// Whether the reader shows mini app casts (tracked).
@@ -63,8 +73,7 @@ pub fn as_shown(pool: &[Cast]) -> Vec<Cast> {
     pool.iter().filter(|c| !c.hidden_for(show)).cloned().collect()
 }
 
-/// The switch: "Show mini app casts", a checkbox-like button. `class` sets
-/// where it is (the account menu, a feed's note).
+/// The switch: "Show mini app casts", a checkbox-like button.
 #[component]
 pub fn MiniAppsSwitch(#[prop(optional)] class: &'static str) -> impl IntoView {
     let on = Memo::new(move |_| shown());
@@ -83,27 +92,43 @@ pub fn MiniAppsSwitch(#[prop(optional)] class: &'static str) -> impl IntoView {
     }
 }
 
-/// A feed's note under its head, when its casts include mini app casts:
-/// how many it leaves out, or that it shows them, with the switch.
+/// When the list in view holds mini app casts: how many it leaves out, or
+/// that it shows them.
 #[component]
-pub fn MiniAppsNote(#[prop(into)] count: Signal<usize>) -> impl IntoView {
+fn MiniAppsNote() -> impl IntoView {
     move || {
-        let count = count.get();
+        let count = IN_FEED.with(|c| c.get());
         (count > 0).then(|| {
-            let said = move || {
-                if shown() {
-                    allthing_core::format::plural(count as u64, "mini app cast", "mini app casts") + " shown"
-                } else {
-                    allthing_core::format::plural(count as u64, "mini app cast", "mini app casts") + " hidden"
-                }
-            };
-            view! {
-                <p class="mini-apps-note">
-                    <span class="muted">{said}</span>
-                    <MiniAppsSwitch class="in-note"/>
-                </p>
-            }
+            let what = allthing_core::format::plural(count as u64, "mini app cast", "mini app casts");
+            let said = move || format!("{what} {}", if shown() { "shown" } else { "hidden" });
+            view! { <p class="mini-apps-note muted">{said}</p> }
         })
+    }
+}
+
+/// The header's Settings: a button opening a panel with the reader's
+/// choices, kept in this browser. For now, whether mini app casts show.
+#[component]
+pub fn Settings() -> impl IntoView {
+    view! {
+        <crate::components::popover::Popover
+            label="Settings"
+            trigger_label="Settings"
+            trigger_class="settings-button"
+            class="settings"
+            panel_class="settings-panel"
+            trigger=|| view! {
+                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2.2"/>
+                    <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>
+                </svg>
+            }
+            content=|| view! {
+                <p class="settings-title">"Settings"</p>
+                <MiniAppsSwitch class="account-link"/>
+                <MiniAppsNote/>
+            }
+        />
     }
 }
 

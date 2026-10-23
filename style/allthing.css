@@ -7762,14 +7762,53 @@ p.jumbo .emoji img {
   transform: translateX(12px);
 }
 
-.mini-apps-note {
-  display: flex;
-  flex-wrap: wrap;
+/* The header's Settings: a round button like the bell, and its panel. */
+.settings-button {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 4px 12px;
-  margin: 0 0 8px;
-  padding: 2px 4px;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--ink-2);
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-button:hover {
+  color: var(--ink);
+  border-color: rgba(79, 67, 212, 0.35);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.settings-button .icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.settings .popover-panel {
+  left: auto;
+  right: 0;
+  width: min(250px, 86vw);
+  padding: 10px 6px 6px;
+}
+
+.settings-title {
+  margin: 0 8px 6px;
+  font: 600 13px/1.2 var(--font-ui);
+  color: var(--ink-3);
+}
+
+.mini-apps-note {
+  margin: 2px 8px 4px;
   font-size: 13px;
 }
 

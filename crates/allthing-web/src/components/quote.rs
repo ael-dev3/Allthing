@@ -81,6 +81,7 @@ pub fn QuoteCard(
                 <div class="quote-text"><CastText text mentions=cast.mentions.clone()/></div>
             })}
             <MediaGrid cast=cast.clone()/>
+            <crate::miniapps::MiniAppLink cast=cast.clone()/>
             {nested_quotes(&cast, notes.as_ref(), depth)}
         }
         .into_any()
