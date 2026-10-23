@@ -2,6 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const stream = "https://mse.example/master.m3u8";
@@ -16,7 +17,7 @@ async function serve(page: Page, blocked = "") {
   await page.route("**/api/v1/home**", (route) => route.fulfill({ json: { pool: [], meta } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
     thread: { cast: { hash, author: { fid: 1, username: "fixture" }, text: "MSE lifecycle fixture",
-      ts: 1792235681, embeds: [{ kind: "video", url: stream }] } }, meta,
+      ts: (NOW - 19), embeds: [{ kind: "video", url: stream }] } }, meta,
   } }));
   await page.route("https://mse.example/**", async (route) => {
     const file = new URL(route.request().url()).pathname.slice(1);

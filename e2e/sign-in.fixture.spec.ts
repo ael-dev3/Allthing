@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { NOW, isoAgo } from "./fixture-time";
 
 /*
  * Sign In With Farcaster by QR code. The relay and the Worker's nonce and
@@ -12,7 +13,7 @@ test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker to sign
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const author = { fid: 42, username: "carol", display_name: "Carol" };
-const cast = { hash: hex(1), author, text: "Hello from the fixture", ts: 1792235681, likes: 0, replies: 0 };
+const cast = { hash: hex(1), author, text: "Hello from the fixture", ts: (NOW - 19), likes: 0, replies: 0 };
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const RELAY = "https://relay.farcaster.xyz/v1";
 const TOKEN = "210f1718-427e-46a4-99e3-2207f21f83ec";
@@ -23,7 +24,7 @@ const USER_COOKIE = "__Host-allthing-user";
 
 type Calls = { start: number; channel: any[]; polls: number; verify: any[]; signout: number; origins: string[] };
 /** When the Worker says the signed message lapses: the nonce's expiry, on its clock. */
-const EXPIRES = "2026-10-19T12:10:00Z";
+const EXPIRES = isoAgo(600);
 
 /**
  * The page's stand-ins. `relay` decides each status poll's answer;

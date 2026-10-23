@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
@@ -8,7 +9,7 @@ const people = [
   { fid: 3, username: "fixture.eth", display_name: "Fixture Two", follower_count: 5 },
 ];
 const channels = [{ id: "fixtures", name: "Fixtures", parent_url: "https://farcaster.xyz/~/channel/fixtures" }];
-const casts = [{ hash: `0x${"c".repeat(40)}`, author: { fid: 2, username: "fixer" }, text: "A fixture cast about search", ts: 1792235681 }];
+const casts = [{ hash: `0x${"c".repeat(40)}`, author: { fid: 2, username: "fixer" }, text: "A fixture cast about search", ts: (NOW - 19) }];
 
 async function serve(page: Page) {
   const queries: string[] = [];

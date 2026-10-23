@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
-const cast = { hash, author: { fid: 1, username: "fixture" }, text: "Lightbox navigation fixture", ts: 1792235681,
+const cast = { hash, author: { fid: 1, username: "fixture" }, text: "Lightbox navigation fixture", ts: (NOW - 19),
   embeds: [{ kind: "image", url: "https://media.example/image.png" }] };
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 

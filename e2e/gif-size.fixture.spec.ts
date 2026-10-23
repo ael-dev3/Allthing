@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { appCame } from "./helpers/app";
+import { NOW } from "./fixture-time";
 
 /*
  * GIFs show at about the size Discord gives them, not a photo's: a Tenor
@@ -21,7 +22,7 @@ import { appCame } from "./helpers/app";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const author = { fid: 1, username: "fixture", display_name: "Fixture" };
 const CAP = 300;

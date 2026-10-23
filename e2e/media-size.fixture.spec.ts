@@ -2,13 +2,14 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const fixtures = path.join(__dirname, "fixtures/hls");
 const hash = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const cast = (n: number, embed: { kind: string; url: string }) => ({
-  hash: hash(n), author: { fid: 1, username: "fixture" }, text: `Media fixture ${n}`, ts: 1792235681 - n, likes: 1, embeds: [embed],
+  hash: hash(n), author: { fid: 1, username: "fixture" }, text: `Media fixture ${n}`, ts: (NOW - 19) - n, likes: 1, embeds: [embed],
 });
 const casts = [
   cast(1, { kind: "image", url: "https://media.example/wide.svg" }),

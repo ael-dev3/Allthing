@@ -2,13 +2,14 @@
 import { expect, test, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const fixtures = path.join(__dirname, "fixtures/hls");
 const withVideo = (hash: string, text: string, url: string) => ({
-  hash, author: { fid: 1, username: "fixture" }, text, ts: 1792235681, embeds: [{ kind: "video", url }],
+  hash, author: { fid: 1, username: "fixture" }, text, ts: (NOW - 19), embeds: [{ kind: "video", url }],
 });
 
 test("autoplay goes to the topmost video in view, and to the next once it scrolls away", async ({ page }) => {

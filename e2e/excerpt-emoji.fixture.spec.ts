@@ -2,6 +2,7 @@
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { appCame } from "./helpers/app";
 import { approvedKey, signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * The pack's emoji in excerpts of a cast. The Replies preview, the casts a
@@ -15,7 +16,7 @@ import { approvedKey, signIn } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const bob = { fid: 7, username: "bob", display_name: "Bob" };

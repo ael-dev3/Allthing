@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { appCame } from "./helpers/app";
+import { NOW } from "./fixture-time";
 
 /*
  * Who liked and recasted feed cards loads a run of six cards ahead of the
@@ -19,7 +20,7 @@ const castsOf = (n: number, paragraphs: number) =>
     hash: hash(i),
     author: { fid: 100 + i, username: `author${i}` },
     text: Array.from({ length: paragraphs }, (_, p) => `Card ${i}, paragraph ${p + 1}.`).join("\n\n"),
-    ts: 1792235681 - i * 60,
+    ts: (NOW - 19) - i * 60,
     likes: 1, recasts: 1, replies: 0,
   }));
 const liker = (h: string) => `Liker of ${parseInt(h, 16)}`;

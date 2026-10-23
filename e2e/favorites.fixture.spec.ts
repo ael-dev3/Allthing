@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * Favorites: the star on a profile makes the account one of the reader's
@@ -13,7 +14,7 @@ import { signIn } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const person = (fid: number, username: string) => ({ fid, username, display_name: username[0].toUpperCase() + username.slice(1), follower_count: 10, following_count: 5, bio: "" });
 const ann = person(1, "ann");

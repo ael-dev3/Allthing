@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * Allthing's emoji: ":pepe_no:" and the rest of the pack, shown inline in
@@ -8,7 +9,7 @@ import { expect, test, type Browser, type Page, type TestInfo } from "@playwrigh
  */
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const casts = [

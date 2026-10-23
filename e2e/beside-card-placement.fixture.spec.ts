@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type TestInfo } from "@playwright/test";
 import { appCame } from "./helpers/app";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -9,7 +10,7 @@ const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 // A tall cast, so its counts sit low and its Liked by list opens above them.
 const tall = {
-  hash: hex(1), author: alice, ts: 1792235681, likes: 10, replies: 0,
+  hash: hex(1), author: alice, ts: (NOW - 19), likes: 10, replies: 0,
   text: Array.from({ length: 30 }, (_, i) => `Line ${i + 1}`).join("\n"),
 };
 const people = Array.from({ length: 10 }, (_, i) => ({ fid: 100 + i, username: `p${i}`, display_name: `Person ${i}` }));

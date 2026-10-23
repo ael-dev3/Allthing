@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * A profile's header keeps its height as its vote and wallet activity come,
@@ -14,7 +15,7 @@ import { expect, test, type Page } from "@playwright/test";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const base = { fid: 42, username: "alice", display_name: "Alice", bio: "Reads conversations.", follower_count: 120, following_count: 30, registered_at: 1759222921 };
 const wallets = {

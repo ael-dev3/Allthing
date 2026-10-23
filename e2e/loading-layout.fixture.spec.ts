@@ -82,7 +82,7 @@ for (const size of sizes) {
       await appCame(page);
       const first = page.locator(".cast-list .cast-card[data-hash]").first();
       await expect(first).toContainText("Hot 0");
-      await expect(page.getByRole("region", { name: "Apps posting today's trending casts", exact: true })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts", exact: true })).toBeVisible();
       await settled(page);
       const where = await top(first);
 

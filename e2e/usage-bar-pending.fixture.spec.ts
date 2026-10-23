@@ -69,7 +69,7 @@ const layout = (page: Page) =>
     return { row: Math.round(box("#app .client-share").height), card: Math.round(box("#app .cast-list .cast-card[data-hash]").top + scrollY) };
   });
 
-const region = (page: Page) => page.getByRole("region", { name: "Apps posting today's trending casts", exact: true });
+const region = (page: Page) => page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts", exact: true });
 const legend = (bar: Locator) => bar.locator(".client-legend li");
 
 const sizes = [

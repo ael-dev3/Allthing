@@ -2,6 +2,7 @@
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { appCame } from "./helpers/app";
 import { signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * Cast on the reader's own profile, as on the feeds: on a computer the
@@ -16,7 +17,7 @@ import { signIn } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in or composer");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const me = { fid: 1234, username: "reader", display_name: "Reader" };
 const bob = { fid: 2, username: "bob", display_name: "Bob" };

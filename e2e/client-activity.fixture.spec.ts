@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * The client bar with the cron's count of accounts active through each app
@@ -12,7 +13,7 @@ test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hash = (i: number) => `0x${(i + 1).toString(16).padStart(40, "0")}`;
 const pool = Array.from({ length: 25 }, (_, i) => ({
-  hash: hash(i), author: { fid: 1, username: "fixture" }, text: `Client activity fixture ${i}`, ts: 1792235681 - i, likes: 25 - i,
+  hash: hash(i), author: { fid: 1, username: "fixture" }, text: `Client activity fixture ${i}`, ts: (NOW - 19) - i, likes: 25 - i,
 }));
 // 15 casts from the Farcaster app, 5 from Base App, 2 from Other client, one
 // from Fourth app, and one each from two small apps, which make up "Other
@@ -59,8 +60,8 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 test("no native tooltip over the bar or an app's card: what the bar is, is read out", async ({ page }) => {
   await serve(page, counted());
   await page.goto("/?sort=top");
-  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
-  await expect(share).toHaveAttribute("aria-description", /^Apps that posted \d+ of today's trending casts, from the app that registered each cast's signing key\.$/);
+  const share = page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts" });
+  await expect(share).toHaveAttribute("aria-description", /^Apps that posted \d+ of the past 24 hours' trending casts, from the app that registered each cast's signing key\.$/);
   await expect(share.locator("[title]")).toHaveCount(0);
   for (const open of [
     () => share.locator(".client-legend").getByRole("link", { name: /Farcaster/ }).hover(),
@@ -81,7 +82,7 @@ test("no native tooltip over the bar or an app's card: what the bar is, is read 
 test("pointing at an app opens its card: its active accounts in the past 24 hours, and its share", async ({ page }) => {
   await serve(page, counted());
   await page.goto("/?sort=top");
-  const share = page.getByRole("region", { name: "Apps posting today's trending casts" });
+  const share = page.getByRole("region", { name: "Apps posting the past 24 hours' trending casts" });
   const legend = share.locator(".client-legend");
   // The legend reads as before.
   await expect(legend.locator("li")).toHaveText(["Farcaster 60%", "Base App 20%", "Other client 8%", "Fourth app 4%", "Other apps 8%"]);
@@ -94,7 +95,7 @@ test("pointing at an app opens its card: its active accounts in the past 24 hour
   // which app, from where; the page says more.
   await expect(card.locator(".client-card-method")).toHaveText(METHOD);
   await expect(card.getByRole("link", { name: "How it's counted" })).toHaveAttribute("href", "/dau");
-  await expect(card).toContainText("60% of today's trending casts");
+  await expect(card).toContainText("60% of the past 24 hours' trending casts");
   await expect(card).not.toContainText("so far");
   await expect(card.getByRole("link", { name: "Show only casts from Farcaster" })).toHaveAttribute("href", /client=9152/);
   await expect(card.getByRole("link", { name: "Show only casts from Farcaster" })).toHaveAttribute("href", /sort=top/);
@@ -112,7 +113,7 @@ test("pointing at an app opens its card: its active accounts in the past 24 hour
   await segment.hover();
   const base = page.getByRole("dialog", { name: "Base App: active accounts" });
   await expect(base).toContainText("1,203 active accounts");
-  await expect(base).toContainText("20% of today's trending casts");
+  await expect(base).toContainText("20% of the past 24 hours' trending casts");
   // An account is "1 active account".
   await page.mouse.move(1200, 880);
   await legend.getByRole("link", { name: /Other client/ }).hover();

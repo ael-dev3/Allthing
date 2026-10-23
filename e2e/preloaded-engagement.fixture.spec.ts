@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -13,7 +14,7 @@ const pool = counts.map(([likes, recasts, replies], i) => ({
   hash: hash(i),
   author: { fid: 100 + i, username: `author${i}` },
   text: Array.from({ length: 10 }, (_, p) => `Preloaded engagement fixture ${i}, paragraph ${p + 1}.`).join("\n\n"),
-  ts: 1792235681 - i * 60,
+  ts: (NOW - 19) - i * 60,
   likes, recasts, replies,
 }));
 // Each preview is what /api/v1/reactions?…&limit=10 answers for its list.
@@ -143,7 +144,7 @@ test("the replies preview comes from the post that hovering its card prefetched"
   const reply = (n: number, text: string, likes: number) => ({
     hash: `0x${n.toString(16).padStart(40, "f")}`,
     author: { fid: 200 + n, username: `replier${n}`, display_name: `Replier ${n}` },
-    text, ts: 1792235700 + n, parent_hash: hash(0), likes,
+    text, ts: NOW + n, parent_hash: hash(0), likes,
   });
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
     thread: {

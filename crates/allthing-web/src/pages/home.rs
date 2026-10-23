@@ -375,15 +375,16 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                         <Heading sort range/>
                         <IndexNote window=window.get() index=payload.index.clone()/>
                         <ClientShareBar casts=crate::miniapps::as_shown(&in_window) notes=Arc::new(payload.notes.clone()) window=shown counted=payload.apps_24h.clone()/>
-                        {move || (ended.get() && !window.get().is_indexed()).then(|| {
-                            view! { <p class="range-note">{window_note(shown, casts.get().len())}</p> }
-                        })}
                         {move || client.get().map(|fid| view! { <ClientChip fid notes=chip_notes.clone()/> })}
                         <StaleNotice stale/>
                         {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
                         {crate::components::poll_gutter()}
                         <CastList casts notes on_end=load_more page_cursor=next_offset inset=crate::components::poll_inset()/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
+                        // Under the list, where it ends, so the cards above don't move.
+                        {move || (ended.get() && !window.get().is_indexed()).then(|| {
+                            view! { <p class="range-note">{window_note(shown, casts.get().len())}</p> }
+                        })}
                     </Columns>
                 }
                 .into_any()

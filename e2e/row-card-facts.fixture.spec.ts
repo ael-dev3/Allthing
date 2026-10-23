@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { appCame } from "./helpers/app";
+import { NOW } from "./fixture-time";
 
 /*
  * The people of a likes or replies preview have their votes and wallets
@@ -12,7 +13,7 @@ import { appCame } from "./helpers/app";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const person = (fid: number) => ({ fid, username: `user${fid}`, display_name: `Person ${fid}` });
 const alice = { fid: 42, username: "alice", display_name: "Alice" };

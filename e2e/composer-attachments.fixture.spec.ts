@@ -5,6 +5,7 @@ import { expect, test, type Browser, type JSHandle, type Locator, type Page, typ
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, envelope, signIn, type Envelope } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
+import { NOW } from "./fixture-time";
 
 /*
  * Images and videos with a cast (crates/allthing-web/src/components/
@@ -21,7 +22,7 @@ import { standIn } from "./helpers/node";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

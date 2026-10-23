@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * No native tooltips on a post or in a popover. A browser's title tooltip is
@@ -11,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const bob = { fid: 43, username: "bob", display_name: "Bob" };

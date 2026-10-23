@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * A page that can't load says what happened in a reader's words, never the
@@ -15,7 +16,7 @@ test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
-const cast = { hash: hex(1), author: alice, text: "A cast that loads in the end", ts: 1792235681, likes: 1, recasts: 0, replies: 0 };
+const cast = { hash: hex(1), author: alice, text: "A cast that loads in the end", ts: (NOW - 19), likes: 1, recasts: 0, replies: 0 };
 
 async function serve(page: Page) {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));

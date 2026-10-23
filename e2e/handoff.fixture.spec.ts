@@ -2,6 +2,7 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
 import { signIn } from "./helpers/farcaster";
+import { NOW } from "./fixture-time";
 
 /*
  * Every write handed to the Farcaster app, as on allthing.social, where the
@@ -15,7 +16,7 @@ import { signIn } from "./helpers/farcaster";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no Worker to hand off with");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const me = { fid: 1234, username: "reader", display_name: "Reader" };

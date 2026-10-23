@@ -7,6 +7,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- The "Only N casts in …" note sits under a range's list, where it ends, not above it: it came once the list had ended and moved every card down (a layout shift at 1280).
+
 - Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.
 
 ### Fixed

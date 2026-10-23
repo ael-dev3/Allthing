@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const hash = `0x${"a".repeat(40)}`;
@@ -12,7 +13,7 @@ type TrackedWindow = Window & {
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home", (route) => route.fulfill({ json: {
-    pool: [{ hash, author: { fid: 1, username: "fixture" }, text: "Popover fixture", ts: 1792235681, likes: 10 }],
+    pool: [{ hash, author: { fid: 1, username: "fixture" }, text: "Popover fixture", ts: (NOW - 19), likes: 10 }],
     meta: { backend: "hypersnap", fetched_at: Date.now() },
   } }));
   await page.route("**/api/v1/reactions?*", (route) => route.fulfill({ json: {

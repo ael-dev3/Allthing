@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -72,7 +73,7 @@ for (const width of [1280, 390]) {
     await serve(page, crossChecked);
     // One cast by the account, so the profile lists a card whose author opens the card.
     await page.route("**/api/v1/user?*", (route) => route.fulfill({ json: {
-      user, pool: [{ hash: `0x${"5".repeat(40)}`, author: { fid: 42, username: "alice", display_name: "Alice" }, text: "Wallets fixture", ts: 1792235681 }], notes: {}, meta,
+      user, pool: [{ hash: `0x${"5".repeat(40)}`, author: { fid: 42, username: "alice", display_name: "Alice" }, text: "Wallets fixture", ts: (NOW - 19) }], notes: {}, meta,
     } }));
     await page.goto("/u/alice");
     const wallets = page.locator("section.wallets");
@@ -122,7 +123,7 @@ for (const width of [1280, 390]) {
     const page = await context.newPage();
     await serve(page, six);
     await page.route("**/api/v1/user?*", (route) => route.fulfill({ json: {
-      user, pool: [{ hash: `0x${"6".repeat(40)}`, author: { fid: 42, username: "alice", display_name: "Alice" }, text: "Six chains", ts: 1792235681 }], notes: {}, meta,
+      user, pool: [{ hash: `0x${"6".repeat(40)}`, author: { fid: 42, username: "alice", display_name: "Alice" }, text: "Six chains", ts: (NOW - 19) }], notes: {}, meta,
     } }));
     await page.goto("/u/alice");
     const wallets = page.locator("section.wallets");

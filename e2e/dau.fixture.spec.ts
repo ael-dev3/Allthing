@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { NOW } from "./fixture-time";
 
 /*
  * /dau: Farcaster's daily active accounts as the cron counts them, laid out
@@ -387,7 +388,7 @@ test.describe("with the Worker", () => {
   test("a client card links to the page, which the app opens without a reload", async ({ page }) => {
     await serve(page, payload());
     const hash = (i: number) => `0x${(i + 1).toString(16).padStart(40, "0")}`;
-    const pool = Array.from({ length: 25 }, (_, i) => ({ hash: hash(i), author: { fid: 1, username: "fixture" }, text: `DAU link fixture ${i}`, ts: 1792235681 - i }));
+    const pool = Array.from({ length: 25 }, (_, i) => ({ hash: hash(i), author: { fid: 1, username: "fixture" }, text: `DAU link fixture ${i}`, ts: (NOW - 19) - i }));
     const origins = Object.fromEntries(pool.map((c) => [c.hash, { signer: "0x01", app_fid: 9152 }]));
     await page.route("**/api/v1/home**", (route) => route.fulfill({
       json: { pool, notes: { origins, apps: { "9152": { fid: 9152, username: "warpcast", display_name: "Warpcast" } } }, meta: payload().meta, apps_24h: payload().apps_24h },

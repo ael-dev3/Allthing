@@ -3,6 +3,7 @@ import { expect, test, type Browser, type Page, type Route, type TestInfo } from
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, signIn, type Envelope } from "./helpers/farcaster";
 import { standIn, type Answer } from "./helpers/node";
+import { NOW } from "./fixture-time";
 
 /*
  * Casting, replying and quoting from Allthing with the reader's key. The
@@ -15,7 +16,7 @@ import { standIn, type Answer } from "./helpers/node";
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no sign-in");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const alice = { fid: 42, username: "alice", display_name: "Alice" };
 const bob = { fid: 7, username: "bob", display_name: "Bob" };

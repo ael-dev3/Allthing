@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page, type TestInfo } from "@playwrigh
 import { appCame } from "./helpers/app";
 import { approvedKey, signIn } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
+import { NOW } from "./fixture-time";
 
 /*
  * A reply's page shows the casts it answers as full cards, root first, joined
@@ -15,7 +16,7 @@ import { standIn } from "./helpers/node";
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
-const ts = 1792235681;
+const ts = (NOW - 19);
 const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const people = {
   alice: { fid: 42, username: "alice", display_name: "Alice" },

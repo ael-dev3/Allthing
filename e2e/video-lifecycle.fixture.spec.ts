@@ -2,6 +2,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NOW } from "./fixture-time";
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 const stream = "https://media.example/master.m3u8";
@@ -12,7 +13,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
     thread: { cast: { hash, author: { fid: 1, username: "fixture" },
-      text: "Video lifecycle fixture", ts: 1792235681, embeds: [{ kind: "video", url: stream }] } }, meta,
+      text: "Video lifecycle fixture", ts: (NOW - 19), embeds: [{ kind: "video", url: stream }] } }, meta,
   } }));
   await page.route("**/api/v1/search?*", (route) => route.fulfill({ json: { query: "fixture", users: [], channels: [], casts: [], meta } }));
 });
