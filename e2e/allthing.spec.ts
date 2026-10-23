@@ -162,23 +162,50 @@ test.describe("front page", () => {
     await shoot(page, "home");
   });
 
-  test("new and top re-rank the same pool without another API call", async ({ page }) => {
+  test("New reads latest casts and Top reuses trending without refetching Home", async ({ page }) => {
+    // This live read checks feed navigation without recording a presence beat.
+    await page.route("**/api/v1/presence", (route) => route.fulfill({ status: 404, json: { error: "Read-only test" } }));
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
+    const latestRead = PAGES ? null : page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/v1/latest" && response.request().method() === "GET",
+    );
     const calls = await apiRequests(page, async () => {
       await page.locator(".sort-tabs a", { hasText: "new" }).click();
       await expect(page).toHaveURL(/sort=new/);
+      if (latestRead) {
+        const response = await latestRead;
+        expect(response.status()).toBe(200);
+        const hashes = (await response.json()).pool.map((cast: { hash: string }) => cast.hash);
+        // URL changes and carried cards can precede the new resource. Check
+        // the actual Latest payload before judging the visible chronology.
+        await expect.poll(() => page.locator(".cast-card").evaluateAll(
+          (cards, allowed) => cards.length > 0 && cards.every((card) => allowed.includes(card.getAttribute("data-hash")!)),
+          hashes,
+        )).toBe(true);
+      }
       await expect(firstCard(page)).toBeVisible();
     });
-    // Prefetches of posts may run meanwhile; the feed itself is not refetched.
+    // New uses its own source; the previous trending payload is reused.
     expect(calls.filter((c) => /\/api\/v1\/home|feed\/trending/.test(c)), "sorting is local").toHaveLength(0);
-    const times = await page.locator(".cast-card").evaluateAll((c) => c.map((e) => Number(e.getAttribute("data-ts"))));
-    expect(times).toEqual([...times].sort((a, b) => b - a));
+    if (!PAGES) expect(calls.filter((call) => /\/api\/v1\/latest/.test(call))).toHaveLength(1);
+    await expect(async () => {
+      const times = await page.locator(".cast-card").evaluateAll((c) => c.map((e) => Number(e.getAttribute("data-ts"))));
+      expect(times.length).toBeGreaterThan(0);
+      expect(times).toEqual([...times].sort((a, b) => b - a));
+    }).toPass({ timeout: 5000 });
 
-    await page.locator(".sort-tabs a", { hasText: "top" }).click();
-    await expect(page).toHaveURL(/sort=top/);
-    const points = await page.locator(".cast-card").evaluateAll((c) => c.map((e) => Number(e.getAttribute("data-points"))));
-    expect(points).toEqual([...points].sort((a, b) => b - a));
+    const topCalls = await apiRequests(page, async () => {
+      await page.locator(".sort-tabs a", { hasText: "top" }).click();
+      await expect(page).toHaveURL(/sort=top/);
+      // The selected sort paints before its rows are reordered.
+      await expect(async () => {
+        const points = await page.locator(".cast-card").evaluateAll((c) => c.map((e) => Number(e.getAttribute("data-points"))));
+        expect(points.length).toBeGreaterThan(0);
+        expect(points).toEqual([...points].sort((a, b) => b - a));
+      }).toPass({ timeout: 5000 });
+    });
+    expect(topCalls.filter((call) => /\/api\/v1\/home|feed\/trending/.test(call)), "Top reuses trending").toHaveLength(0);
   });
 
   test("a feed page that fails to load is tried again", async ({ page }) => {
@@ -675,13 +702,16 @@ test.describe("threads and navigation", () => {
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
   });
 
-  test("back lays out the feed's images at their size before they load", async ({ page }) => {
+  test("Back preserves loaded feed images and their exact size", async ({ page }) => {
+    // Keep this image/navigation check read-only on the live deployment.
+    await page.route("**/api/v1/presence", (route) => route.fulfill({ status: 404, json: { error: "Read-only test" } }));
     await page.goto(at("/"));
     await expect(firstCard(page)).toBeVisible();
     // A card with a single image, scrolled past so its image has loaded.
     const image = page.locator(".cast-card > .media-grid.n1 .tile-image img").first();
     await image.scrollIntoViewIfNeeded();
     await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > 0)).toBe(true);
+    const original = await image.elementHandle();
     const hash = await image.evaluate((img) => img.closest(".cast-card")!.getAttribute("data-hash")!);
     const height = await image.evaluate((img) => Math.round(img.getBoundingClientRect().height));
     expect(height).toBeGreaterThan(50);
@@ -698,10 +728,13 @@ test.describe("threads and navigation", () => {
       },
     );
     await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`${at("/")}$`));
     const again = page.locator(`.cast-card[data-hash="${hash}"] > .media-grid.n1 .tile-image img`);
     await expect(again).toBeAttached();
-    // Its box is already the loaded image's size: nothing below it will move.
-    expect(await again.evaluate((img: HTMLImageElement) => img.complete)).toBe(false);
+    // Back remounts the retained feed: its loaded image and exact box stay
+    // intact even while newly requested images would still be delayed.
+    expect(await again.evaluate((img, kept) => img === kept, original)).toBe(true);
+    expect(await again.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > 0)).toBe(true);
     expect(Math.abs((await again.evaluate((img) => img.getBoundingClientRect().height)) - height)).toBeLessThanOrEqual(2);
   });
 
