@@ -90,6 +90,16 @@ jobs:
       - run: npx playwright test e2e/perf.spec.ts
         env:
           E2E_BASE_URL: https://allthing.social
+      - name: Retain performance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-performance
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   speed:
     # The speed report (docs/PERFORMANCE.md#speed-report): load times of the
