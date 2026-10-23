@@ -7,6 +7,15 @@ use std::collections::BTreeSet;
 
 use crate::model::{Cast, ThreadNode};
 
+/// Allthing's ingest-only buffer for small source clock skew, preserving the
+/// previously tested five-second case. This is not a protocol threshold and
+/// never changes the strict present upper bound used when serving or drawing.
+pub const INGEST_FUTURE_ALLOWANCE_SECS: i64 = 5;
+
+pub fn may_ingest_timestamp(ts: i64, now: i64) -> bool {
+    ts <= now.saturating_add(INGEST_FUTURE_ALLOWANCE_SECS)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Sort {
     #[default]
@@ -190,7 +199,7 @@ impl TrendingWindow {
     /// seconds since the Unix epoch, which has no time zone). The window
     /// starts just after `now − span`: a cast exactly that old is out, and
     /// one a second newer is in. Future-dated casts are out in every range,
-    /// including all time; a clock ahead becomes eligible when `now` catches up.
+    /// including all time. A retained cast can become visible when `now` catches up.
     pub fn holds(self, ts: i64, now: i64) -> bool {
         ts <= now && self.span_secs().is_none_or(|span| ts > now - span)
     }
@@ -521,6 +530,16 @@ mod tests {
         assert_eq!(TrendingWindow::All.span_secs(), None);
         assert!(TrendingWindow::All.holds(0, 1_792_000_000));
         assert!(TrendingWindow::All.holds(i64::MIN / 2, 1_792_000_000));
+    }
+
+    #[test]
+    fn ingest_alone_keeps_five_seconds_of_source_skew_with_saturating_arithmetic() {
+        let now = 1_792_000_000;
+        assert!(may_ingest_timestamp(now + 5, now));
+        assert!(!may_ingest_timestamp(now + 6, now));
+        assert!(!may_ingest_timestamp(2_893_718_638, now));
+        assert!(may_ingest_timestamp(i64::MAX, i64::MAX - 2));
+        assert!(!TrendingWindow::All.holds(now + 5, now));
     }
 
     #[test]

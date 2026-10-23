@@ -521,7 +521,9 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
         }
         warm = serde_json::from_str(&stored.body).ok();
     }
-    build_latest(&inv, warm).await
+    let mut payload = build_latest(&inv, warm).await?;
+    payload.pool.retain(|cast| TrendingWindow::All.holds(cast.ts, now_secs(&inv)));
+    Built::json(&payload, api::LATEST_CACHE)
 }
 
 /// The cron's turn: the newest casts, built on the stored copy and stored
@@ -530,8 +532,10 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
 pub async fn store_latest(inv: Rc<Invocation>) -> Result<(), Failure> {
     let index = inv.index().ok_or_else(|| Failure::internal("no index to store the newest casts in"))?;
     let warm = stored(&inv, LATEST_SNAPSHOT).await.and_then(|s| serde_json::from_str(&s.body).ok());
-    let built = build_latest(&inv, warm).await?;
-    let body = String::from_utf8(built.body).map_err(|e| Failure::internal(&e.to_string()))?;
+    // Keep the bounded ingest buffer for the cron; the public `latest` view
+    // excludes every future timestamp, without mutating this stored source.
+    let payload = build_latest(&inv, warm).await?;
+    let body = serde_json::to_string(&payload).map_err(|e| Failure::internal(&e.to_string()))?;
     if !inv.take_subrequests(1) {
         return Err(Failure::internal("no subrequest left to store the newest casts"));
     }
@@ -564,7 +568,7 @@ async fn stored(inv: &Invocation, name: &'static str) -> Option<Snapshot> {
     index.snapshot(name).await.ok().flatten()
 }
 
-async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<Built, Failure> {
+async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<LatestPayload, Failure> {
     let warm = warm.filter(|p| inv.now() - (p.meta.fetched_at as f64) < WARM_MS);
     let (listed, cursors, mut notes) = match warm {
         Some(p) => (p.pool, p.cursors, p.notes),
@@ -611,7 +615,7 @@ async fn build_latest(inv: &Invocation, warm: Option<LatestPayload>) -> Result<B
     let pool = latest::newest(listed, fresh, &removed, POOL_SIZE as usize, now_secs(inv));
     let quoted = annotate_listing(inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
-    Built::json(&LatestPayload { pool, notes, cursors: next, meta: meta(inv) }, api::LATEST_CACHE)
+    Ok(LatestPayload { pool, notes, cursors: next, meta: meta(inv) })
 }
 
 /// The pages with no casts but a cursor for more that a channel page follows
@@ -1529,6 +1533,7 @@ mod tests {
         bulk_fails: bool,
         requests: RefCell<Vec<String>>,
         stored: Option<Rc<Stored>>,
+        now_ms: Option<f64>,
     }
 
     /// The part of the index the newest casts use: the cron's stored copy.
@@ -1581,7 +1586,7 @@ mod tests {
 
     impl Host for Hub {
         fn now(&self) -> f64 {
-            1_800_000_000_000.0
+            self.now_ms.unwrap_or(1_800_000_000_000.0)
         }
 
         fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
@@ -1761,7 +1766,7 @@ mod tests {
             before = payload.pool.len();
             let mut future = present;
             future.hash = "0xfuture".into();
-            future.ts = (NOW / 1000.0) as i64 + 1;
+            future.ts = (NOW / 1000.0) as i64 + 5;
             payload.pool.insert(0, future);
             snapshot.body = serde_json::to_string(&payload).unwrap();
         }
@@ -1774,6 +1779,17 @@ mod tests {
         assert_eq!(built.fetched_at, Some(NOW - 40_000.0));
         assert_eq!(stored.reads.get(), 1);
         assert!(hub.requests.borrow().is_empty());
+        // The source copy still holds the small skew. A later public read can
+        // expose it, if retained, without re-reading the event source or aging it anew.
+        let later = Rc::new(Hub { stored: Some(stored.clone()), now_ms: Some(NOW + 5_000.0), ..Default::default() });
+        let inv = Rc::new(Invocation::new(later.clone(), 45));
+        let built = latest(inv, None).now_or_never().unwrap().unwrap();
+        let payload: LatestPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(payload.pool.len(), before + 1);
+        assert!(payload.pool.iter().any(|cast| cast.hash == "0xfuture"));
+        assert_eq!(built.fetched_at, Some(NOW - 40_000.0));
+        assert_eq!(stored.reads.get(), 2, "one existing snapshot read for each public request");
+        assert!(later.requests.borrow().is_empty());
     }
 
     #[test]
@@ -1818,6 +1834,54 @@ mod tests {
         let payload: LatestPayload = serde_json::from_str(&saved.body).unwrap();
         assert_eq!(payload.pool.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(), ["0xd3"]);
         assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 13 }, Cursor { shard: 2, event_id: 22 }]);
+    }
+
+    #[test]
+    fn only_the_crons_existing_buffer_retains_a_small_source_clock_skew() {
+        let now = allthing_core::time::parse_rfc3339("2026-10-02T00:00:00Z").unwrap() as f64 * 1000.0;
+        let stored = Rc::new(Stored::default());
+        let mut hub = Hub { stored: Some(stored.clone()), now_ms: Some(now), ..Default::default() };
+        hub.events.insert(
+            ("1".into(), "newest".into()),
+            page(&[
+                add(12, "0xnow", 100, false),
+                add(13, "0xskew", 105, false),
+                add(14, "0xfuture", 106, false),
+                add(15, "0xfar", 107, false),
+            ]),
+        );
+        hub.events.insert(("2".into(), "newest".into()), page(&[]));
+        for (hash, timestamp) in [
+            ("0xnow", "2026-10-02T00:00:00Z"),
+            ("0xskew", "2026-10-02T00:00:05Z"),
+            ("0xfuture", "2026-10-02T00:00:06Z"),
+            ("0xfar", "2061-09-12T00:03:58Z"),
+        ] {
+            hub.casts.insert(hash.into(), raw_cast(hash, timestamp, 1));
+        }
+        let public = build(
+            Rc::new(Hub {
+                events: hub.events.clone(),
+                casts: hub.casts.clone(),
+                now_ms: Some(now),
+                ..Default::default()
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(public.pool.iter().map(|cast| cast.hash.as_str()).collect::<Vec<_>>(), ["0xnow"]);
+
+        let hub = Rc::new(hub);
+        let inv = Rc::new(Invocation::new(hub.clone(), 45));
+        store_latest(inv).now_or_never().unwrap().unwrap();
+        let saved = stored.copy.borrow().clone().unwrap();
+        let payload: LatestPayload = serde_json::from_str(&saved.body).unwrap();
+        assert_eq!(payload.pool.iter().map(|cast| cast.hash.as_str()).collect::<Vec<_>>(), ["0xskew", "0xnow"]);
+        assert_eq!(payload.cursors, [Cursor { shard: 1, event_id: 15 }]);
+        assert_eq!(stored.reads.get(), 1);
+        assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v1/events?")).count(), 2);
+        assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 1);
+        assert_eq!(saved.built, now);
     }
 }
 
