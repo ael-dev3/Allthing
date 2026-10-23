@@ -19,6 +19,8 @@ Each cold-home sample logs its first-card and LCP times, the LCP element and ima
 
 ## Smoothness
 
+CI runs functional fixture files with two workers, then runs `smoothness.fixture.spec.ts` alone with one worker (`scripts/test-browser-fixtures.sh`). Both phases run even if the first fails, and either failure fails the existing browser job. Their HTML reports and test results are kept separately, including from the later static checks; the production performance job, test retries, timing assertions and 45-minute job cap are unchanged.
+
 How the app answers a reader's taps, clicks and scrolls: `e2e/smoothness.fixture.spec.ts`, which CI's browser job runs on every pull request and push to `main`, on the local build with the Worker's API, the node and the images as stand-ins (the API answers after 60 to 180 ms). A signed-in reader with an approved key, on a phone (390 × 844, touch, the CPU slowed 2×) and on a computer (1280 × 900, a mouse):
 
 - taps the sort tabs: new, top, hot;

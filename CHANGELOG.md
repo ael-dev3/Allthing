@@ -31,6 +31,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- CI runs functional browser fixtures with two workers, followed by smoothness measurements alone with one. Both phases run and keep separate reports even after a failure, under the same checks and timing limits.
 - Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
 - Browser regressions use past timestamps relative to the page’s own clock, wait for restored seen rows and the latest presence-cache expiry, and preserve their ordering, privacy, navigation and timing checks, including a deliberately delayed count refresh.
 - Startup checks distinguish the main WebAssembly module from idle-loaded parts, and range navigation waits for the actual New feed response.
