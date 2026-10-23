@@ -58,7 +58,13 @@ for (const width of [1280, 390]) {
           await expect(selector).toBeVisible();
           await expect(selector).toHaveValue(range);
           const expected = pool.filter((c) => c.ts <= now && now - c.ts < span).map((c) => c.text);
-          await expect.poll(async () => (await order(page)).toSorted()).toEqual(expected.toSorted());
+          await expect.poll(async () => {
+            // Earlier ranges can genuinely be read while their page loads.
+            // Use this generation's control before checking exact membership.
+            const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+            if (await show.isVisible()) await show.click();
+            return (await order(page)).toSorted();
+          }).toEqual(expected.toSorted());
           if (sort === "new") expect(await order(page)).toEqual(expected);
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         }
