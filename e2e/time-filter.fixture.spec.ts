@@ -90,11 +90,12 @@ test("the time filter picks the window and is kept in the URL", async ({ page })
   await expect(cards.first()).toContainText("Past week cast");
   await expect(page.locator(".range-note")).toHaveText("Only 3 casts in the past 7 days.");
 
-  // The sort tabs keep the range; "new" is newest first, with no filter.
+  // The sort tabs keep the range, including New.
   await page.getByRole("navigation", { name: "Sort", exact: true }).getByRole("link", { name: "new", exact: true }).click();
   await expect(page).toHaveURL(/[?&]t=week/);
   await expect(page).toHaveURL(/[?&]sort=new/);
-  await expect(range).toHaveCount(0);
+  await expect(range).toBeVisible();
+  await expect(range).toHaveValue("week");
 });
 
 test("until the index can rank a range, the past week is shown and the page says so", async ({ page }) => {

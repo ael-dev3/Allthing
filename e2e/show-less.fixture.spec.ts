@@ -61,7 +61,7 @@ const kept = (page: Page) =>
     less: JSON.parse(localStorage.getItem("allthing.show-less") ?? "[]"),
   }));
 
-test("show less drops an account's casts to the end of hot and top, and lower in new, with no mark and nothing hidden", async ({ page }) => {
+test("show less drops an account's casts to the end of hot and top, with no mark or hidden casts; home New remains chronological", async ({ page }) => {
   await serve(page);
   await feed(page, "/?sort=top", ["Busy", "Middling", "Newest"]);
   await feed(page, "/?sort=new", ["Newest", "Busy", "Middling"]);
@@ -86,7 +86,7 @@ test("show less drops an account's casts to the end of hot and top, and lower in
   await feed(page, "/c/books?sort=top", ["Middling", "Newest", "Busy"]);
   // In new, as if 6 hours older: under bob's cast from the same moment.
   await feed(page, "/c/books?sort=new", ["Newest", "Middling", "Busy"]);
-  await feed(page, "/?sort=new", ["Newest", "Middling", "Busy"]);
+  await feed(page, "/?sort=new", ["Newest", "Busy", "Middling"]);
 
   // Undone, everything is as it was.
   await page.goto("/u/ann");

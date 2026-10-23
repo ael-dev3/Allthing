@@ -653,7 +653,6 @@ pub fn Account() -> impl IntoView {
                         <crate::pages::messages::MessagesMenuItem/>
                         <crate::components::writer::ScheduledMenuItem/>
                         <crate::components::writer::WriterMenuItem/>
-                        <crate::miniapps::MiniAppsSwitch class="account-link"/>
                         <a class="account-link account-source" href=SOURCE_URL target="_blank" rel="noopener">
                             <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d=GITHUB_MARK/></svg>
                             "Allthing on GitHub"

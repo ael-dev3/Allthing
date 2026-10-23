@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use allthing_core::api::{Annotations, HomePayload, IndexCoverage, LatestPayload, home_page_path, latest_path};
-use allthing_core::following::{EVERYONE, EVERYONE_PARAM, FollowingPayload, following_path, shows_following};
+use allthing_core::following::{FEED_PARAM, Feed, FollowingPayload, following_path};
 use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
-use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted_for};
+use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted, sorted_for};
 use allthing_core::time::format_date;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_location, use_query_map};
@@ -17,11 +17,14 @@ use crate::api::{self, Fetched};
 use crate::components::cast::{CastList, CastSkeletons, after_paint};
 use crate::components::clients::{ClientChip, ClientShareBar, client_param};
 use crate::components::layout::{Columns, ErrorPanel, SortTabs, StaleNotice, TimeFilter};
-use crate::util::{href, set_title, use_go, with_query};
+use crate::util::{href, set_title, with_query};
 use allthing_core::clients::from_client;
 
 /// The trending list ends after this many casts.
 const LAST_OFFSET: u32 = 900;
+/// Automatic Following reads per visit, first payload included. Explicit
+/// Load more grants another batch, so a fully filtered feed stays bounded.
+const FOLLOWING_PAGES: u32 = 10;
 /// How many times a page that failed to load is tried again.
 const MAX_RETRIES: u32 = 3;
 /// How long the later pages are kept for a return to the front page
@@ -69,43 +72,72 @@ pub fn Home() -> impl IntoView {
     // in a task of its own once that frame is painted: a tap is answered at
     // once, even where drawing the cards takes a while (docs/PERFORMANCE.md).
     let listed = after_a_paint(sort);
-    // "new" lists the newest casts from the event stream; hot and top rank
-    // the trending pool over the time range (and switching between them
-    // re-sorts in place).
+    // For you's "new" lists the newest casts from the event stream; its hot
+    // and top rank the trending pool over the time range (and switching
+    // between them re-sorts in place). Following lists the casts of whom a
+    // signed-in reader follows, in all three.
     let newest = Memo::new(move |_| listed.get() == Sort::New);
-    // A signed-in reader's hot and top rank the casts of whom they follow;
-    // `?feed=everyone` shows them the trending pool instead.
-    let following = following_memo();
-    move || {
-        if newest.get() {
-            view! { <Latest sort range/> }.into_any()
-        } else if following.get() {
-            view! { <Following sort listed range/> }.into_any()
-        } else {
-            view! { <Trending sort listed range/> }.into_any()
+    let feed = feed_memo();
+    let who = reader();
+    let previous = StoredValue::new(who.get_untracked());
+    let identity = Memo::new(move |_| {
+        let fid = who.get();
+        if previous.get_value() != fid {
+            // Invalidate before the new subtree can read a cached private
+            // payload; the bell's session effect may not have run yet.
+            #[cfg(not(feature = "static-host"))]
+            api::forget(allthing_core::following::FOLLOWING_PATH);
+            previous.set_value(fid);
         }
+        fid
+    });
+    // A different account must discard the old account's resource and
+    // ranking snapshot, even when it stays on the same feed tab.
+    view! {
+        <For each=move || [(identity.get(), feed.get(), newest.get())]
+            key=|key| *key
+            children=move |(_, feed, newest)| {
+                if feed == Feed::Following {
+                    view! { <Following sort listed range/> }.into_any()
+                } else if newest {
+                    view! { <Latest sort range/> }.into_any()
+                } else {
+                    view! { <Trending sort listed range/> }.into_any()
+                }
+            }
+        />
     }
 }
 
-/// Whether the front page lists the casts of whom the reader follows: signed
-/// in, and not asking for everyone's.
-fn following_memo() -> Memo<bool> {
-    let signed_in = signed_in();
+/// The front page's tab: Following when a signed-in reader asks for it
+/// (`?feed=following`), For you otherwise (`allthing_core::following::Feed`).
+fn feed_memo() -> Memo<Feed> {
+    let reader = reader();
     let query = use_query_map();
-    Memo::new(move |_| shows_following(signed_in.get(), query.read().get(EVERYONE_PARAM).as_deref()))
+    Memo::new(move |_| Feed::of(reader.get().is_some(), query.read().get(FEED_PARAM).as_deref()))
 }
 
-/// Whether a reader is signed in, as the session says; never in the static
+/// The signed-in reader's fid, as the session says; never in the static
 /// copy, which has no sign-in.
 #[cfg(not(feature = "static-host"))]
-fn signed_in() -> Signal<bool> {
+fn reader() -> Signal<Option<u64>> {
     let session = crate::components::signin::use_session();
-    Signal::derive(move || session.user.with(Option::is_some))
+    Signal::derive(move || session.user.with(|user| user.as_ref().map(|u| u.fid)))
 }
 
 #[cfg(feature = "static-host")]
-fn signed_in() -> Signal<bool> {
-    Signal::stored(false)
+fn reader() -> Signal<Option<u64>> {
+    Signal::stored(None)
+}
+
+/// Whom For you lifts: the accounts a signed-in reader follows, as this
+/// browser keeps them (`crate::followed`), renewed in the background once
+/// the page is painted when they're old. None signed out.
+fn followed_lift() -> StoredValue<std::collections::BTreeSet<u64>> {
+    let who = reader();
+    let Some(fid) = who.get_untracked() else { return StoredValue::new(Default::default()) };
+    after_paint(move || crate::followed::refresh(fid, who));
+    StoredValue::new(crate::followed::followed(fid))
 }
 
 /// `sort`, a paint later.
@@ -124,11 +156,10 @@ fn after_a_paint(sort: Memo<Sort>) -> ReadSignal<Sort> {
 }
 
 /// The newest casts on Farcaster, read from Snapchain's event stream and
-/// rebuilt at the edge every 30 seconds: newest first, with the casts of
-/// accounts the reader sees less of lower (`sorted_for`).
+/// rebuilt at the edge every 30 seconds: strictly newest first within the
+/// selected range, irrespective of favorites or Show less.
 #[component]
 fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
-    let leaning = crate::leanings::use_leaning();
     let data = LocalResource::new(|| async { api::get::<LatestPayload>(&latest_path()).await });
     // Only another client filter redraws the list: a tap on a sort tab
     // changes the query too, and mustn't rebuild the cards it's leaving.
@@ -151,11 +182,11 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 Some(fid) => from_client(pool, &notes, fid),
                 None => pool,
             };
-            // Seeing less of an account, in a profile card over the list,
-            // leaves its cards where they are until it's next loaded
-            // (`Leaning::for_list`).
-            let sorted_by = StoredValue::new(None);
-            let casts = Memo::new(move |_| sorted_for(&pool, Sort::New, &leaning.for_list(sorted_by, ())));
+            let casts = Memo::new(move |_| {
+                let window = range.get().window();
+                let within: Vec<Cast> = pool.iter().filter(|c| window.holds(c.ts, now_secs())).cloned().collect();
+                sorted(&within, Sort::New)
+            });
             view! {
                 <Columns class="front-columns">
                     <Heading sort range/>
@@ -166,7 +197,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                     {client.map(|fid| view! { <ClientChip fid notes=notes.clone()/> })}
                     <StaleNotice stale/>
                     {crate::components::poll_gutter()}
-                    <CastList casts notes=Signal::stored(notes) inset=crate::components::poll_inset()/>
+                    <CastList hide_seen=true casts notes=Signal::stored(notes) inset=crate::components::poll_inset()/>
                 </Columns>
             }
             .into_any()
@@ -179,6 +210,7 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
 #[component]
 fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     let leaning = crate::leanings::use_leaning();
+    let followed = followed_lift();
     let window = Memo::new(move |_| range.get().window());
     let data = LocalResource::new(move || {
         let window = window.get();
@@ -348,7 +380,9 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                 let casts = Memo::new(move |_| -> Vec<Cast> {
                     let order = listed.get();
                     let filter = client.get();
-                    let leanings = leaning.for_list(sorted_by, (order, filter));
+                    let mut leanings = leaning.for_list(sorted_by, (order, filter));
+                    // For you: the casts of whom the reader follows lifted.
+                    leanings.followed = followed.get_value();
                     let mut all = sorted_for(&pool, order, &leanings);
                     more.with(|pages| {
                         for page in pages {
@@ -379,7 +413,7 @@ fn Trending(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) 
                         <StaleNotice stale/>
                         {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
                         {crate::components::poll_gutter()}
-                        <CastList casts notes on_end=load_more page_cursor=next_offset inset=crate::components::poll_inset()/>
+                        <CastList hide_seen=true casts notes on_end=load_more page_cursor=next_offset inset=crate::components::poll_inset()/>
                         <Show when=move || loading.get()><CastSkeletons count=2/></Show>
                         // Under the list, where it ends, so the cards above don't move.
                         {move || (ended.get() && !window.get().is_indexed()).then(|| {
@@ -399,11 +433,11 @@ struct FollowingPage {
     notes: Annotations,
 }
 
-/// A signed-in reader's hot and top: the casts of the accounts they follow
-/// (`/api/v1/following`), ranked as the trending pool is, with their
-/// favorites and those they see less of; older pages as they scroll. Where
-/// they follow few that cast lately, trending casts follow theirs, and the
-/// note above the list says so. A session that has ended shows everyone's.
+/// The Following tab: only the casts of the accounts the reader follows
+/// (`/api/v1/following`), ranked as the trending pool is in hot and top,
+/// with their favorites and those they see less of, newest first in new,
+/// and over the time range; older pages as they scroll. A session that has
+/// ended shows everyone's.
 #[component]
 fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     let leaning = crate::leanings::use_leaning();
@@ -411,13 +445,19 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
     let more = RwSignal::new(Vec::<FollowingPage>::new());
     let next = RwSignal::new(None::<String>);
     let pages = RwSignal::new(0u32);
+    let remaining = RwSignal::new(FOLLOWING_PAGES - 1);
+    // The source feed is newest first. An empty filtered page alone says
+    // nothing about its age; retain the most recent nonempty source page.
+    let tail = RwSignal::new(None::<i64>);
+    let outside = Memo::new(move |_| tail.get().is_some_and(|ts| !range.get().window().holds(ts, now_secs())));
     let loading = RwSignal::new(false);
     let alive = StoredValue::new(());
     let load_more = Callback::new(move |()| {
         let Some(cursor) = next.get_untracked() else { return };
-        if loading.get_untracked() {
+        if loading.get_untracked() || outside.get_untracked() || remaining.get_untracked() == 0 {
             return;
         }
+        remaining.update(|left| *left -= 1);
         loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let result = api::get::<FollowingPayload>(&following_path(Some(&cursor))).await;
@@ -426,6 +466,9 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
             }
             match result {
                 Ok(page) => {
+                    if let Some(newest) = page.data.pool.iter().map(|c| c.ts).max() {
+                        tail.set(Some(newest));
+                    }
                     let mut known: std::collections::HashSet<String> = more
                         .with_untracked(|pages| pages.iter().flat_map(|p| &p.casts).map(|c| c.hash.clone()).collect());
                     let fresh = page.data.pool.iter().filter(|c| known.insert(c.hash.clone())).cloned().collect();
@@ -438,6 +481,15 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
             pages.update(|n| *n += 1);
             loading.set(false);
         });
+    });
+    // Widening a range can resume at the retained cursor, even when the
+    // visible list stays empty because all its casts are seen or filtered.
+    Effect::new(move |before: Option<TrendingWindow>| {
+        let window = range.get().window();
+        if before.is_some_and(|before| before != window) {
+            pages.update(|n| *n = n.wrapping_add(1));
+        }
+        window
     });
     move || match data.get() {
         None => view! {
@@ -458,7 +510,11 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
         }
         Some(Ok(Fetched { data, stale, .. })) => {
             let payload: Arc<FollowingPayload> = data;
-            next.set(payload.next.clone().filter(|_| payload.topped_up.is_empty()));
+            if let Some(fid) = reader().get_untracked() {
+                crate::followed::remember(fid, &payload);
+            }
+            next.set(payload.next.clone());
+            tail.set(payload.pool.iter().map(|c| c.ts).max());
             let first_notes = payload.notes.clone();
             let notes = Memo::new(move |_| {
                 let mut notes = first_notes.clone();
@@ -470,7 +526,6 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
                 Arc::new(notes)
             });
             let pool = payload.pool.clone();
-            let topped = payload.topped_up.clone();
             let first_hashes: std::collections::HashSet<String> = pool.iter().map(|c| c.hash.clone()).collect();
             let query = use_query_map();
             let client = Memo::new(move |_| client_param(&query.read()));
@@ -478,26 +533,29 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
             let casts = Memo::new(move |_| {
                 let order = listed.get();
                 let filter = client.get();
-                let leanings = leaning.for_list(sorted_by, (order, filter));
-                let mut all = sorted_for(&pool, order, &leanings);
+                let window = range.get().window();
+                let now = now_secs();
+                let leanings = leaning.for_list(sorted_by, (order, filter, window));
+                let rank = |casts: &[Cast]| {
+                    // Hot scales a leaning by the days its input spans:
+                    // casts outside this range must not inflate that lift.
+                    let within: Vec<Cast> = casts.iter().filter(|c| window.holds(c.ts, now)).cloned().collect();
+                    if order == Sort::New { sorted(&within, order) } else { sorted_for(&within, order, &leanings) }
+                };
+                let mut all = rank(&pool);
                 more.with(|pages| {
                     for page in pages {
-                        all.extend(
-                            sorted_for(&page.casts, order, &leanings)
-                                .into_iter()
-                                .filter(|c| !first_hashes.contains(&c.hash)),
-                        );
+                        all.extend(rank(&page.casts).into_iter().filter(|c| !first_hashes.contains(&c.hash)));
                     }
                 });
-                all.extend(sorted_for(&topped, order, &leanings));
                 match filter {
                     Some(fid) => from_client(all, &notes.get(), fid),
                     None => all,
                 }
             });
-            let note = following_note(payload.pool.len(), payload.topped_up.len());
+            let note = following_note(payload.pool.len());
             let chip_notes = Arc::new(payload.notes.clone());
-            let shared: Vec<Cast> = payload.pool.iter().chain(&payload.topped_up).cloned().collect();
+            let shared: Vec<Cast> = payload.pool.clone();
             view! {
                 <Columns class="front-columns">
                     <Heading sort range/>
@@ -507,8 +565,17 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
                     <StaleNotice stale/>
                     {crate::components::outgoing_feed(None, crate::components::listed_hashes(casts.into()))}
                     {crate::components::poll_gutter()}
-                    <CastList casts notes on_end=load_more page_cursor=pages inset=crate::components::poll_inset()/>
+                    <CastList hide_seen=true casts notes on_end=load_more page_cursor=pages inset=crate::components::poll_inset()/>
                     <Show when=move || loading.get()><CastSkeletons count=2/></Show>
+                    <Show when=move || outside.get()>
+                        <p class="range-note following-end">"No more casts in this time range."</p>
+                    </Show>
+                    <Show when=move || !loading.get() && !outside.get() && remaining.get() == 0 && next.get().is_some()>
+                        <button type="button" class="account-link" on:click=move |_| {
+                            remaining.update(|left| *left += FOLLOWING_PAGES);
+                            load_more.run(());
+                        }>"Load more posts"</button>
+                    </Show>
                 </Columns>
             }
             .into_any()
@@ -516,25 +583,22 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
     }
 }
 
-/// What the note over a reader's own feed says: whose casts it ranks, and,
-/// topped up, where theirs end.
-fn following_note(theirs: usize, topped: usize) -> String {
-    match (theirs, topped) {
-        (0, 0) => "No one you follow has cast lately.".to_owned(),
-        (_, 0) => "Casts from people you follow.".to_owned(),
-        (0, _) => "No one you follow has cast lately, so this shows trending casts.".to_owned(),
-        (1, _) => "One cast from people you follow, then trending casts: you follow few who cast lately.".to_owned(),
-        (n, _) => format!("{n} casts from people you follow, then trending casts: you follow few who cast lately."),
+/// What the note over the Following tab says: whose casts it lists.
+fn following_note(theirs: usize) -> &'static str {
+    match theirs {
+        0 => "No one you follow has cast lately.",
+        _ => "Casts from people you follow.",
     }
 }
 
 #[component]
 fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
-    // "new" is newest first, whatever the range.
-    let ranged = move || sort.get() != Sort::New;
     let query = use_query_map();
-    let signed_in = signed_in();
-    let following = following_memo();
+    let signed_in = Signal::derive({
+        let reader = reader();
+        move || reader.get().is_some()
+    });
+    let feed = feed_memo();
     view! {
         <div class="listing-head">
             <h1 class="visually-hidden">"Trending on Farcaster"</h1>
@@ -542,16 +606,16 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 let t = (range.get() != TimeRange::default()).then(|| range.get().as_str().to_owned());
                 // The client filter stays when the reader changes sort or range.
                 let client = client_param(&query.read()).map(|fid| fid.to_string());
-                // So is the choice of everyone's feed.
-                let everyone_kept = query.read().get(EVERYONE_PARAM).filter(|f| f == EVERYONE);
+                // So does the tab.
+                let tab = feed.get().param();
+                let sort_kept = (sort.get() != Sort::Hot).then(|| sort.get().as_str().to_owned());
                 view! {
+                    {signed_in.get().then(|| view! { <FeedTabs current=feed.get() sort=sort_kept t=t.clone() client=client.clone()/> })}
                     <div class="sort-row">
-                        <SortTabs path=with_query(&href("/"), &[("t", t), ("client", client.clone()), (EVERYONE_PARAM, everyone_kept)]) current=sort.get()/>
-                        {(ranged() && signed_in.get()).then(|| view! { <FeedFilter sort=sort.get() following=following.get()/> })}
-                        {(ranged() && !following.get()).then(|| {
-                            let everyone = signed_in.get().then(|| EVERYONE.to_owned());
-                            view! { <TimeFilter path=with_query(&href("/"), &[("client", client), (EVERYONE_PARAM, everyone)]) sort=sort.get() current=range.get()/> }
-                        })}
+                        <SortTabs path=with_query(&href("/"), &[("t", t), ("client", client.clone()), (FEED_PARAM, tab.clone())]) current=sort.get()/>
+                        {
+                            view! { <TimeFilter path=with_query(&href("/"), &[("client", client), (FEED_PARAM, tab)]) sort=sort.get() current=range.get()/> }
+                        }
                     </div>
                 }
             }}
@@ -559,28 +623,29 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
     }
 }
 
-/// A signed-in reader's choice of feed for hot and top: the casts of whom
-/// they follow, or everyone's trending casts (`?feed=everyone`), whose time
-/// range then shows beside it. Styled as the time range's menu.
+/// A signed-in reader's two feeds, as X's: **For you** (the trending pool,
+/// with the casts of whom they follow lifted) and **Following** (only
+/// theirs, `?feed=following`). Links, keeping the sort, the time range and
+/// the client filter; signed out there is only For you, and no tabs.
 #[component]
-fn FeedFilter(sort: Sort, following: bool) -> impl IntoView {
-    let navigate = use_go();
-    let change = move |ev: leptos::ev::Event| {
-        let everyone = (event_target_value(&ev) == EVERYONE).then(|| EVERYONE.to_owned());
-        let to = with_query(
-            &href("/"),
-            &[("sort", (sort != Sort::Hot).then(|| sort.as_str().to_owned())), (EVERYONE_PARAM, everyone)],
-        );
-        navigate(&to, leptos_router::NavigateOptions { scroll: false, ..Default::default() });
-    };
+fn FeedTabs(current: Feed, sort: Option<String>, t: Option<String>, client: Option<String>) -> impl IntoView {
     view! {
-        <label class="time-filter feed-filter">
-            <span class="visually-hidden">"Feed"</span>
-            <select on:change=change>
-                <option value="following" selected=following>"Following"</option>
-                <option value=EVERYONE selected=!following>"Everyone"</option>
-            </select>
-        </label>
+        <nav class="feed-tabs" aria-label="Feed">
+            {[Feed::ForYou, Feed::Following]
+                .into_iter()
+                .map(|feed| {
+                    let to = with_query(
+                        &href("/"),
+                        &[("sort", sort.clone()), ("t", t.clone()), ("client", client.clone()), (FEED_PARAM, feed.param())],
+                    );
+                    view! {
+                        <a href=to data-noscroll="" class:selected=feed == current aria-current=(feed == current).then_some("page")>
+                            {feed.label()}
+                        </a>
+                    }
+                })
+                .collect_view()}
+        </nav>
     }
 }
 

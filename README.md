@@ -31,7 +31,9 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 
 ### Reading, no account needed
 
-- **Feeds.** A trending front page that keeps loading as you scroll, sorted **hot**, **new** or **top** with a time filter, channel feeds and a channel directory, and one search box for casts, people and channels. The client bar shows which apps the casts came from and filters by app.
+- **Feeds.** A front page sorted **hot**, **new** or **top**, with a time filter in every sort. Signed in, **For you** lifts casts from recently active accounts you follow, while **Following** shows their casts only. New stays chronological. Channel feeds, a channel directory and one search box cover casts, people and channels; the client bar filters casts by the app they came from.
+- **Seen posts.** Front-page feeds leave out posts you already read on a later visit, with Show seen posts and Reset seen posts to bring them back. History stays in this browser for 30 days, separate for each reader; cards stay put while you read.
+- **Who is here.** An online count beside Home, including on phones. Signed-in readers can choose whether their name appears.
 - **Posts and threads.** A post with its parent, quoted casts (inline up to three levels) and threaded replies that collapse and expand.
 - **Honest engagement.** Likes, recasts and replies, the only counts Farcaster has. Hovering or tapping a count lists who liked, recasted or replied.
 - **Hover cards.** A name or picture opens a profile card (bio, followers and following, join date, NS vote, wallet activity by chain), and names inside those lists open nested cards of their own.
@@ -41,7 +43,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Provenance.** Each cast names the app that registered its signing key ([docs/PROVENANCE.md](docs/PROVENANCE.md)).
 - **Daily active accounts.** [/dau](https://allthing.social/dau) counts Farcaster's active accounts from the network's event stream, exactly as [SnapMeter](https://github.com/ael-dev3/SnapMeter) does.
 - **Allthing's poll.** One question on the front page: would you like an Allthing mobile client?
-- **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in the account menu; then each links to open in Farcaster. Nothing is hidden because of who posted it.
+- **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in Settings; then each links to open in Farcaster. Nothing is hidden because of who posted it.
 
 ### Signed in
 

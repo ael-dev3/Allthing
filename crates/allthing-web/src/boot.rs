@@ -30,6 +30,7 @@ pub fn mounted() {
         Some(boot) => boot.remove(),
         None => {}
     }
+    crate::seen::wake();
 }
 
 /// Show the app in the boot screen's place. What it drew shows as it is,
@@ -54,6 +55,7 @@ pub fn hand_over() {
         crate::components::media::sizes_changed();
     }
     boot.remove();
+    crate::seen::wake();
 }
 
 fn all(root: &web_sys::Element, selector: &str) -> impl Iterator<Item = web_sys::Element> {

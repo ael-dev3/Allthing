@@ -6,6 +6,7 @@ mod api;
 mod boot;
 mod components;
 mod counts;
+mod followed;
 #[cfg(feature = "static-host")]
 mod host;
 mod kept;
@@ -17,6 +18,7 @@ mod nav;
 mod pages;
 mod preload;
 mod press;
+mod seen;
 mod split;
 mod util;
 mod video;
@@ -80,6 +82,9 @@ fn App() -> impl IntoView {
     provide_context(components::handoff::HandOff::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::writer::Writer::new());
+    #[cfg(not(feature = "static-host"))]
+    provide_context(components::presence::Presence::new());
+    provide_context(seen::Seen::new());
     view! {
         <Router base=util::BASE>
             <a class="skip-link" href="#main">"Skip to content"</a>

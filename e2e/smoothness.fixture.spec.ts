@@ -639,11 +639,14 @@ async function press(page: Page, target: Locator, profile: Profile) {
 /** Each page's DevTools session: its touches, and its garbage collection between measurements. */
 const sessions = new WeakMap<Page, CDPSession>();
 
-/** The card the reader is at, as the app reads it (nav.rs: the card under the line 120 px down), and its top. */
+/** The card at the reading line (120 px down once scrolled), below the feed toolbar at the top. */
 async function cardAtReadingLine(page: Page) {
   return page.evaluate(() => {
     const list = document.querySelector("#app .cast-list")!.getBoundingClientRect();
-    const el = [120, 150, 180].map((y) => document.elementFromPoint(list.left + 24, y)?.closest(".cast-card[data-hash]")).find(Boolean);
+    // For you / Following adds a row above the cards. At scroll zero the
+    // reading line must start inside the list, not inside those controls.
+    const line = Math.max(120, list.top + 16);
+    const el = [line, line + 30, line + 60].map((y) => document.elementFromPoint(list.left + 24, y)?.closest(".cast-card[data-hash]")).find(Boolean);
     return el ? { hash: el.getAttribute("data-hash")!, top: el.getBoundingClientRect().top } : null;
   });
 }

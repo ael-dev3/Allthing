@@ -211,6 +211,30 @@ function keptMessageKey(page: Page, fid: number) {
   );
 }
 
+test("a pressed conversation row keeps its secondary text readable", async ({ browser }) => {
+  const { context, page } = await reader(browser, new Database(), alice, 1280);
+  try {
+    await page.goto("/messages?room=general");
+    const row = page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /#general/ });
+    await expect(row.locator(".dm-row-last")).toBeVisible();
+    await row.hover();
+    await page.mouse.down();
+    await expect(row).toHaveAttribute("data-press", "down");
+    // Check the actual dimmed press state, rather than waiting for the
+    // release animation to end before measuring contrast.
+    await page.evaluate(axe.source);
+    const violations = await page.evaluate(async () => {
+      // @ts-expect-error axe is the injected script's global
+      const result = await window.axe.run(".dm", { resultTypes: ["violations"] });
+      return result.violations.map((v: { id: string; nodes: unknown[] }) => `${v.id} (${v.nodes.length})`);
+    });
+    expect(violations).toEqual([]);
+  } finally {
+    await page.mouse.up();
+    await context.close();
+  }
+});
+
 for (const width of [1280, 390]) {
   test.describe(`at ${width}px`, () => {
     test("one inbox lists #general and encrypted conversations, asks for no API key, and passes axe", async ({ browser }) => {

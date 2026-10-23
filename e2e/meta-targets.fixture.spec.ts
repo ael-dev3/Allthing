@@ -126,17 +126,19 @@ test("on a touch screen, a card's and a quote's meta-line links take a tap of 25
     }
     expect(await meeting(page, root), `${hash}: no tap areas meet`).toEqual([]);
   }
-  // A meta line on one line keeps its height (one with room to spare, so a
-  // wider font can't wrap it); one that wraps keeps its lines 6 px apart.
+  // With room to spare, the whole meta line fits inside one item's tap
+  // height (font metrics can round the line to 22 or 23 px). Wrapped rows
+  // need another item's height and the gap.
   const lines = await page.evaluate((hashes) => hashes.map((h) => {
     const line = document.querySelector(`#app .cast-card[data-hash="${h}"] .cast-meta`)!;
     const items = [...line.children].filter((item) => item.getBoundingClientRect().width > 0);
     const used = items.reduce((width, item) => width + item.getBoundingClientRect().width, 0) + (parseFloat(getComputedStyle(line).columnGap) || 0) * (items.length - 1);
-    return { height: Math.round(line.getBoundingClientRect().height), spare: line.clientWidth - used };
+    const itemHeight = Math.max(...[...line.querySelectorAll(".byline > *")].map((item) => item.getBoundingClientRect().height));
+    return { height: line.getBoundingClientRect().height, itemHeight, spare: line.clientWidth - used };
   }), [plain.hash, wrapped.hash]);
   expect(lines[0].spare, "the plain card's meta line: room to spare").toBeGreaterThanOrEqual(40);
-  expect(lines[0].height).toBe(22);
-  expect(lines[1].height).toBeGreaterThanOrEqual(22 + 6 + 15);
+  expect(lines[0].height).toBeLessThanOrEqual(lines[0].itemHeight + 1);
+  expect(lines[1].height).toBeGreaterThanOrEqual(lines[0].height + 6 + 15);
   expect(await page.locator(`${card(wrapped.hash)} .cast-meta`).evaluate((el) => getComputedStyle(el).rowGap)).toBe("6px");
   await page.screenshot({ path: testInfo.outputPath("meta-targets-390-feed.png"), fullPage: true });
   await context.close();
@@ -156,8 +158,8 @@ test("on a touch screen, a reply's and the post's meta-line links take a tap of 
   }
   expect(await meeting(page, ".post")).toEqual([]);
   expect(await meeting(page, ".replies")).toEqual([]);
-  // A reply's head that wraps keeps its lines apart too.
-  expect(await page.locator(".comment-head").first().evaluate((el) => getComputedStyle(el).rowGap)).toBe("6px");
+  // A wrapped reply clears the collapse button's taller 44 px tap band.
+  expect(await page.locator(".comment-head").first().evaluate((el) => getComputedStyle(el).rowGap)).toBe("14px");
   await page.screenshot({ path: testInfo.outputPath("meta-targets-390-post.png"), fullPage: true });
   await context.close();
 });

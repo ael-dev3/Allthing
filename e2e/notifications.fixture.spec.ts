@@ -144,14 +144,14 @@ test("the bell counts what's new, and the page groups it as Farcaster does and m
   await expect(bell(page)).toHaveAccessibleName("Notifications, 3 unread");
   await expect(bell(page).locator(".bell-badge")).toHaveText("3");
   await expect(bell(page)).toHaveAttribute("href", "/notifications");
-  // Beside the account's picture, in the header, after Cast: the pill stays
-  // where it is on every page (e2e/cast-button.fixture.spec.ts).
+  // Settings, Cast, the bell and the account keep their order. Cast keeps
+  // its place on every page (e2e/cast-button.fixture.spec.ts).
   const header = page.locator(".header-actions");
-  await expect(header.locator(":scope > *")).toHaveCount(3);
+  await expect(header.locator(":scope > *")).toHaveCount(4);
   const order = await header.locator(":scope > *").evaluateAll((els) =>
-    els.map((el) => (el.matches(".header-cast") ? "cast" : el.matches(".bell") ? "bell" : el.querySelector(".account-button") ? "account" : el.className)),
+    els.map((el) => (el.matches(".settings") ? "settings" : el.matches(".header-cast") ? "cast" : el.matches(".bell") ? "bell" : el.querySelector(".account-button") ? "account" : el.className)),
   );
-  expect(order).toEqual(["cast", "bell", "account"]);
+  expect(order).toEqual(["settings", "cast", "bell", "account"]);
   await shot(page.locator(".site-header"), "bell-1280", testInfo);
 
   await page.mouse.move(5, 400);
@@ -243,7 +243,8 @@ test("someone else signing in, in another tab, sees none of the last reader's no
   expect(asked).toBe(1);
 });
 
-test("in view, the bell asks every 3 minutes and when back in view; an open page adds what's new above its rows", async ({ page }) => {
+/** Drive visibility without relying on which browser tab macOS has focused. */
+async function visibility(page: Page) {
   await page.addInitScript(() => {
     let hidden = false;
     Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: () => hidden });
@@ -253,6 +254,10 @@ test("in view, the bell asks every 3 minutes and when back in view; an open page
       document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
     };
   });
+}
+
+test("in view, the bell asks every 3 minutes and when back in view; an open page adds what's new above its rows", async ({ page }) => {
+  await visibility(page);
   await page.clock.install();
   await ready(page);
   let answer = first;
@@ -286,6 +291,48 @@ test("in view, the bell asks every 3 minutes and when back in view; an open page
   expect(asked).toBe(2);
   await page.evaluate(() => (window as any).__setHidden(false));
   await expect.poll(() => asked).toBe(3);
+});
+
+test("marking notifications seen in another tab does not reread the list while hidden after its cache expires", async ({ page }) => {
+  await visibility(page);
+  await page.clock.install();
+  await ready(page);
+  let asked = 0;
+  let release: () => void = () => {};
+  const initial = new Promise<void>((done) => (release = done));
+  await page.route("**/api/v1/notifications", async (route) => {
+    asked += 1;
+    await initial;
+    return route.fulfill({ json: first, headers: { "cache-control": "private, no-store" } });
+  });
+  await page.goto("/notifications");
+  await expect.poll(() => asked).toBe(1);
+  // Opening the page and focus events can all ask while the same first
+  // response is pending. They must share the refresh without late waiters.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  release();
+  await expect(rows(page)).toHaveCount(7);
+  await expect(bell(page)).toHaveAccessibleName("Notifications, 0 unread");
+  expect(asked).toBe(1);
+
+  await page.evaluate(() => (window as any).__setHidden(true));
+  // Past both the one-minute cache and a polling interval. A seen-time
+  // storage event changes bell state but none of the notification times.
+  await page.clock.fastForward("03:01");
+  await page.evaluate(({ key, fid, seen }) => {
+    const value = JSON.stringify({ [fid]: seen });
+    localStorage.setItem(key, value);
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: value, storageArea: localStorage }));
+  }, { key: SEEN, fid: me.fid, seen: first.newest + 60 });
+  await page.waitForTimeout(300);
+  expect(asked).toBe(1);
+  await expect(rows(page)).toHaveCount(7);
+  // A genuine return to the page still refreshes expired data.
+  await page.evaluate(() => (window as any).__setHidden(false));
+  await expect.poll(() => asked).toBe(2);
 });
 
 test("the tabs show all, mentions (and quotes that mention you), and replies, from the URL", async ({ page }, testInfo) => {
@@ -370,14 +417,15 @@ test("signed out, there's no bell, and the page asks to sign in", async ({ page 
 });
 
 test("a read that fails says why, and Try again reads again", async ({ page }) => {
-  const calls = await ready(page, SEEN_BEFORE, { failFirst: 2 });
+  const calls = await ready(page, SEEN_BEFORE, { failFirst: 1 });
   await page.goto("/notifications");
   const failed = page.locator(".notif-error[role=alert]");
   await expect(failed).toContainText("Farcaster data source is busy");
   await expect(page.locator(".bell-badge")).toHaveCount(0);
+  expect(calls.first).toBe(1);
   await failed.getByRole("button", { name: "Try again" }).click();
   await expect(rows(page)).toHaveCount(7);
-  expect(calls.first).toBeGreaterThanOrEqual(3);
+  expect(calls.first).toBe(2);
 });
 
 test("nothing yet, per tab", async ({ page }) => {
@@ -449,8 +497,9 @@ test("at 390 on a touch screen it fits, and its targets take a fingertip", async
   await appCame(page);
   await expect(bell(page)).toHaveAccessibleName("Notifications, 12 unread");
   await expect(page.locator(".bell-badge")).toHaveText("9+");
-  // The header holds the wordmark, Home, search, the bell and the picture.
-  for (const el of [".wordmark", ".main-nav a", ".search-box", ".bell", ".account-button"]) {
+  // The first row keeps Home and all account controls; search gets a full
+  // row below, with room to read and type rather than an almost empty pill.
+  for (const el of [".wordmark", ".main-nav a", ".search-box", ".settings-button", ".bell", ".account-button"]) {
     await expect(page.locator(el).first(), el).toBeInViewport({ ratio: 1 });
   }
   // Search keeps room for its whole placeholder, with 8 px to spare (CI's
@@ -463,16 +512,28 @@ test("at 390 on a touch screen it fits, and its targets take a fingertip", async
     return inside - pen.measureText(input.placeholder).width;
   });
   expect(room).toBeGreaterThanOrEqual(8);
+  const search = (await page.locator(".search-box").boundingBox())!;
+  const controls = (await page.locator(".header-actions").boundingBox())!;
+  expect(search.y).toBeGreaterThanOrEqual(controls.y + controls.height + 8);
+  expect(search.width).toBeGreaterThanOrEqual(350);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await shot(page.locator(".site-header"), "bell-390", testInfo);
-  // The bell and the picture each take a 44 px tap, neither the other's.
+  // Settings, the bell and the picture each take a 44 px tap, without
+  // meeting the next control's band.
   const box = (await bell(page).boundingBox())!;
   const band = await bell(page).evaluate((el) => {
     const after = getComputedStyle(el, "::after");
     return [parseFloat(after.width), parseFloat(after.height)];
   });
   expect(Math.min(...band)).toBeGreaterThanOrEqual(44);
-  // Fixed sizes (36 px, a 12 px gap, 32 px), so no font moves them: the
-  // bell's 44 px band ends before the picture's begins.
+  const settings = (await page.locator(".settings-button").boundingBox())!;
+  const settingsBand = await page.locator(".settings-button").evaluate((el) => {
+    const after = getComputedStyle(el, "::after");
+    return [parseFloat(after.width), parseFloat(after.height)];
+  });
+  expect(Math.min(...settingsBand)).toBeGreaterThanOrEqual(44);
+  expect(settings.x + settings.width / 2 + settingsBand[0] / 2).toBeLessThanOrEqual(box.x + box.width / 2 - band[0] / 2);
+  // Fixed sizes and gaps, so font metrics cannot move these bands together.
   const picture = (await page.locator(".account-button").boundingBox())!;
   const bellRight = box.x + box.width / 2 + band[0] / 2;
   const pictureLeft = picture.x + picture.width / 2 - 22;

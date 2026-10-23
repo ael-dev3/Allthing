@@ -237,6 +237,13 @@ test("on a server that endorses no keys, a signed-in reader likes and recasts in
   expect(calls.sent).toHaveLength(0);
 });
 
+/** Revisit the posts through the reader's recovery control before checking keys. */
+async function showSeen(page: Page) {
+  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
+  const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+  if (await show.isVisible()) await show.click();
+}
+
 test("a like asks for a key by QR code, then likes, unlikes and remembers", async ({ page }) => {
   await signIn(page);
   const calls = await serve(page);
@@ -303,6 +310,7 @@ test("a like asks for a key by QR code, then likes, unlikes and remembers", asyn
 
   // The key outlives the page; the account menu can revoke it, by a second click.
   await page.reload();
+  await showSeen(page);
   await expect(card(page, second).getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(calls.endorse).toHaveLength(1);
   await page.mouse.move(5, 300);
@@ -424,6 +432,7 @@ test("an approval from another account is refused, and signing out forgets the k
   // An approved key goes with the session.
   await approvedKey(page, 60_000);
   await page.reload();
+  await showSeen(page);
   await expect(card(page, first).getByRole("button", { name: "Like", exact: true })).toBeVisible();
   await page.mouse.move(5, 300);
   await page.getByRole("link", { name: "Signed in as @reader: your profile" }).hover();

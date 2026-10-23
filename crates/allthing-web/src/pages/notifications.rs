@@ -223,8 +223,13 @@ pub mod with_worker {
         let first = RwSignal::new(None::<Arc<NotificationsPayload>>);
         let more = RwSignal::new(Vec::<Arc<NotificationsPayload>>::new());
         let read_failed = RwSignal::new(None::<api::Failure>);
+        // Marking the page seen changes the bell's state too, but not its
+        // times. Only a different set of times should ask for the page:
+        // an async read queued by mark_seen could otherwise run later,
+        // after its cached answer expires or while the tab is hidden.
+        let times = Memo::new(move |_| notifications.times());
         Effect::new(move |_| {
-            if notifications.times().is_none() || !notifications.are_for(fid) || !more.with_untracked(Vec::is_empty) {
+            if times.get().is_none() || !notifications.are_for(fid) || !more.with_untracked(Vec::is_empty) {
                 return;
             }
             spawn_local(async move {

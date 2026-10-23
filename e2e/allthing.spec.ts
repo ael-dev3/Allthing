@@ -69,11 +69,14 @@ const firstCard = (page: Page) => page.locator(".cast-card:not(.skeleton)").firs
 /** Cards whose text has no links, so a click or drag on the text lands on plain text. */
 const textCards = (page: Page) => page.locator(".cast-card:not(.skeleton):has(.cast-text):not(:has(.cast-text a))");
 
-/** Data requests made during `action`: Worker API calls, or Hypersnap reads in the static copy. */
+/** Data requests made during `action`: Worker API calls, or Hypersnap reads in the static copy. Not the
+ * presence beat (`POST /api/v1/presence`), which a page sends after its own call, never as part of it
+ * (e2e/presence.fixture.spec.ts checks that it comes after). */
 async function apiRequests(page: Page, action: () => Promise<void>): Promise<string[]> {
   const seen: string[] = [];
   const listener = (request: { url(): string; method(): string }) => {
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/presence") return;
     if (url.pathname.startsWith("/api/") || url.hostname === "haatz.quilibrium.com") seen.push(`${request.method()} ${request.url()}`);
   };
   page.on("request", listener);
@@ -1001,6 +1004,9 @@ test.describe("threads and navigation", () => {
       // Cloudflare Web Analytics reports page timings to /cdn-cgi/rum; that is
       // the platform's beacon, not a write by Allthing.
       if (url.pathname === "/cdn-cgi/rum") return;
+      // The presence beat tells the Worker a reader is here; it posts nothing
+      // to Farcaster (docs/ARCHITECTURE.md#presence).
+      if (url.pathname === "/api/v1/presence") return;
       if (r.method() !== "GET" && r.method() !== "HEAD" && url.origin === new URL(page.url() || "http://x").origin) writes.push(r.url());
     });
     await page.goto(at("/"));

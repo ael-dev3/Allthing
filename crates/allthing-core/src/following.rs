@@ -5,8 +5,11 @@
 //! less of). The Worker reads them from Hypersnap's `feed/following`, which
 //! joins the reader's follows itself, so a follow list of any size costs one
 //! read; it is newest first and mostly replies, which the front page leaves
-//! out. Where they follow few accounts that cast lately, the page is topped
-//! up with trending casts, listed after theirs under a label of their own.
+//! out. It is the front page's **Following** tab (`?feed=following`), and
+//! holds only their casts: no trending casts top it up. The other tab, **For
+//! you**, is the trending pool with the casts of those they follow lifted
+//! (`ranking::FOLLOWED_HOT_WEIGHT`), and the authors of this payload's casts
+//! are how the app knows whom (`Followed`).
 
 use serde::{Deserialize, Serialize};
 
@@ -16,21 +19,48 @@ use crate::model::Cast;
 /// Where the app reads it.
 pub const FOLLOWING_PATH: &str = "/api/v1/following";
 
-/// The query that shows a signed-in reader the trending feed instead.
-pub const EVERYONE_PARAM: &str = "feed";
-/// Its value.
-pub const EVERYONE: &str = "everyone";
+/// The front page's query naming its tab.
+pub const FEED_PARAM: &str = "feed";
+/// Its value for the Following tab. Any other, or none, is For you, so the
+/// old `?feed=everyone` links open For you, as they opened the trending
+/// pool.
+pub const FOLLOWING: &str = "following";
+
+/// The front page's two tabs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Feed {
+    /// The trending pool, with the casts of whom the reader follows lifted.
+    ForYou,
+    /// Only the casts of whom the reader follows.
+    Following,
+}
+
+impl Feed {
+    /// The tab a reader sees for the page's `feed` query: Following only
+    /// signed in and asked for; signed out, For you is the only one.
+    pub fn of(signed_in: bool, param: Option<&str>) -> Feed {
+        if signed_in && param == Some(FOLLOWING) { Feed::Following } else { Feed::ForYou }
+    }
+
+    /// The `feed` query that keeps this tab: none for For you.
+    pub fn param(self) -> Option<String> {
+        match self {
+            Feed::ForYou => None,
+            Feed::Following => Some(FOLLOWING.to_owned()),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Feed::ForYou => "For you",
+            Feed::Following => "Following",
+        }
+    }
+}
 
 /// A first page with fewer top-level casts than this reads Hypersnap's next
 /// page too (two at most: each is about 200 KB to parse).
 pub const SECOND_PAGE_BELOW: usize = 30;
-
-/// A first page with fewer than this, after both reads, is topped up with
-/// trending casts.
-pub const TOP_UP_BELOW: usize = 10;
-
-/// How many trending casts top it up at most.
-pub const TOP_UP: usize = 40;
 
 /// Hypersnap's cursors for this feed are a number; anything else is refused.
 const MAX_CURSOR: usize = 24;
@@ -51,10 +81,12 @@ pub struct FollowingPayload {
     /// The cursor of the next, older page, if there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
-    /// On a first page with fewer than `TOP_UP_BELOW` casts: trending casts
-    /// by others, listed after the reader's own under a label.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub topped_up: Vec<Cast>,
+}
+
+/// The accounts a page shows the reader follows: the authors of its casts,
+/// which are the ones who cast lately, the ones For you can lift.
+pub fn followed_authors(payload: &FollowingPayload) -> std::collections::BTreeSet<u64> {
+    payload.pool.iter().map(|c| c.author.fid).collect()
 }
 
 /// The path of a page: the first without a cursor.
@@ -75,24 +107,6 @@ pub fn cursor_from_param(value: &str) -> Option<String> {
 /// Whether a first page with `top_level` casts reads the next page too.
 pub fn wants_second_page(first: bool, top_level: usize, next: Option<&str>) -> bool {
     first && top_level < SECOND_PAGE_BELOW && next.is_some()
-}
-
-/// Whether a first page with `top_level` casts is topped up.
-pub fn wants_top_up(first: bool, top_level: usize) -> bool {
-    first && top_level < TOP_UP_BELOW
-}
-
-/// Trending casts to list after the reader's own: none of theirs again, and
-/// no reply, `TOP_UP` at most, in the order given.
-pub fn top_up(theirs: &[Cast], trending: Vec<Cast>) -> Vec<Cast> {
-    let mut seen: std::collections::HashSet<String> = theirs.iter().map(|c| c.hash.clone()).collect();
-    trending.into_iter().filter(|c| !c.is_reply() && seen.insert(c.hash.clone())).take(TOP_UP).collect()
-}
-
-/// Whether the front page shows `signed_in` reader the feed of whom they
-/// follow, given the page's `feed` query.
-pub fn shows_following(signed_in: bool, feed: Option<&str>) -> bool {
-    signed_in && feed != Some(EVERYONE)
 }
 
 #[cfg(test)]
@@ -130,31 +144,35 @@ mod tests {
     }
 
     #[test]
-    fn a_sparse_page_reads_more_then_tops_up() {
+    fn a_sparse_page_reads_more() {
         assert!(wants_second_page(true, 22, Some("1")));
         assert!(!wants_second_page(true, 22, None));
         assert!(!wants_second_page(true, 30, Some("1")));
         assert!(!wants_second_page(false, 0, Some("1")));
-        assert!(wants_top_up(true, 9));
-        assert!(!wants_top_up(true, 10));
-        assert!(!wants_top_up(false, 0));
     }
 
     #[test]
-    fn top_up_leaves_out_theirs_and_replies() {
-        let theirs = vec![cast("0xa", None)];
-        let trending = vec![cast("0xa", None), cast("0xb", Some("0xp")), cast("0xc", None), cast("0xc", None)];
-        let hashes: Vec<String> = top_up(&theirs, trending).into_iter().map(|c| c.hash).collect();
-        assert_eq!(hashes, ["0xc"]);
-        let many = (0..100).map(|i| cast(&format!("0x{i}"), None)).collect();
-        assert_eq!(top_up(&[], many).len(), TOP_UP);
+    fn the_tab_is_for_you_unless_a_signed_in_reader_asks_for_following() {
+        assert_eq!(Feed::of(true, Some(FOLLOWING)), Feed::Following);
+        assert_eq!(Feed::of(true, None), Feed::ForYou);
+        // The old link to everyone's trending casts.
+        assert_eq!(Feed::of(true, Some("everyone")), Feed::ForYou);
+        assert_eq!(Feed::of(false, Some(FOLLOWING)), Feed::ForYou);
+        assert_eq!(Feed::Following.param().as_deref(), Some(FOLLOWING));
+        assert_eq!(Feed::ForYou.param(), None);
     }
 
     #[test]
-    fn only_a_signed_in_reader_sees_following() {
-        assert!(shows_following(true, None));
-        assert!(!shows_following(true, Some(EVERYONE)));
-        assert!(!shows_following(false, None));
+    fn followed_authors_are_the_pools() {
+        let mut b = cast("0xb", None);
+        b.author.fid = 7;
+        let payload = FollowingPayload {
+            pool: vec![cast("0xa", None), b],
+            notes: Annotations::default(),
+            meta: Meta::default(),
+            next: None,
+        };
+        assert_eq!(followed_authors(&payload), std::collections::BTreeSet::from([1, 7]));
     }
 
     #[test]

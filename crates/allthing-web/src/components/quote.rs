@@ -70,20 +70,27 @@ pub fn QuoteCard(
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     let click = card_click(href.clone());
-    let body = if crate::miniapps::hides(&cast) {
-        // No label on the cast itself: a mini app is a format, said as such.
-        let note = if cast.spam { "Quoted cast hidden" } else { "Quoted cast hidden: mini app" };
-        view! { <p class="quote-hidden">{note}</p> }.into_any()
-    } else {
-        let text = truncate_title(&cast.text, max_chars);
-        view! {
-            {(!text.is_empty()).then(|| view! {
-                <div class="quote-text"><CastText text mentions=cast.mentions.clone()/></div>
-            })}
-            <MediaGrid cast=cast.clone()/>
-            {nested_quotes(&cast, notes.as_ref(), depth)}
+    // A quoted card stays keyed by its enclosing cast while Settings changes.
+    // Track the choice here so its body follows the switch in place.
+    let body_cast = cast.clone();
+    let body = move || {
+        let cast = &body_cast;
+        if cast.hidden_for(crate::miniapps::shown()) {
+            // No label on the cast itself: a mini app is a format, said as such.
+            let note = if cast.spam { "Quoted cast hidden" } else { "Quoted cast hidden: mini app" };
+            view! { <p class="quote-hidden">{note}</p> }.into_any()
+        } else {
+            let text = truncate_title(&cast.text, max_chars);
+            view! {
+                {(!text.is_empty()).then(|| view! {
+                    <div class="quote-text"><CastText text mentions=cast.mentions.clone()/></div>
+                })}
+                <MediaGrid cast=cast.clone()/>
+                <crate::miniapps::MiniAppLink cast=cast.clone()/>
+                {nested_quotes(cast, notes.as_ref(), depth)}
+            }
+            .into_any()
         }
-        .into_any()
     };
     view! {
         <blockquote class="quote" on:click=click>

@@ -26,6 +26,7 @@ mod host;
 mod index;
 mod media;
 mod poll;
+mod presence;
 mod refresh;
 mod scheduled_casts;
 
@@ -42,6 +43,7 @@ use allthing_core::media::{MEDIA_PATH, SERVED_PREFIX};
 use allthing_core::notifications::{NOTIFICATIONS_PATH, cursor_from_param};
 use allthing_core::params::percent_encode;
 use allthing_core::poll::POLL_PATH;
+use allthing_core::presence::PRESENCE_PATH;
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::scheduled::SCHEDULED_PATH;
 use allthing_core::time::iso_utc;
@@ -130,6 +132,14 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             return Ok(limited);
         }
         return media::handle(req, &env, &ctx, Date::now().as_millis() as f64).await;
+    }
+    // A browser's beat, and who is reading now (POST, never cached; one D1
+    // batch, and on a location's recount the names of those shown).
+    if url.path() == PRESENCE_PATH {
+        if let Some(limited) = rate_limited(&req, &env).await {
+            return Ok(limited);
+        }
+        return presence::handle(req, &env, ctx, Date::now().as_millis() as f64).await;
     }
     // A vote in Allthing's poll, signed in or not: POST, never cached, one
     // D1 batch, nothing upstream.
@@ -524,6 +534,9 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // Whether votes in Allthing's poll are counted: SESSION_SECRET,
         // which keys the voters, and D1, which keeps them.
         "poll": { "ready": poll::ready(env) },
+        // Whether the header's "online" chip and its beats are on
+        // (`PRESENCE = "on"`): a variable, no subrequest.
+        "presence": { "ready": presence::ready(env) },
     });
     let headers = Headers::new();
     headers.set("content-type", "application/json; charset=utf-8")?;

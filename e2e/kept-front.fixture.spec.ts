@@ -112,9 +112,12 @@ for (const size of [
       }
       // As tall as it was, from its first frame back: each card the height
       // it had, so nothing moved under the reader as it was put back.
+      // URL and DOM restoration can finish before the sampler's next rAF.
+      // Wait for that frame, then still inspect its first restored height.
+      await expect.poll(async () => (await frames()).findIndex((f, i) => i > left && f.path === "/" && f.top !== null),
+        { timeout: 3000, message: "a frame of the front page again" }).toBeGreaterThan(left);
       const shown = await frames();
       const returned = shown.findIndex((f, i) => i > left && f.path === "/" && f.top !== null);
-      expect(returned, "a frame of the front page again").toBeGreaterThan(left);
       expect(shown[returned].height, `its height in its first frames back: ${JSON.stringify(shown.slice(returned, returned + 6))}`).toBe(there.height);
       const back = await after();
       expect(back.same, "the card is the one that was on the page").toBe(true);

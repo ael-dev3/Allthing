@@ -108,7 +108,7 @@ If a step fails, delete the secret: writes go back to the Farcaster app at once.
 
 ## Attachments (R2)
 
-Readers' images and videos ([ARCHITECTURE.md](ARCHITECTURE.md#attachments)) are kept in a Cloudflare R2 bucket, `allthing-media`, which the Worker reaches through its `MEDIA` binding. Until the binding is there, nothing else changes: uploads answer 404, the composer shows no attach button, and `/api/v1/status` says `"media": {"ready": false}`. The binding is commented out in `wrangler.toml` because `wrangler deploy` fails when a bound bucket doesn't exist, and Workers Builds deploys every push to `main`.
+Readers' images and videos ([ARCHITECTURE.md](ARCHITECTURE.md#attachments)) are kept in a Cloudflare R2 bucket, `allthing-media`, which the Worker reaches through its `MEDIA` binding. The production binding is enabled in `wrangler.toml`. A fork must create its own bucket before deploying with that binding, or comment it out: `wrangler deploy` fails when a bound bucket does not exist. Without the binding, uploads answer 404, the composer shows no attach button, and `/api/v1/status` says `"media": {"ready": false}`.
 
 **What it costs.** R2 is free, each month, up to 10 GB-month of storage, 1 million Class A operations (an upload is one) and 10 million Class B operations (reading a file is one), and it has no egress fees ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). The free tier is for the Standard storage class only. The Worker never lets the files stored pass 9 GiB in all, under 10 GB however a gigabyte is counted, takes 2,000 uploads a day at most from everyone together (62,000 writes a month), and holds each reader to 300 MiB and 60 files a day ([BUDGET.md](BUDGET.md#12-attachments-r2)). R2 is priced apart from Workers, which the Workers Paid plan doesn't cover either, so the Workers plan stays Free ([Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)). Enabling R2 is a checkout that adds an R2 subscription to the account ([R2: get started](https://developers.cloudflare.com/r2/get-started/)), and Cloudflare wants a valid payment method on file before it enables a subscription ([billing policy](https://developers.cloudflare.com/billing/understand/billing-policy/)). Usage past the free tier would be billed to it; the caps keep storage under it, and operations far under it.
 
@@ -131,6 +131,14 @@ Afterwards:
 
 - **Keep the bucket and the binding** once readers have attached files: their casts embed `https://allthing.social/m/…` for good, and without the binding those addresses answer 404, so every Farcaster app would show the casts' images and videos as broken.
 - **Removing a file by hand** (abuse, a takedown): delete the object in the dashboard (**R2 → `allthing-media` → Objects**, its name is the URL's path after `/m/`), then its row in D1, so the total no longer counts it: `npx wrangler d1 execute allthing-index --remote --command "DELETE FROM media WHERE key = '<fid>/<id>.<ext>'"`, and `npx wrangler d1 execute allthing-index --remote --command "UPDATE media_total SET bytes = (SELECT COALESCE(SUM(bytes), 0) FROM media), files = (SELECT COUNT(*) FROM media) WHERE name = 'all'"`. Browsers that showed it may keep their copy, as each file is cached for a year.
+
+## Presence
+
+The header's small "● 12" ([ARCHITECTURE.md](ARCHITECTURE.md#presence)) is on while `wrangler.toml`'s `[vars]` has `PRESENCE = "on"`: `/api/v1/status` says `"presence": {"ready": true}`. It also needs `SESSION_SECRET` ([Secrets](#secrets)), without which a beat answers 503 and no chip shows. What it costs: [BUDGET.md](BUDGET.md#14-presence).
+
+- **Turning it off at once, from the dashboard.** Workers & Pages → `allthing` → Settings → Variables and Secrets: edit `PRESENCE`, set it to `off` (anything but `on` will do) and deploy. From then on a beat answers 404 without touching D1, and each browser drops the chip at its next beat and sends none for 6 hours. Its rows in D1, the last quarter of an hour's, stay until it is on again; `npx wrangler d1 execute allthing-index --remote --command "DELETE FROM presence"` clears them.
+- **Keeping it off.** The next deploy from `main` sets the variables in `wrangler.toml` again (Wrangler's `keep_vars` is off), so make it `PRESENCE = "off"` there too, or it comes back on.
+- **Turning it on again.** `PRESENCE = "on"`, in `wrangler.toml` and, for at once, in the dashboard. Browsers that heard it was off ask again once their 6 hours are up.
 
 ## Local development
 

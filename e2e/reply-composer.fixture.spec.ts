@@ -178,8 +178,24 @@ async function axeViolations(page: Page, scope: string) {
 
 type Box = { x: number; y: number; width: number; height: number };
 
+/**
+ * Measure final sizes after the dialog's finite entrance transform. First-frame
+ * focus is sampled separately by `press`; the layout-shift observer keeps running.
+ */
+async function composerEntered(dialog: Locator) {
+  await dialog.evaluate((root) =>
+    Promise.all(
+      root
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime ?? Infinity))
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
+}
+
 /** The block's parts, as laid out: the thread line (its `::before`) and the pictures around it. */
 async function layout(dialog: Locator) {
+  await composerEntered(dialog);
   return dialog.evaluate((root) => {
     const rect = (el: Element | null) => {
       if (!el) return null;
@@ -393,6 +409,7 @@ test("the bar: 32 px tools on the left, a 40 px tap on a phone; the ring and Rep
     const dialog = page.getByRole("dialog", { name: "Reply" });
     const bar = dialog.locator(".compose-bar");
     await expect(bar.getByRole("button", { name: "Add an emoji" })).toBeVisible();
+    await composerEntered(dialog);
     const laid = await bar.evaluate((bar) => {
       const box = (el: Element) => el.getBoundingClientRect();
       const tools = [...bar.querySelectorAll(".compose-tool")].map((el) => [Math.round(box(el).width), Math.round(box(el).height)]);

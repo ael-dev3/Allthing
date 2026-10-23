@@ -17,6 +17,7 @@
 // encryption (the app does, in Rust, with keys only the browser has) and
 // sends nothing but what the app asks: reducer calls and subscriptions.
 
+import "./csp-codec";
 import { Identity, setGlobalLogLevel } from "spacetimedb";
 import { DbConnection } from "./module_bindings";
 
