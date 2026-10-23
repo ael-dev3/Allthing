@@ -354,8 +354,17 @@ pub async fn home(
         return Built::json(&payload, api::INDEXED_HOME_CACHE);
     }
     let shown = if window.is_indexed() { TrendingWindow::Week } else { window };
-    let (trending, counted, poll) =
-        join3(hypersnap::trending_casts(&inv, POOL_SIZE, offset, shown), counted, polled).await;
+    // Hypersnap's trending lists run hours behind, so the first page also
+    // takes the newest casts the cron stores each minute: one read.
+    let newest = async {
+        if offset > 0 || window.is_indexed() {
+            return None;
+        }
+        let stored = stored(&inv, LATEST_SNAPSHOT).await?;
+        serde_json::from_str::<LatestPayload>(&stored.body).ok()
+    };
+    let ((trending, newest), counted, poll) =
+        join3(join(hypersnap::trending_casts(&inv, POOL_SIZE, offset, shown), newest), counted, polled).await;
     let raw = trending.map_err(Failure::upstream)?;
     // Hypersnap's list can hold casts older than the window (its 12-hour
     // list is its 24-hour one), so only those posted within it are kept,
@@ -370,6 +379,14 @@ pub async fn home(
         .filter(|(_, cast)| shown.holds(cast.ts, now))
         .unzip();
     let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
+    // The stored newest casts were already filtered for mini apps and spam.
+    let pool = match newest {
+        Some(newest) => {
+            notes.merge(&newest.notes);
+            latest::with_newest(pool, newest.pool, shown, now)
+        }
+        None => pool,
+    };
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let apps_24h = counted.map(|w| w.only(|app| notes.apps.contains_key(&app)));

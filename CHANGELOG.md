@@ -8,12 +8,12 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - The "Only N casts in …" note sits under a range's list, where it ends, not above it: it came once the list had ended and moved every card down (a layout shift at 1280).
-
 - Messages now only take verified Farcaster accounts: allthing.social's attestation key is set up (the `ATTEST_KEY` secret) and its public half, `5df241b6517235a521769788541a5cb6369bb3deb4536734b5db8b5cb23d87cb`, is pinned in the SpacetimeDB module (`spacetime/spacetimedb/src/attest_key.rs`), as `/api/v1/status` reports. Signed in, Messages verifies your account before you chat or send a message; no one can speak there as someone else's FID.
 
 ### Fixed
 
 - `scripts/attest-key.mjs` writes a public key that compiles: its pattern stopped at the `;` inside the placeholder `[0; 32]`, leaving `[0x…]; 32];` in `attest_key.rs`. It now replaces the whole array, also once a key is pinned over several lines.
+- Every time range up to 7 days holds the casts just posted. Hypersnap's trending lists run 4 to 6 hours behind (its past hour's list was 5 to 6 hours old, so Past hour could come back empty), so a range's first page adds the newest casts the cron stores each minute, kept to the range.
 
 ## [0.5.0] - 2026-10-22
 

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::Cast;
 use crate::provenance::base64_decode;
+use crate::ranking::TrendingWindow;
 
 /// The shards that hold users' messages (shard 0 holds none).
 pub const SHARDS: [u32; 2] = [1, 2];
@@ -166,6 +167,17 @@ pub fn newest(listed: Vec<Cast>, fresh: Vec<Cast>, removed: &[String], keep: usi
     all
 }
 
+/// A short trending window's casts: Hypersnap's `trending`, which runs hours
+/// behind (its past hour's list was 5 to 6 hours old), with the `newest`
+/// casts Allthing reads from the event stream added, so every window holds
+/// the casts just posted. Only casts posted within `window` at `now` are
+/// kept; a cast in both comes once, as `trending` has it.
+pub fn with_newest(trending: Vec<Cast>, newest: Vec<Cast>, window: TrendingWindow, now: i64) -> Vec<Cast> {
+    let listed: HashSet<String> = trending.iter().map(|c| c.hash.clone()).collect();
+    let fresh = newest.into_iter().filter(|c| !listed.contains(&c.hash));
+    trending.into_iter().chain(fresh).filter(|c| window.holds(c.ts, now)).collect()
+}
+
 /// How fresh a cached list is, for `/status`: its newest cast's age and its
 /// own, in seconds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -198,6 +210,21 @@ pub fn freshness(body: &[u8], fetched_at: f64, now: f64) -> Option<Freshness> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_window_holds_the_newest_casts_hypersnap_has_not_ranked() {
+        let now = 100_000;
+        let trending = vec![cast("0xold", now - 5 * 3_600, 0), cast("0xboth", now - 600, 0)];
+        let newest =
+            vec![cast("0xjust", now - 30, 0), cast("0xboth", now - 600, 0), cast("0xstale", now - 2 * 3_600, 0)];
+        let hour: Vec<String> = with_newest(trending.clone(), newest.clone(), TrendingWindow::Hour, now)
+            .into_iter()
+            .map(|c| c.hash)
+            .collect();
+        assert_eq!(hour, ["0xboth", "0xjust"]);
+        let day = with_newest(trending, newest, TrendingWindow::Day, now);
+        assert_eq!(day.len(), 4);
+    }
     use crate::model::UserSummary;
 
     /// A page as Snapchain's HTTP API serves it: a block confirmation, a
