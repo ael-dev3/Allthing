@@ -337,14 +337,13 @@ pub async fn home(
     // the poll's counts.
     let counted = async { if offset == 0 { apps_24h(&inv).await } else { None } };
     let polled = async { if offset == 0 { poll_counts(&inv).await } else { None } };
-    let now = now_secs(&inv);
     if let Some(span) = Span::of(window)
         && let Some(ranking) = ranking(&inv, span).await
     {
         let hashes = ranking.page(offset as usize, POOL_SIZE as usize);
         let (ranked, counted, poll) = join3(ranked_casts(&inv, &hashes), counted, polled).await;
         let (raw, casts) = ranked?;
-        let casts = within(window, now, casts);
+        let casts = within(window, now_secs(&inv), casts);
         let pool = drop_hidden(&inv, casts, &mut notes, &known_links, true).await;
         let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
         notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
@@ -366,6 +365,9 @@ pub async fn home(
     let ((trending, newest), counted, poll) =
         join3(join(hypersnap::trending_casts(&inv, POOL_SIZE, offset, shown), newest), counted, polled).await;
     let raw = trending.map_err(Failure::upstream)?;
+    // A source read can include casts posted after this request began.
+    // Judge both edges at its completion, not before awaiting the response.
+    let now = now_secs(&inv);
     // Hypersnap's list can hold casts older than the window (its 12-hour
     // list is its 24-hour one), so only those posted within it are kept,
     // before the page is cut. A page short of casts is not topped up with
@@ -406,7 +408,6 @@ pub async fn following(
     let first = cursor.is_none();
     let mut notes = carried(previous.as_deref().map(Vec::as_slice));
     let known_links = std::mem::take(&mut notes.links);
-    let now = now_secs(&inv);
     let top_level = |raw: &[RawCast]| raw.iter().map(normalize::cast).filter(|c| !c.is_reply()).collect::<Vec<_>>();
     let (mut raw, mut next) =
         hypersnap::following_feed(&inv, fid, cursor.as_deref()).await.map_err(Failure::upstream)?;
@@ -420,7 +421,9 @@ pub async fn following(
     }
     // Keep the existing page-read decision: validation must not fetch another
     // upstream page merely to replace rows with invalid future timestamps.
-    let theirs = within(TrendingWindow::All, now, theirs);
+    // Use the current clock after both reads: otherwise an actually present
+    // cast created during I/O could be dropped while its cursor advances.
+    let theirs = within(TrendingWindow::All, now_secs(&inv), theirs);
     let pool = drop_hidden(&inv, theirs, &mut notes, &known_links, true).await;
     let quoted = annotate_listing(&inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
@@ -2489,6 +2492,7 @@ mod indexed_home_tests {
     /// Hypersnap's trending list of casts posted at fixed times, and no index.
     struct Trending {
         casts: Vec<(&'static str, &'static str)>,
+        next: Option<&'static str>,
         requests: RefCell<Vec<String>>,
     }
 
@@ -2510,7 +2514,7 @@ mod indexed_home_tests {
                         json!({ "hash": hash, "author": { "fid": 2, "username": "two" }, "text": "words", "timestamp": timestamp })
                     })
                     .collect();
-                json!({ "casts": casts })
+                json!({ "casts": casts, "next": { "cursor": self.next } })
             } else {
                 json!({})
             };
@@ -2522,6 +2526,69 @@ mod indexed_home_tests {
         fn index(&self) -> Option<Rc<dyn Index>> {
             None
         }
+    }
+
+    /// Two seconds pass while the source response arrives, including a cast
+    /// written during the read and one still a second ahead at its end.
+    struct Advancing {
+        feed: Trending,
+        now: Rc<std::cell::Cell<f64>>,
+    }
+
+    impl Advancing {
+        fn new() -> Rc<Self> {
+            Rc::new(Self {
+                feed: Trending {
+                    casts: vec![
+                        ("0xduring", "2026-10-14T17:46:41Z"),
+                        ("0xfuture", "2026-10-14T17:46:43Z"),
+                        ("0xaged", "2026-10-14T16:46:41Z"),
+                    ],
+                    next: Some("42"),
+                    requests: RefCell::new(Vec::new()),
+                },
+                now: Rc::new(std::cell::Cell::new(NOW_MS)),
+            })
+        }
+    }
+
+    impl Host for Advancing {
+        fn now(&self) -> f64 {
+            self.now.get()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let read = self.feed.fetch(request);
+            let now = self.now.clone();
+            async move {
+                let result = read.await;
+                now.set(NOW_MS + 2_000.0);
+                result
+            }
+            .boxed_local()
+        }
+    }
+
+    #[test]
+    fn home_filters_at_the_time_the_source_read_completes() {
+        let host = Advancing::new();
+        // The one-hour window advances too: 0xaged was inside it when the
+        // request began, but is outside when the source response arrives.
+        assert_eq!(hashes(&build(&host, 0, TrendingWindow::Hour)), ["0xduring"]);
+        assert_eq!(host.feed.requests.borrow().iter().filter(|url| url.contains("/feed/trending?")).count(), 1);
+    }
+
+    #[test]
+    fn following_keeps_casts_created_while_its_source_read_is_in_flight() {
+        let host = Advancing::new();
+        let inv = Rc::new(Invocation::new(host.clone(), 45));
+        let built = following(inv, 7, Some("later".into()), None).now_or_never().unwrap().unwrap();
+        let payload: FollowingPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(payload.pool.iter().map(|cast| cast.hash.as_str()).collect::<Vec<_>>(), ["0xduring", "0xaged"]);
+        assert_eq!(payload.next.as_deref(), Some("42"));
+        assert_eq!(host.feed.requests.borrow().iter().filter(|url| url.contains("/feed/following?")).count(), 1);
     }
 
     #[test]
@@ -2536,6 +2603,7 @@ mod indexed_home_tests {
                 ("0xf1", "2026-10-14T17:46:41Z"),
                 ("0xf2", "2061-09-12T00:03:58Z"),
             ],
+            next: None,
             requests: RefCell::new(Vec::new()),
         });
         let shown = |window| build(&host, 0, window).pool.into_iter().map(|cast| cast.hash).collect::<Vec<_>>();
@@ -2562,6 +2630,7 @@ mod indexed_home_tests {
                 ("0xfuture", "2026-10-14T17:46:41Z"),
                 ("0xfar", "2061-09-12T00:03:58Z"),
             ],
+            next: None,
             requests: RefCell::new(Vec::new()),
         });
         let inv = Rc::new(Invocation::new(host.clone(), 45));
