@@ -20,7 +20,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 
 **Live at [allthing.social](https://allthing.social).**
 
-![The Allthing front page: trending Farcaster casts with their likes, recasts and replies, the app each one was posted from, and Allthing's poll](docs/screenshots/home.webp)
+![Allthing's Following feed with For you and Following tabs, sorting and time ranges, Settings, the online count and Allthing's poll](docs/screenshots/home.webp)
 
 <p align="center">
   <img src="docs/screenshots/profile.webp" alt="A profile: bio, website, followers and following, join date, NS vote and wallet activity by chain" width="49%">
