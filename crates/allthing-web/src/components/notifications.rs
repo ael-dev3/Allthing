@@ -119,9 +119,10 @@ impl Notifications {
         self.whose() == Some(fid)
     }
 
-    /// The first page's times, as last read (tracked).
+    /// The first page's times once its latest refresh succeeded (tracked).
+    /// Old times must not start a page read behind a refresh that can fail.
     pub fn times(self) -> Option<Arc<Times>> {
-        self.0.with(|state| state.times.clone())
+        self.0.with(|state| if state.loading || state.failed.is_some() { None } else { state.times.clone() })
     }
 
     /// Why the last read failed, if it did (tracked).
@@ -133,6 +134,18 @@ impl Notifications {
     /// holds it for the reader signed in, or else as this browser keeps it.
     pub fn seen_by(self, fid: u64) -> i64 {
         self.0.with_untracked(|state| (state.whose == Some(fid)).then_some(state.seen)).unwrap_or_else(|| seen_of(fid))
+    }
+
+    /// Opening the page shares the bell's initial read, including a failure
+    /// that arrived before the page's code. Only Try again or a later refresh
+    /// should retry that failure; a fresh answer is already ready to reuse.
+    pub fn opened(self) {
+        if self.0.with_untracked(|state| state.loading || state.failed.is_some())
+            || api::peek::<Times>(NOTIFICATIONS_PATH).is_some()
+        {
+            return;
+        }
+        self.refresh();
     }
 
     /// Read the first page again for the reader signed in, unless a read
