@@ -36,10 +36,13 @@ export function perfDiagnosticsProbe() {
 
 /** Descriptions can contain URLs; retain only metric names and numeric durations. */
 export function perfServerTiming(raw?: string) {
-  return (raw ?? "").split(",").flatMap((part) => {
+  // A quoted description may contain commas or strings resembling dur=.
+  const parts = (raw ?? "").match(/(?:[^,"]|"(?:\\.|[^"\\])*")+/g) ?? [];
+  return parts.flatMap((part) => {
     const name = part.trim().match(/^([A-Za-z0-9_-]+)/)?.[1];
     if (!name) return [];
-    const duration = Number(part.match(/;\s*dur=([0-9.]+)/)?.[1] ?? 0);
+    const parameters = part.replace(/"(?:\\.|[^"\\])*"/g, '""');
+    const duration = Number(parameters.match(/;\s*dur=([0-9.]+)/)?.[1] ?? 0);
     return [{ name, duration: Number.isFinite(duration) ? duration : 0 }];
   });
 }

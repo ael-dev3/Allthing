@@ -12,7 +12,7 @@ test("cold-load diagnostics retain LCP, resource phases and cache evidence witho
   await page.route("**/__perfdiag?*", (route) => route.fulfill({ contentType: "text/html", body: '<!doctype html><link rel="stylesheet" href="/__perfdiag.css?css-secret"><img src="/__perfdiag.png?image-secret" width="320" height="250"><div id="app"><p class="cast-card">A cold-load diagnostic fixture</p></div>' }));
   await page.route("**/__perfdiag.css?*", (route) => route.fulfill({ contentType: "text/css", body: "body{margin:0}img{display:block}" }));
   await page.route("**/__perfdiag.png?*", (route) => route.fulfill({ contentType: "image/png", body: readFileSync("web/pfp.png") }));
-  await page.route("**/api/v1/home?*", (route) => route.fulfill({ json: { pool: [] }, headers: { "x-allthing-cache": "fresh", "cf-cache-status": "HIT", "cf-ray": "fixture-BEG", "server-timing": 'fresh;dur=3;desc="https://user:private@example.com/?header-secret"' } }));
+  await page.route("**/api/v1/home?*", (route) => route.fulfill({ json: { pool: [] }, headers: { "x-allthing-cache": "fresh", "cf-cache-status": "HIT", "cf-ray": "fixture-BEG", "server-timing": 'fresh;dur=3;desc="https://user:private@example.com/?header-secret;dur=999,private", backend;dur=4' } }));
   await page.goto("/__perfdiag?document-secret");
   await page.evaluate(async () => { await (await fetch("/api/v1/home?api-secret")).json(); });
   await expect.poll(() => page.evaluate(() => (window as any).__allthingPerfDiagnostics.lcp?.element?.tag), { timeout: 5000 }).toBe("IMG");
@@ -26,7 +26,7 @@ test("cold-load diagnostics retain LCP, resource phases and cache evidence witho
   expect(result.lcpResource?.url).toMatch(/\/__perfdiag\.png$/);
   expect(result.navigation.response).toBeGreaterThan(0);
   expect(result.resources.some((resource) => resource.url.endsWith("/api/v1/home") && resource.end >= resource.start)).toBe(true);
-  expect(result.responses.find((response) => response.url.endsWith("/api/v1/home"))).toMatchObject({ cache: "fresh", cfCache: "HIT", colo: "BEG", serverTiming: [{ name: "fresh", duration: 3 }] });
+  expect(result.responses.find((response) => response.url.endsWith("/api/v1/home"))).toMatchObject({ cache: "fresh", cfCache: "HIT", colo: "BEG", serverTiming: [{ name: "fresh", duration: 3 }, { name: "backend", duration: 4 }] });
   expect(result.longtasks.some((task: { duration: number }) => task.duration >= 50)).toBe(true);
   const serialized = JSON.stringify(result);
   expect(serialized).not.toMatch(/secret|password|private|reader:/);
