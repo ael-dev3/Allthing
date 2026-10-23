@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { signIn } from "./helpers/farcaster";
+import { showSeenPosts } from "./helpers/app";
 import { NOW } from "./fixture-time";
 
 /*
@@ -50,6 +51,7 @@ const order = (page: Page) =>
 
 async function feed(page: Page, path: string, expected: string[]) {
   await page.goto(path);
+  await showSeenPosts(page);
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   await expect.poll(() => order(page)).toEqual(expected);
 }
