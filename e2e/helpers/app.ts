@@ -10,3 +10,11 @@ import { expect, type Page } from "@playwright/test";
 export async function appCame(page: Page) {
   await expect(page.locator("#boot")).toHaveCount(0);
 }
+
+/** Recover a revisited feed through its visible control before testing another feature. */
+export async function showSeenPosts(page: Page) {
+  await appCame(page);
+  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
+  const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+  if (await show.isVisible()) await show.click();
+}

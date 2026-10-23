@@ -2,6 +2,7 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { approvedKey, cast as castOf, reaction, signIn, type Envelope } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
+import { showSeenPosts } from "./helpers/app";
 
 /*
  * What the reader writes from Allthing with their key shows at once where
@@ -241,6 +242,7 @@ test("a like keeps its count after a reload, while the feed's copy doesn't have 
 
   // The feed's copy still says 3: the like, which the node has, counts.
   await page.reload();
+  await showSeenPosts(page);
   await expect(like).toHaveAttribute("aria-pressed", "true");
   await expect(count).toHaveText("4 likes");
   // Taken back, it's 3 again, and stays so after a reload.
@@ -251,6 +253,7 @@ test("a like keeps its count after a reload, while the feed's copy doesn't have 
   // Once the node shows it.
   await expect(like).not.toHaveAttribute("aria-busy");
   await page.reload();
+  await showSeenPosts(page);
   await expect(like).toHaveAttribute("aria-pressed", "false");
   await expect(count).toHaveText("3 likes");
 });
