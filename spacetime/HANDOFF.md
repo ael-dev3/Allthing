@@ -15,6 +15,15 @@ cd spacetime && spacetime publish -s maincloud allthing -y
 spacetime generate --lang typescript --out-dir <allthing-web>/src/module_bindings --module-path spacetimedb
 ```
 
+## Switching on FID verification (owner)
+The module pins the PUBLIC half of the Worker's `ATTEST_KEY` in `src/attest_key.rs` (`ATTEST_PUBLIC_KEY`, all zeros until set;
+`verify_fid` refuses with "FID verification isn't set up on this module yet" meanwhile). Details: docs/DEPLOY.md#secrets.
+1. Generate, locally: `node scripts/attest-key.mjs` (writes nothing; `--self-test` first if you like).
+2. Set the secret: `npx wrangler secret put ATTEST_KEY`, paste the printed secret.
+3. Paste the printed `pub const ATTEST_PUBLIC_KEY ...` line over the placeholder in `src/attest_key.rs`; `cargo fmt`; `sh spacetime/check.sh`; commit.
+4. Publish (above).
+5. Confirm: `/api/v1/status` has `"spacetime": {"attest": true, "public_key": "<the printed public key>"}`.
+
 ## Schema
 Public: `user(identity PK, fid idx, verified, online, last_seen)`; `user_key(identity PK, fid, x25519_pub[32], key_version, updated_at)`;
 `room(id, name unique, created_by, created_at)` (`general` is seeded as id 1); `chat_message(id, room_id idx, sender, sender_fid, text, sent_at)`;

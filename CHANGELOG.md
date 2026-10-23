@@ -5,6 +5,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- FID verification is ready for the owner to switch on. `scripts/attest-key.mjs` makes the `ATTEST_KEY` pair locally and writes nothing to disk: it prints the secret, the public key as the module's `ATTEST_PUBLIC_KEY` line and the exact steps (`--check <public key>` prints the line again, `--self-test` signs and verifies with a throwaway key). The module's attestation check moved to `spacetime/spacetimedb/src/attest.rs`, which a new test in `allthing-core` includes to verify what the Worker's code path signs, so the formats can't drift; while the key is the placeholder, `verify_fid` says so plainly. Owner checklists in `docs/DEPLOY.md#secrets` and `spacetime/HANDOFF.md`. **Changes the SpacetimeDB module** (republish).
+
 ## [0.5.0] - 2026-10-22
 
 ### Added
