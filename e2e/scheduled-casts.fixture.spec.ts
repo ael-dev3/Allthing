@@ -220,7 +220,16 @@ test("the list: one waiting to change or cancel, one that didn't go out, one pos
   const field = dialog.getByLabel("Goes out");
   await expect(field).toHaveValue((await shown(page, list[0].at)).input);
   await reply.fill("Later reply, changed");
-  const at = list[0].at + 3600;
+  // Tomorrow's local noon is unambiguous across Berlin's autumn clock
+  // change. A repeated 02:00 names two UTC instants, while datetime-local
+  // and Date parsing select the earlier one; an exact +1h can name the
+  // later occurrence and cannot round-trip through that field.
+  const at = await page.evaluate(() => {
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    next.setHours(12, 0, 0, 0);
+    return Math.floor(next.getTime() / 1000);
+  });
   await field.fill((await shown(page, at)).input);
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();

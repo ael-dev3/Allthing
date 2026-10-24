@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Tall popovers reserve the sticky header’s actual height, including its second search row on phones.
+
 - Inline images decode before being revealed, so large external originals do not stall an interaction while their frame commits. Their reserved boxes, alt text, original sources and lightbox behavior are preserved; the bootstrap handover keeps images already on screen visible.
 
 - A late popover-close event after navigation ignores disposed state, and cancelling a preview timer is idempotent.

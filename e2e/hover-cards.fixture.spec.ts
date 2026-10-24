@@ -187,6 +187,29 @@ test("cards in view preload their authors' vote and wallets, so a hovered card o
 });
 
 test("Escape stays dismissed when the pointer re-enters during the closing animation", async ({ page }) => {
+  // Hold only the close callback before the app creates any timers, so
+  // Closing stays observable independently of automation latency. Other
+  // timers, including the real pointer re-entry dwell, run normally.
+  await page.addInitScript(() => {
+    const nativeTimeout = window.setTimeout.bind(window);
+    const nativeClear = window.clearTimeout.bind(window);
+    const pending: (() => void)[] = [];
+    let holding = true;
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (holding && delay === 120 && typeof handler === "function") {
+        const id = nativeTimeout(() => {}, 60_000);
+        pending.push(() => { nativeClear(id); handler(...args); });
+        return id;
+      }
+      return nativeTimeout(handler, delay, ...args);
+    }) as typeof window.setTimeout;
+    (window as Window & { releasePopoverClosing?: () => number }).releasePopoverClosing = () => {
+      holding = false;
+      const count = pending.length;
+      pending.splice(0).forEach((finish) => finish());
+      return count;
+    };
+  });
   await serve(page);
   await page.goto("/");
   await appCame(page);
@@ -194,24 +217,23 @@ test("Escape stays dismissed when the pointer re-enters during the closing anima
   await picture.hover();
   const profile = profileOf(page, "Alice", "alice");
   await expect(profile).toBeVisible();
+  await expect(profile).not.toHaveClass(/closing/);
   const box = (await picture.boundingBox())!;
 
-  // Freeze only after opening, then use real pointer events during Closing.
-  // Advancing beyond both timers rules out a transient zero-dialog gap:
-  // before the fix the 100 ms re-entry dwell reopened the 120 ms close.
-  await page.clock.install();
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.keyboard.press("Escape");
   await expect(profile).toHaveClass(/closing/);
   await page.mouse.move(5, 5);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.clock.runFor(300);
+  // The real re-entry dwell runs. Even after it and the usual close
+  // duration, re-entry must not have reopened the held Closing panel.
+  await page.waitForTimeout(300);
+  await expect(profile).toHaveClass(/closing/);
+  expect(await page.evaluate(() => (window as Window & { releasePopoverClosing: () => number }).releasePopoverClosing())).toBe(1);
   await expect(profile).toHaveCount(0);
 
   // A fresh hover after closing still opens the card normally.
   await page.mouse.move(5, 5);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.clock.runFor(100);
   await expect(profile).toBeVisible();
 });
 

@@ -34,8 +34,9 @@ const OPEN_DELAY: Duration = Duration::from_millis(280);
 const LINKS_OPEN_DELAY: Duration = Duration::from_millis(100);
 const CLOSE_DELAY: Duration = Duration::from_millis(180);
 const CLOSE_ANIMATION: Duration = Duration::from_millis(120);
-/// The sticky header covers this much of the top of the viewport.
-const HEADER_PX: f64 = 72.0;
+/// Fallback before the sticky header is mounted. Its responsive height is
+/// measured when a panel opens.
+const DEFAULT_HEADER_PX: f64 = 72.0;
 /// Panels are at most this tall, unless told otherwise, and shrink to the
 /// room they have.
 const MAX_PANEL_PX: f64 = 360.0;
@@ -168,7 +169,16 @@ pub fn Popover(
         let Some(anchor) = anchor() else { return };
         let rect = anchor.get_bounding_client_rect();
         let viewport = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or(800.0);
-        let above_room = rect.top() - HEADER_PX - GAP_PX;
+        // The search row makes the phone header taller than the desktop
+        // header. Reserve its actual visible bottom, not a desktop constant.
+        let header_bottom = document()
+            .query_selector(".site-header")
+            .ok()
+            .flatten()
+            .map(|header| header.get_bounding_client_rect().bottom())
+            .filter(|bottom| bottom.is_finite() && *bottom > 0.0)
+            .unwrap_or(DEFAULT_HEADER_PX);
+        let above_room = rect.top() - header_bottom - GAP_PX;
         let below_room = viewport - rect.bottom() - GAP_PX;
         let open_below = above_room < max_px && below_room > above_room;
         below.set(open_below);
@@ -200,7 +210,7 @@ pub fn Popover(
                     let room = if opened_below {
                         viewport - outer.top() - GAP_PX
                     } else {
-                        outer.bottom() - HEADER_PX - GAP_PX
+                        outer.bottom() - header_bottom - GAP_PX
                     };
                     below.set(opened_below);
                     max_height.set(room.clamp(120.0, max_px));
