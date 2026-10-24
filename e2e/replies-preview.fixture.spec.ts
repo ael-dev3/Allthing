@@ -97,3 +97,42 @@ test("on a phone, a tap on a reply's author opens their card and keeps the previ
   await expect(page).toHaveURL(/\/$/);
   await context.close();
 });
+
+
+for (const width of [390, 1280]) {
+  test(`a tall replies preview stays below the actual header at ${width}px`, async ({ browser }, testInfo) => {
+    const context = await browser.newContext({
+      baseURL: testInfo.project.use.baseURL, viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: true,
+    });
+    const page = await context.newPage();
+    await serve(page);
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      hash: hex(100 + i), author: bob, text: `Reply ${i}: a full row of text for the tall preview.`, ts: ts - i, parent_hash: cast.hash,
+    }));
+    await page.route("**/api/v1/cast?*", (route) => route.fulfill({ json: {
+      thread: { cast, children: many.map((reply) => ({ cast: reply })) }, notes: { users }, meta,
+    } }));
+    await page.route("**/api/v1/replies?*", (route) => route.fulfill({ json: { hash: cast.hash, replies: many, notes: { users }, meta } }));
+    await page.goto("/");
+    await expect(page.locator("#boot")).toBeHidden();
+    const button = page.locator("#app .cast-card:not(.skeleton) .stat-replies").first();
+    await expect(button).toBeVisible();
+    // Place a real trigger where the old 72px allowance let a full panel
+    // overlap the phone's two-row header. The actual header is unchanged.
+    await page.addStyleTag({ content: ".page { min-height: 2000px } .cast-card { margin-top: 400px }" });
+    await button.evaluate((el) => scrollBy(0, el.getBoundingClientRect().top - 454));
+    await expect.poll(() => button.evaluate((el) => Math.round(el.getBoundingClientRect().top))).toBe(454);
+    await button.tap();
+    const panel = page.getByRole("dialog", { name: "Replies", exact: true });
+    await expect(panel.locator(".reply-items > li")).toHaveCount(10);
+    await panel.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+    const header = await page.locator(".site-header").boundingBox();
+    const box = await panel.boundingBox();
+    expect(header && box).toBeTruthy();
+    expect(box!.y).toBeGreaterThanOrEqual(header!.y + header!.height - 1);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(845);
+    await button.tap();
+    await expect(panel).toHaveCount(0);
+    await context.close();
+  });
+}
