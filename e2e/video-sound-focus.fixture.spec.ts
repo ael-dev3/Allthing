@@ -94,7 +94,7 @@ for (const width of [1280, 390]) {
         await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
         expect(await page.evaluate(() => localStorage.getItem("allthing.sound"))).toBe("on");
         // Hold Space on the pointer-focused control until its keydown has
-        // been processed, then release it for the native button activation.
+        // been processed, then release it to activate once.
         // Do not refocus: the same node must keep focus throughout.
         const pointerFocused = await enabled.elementHandle();
         await page.keyboard.down("Space");
@@ -103,9 +103,24 @@ for (const width of [1280, 390]) {
           expect(await enabled.evaluate((button, original) => button === original, pointerFocused)).toBe(true);
           await expect(enabled).toHaveAttribute("data-press", "down");
           await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
+          // Repeated keydown must not toggle while Space remains held.
+          await page.keyboard.down("Space");
+          await expect(enabled).toBeFocused();
+          await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
         } finally {
           await page.keyboard.up("Space");
         }
+        await expect(sound).toBeFocused();
+        await expect.poll(() => video.evaluate((v) => v.muted && !v.paused)).toBe(true);
+        expect(await page.evaluate(() => localStorage.getItem("allthing.sound"))).toBeNull();
+        expect(await page.evaluate(() => window.scrollY)).toBe(before);
+        expect(await video.getAttribute("src")).toBe(source);
+        // Enter retains the native button action, and another Space release
+        // toggles once on the same pointer-focused node.
+        await page.keyboard.press("Enter");
+        await expect(enabled).toBeFocused();
+        await expect.poll(() => video.evaluate((v) => !v.muted && !v.paused)).toBe(true);
+        await page.keyboard.press("Space");
         await expect(sound).toBeFocused();
         await expect.poll(() => video.evaluate((v) => v.muted && !v.paused)).toBe(true);
         expect(await page.evaluate(() => localStorage.getItem("allthing.sound"))).toBeNull();

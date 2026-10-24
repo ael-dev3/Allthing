@@ -89,6 +89,9 @@ thread_local! {
     static JITTER: Cell<f64> = const { Cell::new(0.0) };
     /// A beat of this tab's is on its way.
     static BEATING: Cell<bool> = const { Cell::new(false) };
+    /// A reader changed visibility or session while a beat was in flight.
+    /// Coalesce changes, then send the latest state after that beat finishes.
+    static REFRESH_PENDING: Cell<bool> = const { Cell::new(false) };
     /// The first beat's wait is over.
     static STARTED: Cell<bool> = const { Cell::new(false) };
 }
@@ -176,6 +179,9 @@ impl Presence {
     /// again when the turn comes. Nothing while the tab is hidden, offline
     /// or idle: the listeners look again.
     fn tick(self, now_please: bool) {
+        if now_please {
+            REFRESH_PENDING.set(true);
+        }
         clear_timer();
         let now = js_sys::Date::now();
         let kept = read();
@@ -198,7 +204,9 @@ impl Presence {
         let at = kept.at as f64;
         let last = (kept.at > 0).then_some(at);
         let due = should_beat(now, last, LAST_INPUT.get(), visible, online, next_ms);
+        let now_please = REFRESH_PENDING.get();
         if (due || now_please) && visible && online {
+            REFRESH_PENDING.set(false);
             self.beat(kept, now, now_please);
             return;
         }

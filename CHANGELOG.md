@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A video sound badge handles Space release explicitly after touch input, retaining focus and playback without depending on a synthesized native click. Held-key repeats do not toggle sound, and Enter retains its native button action.
+- Changing presence visibility or session while a heartbeat is in flight queues one refresh with the latest state, so the update is not lost behind the older response.
 - Write buttons retain their dialog accessibility attributes during permission discovery and key approval. A follow confirmed on the first hand-off check preserves its new follower count when the reader was known not to follow beforehand.
 - Leaving a page closes its popovers immediately, disposing nested previews as the kept feed detaches; Back does not restore fading panels while closing timers are delayed.
 - Leaving Home reuses observed card heights when their exact current sizes still match, reducing layout reads before a post opens while preserving Back geometry and the existing fallback for late size changes or unsupported browsers.
@@ -36,6 +38,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Live sort checks wait for the interactive app; deep Back checks use Past week so posts aging out of a short range cannot masquerade as lost retained cards.
+- Profile website checks retain bounded browser errors and failed-request diagnostics when the app fails to leave its boot shell.
 - Post-opening performance checks retain bounded, sanitized hover, resource, frame, long-task and animation-frame diagnostics for each attempt, including failures. The click-to-post measurement, prefetch wait, sample count and strict 100 ms limit are unchanged.
 
 - Pin the current Miniflare development dependency's Undici to 7.30.1, fixing its [EventSource memory](https://github.com/advisories/GHSA-4qv8-2p9j-2685), [integrity-check](https://github.com/advisories/GHSA-f72v-6w45-q472) and [content-encoding](https://github.com/advisories/GHSA-xjj6-f33q-929c) advisories. The version-scoped override leaves Wrangler, Miniflare and workerd unchanged; Wrangler 4.152.0 also still pins an affected version.
