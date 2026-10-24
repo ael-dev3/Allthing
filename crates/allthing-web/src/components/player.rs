@@ -575,7 +575,7 @@ pub fn HlsVideo(
     // so it decides, and changes at once rather than when the element's
     // volumechange event comes back (a queued event could leave a quick
     // second press reading a stale state).
-    let toggle_sound = move |_: ev::MouseEvent| {
+    let toggle_sound = move || {
         let Some(video) = video_ref.get_untracked() else { return };
         let sound = muted.get_untracked();
         set_sound(sound);
@@ -589,6 +589,11 @@ pub fn HlsVideo(
             show_sound();
         }
     };
+    // After touch input, a browser can deliver Space down/up to this
+    // focused badge without synthesizing its native click. Handle that
+    // release explicitly, cancelling the default to avoid two toggles in
+    // browsers that do synthesize it. Enter keeps the button's native action.
+    let sound_key_down = StoredValue::new(false);
 
     // Media events are queued. A pause/ended event from an earlier state
     // can arrive after play has resumed; it must not hide active controls.
@@ -675,7 +680,29 @@ pub fn HlsVideo(
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
                 </button>
-                <button class="video-sound" type="button" on:click=toggle_sound>
+                <button
+                    class="video-sound"
+                    type="button"
+                    on:click=move |_| toggle_sound()
+                    on:keydown=move |event: ev::KeyboardEvent| {
+                        if event.key() == " " {
+                            event.prevent_default();
+                            if !event.repeat() {
+                                sound_key_down.set_value(true);
+                            }
+                        }
+                    }
+                    on:keyup=move |event: ev::KeyboardEvent| {
+                        if event.key() == " " {
+                            event.prevent_default();
+                            if sound_key_down.get_value() {
+                                sound_key_down.set_value(false);
+                                toggle_sound();
+                            }
+                        }
+                    }
+                    on:blur=move |_| sound_key_down.set_value(false)
+                >
                     {move || if muted.get() { "Sound off · tap for sound" } else { "Sound on · tap to mute" }}
                 </button>
             </Show>

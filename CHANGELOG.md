@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A video sound badge handles Space release explicitly after touch input, retaining focus and playback without depending on a synthesized native click. Held-key repeats do not toggle sound, and Enter retains its native button action.
 - Changing presence visibility or session while a heartbeat is in flight queues one refresh with the latest state, so the update is not lost behind the older response.
 - Write buttons retain their dialog accessibility attributes during permission discovery and key approval. A follow confirmed on the first hand-off check preserves its new follower count when the reader was known not to follow beforehand.
 - Leaving a page closes its popovers immediately, disposing nested previews as the kept feed detaches; Back does not restore fading panels while closing timers are delayed.
