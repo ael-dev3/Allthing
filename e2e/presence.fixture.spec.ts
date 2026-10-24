@@ -145,6 +145,28 @@ const kept = (page: Page | BrowserContext, answer: Answer, at = Date.now()) =>
 test.describe("in front of the Worker", () => {
   test.skip(PAGES, "the static copy has no Worker to beat to");
 
+  test("a visibility change during an in-flight beat refreshes after its answer", async ({ page }) => {
+    await signIn(page, me);
+    await kept(page, { online: 2, readers: [ann], next: 240 }, 0);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { beats } = await serve(page, () => ok(2, [ann]), gate);
+    await page.goto("/");
+    const chip = chipOf(page);
+    await expect(chip).toBeVisible();
+    await expect.poll(() => beats.length).toBe(1);
+    await chip.click();
+    const show = panelOf(page).getByRole("switch", { name: "Show me here" });
+    await show.click();
+    await expect(show).toHaveAttribute("aria-checked", "false");
+    expect(beats[0].body.hidden).toBe(false);
+    release();
+    await expect.poll(() => beats.length).toBe(2);
+    expect(beats[1].body).toEqual({ ...beats[0].body, hidden: true, refresh: true });
+    await expect(panelOf(page).locator(".presence-readers a")).toHaveCount(1);
+    await expect(panelOf(page).getByRole("link", { name: "@ann", exact: true })).toBeVisible();
+  });
+
   for (const width of [1280, 921, 920, 390]) {
     test(`the chip comes after the page's own call and moves nothing at width ${width}`, async ({ browser, page: desktop }, info) => {
       const { page, close } = await opened(browser, desktop, info, width);

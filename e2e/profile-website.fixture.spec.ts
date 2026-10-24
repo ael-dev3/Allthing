@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { expect, test, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type Request, type TestInfo } from "@playwright/test";
 import { NOW } from "./fixture-time";
 
 /*
@@ -20,6 +20,19 @@ const hex = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const REL = "noopener noreferrer nofollow ugc";
 const longHref = `https://www.example.com/${"a-rather-long-path/".repeat(10)}end/`;
 const longLabel = longHref.replace("https://www.", "").replace(/\/$/, "");
+
+// A profile stuck at the boot shell needs its original browser failure,
+// rather than only the later missing-name assertion. Keep diagnostics bounded
+// and omit URL queries, which can contain account or authentication data.
+const bootDiagnostics = new Map<TestInfo, { rows: string[]; pending: Map<Request, string> }>();
+test.afterEach(async ({}, info) => {
+  const diagnostics = bootDiagnostics.get(info);
+  bootDiagnostics.delete(info);
+  if (diagnostics && info.status !== info.expectedStatus) {
+    const rows = [...diagnostics.rows, ...[...diagnostics.pending.values()].map((url) => `still pending: ${url}`)];
+    await info.attach("profile-boot-diagnostics", { body: rows.join("\n"), contentType: "text/plain" });
+  }
+});
 
 type Website = { href: string; label: string };
 // What each profile's payload says of the account's website: as Allthing's
@@ -84,7 +97,30 @@ async function at(browser: Browser, info: TestInfo, width: number) {
   const context = await browser.newContext({
     baseURL: info.project.use.baseURL, viewport: { width, height: phone ? 844 : 900 }, isMobile: phone, hasTouch: phone,
   });
-  return { context, page: await context.newPage() };
+  const page = await context.newPage();
+  const rows: string[] = [];
+  const pending = new Map<Request, string>();
+  bootDiagnostics.set(info, { rows, pending });
+  const record = (row: string) => {
+    if (rows.length < 40) rows.push(row.replace(/https?:\/\/[^\s)]+/g, (raw) => {
+      try {
+        const url = new URL(raw);
+        return `${url.origin}${url.pathname}`;
+      } catch { return "[invalid URL]"; }
+    }).slice(0, 4000));
+  };
+  page.on("pageerror", (error) => record(`pageerror: ${error.stack ?? error.message}`));
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (pending.size < 40 && /\.(?:wasm|js)$/.test(url.pathname)) pending.set(request, `${url.origin}${url.pathname}`);
+  });
+  page.on("requestfinished", (request) => pending.delete(request));
+  page.on("requestfailed", (request) => {
+    pending.delete(request);
+    const url = new URL(request.url());
+    record(`requestfailed: ${url.origin}${url.pathname} ${request.failure()?.errorText}`);
+  });
+  return { context, page };
 }
 
 async function open(page: Page, name: string) {
