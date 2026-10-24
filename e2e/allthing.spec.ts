@@ -175,6 +175,7 @@ test.describe("front page", () => {
     // This live read checks feed navigation without recording a presence beat.
     await page.route("**/api/v1/presence", (route) => route.fulfill({ status: 404, json: { error: "Read-only test" } }));
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     const latestRead = PAGES ? null : page.waitForResponse((response) =>
       new URL(response.url()).pathname === "/api/v1/latest" && response.request().method() === "GET",
@@ -898,11 +899,18 @@ test.describe("threads and navigation", () => {
       await new Promise((done) => setTimeout(done, 2500));
       await route.continue();
     });
-    await page.goto(at("/"));
+    // Keep this geometry test independent of posts aging out of a short
+    // time window while the slow-navigation and hold checks are running.
+    await page.goto(at("/?t=week"));
+    await appCame(page);
+    const home = page.url();
+    await expect(page.getByRole("combobox", { name: "Time range", exact: true })).toHaveValue("week");
     await expect(firstCard(page)).toBeVisible();
     // Several pages deep: more than one server page of trending casts.
     for (let i = 0; i < 40 && (await page.locator(".cast-card").count()) < atLeast + 10; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      const more = page.getByRole("button", { name: "Load more posts", exact: true });
+      if (await more.isVisible() && await more.isEnabled()) await more.click();
       await page.waitForTimeout(600);
     }
     const loaded = await page.locator(".cast-card").count();
@@ -937,7 +945,7 @@ test.describe("threads and navigation", () => {
     await openAnchor();
     await page.waitForTimeout(500);
     await page.goBack();
-    await expect(page).toHaveURL(new RegExp(`${at("/")}$`));
+    await expect(page).toHaveURL(home);
     // Where things are, for a failure's message: the anchor card's top and
     // place in the list, the scroll offset and how much of the page exists.
     const where = () =>
