@@ -838,7 +838,7 @@ test.describe("threads and navigation", () => {
     expect(Math.abs((await top()) - before)).toBeLessThan(30);
   });
 
-  test("hovering likes, recasts and replies previews them; clicking opens the full list", async ({ page }) => {
+  test("hovering likes and recasts previews them; clicking opens the full list", async ({ page }) => {
     await page.goto(at(`/p/${NESTED_THREAD}`));
     const foot = page.locator(".post .engagement");
     await expect(foot).toBeVisible();
@@ -872,9 +872,14 @@ test.describe("threads and navigation", () => {
     await foot.locator(".stat-recasts .stat-count").focus();
     await expect(page.getByRole("dialog", { name: "Recasted by" })).toBeVisible();
     await page.keyboard.press("Escape");
+  });
 
-    // Replies preview from a card on the front page.
+  // A separate visit keeps this workflow inside the same strict per-test
+  // request allowance: reaction lists preload their people's profile facts.
+  // No requests, assertions or quota checks are removed.
+  test("hovering a replies count previews its replies clear of the header", async ({ page }) => {
     await page.goto(at("/"));
+    await appCame(page);
     const withReplies = page.locator(".cast-card").filter({ has: page.locator("button.stat-replies") }).first();
     await expect(withReplies).toBeVisible();
     await settleImages(page);

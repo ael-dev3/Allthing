@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A late popover-close event after navigation ignores disposed state, and cancelling a preview timer is idempotent.
+
 - A video sound badge handles Space release explicitly after touch input, retaining focus and playback without depending on a synthesized native click. Held-key repeats do not toggle sound, and Enter retains its native button action.
 - Changing presence visibility or session while a heartbeat is in flight queues one refresh with the latest state, so the update is not lost behind the older response.
 - Write buttons retain their dialog accessibility attributes during permission discovery and key approval. A follow confirmed on the first hand-off check preserves its new follower count when the reader was known not to follow beforehand.
@@ -37,6 +39,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A wrapped reply's app link clears the collapse button's full tap area.
 
 ### Development
+
+- Live reaction-list and feed-reply previews run as separate workflows, retaining every assertion and the strict per-test API request allowance while allowing the existing between-test pacing to drain speculative profile reads.
 
 - Live sort checks wait for the interactive app; deep Back checks use Past week so posts aging out of a short range cannot masquerade as lost retained cards.
 - Profile website checks retain bounded browser errors and failed-request diagnostics when the app fails to leave its boot shell.
