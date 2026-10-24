@@ -34,6 +34,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Post-opening performance checks retain bounded, sanitized hover, resource, frame, long-task and animation-frame diagnostics for each attempt, including failures. The click-to-post measurement, prefetch wait, sample count and strict 100 ms limit are unchanged.
+
 - Pin the current Miniflare development dependency's Undici to 7.30.1, fixing its [EventSource memory](https://github.com/advisories/GHSA-4qv8-2p9j-2685), [integrity-check](https://github.com/advisories/GHSA-f72v-6w45-q472) and [content-encoding](https://github.com/advisories/GHSA-xjj6-f33q-929c) advisories. The version-scoped override leaves Wrangler, Miniflare and workerd unchanged; Wrangler 4.152.0 also still pins an affected version.
 
 - Smoothness checks retain bounded, sanitized raw input, long-task, animation-frame and frame diagnostics after each profile closes, including on failure. Metric inputs, strict checks and timing limits are unchanged.
