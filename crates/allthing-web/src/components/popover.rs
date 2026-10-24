@@ -233,9 +233,11 @@ pub fn Popover(
     // or replace. The end of the closing animation has a timer of its own,
     // so nothing leaves a panel invisible but still in the page.
     let cancel = move || {
-        if let Some(handle) = timer.get_value() {
+        // Navigation can dispose a nested preview while an event that
+        // closes it is still being delivered. Taking a live timer is
+        // idempotent; a timer whose owner has gone needs no cancellation.
+        if let Some(Some(handle)) = timer.try_update_value(Option::take) {
             handle.clear();
-            timer.set_value(None);
         }
     };
     let schedule = move |delay: Duration, f: Box<dyn FnOnce()>| {
@@ -251,6 +253,11 @@ pub fn Popover(
     };
     let open = move || open_by(false);
     let close = move || {
+        // An event already being dispatched can outlive the panel that
+        // registered it. Never touch that panel's other stored values.
+        if state.try_get_untracked().is_none() {
+            return;
+        }
         cancel();
         pressing.set_value(false);
         if state.get_untracked() == State::Open {
