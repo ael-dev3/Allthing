@@ -296,10 +296,13 @@ pub fn Popover(
     let enter = move |_: ev::MouseEvent| {
         warm();
         if hovering() {
-            if state.get_untracked() == State::Open {
-                cancel();
-            } else {
-                schedule(open_delay, Box::new(open));
+            match state.get_untracked() {
+                State::Open => cancel(),
+                State::Closed => schedule(open_delay, Box::new(open)),
+                // Escape has dismissed this panel. A pointer entering while
+                // it fades out must not arm another open: a profile's dwell
+                // is shorter than its closing animation.
+                State::Closing => {}
             }
         }
     };

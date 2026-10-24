@@ -77,6 +77,57 @@ const feedCard = (page: Page) => page.locator(`.cast-card[data-hash="${cast.hash
 const chipLink = (card: Locator, which: "user-link" | "display-name" | "author") =>
   card.locator(`header.cast-meta > .byline > .user-chip > .${which}`);
 
+// Keep a small event ledger if dismissal fails again: a remaining dialog
+// alone cannot distinguish a missed Escape from a panel that reopened.
+async function watchDismissal(page: Page) {
+  await page.addInitScript(() => {
+    const events: unknown[] = [];
+    (window as Window & { popoverDismissalEvents?: unknown[] }).popoverDismissalEvents = events;
+    const listeners = new Set<EventListenerOrEventListenerObject>();
+    const describe = (target: EventTarget | null) => target instanceof Element
+      ? `${target.tagName.toLowerCase()}.${target.className}`.slice(0, 120) : null;
+    const record = (action: string, target: EventTarget | null = null) => {
+      events.push({
+        at: Math.round(performance.now()), action, target: describe(target),
+        focus: describe(document.activeElement), windowKeys: listeners.size,
+        panels: [...document.querySelectorAll(".popover-panel")].slice(0, 8)
+          .map((panel) => ({ id: panel.id, class: panel.className })),
+      });
+      if (events.length > 80) events.shift();
+    };
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    window.addEventListener = ((type, listener, options) => {
+      add(type, listener, options);
+      if (type === "keydown" && listener) { listeners.add(listener); record("listen-key"); }
+    }) as typeof window.addEventListener;
+    window.removeEventListener = ((type, listener, options) => {
+      remove(type, listener, options);
+      if (type === "keydown" && listener) { listeners.delete(listener); record("unlisten-key"); }
+    }) as typeof window.removeEventListener;
+    for (const type of ["keydown", "keyup", "mouseenter", "mouseleave", "focusin", "focusout"]) {
+      add(type, ((event: Event) => {
+        if (event instanceof KeyboardEvent) {
+          if (event.key === "Escape") record(`${type}:${event.key}:${event.isTrusted}`, event.target);
+        } else if (event.target instanceof Element && event.target.matches(".popover, .popover-panel, .user-link, .author, .display-name")) {
+          record(type, event.target);
+        }
+      }) as EventListener, true);
+    }
+    new MutationObserver((changes) => {
+      for (const change of changes) {
+        if (change.type === "attributes" && (change.target as Element).matches(".popover-panel")) {
+          record("panel-class", change.target);
+        } else if (change.type === "childList") {
+          for (const [action, nodes] of [["panel-added", change.addedNodes], ["panel-removed", change.removedNodes]] as const) {
+            if ([...nodes].some((node) => node instanceof Element && (node.matches(".popover-panel") || node.querySelector(".popover-panel")))) record(action);
+          }
+        }
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+  });
+}
+
 // Hovering needs a mouse; touch screens open cards with a tap (tested below).
 test.beforeEach(({}, testInfo) => {
   test.skip(Boolean(testInfo.project.use.hasTouch) && !testInfo.titlePath.some((t) => t.includes("touch")), "hover needs a mouse");
@@ -84,6 +135,7 @@ test.beforeEach(({}, testInfo) => {
 
 test("cards in view preload their authors' vote and wallets, so a hovered card opens complete", async ({ page }) => {
   const requests = await serve(page);
+  await watchDismissal(page);
   await page.goto("/");
   await expect(chipLink(feedCard(page), "author")).toHaveText("@alice");
   // The three authors in view: their vote and wallets, before any hover.
@@ -121,11 +173,46 @@ test("cards in view preload their authors' vote and wallets, so a hovered card o
   await expect(profile.getByRole("link", { name: "View profile →", exact: true })).toHaveAttribute("href", "/u/alice");
 
   await page.keyboard.press("Escape");
-  await expect(profile).toHaveCount(0);
+  try {
+    await expect(profile).toHaveCount(0);
+  } catch (error) {
+    const events = await page.evaluate(() => (window as Window & { popoverDismissalEvents?: unknown[] }).popoverDismissalEvents);
+    await test.info().attach("popover-dismissal-events", { body: JSON.stringify(events, null, 2), contentType: "application/json" });
+    throw error;
+  }
 
   // A mouse click on the handle goes to the profile, as before.
   await chipLink(feedCard(page), "author").click();
   await expect(page).toHaveURL(/\/u\/alice$/);
+});
+
+test("Escape stays dismissed when the pointer re-enters during the closing animation", async ({ page }) => {
+  await serve(page);
+  await page.goto("/");
+  await appCame(page);
+  const picture = chipLink(feedCard(page), "user-link");
+  await picture.hover();
+  const profile = profileOf(page, "Alice", "alice");
+  await expect(profile).toBeVisible();
+  const box = (await picture.boundingBox())!;
+
+  // Freeze only after opening, then use real pointer events during Closing.
+  // Advancing beyond both timers rules out a transient zero-dialog gap:
+  // before the fix the 100 ms re-entry dwell reopened the 120 ms close.
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.keyboard.press("Escape");
+  await expect(profile).toHaveClass(/closing/);
+  await page.mouse.move(5, 5);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.clock.runFor(300);
+  await expect(profile).toHaveCount(0);
+
+  // A fresh hover after closing still opens the card normally.
+  await page.mouse.move(5, 5);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.clock.runFor(100);
+  await expect(profile).toBeVisible();
 });
 
 test("a card's picture shows the small copy the feed loaded until its own has loaded", async ({ page }) => {
