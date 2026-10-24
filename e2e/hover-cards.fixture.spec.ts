@@ -200,7 +200,7 @@ test("Escape stays dismissed when the pointer re-enters during the closing anima
   // Advancing beyond both timers rules out a transient zero-dialog gap:
   // before the fix the 100 ms re-entry dwell reopened the 120 ms close.
   await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.keyboard.press("Escape");
   await expect(profile).toHaveClass(/closing/);
   await page.mouse.move(5, 5);
