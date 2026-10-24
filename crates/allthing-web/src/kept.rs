@@ -44,13 +44,14 @@ struct Kept {
 thread_local! {
     static KEPT: RefCell<Option<Kept>> = const { RefCell::new(None) };
     static HEIGHT_OBSERVER: Option<HeightObserver> = height_observer();
+    // Private keys leave hydrated card markup identical to early paint.
+    static HEIGHT_IDS: js_sys::WeakMap = js_sys::WeakMap::new();
     static HEIGHTS: RefCell<HashMap<u64, ObservedCard>> = RefCell::new(HashMap::new());
     static NEXT_HEIGHT: Cell<u64> = const { Cell::new(0) };
 }
 
-/// One opaque ID, rather than reading and parsing every CSS edge during a
-/// navigation. Only mounted Home cards register, and cleanup removes them.
-const HEIGHT_ID: &str = "data-kept-size";
+// Opaque IDs connect weak element keys to Rust measurements without adding
+// attributes or properties to cards. Only mounted Home cards register.
 const SIZE_TOLERANCE: f64 = 0.000_001;
 
 #[derive(Clone, Copy, Debug)]
@@ -89,7 +90,7 @@ struct HeightObserver {
 }
 
 fn height_id(element: &web_sys::Element) -> Option<u64> {
-    element.get_attribute(HEIGHT_ID)?.parse().ok()
+    HEIGHT_IDS.with(|ids| ids.get_checked(element.unchecked_ref()).and_then(|id| id.as_string())?.parse().ok())
 }
 
 fn height_observer() -> Option<HeightObserver> {
@@ -148,9 +149,7 @@ pub fn watch_height(element: &web_sys::Element) {
             next.set(id);
             id
         });
-        if element.set_attribute(HEIGHT_ID, &id.to_string()).is_err() {
-            return;
-        }
+        HEIGHT_IDS.with(|ids| ids.set(element.unchecked_ref(), &id.to_string().into()));
         observer.observer.observe(element);
     });
 }
@@ -163,8 +162,8 @@ pub fn unwatch_height(element: &web_sys::Element) {
     });
     if let Some(id) = height_id(element) {
         HEIGHTS.with(|heights| heights.borrow_mut().remove(&id));
-        let _ = element.remove_attribute(HEIGHT_ID);
     }
+    HEIGHT_IDS.with(|ids| ids.delete(element.unchecked_ref()));
 }
 
 fn observed_height(element: &web_sys::HtmlElement) -> Option<f64> {

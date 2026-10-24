@@ -239,6 +239,9 @@ for (const mode of ["observed", "late fractional change", "content change within
           && observed.style === card.getAttribute("style") && observed.class === card.getAttribute("class");
       }))).toBe(true);
     }
+    // The retention cache is private: hydrated cards retain the same
+    // markup as early paint, including while observations are active.
+    await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
     let expectedContent: number | undefined;
     if (mode === "content change within a fixed border") {
       const delivered = await cards.first().evaluate((card) => (window as any).__retention.deliveries.get(card) as number);
@@ -280,6 +283,7 @@ for (const mode of ["observed", "late fractional change", "content change within
       height: document.documentElement.scrollHeight, expected: (window as any).__retention.expectedHeight,
     }));
     expect(restored.same).toBe(true);
+    await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
     expect(restored.heights).toEqual([mode === "late fractional change" ? 350.375 : 350.125, 350.125, 350.125]);
     expect(restored.height).toBe(restored.expected);
     if (expectedContent !== undefined) {
@@ -312,18 +316,20 @@ for (const mode of ["observed", "late fractional change", "content change within
         height: document.documentElement.scrollHeight, expected: (window as any).__retention.expectedHeight,
       }));
       expect(again.same).toBe(true);
+      await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
       expect(again.heights).toEqual([350.125, 350.125, 350.125]);
       expect(again.height).toBe(again.expected);
       expect(asked.length).toBe(requests);
     }
     if (mode !== "without ResizeObserver") {
       // Taking Home out preserves its owners; replacing its list disposes
-      // them and must release their observer registrations and cached IDs.
+      // them and must release their actual observer registrations.
       expect(await page.evaluate(() => (window as any).__retainedCards.some((card: Element) => (window as any).__retention.unobserved.has(card)))).toBe(false);
       await page.getByRole("combobox", { name: "Time range" }).selectOption({ label: "Past hour" });
       await expect(cards).toHaveCount(0);
       await expect.poll(() => page.evaluate(() => (window as any).__retainedCards.every((card: Element) =>
-        (window as any).__retention.unobserved.has(card) && !card.hasAttribute("data-kept-size")))).toBe(true);
+        (window as any).__retention.unobserved.has(card)))).toBe(true);
+      await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
     }
   });
 }
