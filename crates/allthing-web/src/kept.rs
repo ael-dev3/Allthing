@@ -13,12 +13,14 @@
 //! it. Out for longer than the client cache keeps its data, it's drawn anew
 //! when it shows again.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use leptos::prelude::*;
 use leptos::tachys::view::{Mountable, Render};
 use leptos_router::hooks::use_url;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 use crate::pages::home::Home;
 use crate::util::BASE;
@@ -41,6 +43,164 @@ struct Kept {
 
 thread_local! {
     static KEPT: RefCell<Option<Kept>> = const { RefCell::new(None) };
+    static HEIGHT_OBSERVER: Option<HeightObserver> = height_observer();
+    static HEIGHTS: RefCell<HashMap<u64, ObservedCard>> = RefCell::new(HashMap::new());
+    static NEXT_HEIGHT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// One opaque ID, rather than reading and parsing every CSS edge during a
+/// navigation. Only mounted Home cards register, and cleanup removes them.
+const HEIGHT_ID: &str = "data-kept-size";
+const SIZE_TOLERANCE: f64 = 0.000_001;
+
+#[derive(Clone, Copy, Debug)]
+struct ObservedHeight {
+    content: f64,
+    border_height: f64,
+    border_width: f64,
+}
+
+impl ObservedHeight {
+    fn new(content: f64, border_height: f64, border_width: f64) -> Option<Self> {
+        [content, border_height, border_width]
+            .into_iter()
+            .all(|size| size.is_finite() && size > 0.0)
+            .then_some(Self { content, border_height, border_width })
+            .filter(|size| size.content <= size.border_height + SIZE_TOLERANCE)
+    }
+
+    fn for_box(self, height: f64, width: f64) -> Option<f64> {
+        ((height - self.border_height).abs() <= SIZE_TOLERANCE && (width - self.border_width).abs() <= SIZE_TOLERANCE)
+            .then_some(self.content)
+    }
+}
+
+#[derive(Clone)]
+struct ObservedCard {
+    size: ObservedHeight,
+    style: Option<String>,
+    class: Option<String>,
+}
+
+struct HeightObserver {
+    observer: web_sys::ResizeObserver,
+    // The shared observer and its callback have the same lifetime.
+    _callback: Closure<dyn Fn(js_sys::Array)>,
+}
+
+fn height_id(element: &web_sys::Element) -> Option<u64> {
+    element.get_attribute(HEIGHT_ID)?.parse().ok()
+}
+
+fn height_observer() -> Option<HeightObserver> {
+    let callback = Closure::<dyn Fn(js_sys::Array)>::new(|entries: js_sys::Array| {
+        for entry in entries.iter().filter_map(|entry| entry.dyn_into::<web_sys::ResizeObserverEntry>().ok()) {
+            let element = entry.target();
+            let Some(id) = height_id(&element).filter(|_| element.is_connected()) else { continue };
+            // Missing/fragmented border boxes in older browsers keep the
+            // existing exact measurement fallback. Reflect also tolerates a
+            // browser that implements ResizeObserver without borderBoxSize.
+            let border = js_sys::Reflect::get(&entry, &"borderBoxSize".into())
+                .ok()
+                .and_then(|value| value.dyn_into::<js_sys::Array>().ok())
+                .filter(|boxes| boxes.length() == 1)
+                .map(|boxes| boxes.get(0));
+            let size = border.and_then(|border| {
+                let height = js_sys::Reflect::get(&border, &"blockSize".into()).ok()?.as_f64()?;
+                let width = js_sys::Reflect::get(&border, &"inlineSize".into()).ok()?.as_f64()?;
+                ObservedHeight::new(entry.content_rect().height(), height, width)
+            });
+            HEIGHTS.with(|heights| {
+                let mut heights = heights.borrow_mut();
+                match size {
+                    Some(size) => {
+                        heights.insert(
+                            id,
+                            ObservedCard {
+                                size,
+                                style: element.get_attribute("style"),
+                                class: element.get_attribute("class"),
+                            },
+                        );
+                    }
+                    None => {
+                        heights.remove(&id);
+                    }
+                }
+            });
+        }
+    });
+    let observer = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
+    Some(HeightObserver { observer, _callback: callback })
+}
+
+/// Remember a Home card's exact content height outside navigation, after
+/// layout. Content-box observation follows the value we cache, including
+/// content changes that leave the outer border box unchanged.
+pub fn watch_height(element: &web_sys::Element) {
+    HEIGHT_OBSERVER.with(|observer| {
+        let Some(observer) = observer else { return };
+        if height_id(element).is_some() {
+            return;
+        }
+        let id = NEXT_HEIGHT.with(|next| {
+            let id = next.get().wrapping_add(1);
+            next.set(id);
+            id
+        });
+        if element.set_attribute(HEIGHT_ID, &id.to_string()).is_err() {
+            return;
+        }
+        observer.observer.observe(element);
+    });
+}
+
+pub fn unwatch_height(element: &web_sys::Element) {
+    HEIGHT_OBSERVER.with(|observer| {
+        if let Some(observer) = observer {
+            observer.observer.unobserve(element);
+        }
+    });
+    if let Some(id) = height_id(element) {
+        HEIGHTS.with(|heights| heights.borrow_mut().remove(&id));
+        let _ = element.remove_attribute(HEIGHT_ID);
+    }
+}
+
+fn observed_height(element: &web_sys::HtmlElement) -> Option<f64> {
+    let id = height_id(element)?;
+    let observed = HEIGHTS.with(|heights| heights.borrow().get(&id).cloned())?;
+    // A late edge change can leave the border box unchanged while the
+    // observer's content-height delivery is still pending. In that case
+    // keep the CSS fallback rather than trusting the old content height.
+    let unchanged =
+        observed.style == element.get_attribute("style") && observed.class == element.get_attribute("class");
+    let held = unchanged
+        .then(|| {
+            // Rounded offsetHeight cannot detect a late fractional change. A
+            // single exact box checks both dimensions and rejects transforms
+            // and responsive width changes alike.
+            let rect = element.get_bounding_client_rect();
+            observed.size.for_box(rect.height(), rect.width())
+        })
+        .flatten();
+    if held.is_none() {
+        HEIGHTS.with(|heights| heights.borrow_mut().remove(&id));
+    }
+    held
+}
+
+fn remember_retention_style(element: &web_sys::HtmlElement) {
+    let Some(id) = height_id(element) else { return };
+    HEIGHTS.with(|heights| {
+        if let Some(observed) = heights.borrow_mut().get_mut(&id) {
+            // Only entries accepted above survive. Our own two style
+            // writes must not make their next reuse look like a late edge
+            // change, nor make an invalidated entry trustworthy again.
+            observed.style = element.get_attribute("style");
+            observed.class = element.get_attribute("class");
+        }
+    });
 }
 
 /// Whether `path` is the front page's.
@@ -112,6 +272,9 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
     let taken = KEPT.with(|kept| {
         let mut kept = kept.borrow_mut();
         let Some(kept) = kept.as_mut().filter(|kept| kept.out_since.is_none()) else { return false };
+        // Every height read comes before animation or retention writes,
+        // so those writes cannot force another style/layout calculation.
+        let heights = measure_heights(slot);
         // What has come in stays in: put back, it would come in again.
         if let Ok(entered) = slot.query_selector_all(ENTERED) {
             for i in 0..entered.length() {
@@ -120,7 +283,10 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
                 }
             }
         }
-        keep_heights(slot);
+        for (card, held) in heights {
+            let _ = card.style().set_property("contain-intrinsic-height", &format!("auto {held}px"));
+            remember_retention_style(&card);
+        }
         kept.view.unmount();
         kept.out_since = Some(js_sys::Date::now());
         true
@@ -140,13 +306,14 @@ fn take_out(slot: &web_sys::HtmlDivElement) {
 /// 180 px, so a front page of 30 cards came back 2,800 px taller at 1280 px,
 /// and moved under the reader as its cards were laid out again, one screen
 /// at a time. With the heights kept, it's as it was from its first frame.
-fn keep_heights(slot: &web_sys::Element) {
-    let Ok(cards) = slot.query_selector_all(".cast-card, .cast-list > .poll-card") else { return };
-    // All read, then all kept: a height kept between two reads would have
-    // the page laid out again for the next.
-    let heights: Vec<_> = (0..cards.length())
+fn measure_heights(slot: &web_sys::Element) -> Vec<(web_sys::HtmlElement, f64)> {
+    let Ok(cards) = slot.query_selector_all(".cast-card, .cast-list > .poll-card") else { return Vec::new() };
+    (0..cards.length())
         .filter_map(|i| {
             let card = cards.item(i)?.dyn_into::<web_sys::HtmlElement>().ok()?;
+            if let Some(held) = observed_height(&card) {
+                return Some((card, held));
+            }
             let style = window().get_computed_style(&card).ok()??;
             let px = |property: &str| {
                 let value = style.get_property_value(property).ok()?;
@@ -166,8 +333,34 @@ fn keep_heights(slot: &web_sys::Element) {
                 .try_fold(height, |left, edge| Some(left - px(edge)?))?;
             (held > 0.0).then_some((card, held))
         })
-        .collect();
-    for (card, held) in heights {
-        let _ = card.style().set_property("contain-intrinsic-height", &format!("auto {held}px"));
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ObservedHeight;
+
+    #[test]
+    fn observed_sizes_preserve_fractional_heights_and_require_both_exact_dimensions() {
+        let size = ObservedHeight::new(308.125, 350.125, 770.375).unwrap();
+        assert_eq!(size.for_box(350.125, 770.375), Some(308.125));
+        assert_eq!(size.for_box(350.375, 770.375), None, "same rounded offsetHeight is not enough");
+        assert_eq!(size.for_box(350.125, 770.625), None, "a responsive width change invalidates it");
+        assert_eq!(size.for_box(350.125 * 0.96, 770.375 * 0.96), None, "transforms retain the fallback");
+        assert_eq!(size.for_box(f64::NAN, 770.375), None);
+    }
+
+    #[test]
+    fn empty_unmounted_and_invalid_observations_are_not_kept() {
+        for (content, height, width) in [
+            (0.0, 0.0, 0.0),
+            (100.0, 0.0, 200.0),
+            (100.0, 120.0, 0.0),
+            (121.0, 120.0, 200.0),
+            (f64::NAN, 120.0, 200.0),
+            (100.0, f64::INFINITY, 200.0),
+        ] {
+            assert!(ObservedHeight::new(content, height, width).is_none());
+        }
     }
 }
