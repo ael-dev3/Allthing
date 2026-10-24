@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Leaving a page closes its popovers immediately, disposing nested previews as the kept feed detaches; Back does not restore fading panels while closing timers are delayed.
 - Leaving Home reuses observed card heights when their exact current sizes still match, reducing layout reads before a post opens while preserving Back geometry and the existing fallback for late size changes or unsupported browsers.
 - A hover card dismissed with Escape cannot reopen when the pointer re-enters during its closing animation.
 - A data center with no default 24-hour Home copy, or an expired retained one, can use a fresh public copy shared by another data center, preserving its original age and current time bounds, instead of waiting for the full upstream build. Missing or invalid copies retain the normal fallback, ordinary background refreshes still build normally, and other ranges and private feeds are unchanged.
