@@ -135,6 +135,36 @@ fn remember_size(src: &str, event: &ev::Event) {
     }
 }
 
+/// Let an inline image finish decoding outside the frame that reveals it.
+/// `decoding="async"` is a hint: large originals can still make a frame
+/// commit wait for their pixels. Keep the reserved box while they decode.
+fn reveal_decoded_image(event: &ev::Event) {
+    let Some(image) = event.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) else { return };
+    let decode =
+        js_sys::Reflect::get(&image, &"decode".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+    let Some(decode) = decode else {
+        reveal_image(&image);
+        return;
+    };
+    let result = decode.call0(&image);
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(result) = result {
+            let _ = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&result)).await;
+        }
+        // The old element can have left the page meanwhile. This only
+        // touches that element, never a disposed component's signals.
+        reveal_image(&image);
+    });
+}
+
+fn reveal_image(image: &web_sys::HtmlImageElement) {
+    let style = HtmlElement::style(image.unchecked_ref());
+    let _ = style.remove_property("visibility");
+    if style.length() == 0 {
+        let _ = image.remove_attribute("style");
+    }
+}
+
 /// Find out the size of the image at `url` (an embed's) as a tile shows it,
 /// unless it is known or on its way: from Cloudflare Images' description of
 /// it, about 110 bytes, or, `eager`ly, for an image hosted elsewhere, from
@@ -395,6 +425,10 @@ fn sticker_view(sticker: &'static Sticker) -> impl IntoView {
 #[component]
 pub fn MediaGrid(cast: Cast) -> impl IntoView {
     let viewer = use_viewer();
+    // The bootstrap already shows these exact images: taking over must not
+    // hide them for a frame. Later lists and direct posts decode before
+    // revealing each new image, without changing its box or source.
+    let decode_first = !document().get_element_by_id("boot").is_some_and(|boot| boot.has_attribute("data-painted"));
     let (stickers, items): (Vec<MediaItem>, Vec<MediaItem>) =
         media_items(&cast).into_iter().partition(|item| emoji::sticker_of(&item.url).is_some());
     let stickers = stickers.iter().filter_map(|item| emoji::sticker_of(&item.url)).map(sticker_view).collect_view();
@@ -456,8 +490,19 @@ pub fn MediaGrid(cast: Cast) -> impl IntoView {
                             src=src
                             width=move || size.get().map(|(w, _)| w)
                             height=move || size.get().map(|(_, h)| h)
-                            on:load=move |event| remember_size(&key, &event)
-                            on:error=move |_| broken.set(true)
+                            style=decode_first.then_some("visibility: hidden")
+                            on:load=move |event| {
+                                remember_size(&key, &event);
+                                if decode_first {
+                                    reveal_decoded_image(&event);
+                                }
+                            }
+                            on:error=move |event| {
+                                if let Some(image) = event.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
+                                    reveal_image(&image);
+                                }
+                                broken.set(true);
+                            }
                             alt=item.alt.clone()
                             loading="lazy"
                             decoding="async"
