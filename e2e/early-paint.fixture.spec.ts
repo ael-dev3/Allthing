@@ -332,22 +332,38 @@ for (const width of [1280, 390]) {
     await serve(page, { ...payload, pool: pool.filter((c) => c.ts > now - 20 * HOUR) });
     await page.route("**/api/v1/notifications**", (route) => route.fulfill({ json: { groups: [], meta }, headers: { "cache-control": "private, no-store" } }));
     await signIn(page, { fid: 1234, username: "reader", display_name: "Reader" });
-    // The reader follows dee, as kept from their Following tab (followed.rs).
-    await page.addInitScript(() => localStorage.setItem("allthing.followed", JSON.stringify({ reader: 1234, at: Date.now(), fids: [4] })));
-    await page.goto("/");
-    const boot = page.locator("#boot");
-    // Hot, dee followed: dee's quiet pair, 20 times its 5 points, goes first.
-    await expect(boot.locator(".cast-card").first()).toHaveAttribute("data-hash", pair.hash);
-    await expect(boot.getByRole("link", { name: "For you", includeHidden: true })).toHaveAttribute("aria-current", "page");
-    await expect(boot.locator(".feed-tabs a")).toHaveCount(2);
-    await moduleIn(page, held);
-    await settled(page, "#boot");
-    const early = await shown(page, "#boot");
-    held.js("continue");
-    await expect(boot).toHaveCount(0);
-    await expect(page.locator("#app .cast-card").first()).toBeVisible();
-    // The app's tabs and cards, in the same boxes: nothing moves.
-    expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+    // Permission discovery may still be pending when hydration finishes.
+    // Early and mounted cards must describe the same dialog action then.
+    let releaseSigner!: () => void;
+    const signer = new Promise<void>(resolve => { releaseSigner = resolve; });
+    await page.route("**/api/v1/signer", async route => {
+      await signer;
+      await route.fulfill({ status: 404, json: { error: "not set up" } });
+    });
+    try {
+      // The reader follows dee, as kept from their Following tab (followed.rs).
+      await page.addInitScript(() => localStorage.setItem("allthing.followed", JSON.stringify({ reader: 1234, at: Date.now(), fids: [4] })));
+      await page.goto("/");
+      const boot = page.locator("#boot");
+      // Hot, dee followed: dee's quiet pair, 20 times its 5 points, goes first.
+      await expect(boot.locator(".cast-card").first()).toHaveAttribute("data-hash", pair.hash);
+      await expect(boot.getByRole("link", { name: "For you", includeHidden: true })).toHaveAttribute("aria-current", "page");
+      await expect(boot.locator(".feed-tabs a")).toHaveCount(2);
+      await moduleIn(page, held);
+      await settled(page, "#boot");
+      const early = await shown(page, "#boot");
+      held.js("continue");
+      await expect(boot).toHaveCount(0);
+      await expect(page.locator("#app .cast-card").first()).toBeVisible();
+      // The app's tabs and cards, in the same boxes: nothing moves.
+      expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+      const permissionsRead = page.waitForResponse("**/api/v1/signer");
+      releaseSigner();
+      await permissionsRead;
+      await expect(page.locator("#app .cast-card").first().getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-haspopup", "dialog");
+    } finally {
+      releaseSigner();
+    }
   });
 }
 

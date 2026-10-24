@@ -74,6 +74,7 @@ pub fn CastCard(
         if let Some(element) = node.get() {
             if track_seen {
                 crate::seen::watch(&element, seen);
+                crate::kept::watch_height(&element);
             }
             watch_for_prefetch(&element);
         }
@@ -82,6 +83,9 @@ pub fn CastCard(
         if let Some(element) = node.get_untracked() {
             unwatch(&element);
             crate::seen::unwatch(&element);
+            if track_seen {
+                crate::kept::unwatch_height(&element);
+            }
         }
     });
     view! {

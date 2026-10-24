@@ -280,7 +280,12 @@ pub fn Popover(
     Effect::new(move |seen: Option<String>| {
         let now = pathname.get();
         if seen.is_some_and(|seen| seen != now) {
-            close();
+            // The old page is leaving, so there is no closing animation to
+            // show. Dispose nested previews now, including their dwell
+            // timers and window listeners, as the kept page detaches.
+            cancel();
+            pressing.set_value(false);
+            state.set(State::Closed);
         }
         now
     });

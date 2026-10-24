@@ -41,7 +41,7 @@ test("Escape closes a keyboard popover and returns focus to its trigger", async 
 
 test("navigating from an open popover removes its window click listener", async ({ page }) => {
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
   await page.addInitScript(() => {
     const tracked = (window as TrackedWindow).activeClickListeners = new Set();
     const add = window.addEventListener.bind(window);
@@ -86,13 +86,52 @@ test("navigating from an open popover removes its window click listener", async 
 
 test("unmounting an open popover removes its window click listener", async ({ page }) => {
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
   await page.goto("/channels");
   await page.getByRole("banner").getByRole("link", { name: "Home", exact: true }).click();
   await page.getByRole("button", { name: "10 likes: show who", exact: true }).hover();
   await expect(page.getByRole("dialog", { name: "Liked by", exact: true })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/channels$/);
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  expect(errors).toEqual([]);
+});
+
+// Background tabs can delay the closing-animation timer. Returning to a
+// kept page must not restore a fading panel or its nested profile preview.
+test("Back after leaving nested previews does not wait for their closing animations", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.stack ?? error.message));
+  await page.addInitScript(() => {
+    const schedule = window.setTimeout.bind(window);
+    const clear = window.clearTimeout.bind(window);
+    const held = new Map<number, () => void>();
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay !== 120 || typeof handler !== "function") return schedule(handler, delay, ...args);
+      const id = schedule(() => { held.delete(id); handler(...args); }, 60_000);
+      held.set(id, () => { clear(id); handler(...args); });
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((id?: number) => { if (id !== undefined) held.delete(id); clear(id); }) as typeof window.clearTimeout;
+    (window as Window & { finishHeldClosings: () => void }).finishHeldClosings = () => {
+      const callbacks = [...held.values()];
+      held.clear();
+      for (const callback of callbacks) callback();
+    };
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "10 likes: show who", exact: true }).hover();
+  const likes = page.getByRole("dialog", { name: "Liked by", exact: true });
+  const reader = likes.locator("a.who-link");
+  await reader.hover();
+  await expect(page.getByRole("dialog", { name: "Profile: reader (@reader)", exact: true })).toBeVisible();
+  await reader.click();
+  await expect(page).toHaveURL(/\/u\/reader$/);
+  await expect(page.getByRole("region", { name: "Profile", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("button", { name: "10 likes: show who", exact: true })).toBeVisible();
+  await expect(page.locator(".popover-panel")).toHaveCount(0);
+  await page.evaluate(() => (window as Window & { finishHeldClosings: () => void }).finishHeldClosings());
   await page.locator("body").click({ position: { x: 5, y: 5 } });
   expect(errors).toEqual([]);
 });

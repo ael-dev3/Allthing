@@ -256,3 +256,33 @@ test("signed out, a hand-off asks the node nothing", async ({ page }) => {
   expect(asked.reaction).toBe(0);
   await expect(likes(page, theirs.hash)).not.toHaveClass(/\bmine\b/);
 });
+
+test("a follow completed before the first handoff check keeps its new follower count", async ({ page }) => {
+  await signIn(page, me);
+  await serve(page, { liked: false, following: false, deleted: false });
+  let handedOff = false;
+  let release!: () => void;
+  const landed = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`${NODE}/linkById?*`, async route => {
+    if (!handedOff) return route.fulfill(notFound("link"));
+    await landed;
+    await route.fulfill({ headers: cors, json: { data: { type: "MESSAGE_TYPE_LINK_ADD", fid: me.fid, linkBody: { type: "follow", targetFid: alice.fid } } } });
+  });
+  try {
+    await page.goto("/u/alice");
+    const follow = page.getByRole("button", { name: "Follow @alice", exact: true });
+    await expect(follow).not.toHaveClass(/\bunknown\b/);
+    await expect(follow).toHaveAttribute("aria-pressed", "false");
+    handedOff = true;
+    await follow.click();
+    await expect(page.getByRole("dialog", { name: "Follow @alice in Farcaster" })).toBeVisible();
+    await expect(page.getByText("13 followers", { exact: true })).toBeVisible();
+    release();
+    await expect(follow).not.toHaveClass(/\bpending\b/);
+    await expect(follow).toContainText("Following");
+    await expect(page.getByText("13 followers", { exact: true })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Following." })).toBeVisible();
+  } finally {
+    release();
+  }
+});

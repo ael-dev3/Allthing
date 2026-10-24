@@ -429,6 +429,12 @@ impl Writer {
         self.can.get() == Can::No
     }
 
+    /// A write without an approved key opens a dialog, including while
+    /// permission discovery is pending and when approval is still needed.
+    pub fn opens_dialog(self) -> bool {
+        self.can.get() != Can::Yes
+    }
+
     /// Whether what the reader liked and recasted shows: signed in, once
     /// it's known whether Allthing writes for them (with a key, or in the
     /// Farcaster app).
@@ -1250,6 +1256,12 @@ impl Writer {
             cast.id = run;
         }
         let about = expect.about();
+        // A first read may land after the reader acts in the other app.
+        // A known opposite state before this hand-off still makes it new.
+        let follow_was_done = match &expect {
+            Expect::Follow { fid, on } => self.mine.with_untracked(|m| m.following(*fid).map(|was| was == *on)),
+            _ => None,
+        };
         // A newer hand-off of the same, taken back, goes back to where the
         // first began.
         let earlier = UNDO.with(|u| u.borrow_mut().remove(&about)).map(|(_, undo)| undo);
@@ -1289,7 +1301,7 @@ impl Writer {
         if let Some(undo) = earlier.or(undo) {
             UNDO.with(|u| u.borrow_mut().insert(about.clone(), (run, undo)));
         }
-        self.watch(expect, url, run);
+        self.watch(expect, url, run, follow_was_done);
         (about, run)
     }
 
@@ -1343,10 +1355,11 @@ impl Writer {
     /// view. Once it's there, it shows as done, the dialog closes if it's
     /// still open, and a notice says so. Found at once, before the reader
     /// can have done anything, a like or a follow was so already, and the
-    /// page was behind (a like older than their latest). A newer hand-off of
+    /// page was behind (a like older than their latest), unless a follow
+    /// was known to be opposite before handing it off. A newer hand-off of
     /// the same takes its place; signing out ends it; not done in time, what
     /// shows is taken back.
-    fn watch(self, expect: Expect, url: String, run: u64) {
+    fn watch(self, expect: Expect, url: String, run: u64, follow_was_done: Option<bool>) {
         let Some(reader) = self.fid() else { return };
         let about = expect.about();
         WATCHES.with(|w| w.borrow_mut().insert(about.clone(), run));
@@ -1373,7 +1386,9 @@ impl Writer {
                     && current(&about)
                 {
                     UNDO.with(|u| u.borrow_mut().remove(&about));
-                    let already = first && matches!(expect, Expect::Reaction { .. } | Expect::Follow { .. });
+                    let already = first
+                        && follow_was_done != Some(false)
+                        && matches!(expect, Expect::Reaction { .. } | Expect::Follow { .. });
                     if already {
                         self.was_so(&expect, &about)
                     } else {
@@ -2687,7 +2702,7 @@ pub fn FollowButton(fid: u64, username: String) -> impl IntoView {
                     class:unknown=move || writer.reader().is_some() && known.get().is_none()
                     aria-label=label.clone()
                     aria-pressed=move || writer.reader().is_some().then(|| following().to_string())
-                    aria-haspopup=move || writer.hands_off().then_some("dialog")
+                    aria-haspopup=move || writer.opens_dialog().then_some("dialog")
                     aria-busy=move || writer.follow_busy(fid).then_some("true")
                     on:click=move |_| writer.toggle_follow(fid, Ask::follow(url.clone(), &username, following()))
                 >
@@ -2755,7 +2770,7 @@ pub fn DeleteButton(hash: String, author: u64, username: String, noun: &'static 
                         class="reply-button delete-button"
                         disabled=busy
                         aria-busy=move || busy.get().then_some("true")
-                        aria-haspopup=move || writer.hands_off().then_some("dialog")
+                        aria-haspopup=move || writer.opens_dialog().then_some("dialog")
                         on:click=move |_| {
                             if writer.hands_off() {
                                 writer.delete(hash.clone(), Ask::delete(url.clone(), noun));

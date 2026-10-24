@@ -154,3 +154,182 @@ test("the front page kept keeps its sort, and another page's address doesn't red
   await expect(page).toHaveTitle("new · Allthing");
   expect(asked.length).toBe(requests);
 });
+
+// Observe real deliveries, or hold a later one to exercise the interval
+// between a size change and its observer callback. No measurements are timed.
+async function retentionProbe(page: Page, unsupported: boolean) {
+  await page.addInitScript((unsupported) => {
+    const state = {
+      armed: false, hold: false, observed: new WeakMap<Element, { height: number; width: number; style: string | null; class: string | null }>(), unobserved: new WeakSet<Element>(),
+      deliveries: new WeakMap<Element, number>(), content: new WeakMap<Element, number>(),
+      styles: [] as string[], pending: [] as Array<() => void>, expectedHeight: 0,
+    };
+    (window as any).__retention = state;
+    const style = window.getComputedStyle.bind(window);
+    window.getComputedStyle = ((element, pseudo) => {
+      if (state.armed && element.matches(".kept-front .cast-card") && state.styles.length < 80) {
+        state.styles.push(element.getAttribute("data-hash")!);
+      }
+      return style(element, pseudo);
+    }) as typeof window.getComputedStyle;
+    if (unsupported) {
+      Object.defineProperty(window, "ResizeObserver", { value: undefined, configurable: true });
+      return;
+    }
+    const NativeObserver = window.ResizeObserver;
+    window.ResizeObserver = class extends NativeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super((entries, observer) => {
+          const deliver = () => {
+            callback(entries, observer);
+            for (const entry of entries) if (entry.contentRect.height > 0) {
+              const border = entry.borderBoxSize[0];
+              state.observed.set(entry.target, { height: border.blockSize, width: border.inlineSize,
+                style: entry.target.getAttribute("style"), class: entry.target.getAttribute("class") });
+              state.deliveries.set(entry.target, (state.deliveries.get(entry.target) ?? 0) + 1);
+              state.content.set(entry.target, entry.contentRect.height);
+            }
+          };
+          if (state.hold) state.pending.push(deliver); else deliver();
+        });
+      }
+      unobserve(element: Element) {
+        state.unobserved.add(element);
+        super.unobserve(element);
+      }
+    };
+  }, unsupported);
+}
+
+for (const mode of ["observed", "late fractional change", "content change within a fixed border", "late padding change within a fixed border", "without ResizeObserver"] as const) {
+  test(`Home retention preserves exact sizes with fewer navigation reads: ${mode}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await retentionProbe(page, mode === "without ResizeObserver");
+    const asked = await serve(page);
+    await page.route("**/api/v1/home**", (route) => {
+      const later = new URL(route.request().url()).searchParams.has("offset");
+      asked.push(later ? "home later" : "home");
+      return route.fulfill({ json: { pool: later ? [] : feed.slice(0, 3).map((cast) => ({ ...cast, ts: cast.ts - 7200 })), notes: {}, meta } });
+    });
+    // This deliberately short Hot feed exhausts the existing ten-page
+    // source budget while its sentinel is in view. Snapshot requests only
+    // after that real background work has finished, before testing Back.
+    const lastPage = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/v1/home" && url.searchParams.get("offset") === "900";
+    });
+    await page.goto("/");
+    await appCame(page);
+    await lastPage;
+    await expect(page.locator("#app .cast-list[aria-busy='true']")).toHaveCount(0);
+    const cards = page.locator("#app .cast-list .cast-card");
+    await expect(cards).toHaveCount(3);
+    await cards.evaluateAll((cards) => {
+      (window as any).__retainedCards = cards;
+      for (const card of cards) (card as HTMLElement).style.height = "350.125px";
+    });
+    await expect.poll(() => cards.evaluateAll((cards) => cards.every((card) => card.getAnimations().length === 0))).toBe(true);
+    if (mode !== "without ResizeObserver") {
+      await expect.poll(() => cards.evaluateAll((cards) => cards.every((card) => {
+        const observed = (window as any).__retention.observed.get(card);
+        const rect = card.getBoundingClientRect();
+        return observed?.height === 350.125 && observed.width === rect.width
+          && observed.style === card.getAttribute("style") && observed.class === card.getAttribute("class");
+      }))).toBe(true);
+    }
+    // The retention cache is private: hydrated cards retain the same
+    // markup as early paint, including while observations are active.
+    await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
+    let expectedContent: number | undefined;
+    if (mode === "content change within a fixed border") {
+      const delivered = await cards.first().evaluate((card) => (window as any).__retention.deliveries.get(card) as number);
+      await cards.first().evaluate((card) => {
+        const padding = parseFloat(getComputedStyle(card).paddingTop);
+        (card as HTMLElement).style.paddingTop = `${padding + 8}px`;
+      });
+      // The fixed outer height stays the same; the cached content height
+      // changes, so content-box observation must deliver another value.
+      await expect.poll(() => cards.first().evaluate((card) => (window as any).__retention.deliveries.get(card) as number)).toBeGreaterThan(delivered);
+      expectedContent = await cards.first().evaluate((card) => (window as any).__retention.content.get(card) as number);
+    }
+    if (mode === "late padding change within a fixed border") {
+      expectedContent = await cards.first().evaluate((card) => (window as any).__retention.content.get(card) - 8);
+    }
+    const requests = asked.length;
+    await page.evaluate((mode) => {
+      const state = (window as any).__retention;
+      state.hold = mode.startsWith("late ");
+      document.addEventListener("click", () => {
+        const first = (window as any).__retainedCards[0] as HTMLElement;
+        if (mode === "late fractional change") first.style.height = "350.375px";
+        if (mode === "late padding change within a fixed border") first.style.paddingTop = `${parseFloat(getComputedStyle(first).paddingTop) + 8}px`;
+        state.expectedHeight = document.documentElement.scrollHeight;
+        state.armed = true;
+      }, { capture: true, once: true });
+    }, mode);
+    await cards.first().locator(".cast-text").click();
+    await expect(page.locator("#app .post .post-text")).toBeVisible();
+    const read = await page.evaluate(() => (window as any).__retention.styles as string[]);
+    expect(read).toEqual(mode === "without ResizeObserver" ? feed.slice(0, 3).map((cast) => cast.hash)
+      : mode.startsWith("late ") ? [feed[0].hash] : []);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(cards).toHaveCount(3);
+    const restored = await cards.evaluateAll((cards) => ({
+      same: cards.every((card, i) => card === (window as any).__retainedCards[i]),
+      heights: cards.map((card) => card.getBoundingClientRect().height),
+      height: document.documentElement.scrollHeight, expected: (window as any).__retention.expectedHeight,
+    }));
+    expect(restored.same).toBe(true);
+    await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
+    expect(restored.heights).toEqual([mode === "late fractional change" ? 350.375 : 350.125, 350.125, 350.125]);
+    expect(restored.height).toBe(restored.expected);
+    if (expectedContent !== undefined) {
+      const retained = await cards.first().evaluate((card) => parseFloat((card as HTMLElement).style.containIntrinsicHeight.replace(/^auto /, "")));
+      expect(retained).toBe(expectedContent);
+    }
+    expect(asked.length).toBe(requests);
+    expect(errors).toEqual([]);
+    if (mode === "observed") {
+      // Retention writes changed the inline style. A second trip must
+      // still reuse valid observations, with no CSS fallback or new nodes.
+      await page.evaluate(() => {
+        const state = (window as any).__retention;
+        state.armed = false;
+        state.styles = [];
+        document.addEventListener("click", () => {
+          state.expectedHeight = document.documentElement.scrollHeight;
+          state.armed = true;
+        }, { capture: true, once: true });
+      });
+      await cards.first().locator(".cast-text").click();
+      await expect(page.locator("#app .post .post-text")).toBeVisible();
+      expect(await page.evaluate(() => (window as any).__retention.styles)).toEqual([]);
+      await page.goBack();
+      await expect(page).toHaveURL(/\/$/);
+      await expect(cards).toHaveCount(3);
+      const again = await cards.evaluateAll((cards) => ({
+        same: cards.every((card, i) => card === (window as any).__retainedCards[i]),
+        heights: cards.map((card) => card.getBoundingClientRect().height),
+        height: document.documentElement.scrollHeight, expected: (window as any).__retention.expectedHeight,
+      }));
+      expect(again.same).toBe(true);
+      await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
+      expect(again.heights).toEqual([350.125, 350.125, 350.125]);
+      expect(again.height).toBe(again.expected);
+      expect(asked.length).toBe(requests);
+    }
+    if (mode !== "without ResizeObserver") {
+      // Taking Home out preserves its owners; replacing its list disposes
+      // them and must release their actual observer registrations.
+      expect(await page.evaluate(() => (window as any).__retainedCards.some((card: Element) => (window as any).__retention.unobserved.has(card)))).toBe(false);
+      await page.getByRole("combobox", { name: "Time range" }).selectOption({ label: "Past hour" });
+      await expect(cards).toHaveCount(0);
+      await expect.poll(() => page.evaluate(() => (window as any).__retainedCards.every((card: Element) =>
+        (window as any).__retention.unobserved.has(card)))).toBe(true);
+      await expect(page.locator("#app [data-kept-size]")).toHaveCount(0);
+    }
+  });
+}

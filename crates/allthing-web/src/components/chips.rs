@@ -310,7 +310,7 @@ fn acting_stat(
                 // hands off (what the reader did in the app shows); signed
                 // out, only a way to the app.
                 aria-pressed=move || (!hands_off.get() || shows_mine.get()).then(|| mine.get().to_string())
-                aria-haspopup=move || hands_off.get().then_some("dialog")
+                aria-haspopup=move || writer.opens_dialog().then_some("dialog")
                 aria-busy=move || busy.get().then_some("true")
                 on:click=move |_| writer.toggle(target, reaction, ask(mine.get_untracked()), shown.get_untracked())
             >
