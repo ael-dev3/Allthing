@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { perfDiagnosticsProbe, perfResponses, readPerfDiagnostics } from "./helpers/perf-diagnostics";
+import { POST_OPEN_LIMITS, postOpenDiagnosticsProbe, readPostOpenDiagnostics } from "./helpers/post-open-diagnostics";
 
 /*
  * Performance budget (docs/PERFORMANCE.md), measured in the browser:
@@ -88,35 +89,54 @@ test.describe("performance budget", () => {
     expect(value).toBeLessThan(LCP_BUDGET);
   });
 
-  test("opening a post from the feed takes under 100 ms", async ({ page }) => {
-    await page.goto("/");
-    // A card with plain text to click (.cast-title: releases before full text).
-    const card = page.locator("#app .cast-card:not(.skeleton):has(.cast-text, .cast-title):not(:has(.cast-text a))").nth(2);
-    await expect(card).toBeVisible();
-    await card.hover(); // prefetches the post's data
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
-      (window as any).__openedIn = null;
-      document.addEventListener(
-        "click",
-        () => {
-          const t0 = performance.now();
-          const check = () =>
-            document.querySelector(".post .post-text, .post .mini-app-note")
-              ? ((window as any).__openedIn = performance.now() - t0)
-              : requestAnimationFrame(check);
-          requestAnimationFrame(check);
-        },
-        { capture: true, once: true },
-      );
-    });
-    await card.locator(".cast-text, .cast-title").first().click({ position: { x: 4, y: 8 } });
-    await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
-    const opened = await page.evaluate(() => (window as any).__openedIn as number);
-    // With prefetched data, the replies are in place too.
-    await expect(page.locator(".replies .comments, .replies .empty").first()).toBeVisible({ timeout: 5000 });
-    console.log(`post opened in ${opened.toFixed(0)} ms`);
-    expect(opened).toBeLessThan(OPEN_BUDGET);
+  test("opening a post from the feed takes under 100 ms", async ({ page }, testInfo) => {
+    await page.addInitScript(postOpenDiagnosticsProbe, POST_OPEN_LIMITS);
+    try {
+      await page.goto("/");
+      // A card with plain text to click (.cast-title: releases before full text).
+      const card = page.locator("#app .cast-card:not(.skeleton):has(.cast-text, .cast-title):not(:has(.cast-text a))").nth(2);
+      await expect(card).toBeVisible();
+      await card.hover(); // prefetches the post's data
+      await page.waitForTimeout(600);
+      await page.evaluate(() => {
+        (window as any).__openedIn = null;
+        document.addEventListener(
+          "click",
+          () => {
+            const t0 = performance.now();
+            const diagnostic = (window as any).__allthingPostOpenDiagnostics;
+            if (diagnostic) diagnostic.click = t0;
+            const check = () => {
+              const result =
+                document.querySelector(".post .post-text, .post .mini-app-note")
+                  ? ((window as any).__openedIn = performance.now() - t0)
+                  : requestAnimationFrame(check);
+              // Observe this existing check only; never schedule another frame.
+              if (diagnostic) {
+                diagnostic.counts.frames++;
+                if (diagnostic.frames.length < diagnostic.limits.frames) {
+                  diagnostic.frames.push({ at: performance.now(), shown: (window as any).__openedIn !== null });
+                }
+                diagnostic.opened = (window as any).__openedIn;
+              }
+              return result;
+            };
+            requestAnimationFrame(check);
+          },
+          { capture: true, once: true },
+        );
+      });
+      await card.locator(".cast-text, .cast-title").first().click({ position: { x: 4, y: 8 } });
+      await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
+      const opened = await page.evaluate(() => (window as any).__openedIn as number);
+      // With prefetched data, the replies are in place too.
+      await expect(page.locator(".replies .comments, .replies .empty").first()).toBeVisible({ timeout: 5000 });
+      console.log(`post opened in ${opened.toFixed(0)} ms`);
+      expect(opened).toBeLessThan(OPEN_BUDGET);
+    } finally {
+      const diagnostic = await readPostOpenDiagnostics(page).catch(() => ({ unavailable: "diagnostics could not be collected" }));
+      await testInfo.attach("post-open-diagnostics.json", { body: JSON.stringify({ budget: OPEN_BUDGET, retry: testInfo.retry, ...diagnostic }, null, 2), contentType: "application/json" });
+    }
   });
 
   test("interactions respond within 100 ms (Event Timing)", async ({ page }) => {
