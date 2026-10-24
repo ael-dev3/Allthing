@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 import { perfDiagnosticsProbe, perfResponses, readPerfDiagnostics } from "./helpers/perf-diagnostics";
+import { interactionDiagnosticsProbe, readInteractionDiagnostics } from "./helpers/interaction-diagnostics";
 import { POST_OPEN_LIMITS, postOpenDiagnosticsProbe, readPostOpenDiagnostics } from "./helpers/post-open-diagnostics";
 
 /*
@@ -139,27 +140,28 @@ test.describe("performance budget", () => {
     }
   });
 
-  test("interactions respond within 100 ms (Event Timing)", async ({ page }) => {
+  test("interactions respond within 100 ms (Event Timing)", async ({ page }, testInfo) => {
     await page.goto("/");
     await expect(page.locator("#app .cast-card:not(.skeleton)").first()).toBeVisible();
     // Interactions after the page has settled (first images and prefetches).
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForTimeout(1000);
-    await page.evaluate(() => {
-      (window as any).__events = [] as number[];
-      new PerformanceObserver((list) => {
-        // Interactions only (clicks, taps, keys), as INP counts them.
-        for (const entry of list.getEntries()) if ((entry as any).interactionId) (window as any).__events.push(entry.duration);
-        }).observe({ type: "event", durationThreshold: 16, buffered: false } as PerformanceObserverInit);
-    });
-    await page.locator("#app .sort-tabs a", { hasText: "new" }).click();
-    await page.locator("#app .sort-tabs a", { hasText: "top" }).click();
-    await page.locator("#app .cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").first().focus();
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(500);
-    const worst = await page.evaluate(() => Math.max(0, ...((window as any).__events as number[])));
-    console.log(`slowest interaction ${worst.toFixed(0)} ms`);
-    expect(worst).toBeLessThan(INP_BUDGET);
+    await page.evaluate(interactionDiagnosticsProbe);
+    try {
+      await page.locator("#app .sort-tabs a", { hasText: "new" }).click();
+      await page.locator("#app .sort-tabs a", { hasText: "top" }).click();
+      await page.locator("#app .cast-card:not(.skeleton)").first().locator(".stat-likes .stat-count").first().focus();
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(500);
+      const worst = await page.evaluate(() => Math.max(0, ...((window as any).__events as number[])));
+      console.log(`slowest interaction ${worst.toFixed(0)} ms`);
+      expect(worst).toBeLessThan(INP_BUDGET);
+    } finally {
+      const diagnostic = await readInteractionDiagnostics(page).catch(() => ({ unavailable: true }));
+      await testInfo.attach("interaction-diagnostics.json", { contentType: "application/json", body: JSON.stringify({
+        budget: INP_BUDGET, retry: testInfo.retry, ...diagnostic,
+      }, null, 2) });
+    }
   });
 });
 

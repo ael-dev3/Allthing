@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Inline images decode before being revealed, so large external originals do not stall an interaction while their frame commits. Their reserved boxes, alt text, original sources and lightbox behavior are preserved; the bootstrap handover keeps images already on screen visible.
+
 - A late popover-close event after navigation ignores disposed state, and cancelling a preview timer is idempotent.
 
 - A video sound badge handles Space release explicitly after touch input, retaining focus and playback without depending on a synthesized native click. Held-key repeats do not toggle sound, and Enter retains its native button action.
@@ -39,6 +41,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - A wrapped reply's app link clears the collapse button's full tap area.
 
 ### Development
+
+- Interaction checks retain bounded, sanitized Event Timing, long-task and long-frame diagnostics, including failures. Their actions, initial settling and strict 100 ms maximum are unchanged.
 
 - Live reaction-list and feed-reply previews run as separate workflows, retaining every assertion and the strict per-test API request allowance while allowing the existing between-test pacing to drain speculative profile reads.
 
