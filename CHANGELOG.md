@@ -32,6 +32,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Smoothness checks retain bounded, sanitized raw input, long-task, animation-frame and frame diagnostics after each profile closes, including on failure. Metric inputs, strict checks and timing limits are unchanged.
+
 - Live Worker checks pace API traffic between tests, within the existing per-IP limit, and retain bounded request counts and sanitized failed-response diagnostics. Interaction timings, assertions and retry counts are unchanged.
 
 - Back-navigation checks wait for sampled Home and post frames before returning, preserving their exact retained-card, restored-height, position and request assertions.
