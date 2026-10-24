@@ -97,7 +97,13 @@ for (const size of sizes) {
       expect(await top(first)).toBe(where);
 
       await press(page.locator(".sort-tabs a", { hasText: /^hot$/ }));
-      await expect(first).toContainText("Hot 0");
+      await expect.poll(async () => {
+        // The initial Hot screen may now be seen. Restore its first row
+        // before comparing the same row's exact settled position.
+        const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+        if (await show.isVisible()) await show.click();
+        return page.locator(".cast-list .cast-card[data-hash]").evaluateAll((cards) => cards[0]?.textContent ?? "");
+      }).toContain("Hot 0");
       await settled(page);
       expect(await top(first)).toBe(where);
     });

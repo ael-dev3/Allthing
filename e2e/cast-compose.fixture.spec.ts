@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Browser, type Page, type Route, type TestInfo } from "@playwright/test";
+import { appCame } from "./helpers/app";
 import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, signIn, type Envelope } from "./helpers/farcaster";
 import { standIn, type Answer } from "./helpers/node";
@@ -108,7 +109,14 @@ async function ready(page: Page, path = "/") {
   await expect(page.locator(".cast-card:not(.skeleton), .post").first()).toBeVisible();
   await approvedKey(page, me.fid, 3_600_000);
   await page.reload();
-  await expect(page.locator(".cast-card:not(.skeleton), .post").first()).toBeVisible();
+  await appCame(page);
+  await expect.poll(async () => {
+    // Approving the key can take long enough to read the fixture's first
+    // screen. Restore it through the real control on this new generation.
+    const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+    if (await show.isVisible()) await show.click();
+    return page.locator(".cast-card:not(.skeleton), .post").first().isVisible();
+  }).toBe(true);
   return calls;
 }
 

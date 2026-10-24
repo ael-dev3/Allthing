@@ -254,6 +254,82 @@ type Sample = {
   frames: { t: number; blank: boolean; skeleton: boolean; placeholder: boolean; white: boolean; anchor: number | null; scrollY: number; path: string }[];
 };
 
+/** Diagnostic retention only; `measure` always receives the complete original Sample. */
+const RAW_LIMITS = { samples: 80, events: 64, longtasks: 64, loafs: 64, shifts: 64, frames: 240, scripts: 4 } as const;
+type Rows = "events" | "longtasks" | "loafs" | "shifts" | "frames";
+type RetainedSample = { sample: Sample; totals: Record<Rows, number> };
+type RetainedSamples = { observed: number; samples: RetainedSample[] };
+const rawSamples = new WeakMap<Page, RetainedSamples>();
+
+/** A shallow bounded diagnostic copy; no mutation or truncation of metric inputs. */
+function retainSample(page: Page, sample: Sample) {
+  const kept = rawSamples.get(page);
+  if (!kept) return;
+  kept.observed += 1;
+  if (kept.samples.length >= RAW_LIMITS.samples) return;
+  kept.samples.push({
+    sample: {
+      ...sample,
+      events: sample.events.slice(0, RAW_LIMITS.events),
+      longtasks: sample.longtasks.slice(0, RAW_LIMITS.longtasks),
+      loafs: sample.loafs.slice(0, RAW_LIMITS.loafs),
+      shifts: sample.shifts.slice(0, RAW_LIMITS.shifts),
+      frames: sample.frames.slice(0, RAW_LIMITS.frames),
+    },
+    totals: { events: sample.events.length, longtasks: sample.longtasks.length, loafs: sample.loafs.length, shifts: sample.shifts.length, frames: sample.frames.length },
+  });
+}
+
+/** Serialize only after the profile's browser context closes, outside all measured windows. */
+function rawDiagnostic(profile: Profile, kept: RetainedSamples, measurementComplete: boolean) {
+  const text = (s: string, cap = 160) => String(s).slice(0, cap);
+  const url = (s: string) => {
+    const raw = String(s);
+    if (!raw) return raw;
+    try {
+      const parsed = new URL(raw, "https://diagnostic.invalid");
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "[non-http URL]";
+      // The existing observer keeps source basenames; frames keep relative routes.
+      // Drop credentials, query strings and fragments from either URL form.
+      const safe = /^(?:https?:)?\/\//i.test(raw) ? parsed.origin + parsed.pathname
+        : raw.startsWith("/") ? parsed.pathname : parsed.pathname.replace(/^\//, "");
+      return text(safe, 320);
+    } catch {
+      return "[invalid URL]";
+    }
+  };
+  return {
+    version: 1,
+    profile,
+    measurementComplete,
+    note: "Bounded diagnostics only. Metrics use every original Sample entry; truncation never changes a budget result. Script entries were already capped at four per frame by the existing observer.",
+    limits: RAW_LIMITS,
+    samplesObserved: kept.observed,
+    samplesRetained: kept.samples.length,
+    samplesOmitted: kept.observed - kept.samples.length,
+    strategy: "first entries, without sampling or metric subtraction",
+    samples: kept.samples.map(({ sample, totals }) => ({
+      label: text(sample.label), t0: sample.t0, t1: sample.t1,
+      counts: Object.fromEntries((Object.keys(totals) as Rows[]).map((key) => [key, {
+        observed: totals[key], retained: sample[key].length, omitted: totals[key] - sample[key].length,
+      }])),
+      events: sample.events.map((e) => ({ id: e.id, name: text(e.name, 64), start: e.start, dur: e.dur, processed: e.processed })),
+      longtasks: sample.longtasks.map((t) => ({ start: t.start, dur: t.dur })),
+      loafs: sample.loafs.map((f) => ({
+        start: f.start, dur: f.dur, blocking: f.blocking,
+        scriptsObserved: f.scripts.length,
+        scriptsOmitted: Math.max(0, f.scripts.length - RAW_LIMITS.scripts),
+        scripts: f.scripts.slice(0, RAW_LIMITS.scripts).map((script) => ({ invoker: text(script.invoker, 80), dur: script.dur, fn: text(script.fn), src: url(script.src) })),
+      })),
+      shifts: sample.shifts.map((shift) => ({ start: shift.start, value: shift.value, recent: shift.recent, sources: shift.sources.slice(0, 3).map((source) => text(source)) })),
+      frames: sample.frames.map((frame) => ({
+        t: frame.t, blank: frame.blank, skeleton: frame.skeleton, placeholder: frame.placeholder, white: frame.white,
+        anchor: frame.anchor, scrollY: frame.scrollY, path: url(frame.path),
+      })),
+    })),
+  };
+}
+
 /**
  * Installed before the app: observers for Event Timing, long tasks, long
  * animation frames and layout shifts, a frame sampler, and the press probe.
@@ -604,7 +680,9 @@ async function begin(page: Page, label: string, anchor: string | null = null) {
 
 async function end(page: Page, ms = 1100): Promise<Sample> {
   await page.waitForTimeout(ms);
-  return page.evaluate(() => (window as any).__smooth.end());
+  const sample: Sample = await page.evaluate(() => (window as any).__smooth.end());
+  retainSample(page, sample);
+  return sample;
 }
 
 /**
@@ -1001,6 +1079,9 @@ const results: Partial<Record<string, Results>> = {};
 async function run(browser: Browser, profile: Profile): Promise<Results> {
   const tracing = traced(profile);
   const { context, page, calls, cdp } = await open(browser, profile);
+  const kept: RetainedSamples = { observed: 0, samples: [] };
+  rawSamples.set(page, kept);
+  let measurementComplete = false;
   // Its screencast, actions and network; DOM snapshots would slow it more.
   if (tracing) await context.tracing.start({ screenshots: true, snapshots: false });
   try {
@@ -1029,14 +1110,25 @@ async function run(browser: Browser, profile: Profile): Promise<Results> {
     const scroll = await timed(() => scrollFeed(page, profile, cdp));
     const pressed = await timed(() => presses(page, profile, cdp));
     const machine = { share: round(median(shares), 2), shares: shares.map((s) => round(s, 2)), load: round(loadavg()[0], 1), cpus: cpus().length };
+    measurementComplete = true;
     return { profile, scenarios, presses: pressed, scroll, machine };
   } catch (error) {
     // Where it stopped, for the report CI uploads.
     await page.screenshot({ path: test.info().outputPath(`stopped-${profile.name}.png`) }).catch(() => {});
     throw error;
   } finally {
-    if (tracing) await context.tracing.stop({ path: process.env.SMOOTH_TRACE });
-    await context.close();
+    try {
+      if (tracing) await context.tracing.stop({ path: process.env.SMOOTH_TRACE });
+    } finally {
+      try {
+        await context.close();
+      } finally {
+        rawSamples.delete(page);
+        await test.info().attach(`smoothness-raw-${profile.name}.json`, {
+          body: JSON.stringify(rawDiagnostic(profile, kept, measurementComplete)), contentType: "application/json",
+        });
+      }
+    }
   }
 }
 

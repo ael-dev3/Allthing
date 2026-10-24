@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A hover card dismissed with Escape cannot reopen when the pointer re-enters during its closing animation.
 - A data center with no default 24-hour Home copy, or an expired retained one, can use a fresh public copy shared by another data center, preserving its original age and current time bounds, instead of waiting for the full upstream build. Missing or invalid copies retain the normal fallback, ordinary background refreshes still build normally, and other ranges and private feeds are unchanged.
 - CI rejects browser tests that pass only on retry, so a flaky run cannot appear as a clean release check.
 - Choosing an emoji group while the picker is still drawing reaches its heading on the first click, including a group at the temporary bottom of the list.
@@ -27,10 +28,16 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Following prefetches its own feed when changing sort or range, stops automatic paging at the time limit, and resumes from that cursor for a wider range. A fully seen or filtered feed offers Load more posts after ten payloads rather than reading indefinitely.
 - Changing accounts replaces the feed and ranking snapshot, and late answers from the previous account cannot refill its cache. Presence no longer counts an anonymous and signed-in visit twice; hiding or signing out also removes the public name from cached lists.
 - Messages connects under the existing Content Security Policy without permitting JavaScript evaluation. Pressed conversation rows keep their previews and timestamps readable.
-- Notifications coalesce refreshes from opening the page and regaining focus. Marking the list read no longer queues a duplicate request that could start after the tab is hidden.
+- Notifications share the bell's initial read even when it finishes before the page's code arrives. A failure remains visible for Try again, and a fresh answer is reused. Opening the page, regaining focus and marking the list read no longer queue duplicate reads behind an in-flight refresh or after the tab is hidden.
 - A wrapped reply's app link clears the collapse button's full tap area.
 
 ### Development
+
+- Pin the current Miniflare development dependency's Undici to 7.30.1, fixing its [EventSource memory](https://github.com/advisories/GHSA-4qv8-2p9j-2685), [integrity-check](https://github.com/advisories/GHSA-f72v-6w45-q472) and [content-encoding](https://github.com/advisories/GHSA-xjj6-f33q-929c) advisories. The version-scoped override leaves Wrangler, Miniflare and workerd unchanged; Wrangler 4.152.0 also still pins an affected version.
+
+- Smoothness checks retain bounded, sanitized raw input, long-task, animation-frame and frame diagnostics after each profile closes, including on failure. Metric inputs, strict checks and timing limits are unchanged.
+
+- Live Worker checks pace API traffic between tests, within the existing per-IP limit, and retain bounded request counts and sanitized failed-response diagnostics. Interaction timings, assertions and retry counts are unchanged.
 
 - Back-navigation checks wait for sampled Home and post frames before returning, preserving their exact retained-card, restored-height, position and request assertions.
 
@@ -38,6 +45,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Video keyboard checks verify a held Space press on the original pointer-focused control before release, retaining bounded input and media diagnostics on failure.
 - Cold-load performance checks retain sanitized per-sample LCP, network, cache and long-task diagnostics, including on failure, in a seven-day Actions artifact. Their timing limits, cold contexts and sample count are unchanged.
 - Browser regressions use past timestamps relative to the page’s own clock, wait for restored seen rows and the latest presence-cache expiry, and preserve their ordering, privacy, navigation and timing checks, including a deliberately delayed count refresh.
+- Browser checks recover read posts through Show seen posts, distinguish media uploads from analytics XHRs, control typeahead's input intervals and settle initial fixture resources before measuring reply-sheet shifts. Live checks observe pagination retries, available wallet data and the deployed inline-fetch/CSP contract without changing their timing limits.
+- The roadmap lists the participating and Messages features already delivered, and the architecture's static-test command matches CI.
 - Startup checks distinguish the main WebAssembly module from idle-loaded parts, and range navigation waits for the actual New feed response.
 - Local macOS builds find worker-build's cached WebAssembly optimizer. SDK wire-format and strict-CSP browser checks cover Messages; feed-ranking, reply-composer and smoothness fixtures exercise the updated UI without changing their budgets.
 - The attestation-key helper replaces the complete Rust key array, including multiline values, so a generated key compiles.

@@ -224,7 +224,7 @@ pub mod with_worker {
         let more = RwSignal::new(Vec::<Arc<NotificationsPayload>>::new());
         let read_failed = RwSignal::new(None::<api::Failure>);
         // Marking the page seen changes the bell's state too, but not its
-        // times. Only a different set of times should ask for the page:
+        // times. Only a settled refresh should ask for the page:
         // an async read queued by mark_seen could otherwise run later,
         // after its cached answer expires or while the tab is hidden.
         let times = Memo::new(move |_| notifications.times());
@@ -251,7 +251,7 @@ pub mod with_worker {
                 notifications.mark_seen(fid, page.newest);
             }
         });
-        notifications.refresh();
+        notifications.opened();
         let pages = Memo::new(move |_| first.get().into_iter().chain(more.get()).collect::<Vec<_>>());
         // Whether the first page is in: a newer copy of it updates the rows
         // in place rather than drawing the list anew.

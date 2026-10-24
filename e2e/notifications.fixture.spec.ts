@@ -123,6 +123,26 @@ async function ready(page: Page, seen = SEEN_BEFORE, opts: { failFirst?: number 
   return serve(page, opts);
 }
 
+/** Hold the actual page module while the bell's initial response settles. */
+async function delayPageCode(page: Page) {
+  let release: () => void = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  let asked = 0;
+  await page.route("**/split_notifications.wasm", async (route) => {
+    asked += 1;
+    await held;
+    await route.continue();
+  });
+  return { release, asked: () => asked };
+}
+
+/** Let the completed response reach the bell before releasing the page. */
+async function bellSettled(page: Page) {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
 const bell = (page: Page) => page.getByRole("link", { name: /^Notifications, \d+ unread$/ });
 const rows = (page: Page) => page.locator(".notif-list > li.notif:not(.skeleton)");
 const shot = async (target: Page | Locator, name: string, testInfo: TestInfo) => {
@@ -416,16 +436,48 @@ test("signed out, there's no bell, and the page asks to sign in", async ({ page 
   expect(calls.first).toBe(0);
 });
 
-test("a read that fails says why, and Try again reads again", async ({ page }) => {
+test("a read that fails before the page code arrives says why, and Try again reads again", async ({ page }) => {
   const calls = await ready(page, SEEN_BEFORE, { failFirst: 1 });
-  await page.goto("/notifications");
-  const failed = page.locator(".notif-error[role=alert]");
-  await expect(failed).toContainText("Farcaster data source is busy");
-  await expect(page.locator(".bell-badge")).toHaveCount(0);
-  expect(calls.first).toBe(1);
-  await failed.getByRole("button", { name: "Try again" }).click();
-  await expect(rows(page)).toHaveCount(7);
-  expect(calls.first).toBe(2);
+  const code = await delayPageCode(page);
+  try {
+    const response = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/notifications" && response.status() === 503);
+    await page.goto("/notifications", { waitUntil: "domcontentloaded" });
+    await expect.poll(code.asked).toBeGreaterThan(0);
+    expect(await (await response).finished()).toBeNull();
+    await bellSettled(page);
+    // The page is not mounted yet, but the bell's failed read is complete.
+    await expect(page.getByRole("heading", { name: "Notifications", exact: true })).toHaveCount(0);
+    expect(calls.first).toBe(1);
+    code.release();
+
+    const failed = page.locator(".notif-error[role=alert]");
+    await expect(failed).toContainText("Farcaster data source is busy");
+    await expect(page.locator(".bell-badge")).toHaveCount(0);
+    expect(calls.first).toBe(1);
+    await failed.getByRole("button", { name: "Try again" }).click();
+    await expect(rows(page)).toHaveCount(7);
+    expect(calls.first).toBe(2);
+  } finally {
+    code.release();
+  }
+});
+
+test("a fresh bell answer arriving before the page code is reused without another request", async ({ page }) => {
+  const calls = await ready(page);
+  const code = await delayPageCode(page);
+  try {
+    await page.goto("/notifications", { waitUntil: "domcontentloaded" });
+    await expect.poll(code.asked).toBeGreaterThan(0);
+    await expect(bell(page)).toHaveAccessibleName("Notifications, 3 unread");
+    await expect(page.getByRole("heading", { name: "Notifications", exact: true })).toHaveCount(0);
+    expect(calls.first).toBe(1);
+    code.release();
+    await expect(rows(page)).toHaveCount(7);
+    await expect(bell(page)).toHaveAccessibleName("Notifications, 0 unread");
+    expect(calls.first).toBe(1);
+  } finally {
+    code.release();
+  }
 });
 
 test("nothing yet, per tab", async ({ page }) => {

@@ -153,14 +153,37 @@ async function watchUploads(page: Page) {
   await page.addInitScript(() => {
     const w = window as unknown as { uploads: { xhr: XMLHttpRequest; aborted: boolean }[] };
     w.uploads = [];
+    const media = new WeakSet<XMLHttpRequest>();
+    const open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, ...args: [string, string | URL, ...unknown[]]) {
+      const url = new URL(args[1], location.href);
+      if (args[0].toUpperCase() === "POST" && url.origin === location.origin && url.pathname === "/api/v1/media") media.add(this);
+      else media.delete(this);
+      return Reflect.apply(open, this, args);
+    } as typeof open;
     const send = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-      const entry = { xhr: this, aborted: false };
-      this.addEventListener("abort", () => (entry.aborted = true));
-      w.uploads.push(entry);
+      if (media.has(this)) {
+        const entry = { xhr: this, aborted: false };
+        this.addEventListener("abort", () => (entry.aborted = true));
+        w.uploads.push(entry);
+      }
       return send.call(this, body);
     };
   });
+}
+
+/** Analytics and other XHRs must not take an upload's progress/abort index. */
+async function unrelatedXhr(page: Page) {
+  const observed = await page.evaluate(() => new Promise<{ status: number; uploads: number }>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.onload = () => resolve({ status: request.status, uploads: (window as unknown as { uploads: unknown[] }).uploads.length });
+    request.onerror = () => reject(new Error("The unrelated fixture XHR failed"));
+    request.open("POST", "/api/v1/unrelated-xhr");
+    request.send("not an upload");
+  }));
+  // The fixture's catch-all answers it; the real upload remains index zero.
+  expect(observed).toEqual({ status: 404, uploads: 0 });
 }
 
 /** Upload `n`'s progress, as the browser reports it: `loaded` bytes of `total`. */
@@ -381,6 +404,7 @@ const segment = (marker: number, payload: Buffer) => {
 test("at 1280, files attach from the button and a paste, show their uploads' progress, and go out as the cast's embeds", async ({ page }, info) => {
   const media = new Media();
   const calls = await ready(page, media);
+  await unrelatedXhr(page);
   media.held = true;
   await page.getByRole("button", { name: "Write a cast" }).click();
   const dialog = page.getByRole("dialog", { name: "New cast" });
@@ -607,6 +631,7 @@ test("files dropped on the composer attach, with a hint while they're over it; a
 test("Remove stops an upload on its way, and lets its picture go", async ({ page }) => {
   const media = new Media();
   await ready(page, media);
+  await unrelatedXhr(page);
   media.held = true;
   const failed: string[] = [];
   page.on("requestfailed", (request) => {
