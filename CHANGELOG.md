@@ -32,6 +32,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Pin the current Miniflare development dependency's Undici to 7.30.1, fixing its [EventSource memory](https://github.com/advisories/GHSA-4qv8-2p9j-2685), [integrity-check](https://github.com/advisories/GHSA-f72v-6w45-q472) and [content-encoding](https://github.com/advisories/GHSA-xjj6-f33q-929c) advisories. The version-scoped override leaves Wrangler, Miniflare and workerd unchanged; the latest vendor release still pins the affected version.
+
 - Smoothness checks retain bounded, sanitized raw input, long-task, animation-frame and frame diagnostics after each profile closes, including on failure. Metric inputs, strict checks and timing limits are unchanged.
 
 - Live Worker checks pace API traffic between tests, within the existing per-IP limit, and retain bounded request counts and sanitized failed-response diagnostics. Interaction timings, assertions and retry counts are unchanged.
