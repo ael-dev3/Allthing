@@ -160,7 +160,7 @@ test("the front page kept keeps its sort, and another page's address doesn't red
 async function retentionProbe(page: Page, unsupported: boolean) {
   await page.addInitScript((unsupported) => {
     const state = {
-      armed: false, hold: false, observed: new WeakSet<Element>(), unobserved: new WeakSet<Element>(),
+      armed: false, hold: false, observed: new WeakMap<Element, { height: number; width: number; style: string | null; class: string | null }>(), unobserved: new WeakSet<Element>(),
       deliveries: new WeakMap<Element, number>(), content: new WeakMap<Element, number>(),
       styles: [] as string[], pending: [] as Array<() => void>, expectedHeight: 0,
     };
@@ -183,7 +183,9 @@ async function retentionProbe(page: Page, unsupported: boolean) {
           const deliver = () => {
             callback(entries, observer);
             for (const entry of entries) if (entry.contentRect.height > 0) {
-              state.observed.add(entry.target);
+              const border = entry.borderBoxSize[0];
+              state.observed.set(entry.target, { height: border.blockSize, width: border.inlineSize,
+                style: entry.target.getAttribute("style"), class: entry.target.getAttribute("class") });
               state.deliveries.set(entry.target, (state.deliveries.get(entry.target) ?? 0) + 1);
               state.content.set(entry.target, entry.contentRect.height);
             }
@@ -211,8 +213,17 @@ for (const mode of ["observed", "late fractional change", "content change within
       asked.push(later ? "home later" : "home");
       return route.fulfill({ json: { pool: later ? [] : feed.slice(0, 3).map((cast) => ({ ...cast, ts: cast.ts - 7200 })), notes: {}, meta } });
     });
+    // This deliberately short Hot feed exhausts the existing ten-page
+    // source budget while its sentinel is in view. Snapshot requests only
+    // after that real background work has finished, before testing Back.
+    const lastPage = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/v1/home" && url.searchParams.get("offset") === "900";
+    });
     await page.goto("/");
     await appCame(page);
+    await lastPage;
+    await expect(page.locator("#app .cast-list[aria-busy='true']")).toHaveCount(0);
     const cards = page.locator("#app .cast-list .cast-card");
     await expect(cards).toHaveCount(3);
     await cards.evaluateAll((cards) => {
@@ -221,7 +232,12 @@ for (const mode of ["observed", "late fractional change", "content change within
     });
     await expect.poll(() => cards.evaluateAll((cards) => cards.every((card) => card.getAnimations().length === 0))).toBe(true);
     if (mode !== "without ResizeObserver") {
-      await expect.poll(() => cards.evaluateAll((cards) => cards.every((card) => (window as any).__retention.observed.has(card)))).toBe(true);
+      await expect.poll(() => cards.evaluateAll((cards) => cards.every((card) => {
+        const observed = (window as any).__retention.observed.get(card);
+        const rect = card.getBoundingClientRect();
+        return observed?.height === 350.125 && observed.width === rect.width
+          && observed.style === card.getAttribute("style") && observed.class === card.getAttribute("class");
+      }))).toBe(true);
     }
     let expectedContent: number | undefined;
     if (mode === "content change within a fixed border") {
@@ -304,7 +320,7 @@ for (const mode of ["observed", "late fractional change", "content change within
       // Taking Home out preserves its owners; replacing its list disposes
       // them and must release their observer registrations and cached IDs.
       expect(await page.evaluate(() => (window as any).__retainedCards.some((card: Element) => (window as any).__retention.unobserved.has(card)))).toBe(false);
-      await page.getByRole("combobox", { name: "Time range" }).selectOption("1h");
+      await page.getByRole("combobox", { name: "Time range" }).selectOption({ label: "Past hour" });
       await expect(cards).toHaveCount(0);
       await expect.poll(() => page.evaluate(() => (window as any).__retainedCards.every((card: Element) =>
         (window as any).__retention.unobserved.has(card) && !card.hasAttribute("data-kept-size")))).toBe(true);
