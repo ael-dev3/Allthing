@@ -17,6 +17,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Write buttons retain their dialog accessibility attributes during permission discovery and key approval. A follow confirmed on the first hand-off check preserves its new follower count when the reader was known not to follow beforehand.
 - Leaving a page closes its popovers immediately, disposing nested previews as the kept feed detaches; Back does not restore fading panels while closing timers are delayed.
 - Leaving Home reuses observed card heights when their exact current sizes still match, reducing layout reads before a post opens while preserving Back geometry and the existing fallback for late size changes or unsupported browsers.
 - A hover card dismissed with Escape cannot reopen when the pointer re-enters during its closing animation.
