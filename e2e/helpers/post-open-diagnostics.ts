@@ -17,7 +17,9 @@ export function postOpenDiagnosticsProbe(limits: typeof POST_OPEN_LIMITS) {
   document.addEventListener("pointerover", (event) => {
     if (state.click === null && event.isTrusted && event.pointerType === "mouse") {
       const selected = hash(event.target);
-      if (selected) state.hover = { at: performance.now(), hash: selected };
+      // Moving from a card's center to its text must not replace the
+      // original intent timestamp with the click action's pointer move.
+      if (selected && selected !== state.hover?.hash) state.hover = { at: performance.now(), hash: selected };
     }
   }, { capture: true });
   // This runs before the measurement's capture listener. Attribute lookup
