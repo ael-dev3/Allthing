@@ -5,14 +5,11 @@
 # same Rust app, compiled with the `static-host` feature so the browser builds
 # each page's payload itself (there is no Worker behind a static host).
 # Run scripts/build.sh first: it installs the toolchain and wasm-bindgen.
+# Rust owns optimizer discovery and all build logic.
 #
 #   bash scripts/build-pages.sh [base]   # base path, default /Allthing
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export PATH="$HOME/.cargo/bin:$PWD/target/tools/bin:$PATH"
-if [ -z "${WASM_OPT_BIN:-}" ]; then
-  WASM_OPT_BIN="$(bash scripts/find-wasm-opt.sh)"
-fi
-export WASM_OPT_BIN
-cargo xtask pages "${1:-/Allthing}"
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PWD/target/tools/bin:$PATH"
+exec cargo xtask pages "${1:-/Allthing}"

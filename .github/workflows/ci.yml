@@ -68,7 +68,7 @@ jobs:
     name: performance budget (allthing.social)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    # Up to 30 minutes waiting for the deploy (scripts/wait-for-deploy.mjs),
+    # Up to 30 minutes waiting for the deploy (cargo xtask wait-for-deploy),
     # then the measurements.
     timeout-minutes: 45
     steps:
@@ -79,6 +79,9 @@ jobs:
           # The history the deploy wait needs to tell whether a later live
           # commit includes this one.
           fetch-depth: 0
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -86,7 +89,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Wait for the intended deployment
-        run: node scripts/wait-for-deploy.mjs https://allthing.social "$(git rev-parse HEAD)"
+        run: cargo xtask wait-for-deploy https://allthing.social "$(git rev-parse HEAD)"
       - run: npx playwright test e2e/perf.spec.ts
         env:
           E2E_BASE_URL: https://allthing.social
@@ -147,12 +150,12 @@ jobs:
             ~/.cache/worker-build
           key: browser-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - run: npm ci
-      - run: node scripts/npm-audit.mjs
+      - run: cargo xtask npm-audit
       - run: npm run test:tools
       - run: npx playwright install --with-deps chromium
       - run: bash scripts/build.sh
       - name: Test the local build without live data
-        run: sh scripts/test-browser-fixtures.sh
+        run: cargo xtask browser-fixtures
       - name: Test the static copy
         run: |
           bash scripts/build-pages.sh

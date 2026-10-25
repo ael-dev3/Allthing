@@ -1,5 +1,6 @@
 # Rust and build output
 /target/
+/spacetime/spacetimedb/target/
 /dist/
 /dist-pages/
 /crates/allthing-worker/build/

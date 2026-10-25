@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import axe from "axe-core";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
 /*
  * Allthing's poll on the front page: "Would you like an Allthing mobile
@@ -391,24 +391,98 @@ test.describe("the poll", () => {
 });
 
 for (const width of [1280, 390]) {
-  test(`the static copy, which has no Worker to vote with, has no poll, at ${width} px`, async ({ page }) => {
+  test(`the static copy, which has no Worker to vote with, has no poll, at ${width} px`, async ({ page }, info) => {
     test.skip(!process.env.E2E_PAGES, "the static copy, under /Allthing");
-    await page.setViewportSize({ width, height: 844 });
-    // Its trending casts, from Hypersnap in the browser: more than four.
-    await page.route("https://haatz.quilibrium.com/**", (route) => {
-      const url = new URL(route.request().url());
-      const casts = url.pathname.endsWith("/feed/trending") && !url.searchParams.has("cursor")
-        ? pool.slice(0, 8).map((cast) => ({
-            hash: cast.hash, author: cast.author, text: cast.text, timestamp: new Date(cast.ts * 1000).toISOString(),
-            embeds: [], replies: { count: 0 }, reactions: { likes_count: cast.likes, recasts_count: 0 },
-          }))
-        : null;
-      return casts
-        ? route.fulfill({ json: { casts }, headers: { "access-control-allow-origin": "*" } })
-        : route.fulfill({ status: 404, json: {}, headers: { "access-control-allow-origin": "*" } });
+    // Keep transport/startup evidence if this fails before the app mounts.
+    // Never retain bodies, console arguments, cookies or URL queries.
+    const started = Date.now();
+    const safeURL = (raw: string) => {
+      try {
+        const url = new URL(raw);
+        return /^https?:$/.test(url.protocol) ? `${url.origin}${url.pathname}`.slice(0, 240) : url.protocol;
+      } catch { return "unparseable URL"; }
+    };
+    const categories = (message: string) => ["wasm", "compile", "instantiate", "import", "fetch", "network", "cors", "csp", "mime", "panic", "unreachable", "memory", "timeout", "abort"].filter(word => message.toLowerCase().includes(word));
+    const events: object[] = [];
+    let dropped = 0;
+    const record = (event: object) => {
+      if (events.length === 64) { events.shift(); dropped++; }
+      events.push({ at: Date.now() - started, ...event });
+    };
+    const ids = new WeakMap<Request, number>();
+    let nextId = 0;
+    const id = (request: Request) => {
+      if (!ids.has(request)) ids.set(request, ++nextId);
+      return ids.get(request)!;
+    };
+    const pending = new Map<Request, object>();
+    let pendingTotal = 0;
+    page.on("request", request => {
+      const entry = { id: id(request), method: request.method(), url: safeURL(request.url()) };
+      pendingTotal++;
+      if (pending.size < 32) pending.set(request, entry);
+      record({ kind: "request", ...entry });
     });
-    await page.goto("/Allthing/");
-    await expect(page.locator("#app .cast-card:not(.skeleton)").nth(5)).toBeVisible();
-    await expect(page.locator(".poll-card, .poll-gutter")).toHaveCount(0);
+    page.on("response", response => {
+      const headers = response.headers();
+      record({ kind: "response", id: id(response.request()), status: response.status(), contentType: headers["content-type"]?.slice(0, 100), contentLength: /^\d+$/.test(headers["content-length"] ?? "") ? Number(headers["content-length"]) : undefined });
+    });
+    page.on("requestfinished", request => {
+      pendingTotal--;
+      pending.delete(request);
+      const timing = request.timing();
+      record({ kind: "finished", id: id(request), requestStart: timing.requestStart, responseStart: timing.responseStart, responseEnd: timing.responseEnd });
+    });
+    page.on("requestfailed", request => {
+      pendingTotal--;
+      pending.delete(request);
+      record({ kind: "failed", id: id(request), code: request.failure()?.errorText.match(/net::ERR_[A-Z_]+/)?.[0] ?? "unclassified network failure" });
+    });
+    page.on("pageerror", error => record({ kind: "pageerror", name: ["Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "CompileError", "LinkError", "RuntimeError"].includes(error.name) ? error.name : "Error", categories: categories(error.message), scripts: [...(error.stack ?? "").split("\n").filter(line => /^\s*at /.test(line)).join("\n").matchAll(/https?:\/\/[^\s)]+/g)].slice(0, 4).map(match => safeURL(match[0])) }));
+    page.on("console", message => {
+      const location = message.location();
+      record({ kind: "console", type: message.type(), categories: categories(message.text()), url: safeURL(location.url), line: location.lineNumber, column: location.columnNumber });
+    });
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      // Its trending casts, from Hypersnap in the browser: more than four.
+      await page.route("https://haatz.quilibrium.com/**", (route) => {
+        const url = new URL(route.request().url());
+        const casts = url.pathname.endsWith("/feed/trending") && !url.searchParams.has("cursor")
+          ? pool.slice(0, 8).map((cast) => ({
+              hash: cast.hash, author: cast.author, text: cast.text, timestamp: new Date(cast.ts * 1000).toISOString(),
+              embeds: [], replies: { count: 0 }, reactions: { likes_count: cast.likes, recasts_count: 0 },
+            }))
+          : null;
+        return casts
+          ? route.fulfill({ json: { casts }, headers: { "access-control-allow-origin": "*" } })
+          : route.fulfill({ status: 404, json: {}, headers: { "access-control-allow-origin": "*" } });
+      });
+      await page.goto("/Allthing/");
+      await expect(page.locator("#app .cast-card:not(.skeleton)").nth(5)).toBeVisible();
+      await expect(page.locator(".poll-card, .poll-gutter")).toHaveCount(0);
+    } catch (error) {
+      // Diagnostic failure must not replace the original assertion failure.
+      try {
+        const state = await Promise.race([page.evaluate(() => {
+          const safe = (raw: string) => {
+            try { const url = new URL(raw); return /^https?:$/.test(url.protocol) ? `${url.origin}${url.pathname}`.slice(0, 240) : url.protocol; }
+            catch { return "unparseable URL"; }
+          };
+          const boot = document.getElementById("boot"), app = document.getElementById("app");
+          return {
+            url: safe(location.href), readyState: document.readyState, visibility: document.visibilityState, online: navigator.onLine,
+            boot: { present: Boolean(boot), painted: boot?.hasAttribute("data-painted"), hidden: boot?.getAttribute("aria-hidden") },
+            app: { present: Boolean(app), children: app?.childElementCount, cards: app?.querySelectorAll(".cast-card:not(.skeleton)").length },
+            resources: (performance.getEntriesByType("resource") as PerformanceResourceTiming[]).slice(-48).map(entry => ({
+              url: safe(entry.name), initiator: entry.initiatorType, start: entry.startTime, duration: entry.duration,
+              responseStart: entry.responseStart, responseEnd: entry.responseEnd, transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize,
+            })),
+          };
+        }).catch(() => ({ unavailable: true })), new Promise(resolve => setTimeout(() => resolve({ diagnosticTimeout: true }), 1000))]);
+        await info.attach("static-startup-diagnostics", { contentType: "application/json", body: Buffer.from(JSON.stringify({ elapsed: Date.now() - started, dropped, events, pendingTotal, pendingEntriesTruncated: pendingTotal > pending.size, pending: [...pending.values()], state })) });
+      } catch { /* The original failure remains authoritative. */ }
+      throw error;
+    }
   });
 }

@@ -16,6 +16,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+mod browser_assets;
+mod tooling;
+
 type Result<T> = std::result::Result<T, String>;
 
 fn main() -> ExitCode {
@@ -24,13 +27,23 @@ fn main() -> ExitCode {
         Some("dist") => site(&Site::workers()),
         Some("pages") => site(&Site::pages(args.get(1).map_or("/Allthing", String::as_str))),
         Some("strip-worker") => strip_worker(&args.get(1).map_or_else(|| root().join(WORKER_WASM), PathBuf::from)),
-        _ => Err("usage: cargo xtask dist | cargo xtask pages [base] | cargo xtask strip-worker [path]".into()),
+        Some("build") => tooling::build::run(&root(), &args[1..]),
+        Some("check") => tooling::metadata::check_repo(&root()).and_then(|()| tooling::commands::check(&root(), &args[1..])),
+        Some("check-repo") if args.len() == 1 => tooling::metadata::check_repo(&root()),
+        Some("check-credits") if args.len() == 1 => tooling::metadata::check_emoji_sources(&root()),
+        Some("find-wasm-opt") => tooling::find_wasm_opt::run(&args[1..]),
+        Some("browser-fixtures") => tooling::commands::browser_fixtures(&root(), &args[1..]),
+        Some("module-check") => tooling::commands::module_check(&root(), &args[1..]),
+        Some("npm-audit") => tooling::commands::npm_audit(&root(), &args[1..]),
+        Some("attest-key") => tooling::attest::run(&root(), &args[1..]),
+        Some("wait-for-deploy") => tooling::deploy::run(&root(), &args[1..]),
+        _ => Err("usage: cargo xtask dist | pages [base] | build | check | check-repo | check-credits | find-wasm-opt [cache...] | browser-fixtures | module-check | npm-audit | attest-key | wait-for-deploy <site-url> <full-commit> | strip-worker [path]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("xtask: {error}");
-            ExitCode::FAILURE
+            if error.starts_with("usage:") { ExitCode::from(2) } else { ExitCode::FAILURE }
         }
     }
 }
@@ -55,20 +68,9 @@ fn available(program: &str) -> bool {
     Command::new(program).arg("--version").output().is_ok_and(|o| o.status.success())
 }
 
-/// Write `input` compressed at brotli's highest level to `output`, with
-/// Node's zlib (wrangler needs Node anyway). Without Node no copy is written,
-/// and the Worker serves the module as it is.
+/// Write the optional native Brotli-11 copy the Worker serves.
 fn brotli(input: &Path, output: &Path) {
-    const SCRIPT: &str = "const z = require('zlib'), fs = require('fs'); \
-        const bytes = fs.readFileSync(process.argv[1]); \
-        fs.writeFileSync(process.argv[2], z.brotliCompressSync(bytes, { params: { \
-          [z.constants.BROTLI_PARAM_QUALITY]: 11, [z.constants.BROTLI_PARAM_LGWIN]: 24, \
-          [z.constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } }));";
-    let _ = fs::remove_file(output);
-    match Command::new(tool("NODE_BIN", "node")).args(["-e", SCRIPT]).arg(input).arg(output).status() {
-        Ok(status) if status.success() => {}
-        _ => eprintln!("xtask: could not compress {} with Node; the Worker will serve it as is", input.display()),
-    }
+    browser_assets::brotli(input, output);
 }
 
 /// The Pepe pack as web/paint.js reads it: `{"code": [width, height,
@@ -178,9 +180,7 @@ fn site(site: &Site) -> Result<()> {
         // without them: Messages says so, and the rest of the site is whole.
         let out = root.join("target/stdb-bridge/bridge.js");
         let _ = fs::remove_file(&out);
-        let built =
-            run(Command::new(tool("NODE_BIN", "node")).current_dir(&root).arg("scripts/build-stdb.mjs").arg(&out))
-                .and_then(|()| read(&out));
+        let built = browser_assets::build_bridge(&root, &out);
         match built {
             Ok(bytes) => {
                 let name = format!("stdb-{}.js", fingerprint(&bytes));
@@ -211,7 +211,8 @@ fn site(site: &Site) -> Result<()> {
         "target/web-split/main.wasm",
     ]))?;
     let wasm_path = bindgen_out.join("allthing_bg.wasm");
-    let wasm_opt = tool("WASM_OPT_BIN", "wasm-opt");
+    let wasm_opt = tooling::find_wasm_opt::current(&tooling::find_wasm_opt::default_roots())?
+        .map_or_else(|| "wasm-opt".to_owned(), |path| path.to_string_lossy().into_owned());
     if available(&wasm_opt) {
         for module in std::iter::once(&wasm_path).chain(&parts) {
             optimize(&wasm_opt, module)?;

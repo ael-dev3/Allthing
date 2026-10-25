@@ -16,6 +16,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Move build orchestration, Brotli compression, repository validation, asset-credit checks, deployment waiting, isolated database-module checks, audit handling and browser fixture orchestration into native Rust `xtask` commands. Retain official Playwright tests and independent cryptography, SQL and SDK codec checks.
+
 - Live layout and interaction checks wait for loaded app content instead of loading placeholders or inert early cards; first-paint and navigation timing limits remain unchanged.
 - Browser checks wait for app handover after measuring the first painted card, compare Back with the position at the actual click, and await exact page-load counts. Local media checks run database commands asynchronously so CI's Node 22 client can retire closed connections, and retain bounded Worker diagnostics on failure. Existing timing limits, request counts and upload assertions remain.
 

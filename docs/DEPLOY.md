@@ -27,18 +27,18 @@ Pushing to `main` then builds and deploys. The first deploy also:
 
 ### What the build does
 
-`scripts/build.sh` runs on the Workers Builds image (Ubuntu, 2 vCPUs and a 20-minute limit on the Free plan). The image has no Rust, so the script installs it:
+`scripts/build.sh` runs on the Workers Builds image (Ubuntu, 2 vCPUs and a 20-minute limit on the Free plan). The image has no Rust, so the shell wrapper installs it and hands build policy to native Rust:
 
 1. rustup and the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1 with the `wasm32-unknown-unknown` target);
-2. `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
+2. `cargo xtask build` selects and installs `wasm-bindgen` CLI at the version in `Cargo.lock` (a prebuilt binary from its GitHub release), and `worker-build` (compiled with `cargo install`);
 3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`, then `cargo xtask strip-worker`, which drops from its WebAssembly the relocations the workspace's `--emit-relocs` leaves for the app's wasm-split (`linking` and `reloc.*`, more than half its bytes);
-4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted WebAssembly and its brotli-11 copy, written with Node's zlib, JS glue, the parts loaded when used and their loader, CSS, fonts, `index.html`, `_headers`).
+4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted app WebAssembly and its Brotli-11 copy written in Rust, generated glue, the app's split parts, the JavaScript loader and early-card renderer, CSS, fonts, `index.html`, `_headers`). Native Rust checks the pinned SpacetimeDB SDK and invokes the installed esbuild CLI to bundle its TypeScript adapter.
 
-A clean build on 2 CPUs takes about 5 minutes, most of it compiling (see "Build timing" below). `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
+The earlier clean-build timing below predates the native tooling migration; it is historical evidence, not a timing guarantee for this build. `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
 
 ### Build timing
 
-A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty caches (as on Workers Builds), took **4 min 51 s**:
+An earlier rehearsal, before the native tooling migration, from a fresh clone on a 2-CPU Linux machine with no Rust and empty caches took **4 min 51 s**:
 
 | Step | Time |
 |---|---|
@@ -53,6 +53,8 @@ A rehearsal from a fresh clone, on a 2-CPU Linux machine with no Rust and empty 
 2. Run the end-to-end suite against production: `E2E_BASE_URL=https://allthing.social npx playwright test`.
 3. **Recommended:** make `www` redirect with a real HTTP 301 at no Worker cost. Go to the zone's **Rules → Redirect Rules**, choose the template **Redirect from WWW to root**, and deploy it. Without it, `www.allthing.social` still redirects: API calls get a 301 from the Worker, and pages are sent to the apex by the first script that runs (`web/boot.js`).
 4. Optional protections that stop abusive traffic before it reaches the Worker, so it doesn't count against the 100,000 requests a day: a **WAF rate-limiting rule** on `/api/` and **Bot Fight Mode** (both under the zone's Security settings).
+
+Before production performance measurements, `cargo xtask wait-for-deploy https://allthing.social <full-commit>` polls only `/version`: every 10 seconds for at most 30 minutes, with a 5-second request deadline. A later live revision is accepted only when local Git ancestry proves it contains the intended commit; unknown commits trigger a bounded read-only fetch of `origin/main`. This does not warm Home or change application request budgets. CI retains its existing 45-minute performance-job cap.
 
 ## Rolling back
 
@@ -73,6 +75,8 @@ E2E_PAGES=1 npx playwright test   # check it locally
 
 With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.social/u/dwr`.
 
+The local static-site test server remains `node e2e/pages-server.mjs [port] [base] [root]` (defaults: `4173`, `/Allthing`, `dist-pages/`). Playwright selects it automatically with `E2E_PAGES=1`. It binds loopback and reproduces the static host's base-path redirect, directory index and `404.html` behavior. Its existing Node oracles remain; the migration CI startup stall and conservative rollback are documented in [PERFORMANCE.md](PERFORMANCE.md#retained-node-static-test-server).
+
 ## Secrets
 
 - **`SESSION_SECRET`** (needed for sign-in and the poll): the key that signs sign-in cookies ([ARCHITECTURE.md](ARCHITECTURE.md#sign-in)), and that keys the HMACs [Allthing's poll](ARCHITECTURE.md#allthings-poll) keeps votes under, at least 32 characters, random. Make one with `openssl rand -base64 48` and set it once with `npx wrangler secret put SESSION_SECRET`, or in the Cloudflare dashboard (Workers & Pages → `allthing` → Settings → Variables and Secrets, type *Secret*). It is never committed, logged or sent anywhere. Without it, "Sign in" says sign-in isn't set up and the poll hides itself, and everything else works. Changing it signs everyone out, and lets every network vote in the poll again. For local development, put a different random value in a `.dev.vars` file next to `wrangler.toml` (git-ignored) as `SESSION_SECRET=…`. `wrangler dev` presents requests to the Worker at the route's host, so a sign-in started locally names `allthing.social` (over http).
@@ -85,9 +89,9 @@ With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.soci
   - **Taking it back.** Delete the secret: writes go to the Farcaster app again at once, and keys readers already approved keep working until they remove Allthing in the Farcaster app. If it may have leaked, move the account to a new custody address straight away.
 - **`ATTEST_KEY`** (for Messages on SpacetimeDB): the Ed25519 private key, 64 hex digits, with which the Worker attests that a signed-in reader's SpacetimeDB identity is their Farcaster account (`POST /api/v1/auth/attest`; [ARCHITECTURE.md](ARCHITECTURE.md#messages-on-spacetimedb)). The module's `verify_fid` checks the attestation against the key's public half, pinned in `spacetime/spacetimedb/src/attest_key.rs`. It is a key of its own, used for nothing else: never `ALLTHING_CUSTODY_KEY` or a reader's key.
   - **What it can do.** Make the module believe any SpacetimeDB identity is any Farcaster account, for chat and encrypted messages. It can't read anyone's messages, which only readers' browsers can decrypt, or touch a Farcaster account.
-  - **Making and setting it.** From the repository's root: `node scripts/attest-key.mjs | npx wrangler secret put ATTEST_KEY`. The script makes a new key pair, hands the private half straight to Wrangler (it refuses to print it to a terminal), and writes the public half into `attest_key.rs` and on the screen. Commit that file, then republish the module (`cd spacetime && spacetime publish -s maincloud allthing`; see `spacetime/HANDOFF.md`). Open `/api/v1/status`: `spacetime.attest` is `true` and `spacetime.public_key` is what the script printed. Any other key means the module and the Worker disagree, and no one can verify. The key itself never shows. Never put it in the repository, a chat, an issue or a log.
+  - **Making and setting it.** From the repository's root: `cargo xtask attest-key | npx wrangler secret put ATTEST_KEY`. The native command makes a new key pair, hands the private half straight to Wrangler (it refuses to print it to a terminal), and writes the public half into `attest_key.rs` and on the screen. Commit that file, then republish the module (`cd spacetime && spacetime publish -s maincloud allthing`; see `spacetime/HANDOFF.md`). Open `/api/v1/status`: `spacetime.attest` is `true` and `spacetime.public_key` is the public half printed on stderr. Any other key means the module and the Worker disagree, and no one can verify. The key itself never shows. Never put it in the repository, a chat, an issue or a log.
   - **Until it is set**, `spacetime.attest` is `false`, the attestation endpoint answers 404, and the module, with its all-zero placeholder key, refuses `verify_fid` and lets unverified FIDs speak as before, which Messages says.
-  - **Changing it.** Run the script again and republish: attestations signed with the old key stop verifying, and identities already verified stay verified.
+  - **Changing it.** Run the native command again and republish: attestations signed with the old key stop verifying, and identities already verified stay verified.
 - **`ALLTHING_FID`** (in `wrangler.toml`, public): the account Allthing asks for readers' keys as, 3356318, @allthingapp. A fork sets its own. For the account's picture, Allthing serves its logo as a 512×512 PNG at `https://allthing.social/pfp.png` (`web/pfp.png`), since Farcaster apps show an SVG picture as blank. The URL is cached for a year (`web/_headers`), so a new logo gets a new file name.
 - **`HYPERSNAP_ORIGIN`**: never set it. Only the end-to-end tests do, to put a stand-in on their own machine in the place of Hypersnap's node; the Worker ignores anything but a local port (`http://127.0.0.1:<port>`).
 - **`ALLTHING_SPONSOR`** (optional): `1` to have the account pay the onchain fee for readers' approvals, which the Farcaster app takes from it in warps (it needs at least 100). Without it, any fee is the reader's. Set it as a *Secret* too: a deploy drops plain variables set only in the dashboard (Wrangler's `keep_vars` is off).

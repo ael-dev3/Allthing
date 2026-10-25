@@ -57,14 +57,16 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 ### Fast and frugal
 
 - **One API call per page**, cached at the edge, so the whole site runs on the Cloudflare Workers Free plan.
-- **Early paint.** The front page draws its first cards before the app has loaded (about 1.2 s on a slow phone).
+- **Early paint.** A small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
 - **Split WebAssembly.** Pages, the composer, writing, sign-in and the DAU dashboard are code of their own, fetched when used, so every visit downloads less.
 - **Instant navigation.** Posts open from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. CI holds smoothness to budgets ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - **Accessible.** Keyboard throughout, alt text, focus kept in dialogs, reduced motion respected, and it fits a phone.
 
 ## Architecture
 
-Allthing is one Cloudflare Worker that serves a static WebAssembly app and a small JSON API. All of it is Rust, apart from generated JavaScript glue and a few lines of boot script.
+Allthing is one Cloudflare Worker that serves a WebAssembly app and a small JSON API. Application logic, the Leptos interface, the API Worker and the SpacetimeDB module are written in Rust. Native Rust tooling also owns builds, compression and repository checks.
+
+JavaScript loads WebAssembly, starts the page's data request before it arrives and renders its first inert cards. That early renderer is a measured performance exception to the Rust-first policy. Messages keeps a TypeScript adapter for the official SpacetimeDB SDK and its generated bindings; browser tests keep the official Playwright TypeScript runner and the small Node static-site test server. CSS, SQL, HTML and configuration stay in their platform formats.
 
 ```text
           ┌── static files ──▶ Workers Static Assets: the app, styles, fonts (free)
@@ -82,7 +84,7 @@ The Worker builds each payload from [Hypersnap](https://github.com/farcasterorg/
 | [`allthing-data`](crates/allthing-data) | Page payload builders and guarded upstream clients, behind a small `Host` trait so they run in the Worker and in the browser. |
 | [`allthing-worker`](crates/allthing-worker) | The `/api/v1` Worker (workers-rs): routing, the per-IP rate limit, the edge cache and request coalescing. |
 | [`allthing-web`](crates/allthing-web) | The browser app: Leptos, rendered client-side, compiled to WebAssembly. |
-| [`xtask`](xtask) | Build tooling: fingerprinted static assets and the static copy. |
+| [`xtask`](xtask) | Native build orchestration, fingerprinted assets, Brotli compression, repository and credit checks, attestation key generation and deployment waiting. |
 
 More in [docs/](docs):
 
@@ -110,17 +112,22 @@ The first build also installs `wasm-bindgen` and `worker-build` into `target/too
 Checks and tests:
 
 ```sh
-bash scripts/check.sh                       # version, CSP hashes, changelog links, rustfmt, Clippy, unit tests, cargo-deny
+cargo xtask check                           # version, CSP hashes, changelog links, rustfmt, Clippy, unit tests, cargo-deny
+cargo xtask module-check                    # isolated SpacetimeDB crate: fmt, native/Wasm Clippy, tests, release build, licenses
 npx playwright install chromium             # once
-npx playwright test '\.fixture\.spec\.ts$'  # deterministic browser regressions, as CI runs them
+cargo xtask browser-fixtures                # functional fixtures, then isolated smoothness, as CI runs them
 npx playwright test                         # everything, including live Farcaster data
 E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test # production
 bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test   # the static copy
 ```
 
-Playwright starts `wrangler dev` on port 8787 by itself. CI runs `check.sh` and the fixture regressions on pull requests and pushes to `main`, and checks the [performance budget](docs/PERFORMANCE.md) against production after each push to `main`. Cloudflare Workers Builds deploys `main` ([docs/DEPLOY.md](docs/DEPLOY.md)); the repository holds no secrets.
+Playwright starts `wrangler dev` on port 8787 by itself, or `node e2e/pages-server.mjs` for the static copy. CI runs `cargo xtask check` and the fixture regressions on pull requests and pushes to `main`, and checks the [performance budget](docs/PERFORMANCE.md) against production after each push to `main`. Cloudflare Workers Builds deploys `main` ([docs/DEPLOY.md](docs/DEPLOY.md)); the repository holds no secrets.
+
+Other native commands include `cargo xtask check-repo` (metadata only), `cargo xtask check-credits` (read-only online asset-credit audit), `cargo xtask npm-audit`, and `cargo xtask wait-for-deploy https://allthing.social <full-commit>`. Attestation key generation is documented with its secret-handling precautions in [DEPLOY.md](docs/DEPLOY.md#secrets).
 
 ## Contributing
+
+**Rust first.** Add application logic to the Rust crates and native build or validation policy to `xtask`. Retain the measured faster JavaScript early-card renderer, the existing Node static test server and necessary browser, SDK and official test-tool boundaries; document exceptions and compare performance before migrating them. Preserve performance, licensing and independent test oracles; language statistics are not a reason to hide or reclassify handwritten files.
 
 Bug reports, fixes and focused improvements are welcome, within Allthing's scope: it reads, its one sign-in is Farcaster's, and it writes only what a reader asks for, with a key they approved. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules, the workflow and the checks, and follow the [code of conduct](CODE_OF_CONDUCT.md). Commits and pull request titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), each change a reader or operator would notice gets a line in the [changelog](CHANGELOG.md), and versions follow [Semantic Versioning](https://semver.org) ([docs/RELEASING.md](docs/RELEASING.md)).
 
