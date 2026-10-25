@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The connection to Allthing's SpacetimeDB database, through the bridge
-//! (web/stdb/bridge.ts), which this adds to the page as a module script the
-//! first time a signed-in reader opens Messages: nothing else fetches it.
+//! (web/stdb/bridge.ts), added once by the shared loader when a signed-in
+//! feature needs it.
 //!
 //! Signed in as `fid`, it connects with the token this browser keeps for
 //! the account (`keys::realtime`), or none the first time, and keeps the
@@ -15,19 +15,17 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use allthing_core::stdb::{
-    AttestRequest, Attestation, Called, Event, Mirror, STDB_DATABASE, STDB_URI, hex, subscriptions,
-};
-use js_sys::{Function, Promise, Reflect};
+use allthing_core::stdb::{AttestRequest, Attestation, Called, Event, Mirror, STDB_DATABASE, hex, subscriptions};
+use js_sys::Reflect;
 use leptos::prelude::*;
 use send_wrapper::SendWrapper;
+use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 use web_sys::CryptoKey;
 
 use crate::api::{self, Failure};
 use crate::keys::{self, KeyError, Realtime};
+use crate::stdb_bridge::{await_promise, js_error, load_bridge, method, parse, uri};
 
 /// The bridge's fingerprinted path, from `cargo xtask dist`; a build
 /// without it (`cargo build` alone) has no Messages.
@@ -237,21 +235,6 @@ impl Live {
     }
 }
 
-/// The database's host: maincloud, except on a development server on this
-/// machine, where `localStorage["allthing-stdb-uri"]` may name a local
-/// SpacetimeDB (`ws://127.0.0.1:<port>`) to test against.
-fn uri() -> String {
-    let local = web_sys::window().and_then(|w| {
-        let host = w.location().hostname().ok()?;
-        if host != "127.0.0.1" && host != "localhost" {
-            return None;
-        }
-        let uri = w.local_storage().ok()??.get_item("allthing-stdb-uri").ok()??;
-        (uri.starts_with("ws://127.0.0.1:") || uri.starts_with("ws://localhost:")).then_some(uri)
-    });
-    local.unwrap_or_else(|| STDB_URI.to_owned())
-}
-
 fn key_error(error: KeyError) -> String {
     match error {
         KeyError::Unsupported => {
@@ -259,69 +242,4 @@ fn key_error(error: KeyError) -> String {
         }
         KeyError::Failed(why) => why,
     }
-}
-
-fn js_error(error: JsValue) -> String {
-    Reflect::get(&error, &"message".into())
-        .ok()
-        .and_then(|m| m.as_string())
-        .or_else(|| error.as_string())
-        .unwrap_or_else(|| "Something went wrong".into())
-}
-
-fn method(object: &JsValue, name: &str) -> Result<Function, String> {
-    Reflect::get(object, &name.into())
-        .ok()
-        .and_then(|f| f.dyn_into::<Function>().ok())
-        .ok_or_else(|| format!("The database bridge has no {name}"))
-}
-
-async fn await_promise(value: JsValue) -> Result<JsValue, String> {
-    match value.dyn_into::<Promise>() {
-        Ok(promise) => JsFuture::from(promise).await.map_err(js_error),
-        Err(value) => Ok(value),
-    }
-}
-
-fn parse<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<T, String> {
-    serde_json::from_str(&value.as_string().unwrap_or_default()).map_err(|_| "The database answered oddly".into())
-}
-
-/// The bridge's `window.allthingStdb`, its script added the first time.
-async fn load_bridge(path: &str) -> Result<JsValue, String> {
-    let window = web_sys::window().ok_or("No window")?;
-    let present = |w: &web_sys::Window| Reflect::get(w, &"allthingStdb".into()).ok().filter(|v| v.is_object());
-    if let Some(global) = present(&window) {
-        return Ok(global);
-    }
-    let document = window.document().ok_or("No document")?;
-    let src = format!("{}{path}", crate::util::BASE);
-    let (script, added) = match document.query_selector("script[data-stdb]").ok().flatten() {
-        Some(script) => (script, true),
-        None => {
-            let script = document.create_element("script").map_err(js_error)?;
-            let _ = script.set_attribute("type", "module");
-            let _ = script.set_attribute("data-stdb", "");
-            let _ = script.set_attribute("src", &src);
-            (script, false)
-        }
-    };
-    let loaded = Promise::new(&mut |resolve, reject| {
-        let ok = Closure::once_into_js(move || {
-            let _ = resolve.call0(&JsValue::NULL);
-        });
-        let failed = Closure::once_into_js(move || {
-            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("Couldn't load Messages; check your connection"));
-        });
-        let _ = script.add_event_listener_with_callback("load", ok.unchecked_ref());
-        let _ = script.add_event_listener_with_callback("error", failed.unchecked_ref());
-    });
-    if !added {
-        let head = document.query_selector("head").ok().flatten().ok_or("No head")?;
-        head.append_child(&script).map_err(js_error)?;
-    }
-    if present(&window).is_none() {
-        JsFuture::from(loaded).await.map_err(js_error)?;
-    }
-    present(&window).ok_or_else(|| "Messages didn't load".into())
 }

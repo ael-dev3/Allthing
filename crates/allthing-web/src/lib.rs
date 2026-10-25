@@ -15,11 +15,15 @@ mod keys;
 mod leanings;
 mod miniapps;
 mod nav;
+#[cfg(not(feature = "static-host"))]
+mod notification_sync;
 mod pages;
 mod preload;
 mod press;
 mod seen;
 mod split;
+#[cfg(not(feature = "static-host"))]
+mod stdb_bridge;
 mod util;
 mod video;
 

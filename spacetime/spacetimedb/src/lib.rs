@@ -18,6 +18,9 @@ pub const ATTEST_MAX_TTL_SECS: u64 = 3600;
 /// the key might ever sign. Allthing's Worker builds the same string
 /// (`allthing_core::stdb::attestation_message`).
 pub const ATTEST_CONTEXT: &str = "allthing-spacetimedb-fid-v1";
+/// Small upstream clock differences may put an event just ahead of this
+/// server. Accepted values are still capped at server time before storing.
+const NOTIFICATION_FUTURE_ALLOWANCE_SECS: i64 = 60;
 
 /// SpacetimeDB identity -> Farcaster FID. `verified` once `verify_fid` checked
 /// Allthing's attestation that this identity signed in as `fid`.
@@ -99,6 +102,34 @@ pub struct RateLimit {
     #[primary_key]
     pub identity: Identity,
     pub last_at: Timestamp,
+}
+
+/// PRIVATE: an identity's signed account binding for notification state.
+/// It is separate from public chat users: reading notifications must not
+/// announce presence, publish a message key or create a chat account.
+#[spacetimedb::table(accessor = notification_reader)]
+pub struct NotificationReader {
+    #[primary_key]
+    pub identity: Identity,
+    pub fid: u64,
+}
+
+/// PRIVATE: the account-wide notification watermark, shared by all of its
+/// independently verified identities. No notification content is stored.
+#[spacetimedb::table(accessor = notification_state)]
+pub struct NotificationState {
+    #[primary_key]
+    pub fid: u64,
+    /// Unix seconds, matching Hypersnap's notification event timestamps.
+    pub seen_at: i64,
+}
+
+/// Only this caller's signed account binding can select a watermark. A
+/// client-supplied FID or a public, unverified chat claim grants no access.
+#[view(accessor = my_notification_state, public)]
+fn my_notification_state(ctx: &ViewContext) -> Vec<NotificationState> {
+    let Some(reader) = ctx.db.notification_reader().identity().find(ctx.sender()) else { return Vec::new() };
+    ctx.db.notification_state().fid().find(reader.fid).into_iter().collect()
 }
 
 #[view(accessor = my_dm_inbox, public)]
@@ -199,6 +230,46 @@ pub fn verify_fid(ctx: &ReducerContext, fid: u64, expiry: u64, signature: Vec<u8
         && k.fid != fid
     {
         ctx.db.user_key().identity().update(UserKey { fid, ..k });
+    }
+    Ok(())
+}
+
+/// Verify notification access without touching public chat users, keys or
+/// presence. The same identity-bound Worker attestation is required even
+/// when chat's development-only unverified mode is available.
+#[spacetimedb::reducer]
+pub fn verify_notification_fid(ctx: &ReducerContext, fid: u64, expiry: u64, signature: Vec<u8>) -> Result<(), String> {
+    let now = (ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000).max(0) as u64;
+    let identity = ctx.sender().to_hex().to_string();
+    check_attestation(&ATTEST_PUBLIC_KEY, &identity, fid, expiry, now, &signature)?;
+    let readers = ctx.db.notification_reader();
+    let previous = readers.identity().find(ctx.sender());
+    notification_fid(previous.as_ref().map(|reader| reader.fid), fid)?;
+    if previous.is_none() {
+        readers.insert(NotificationReader { identity: ctx.sender(), fid });
+    }
+    Ok(())
+}
+
+/// Advance the signed account's watermark. Stale or offline sessions may
+/// replay older values safely: a transaction can only increase the value.
+/// This deliberately does not share chat's per-identity send rate limiter.
+#[spacetimedb::reducer]
+pub fn mark_notifications_seen(ctx: &ReducerContext, seen_at: i64) -> Result<(), String> {
+    let reader =
+        ctx.db.notification_reader().identity().find(ctx.sender()).ok_or("verify your Farcaster account first")?;
+    let now = ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000;
+    let states = ctx.db.notification_state();
+    let old = states.fid().find(reader.fid);
+    let merged = notification_seen_at(old.as_ref().map(|state| state.seen_at), seen_at, now)?;
+    match old {
+        Some(state) if merged > state.seen_at => {
+            states.fid().update(NotificationState { fid: reader.fid, seen_at: merged });
+        }
+        None => {
+            states.insert(NotificationState { fid: reader.fid, seen_at: merged });
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -316,6 +387,28 @@ pub fn delete_dm(ctx: &ReducerContext, id: u64) -> Result<(), String> {
 
 // Checks on what clients send, kept apart from the database so they can be
 // unit-tested natively (`cargo test` in this directory).
+
+/// Notification bindings are immutable and never accept a zero FID, even
+/// if called apart from attestation validation in a future reducer.
+fn notification_fid(previous: Option<u64>, fid: u64) -> Result<(), String> {
+    if fid == 0 {
+        return Err("bad fid".into());
+    }
+    if previous.is_some_and(|old| old != fid) {
+        return Err("notification fid locked (verified)".into());
+    }
+    Ok(())
+}
+
+/// Validate a proposed watermark before taking the monotonic maximum.
+/// A client's bad clock cannot permanently hide future notifications.
+fn notification_seen_at(previous: Option<i64>, seen_at: i64, now: i64) -> Result<i64, String> {
+    let now = now.max(0);
+    if seen_at < 0 || seen_at > now.saturating_add(NOTIFICATION_FUTURE_ALLOWANCE_SECS) {
+        return Err("notification time is outside the allowed range".into());
+    }
+    Ok(previous.unwrap_or(0).max(seen_at.min(now)))
+}
 
 /// A room name: trimmed, lower-cased, 1–64 of `[a-z0-9-_]`.
 pub fn room_name(name: &str) -> Result<String, String> {
@@ -450,6 +543,44 @@ mod tests {
             Err("FID verification isn't set up yet".into())
         );
         assert!(!attestations_on(&[0; 32]));
+    }
+
+    #[test]
+    fn notification_accounts_cannot_be_rebound() {
+        assert_eq!(notification_fid(None, 3), Ok(()));
+        assert_eq!(notification_fid(Some(3), 3), Ok(()));
+        assert!(notification_fid(None, 0).is_err());
+        assert!(notification_fid(Some(3), 0).is_err());
+        assert!(notification_fid(Some(3), 4).is_err());
+    }
+
+    #[test]
+    fn notification_watermarks_merge_all_session_orders() {
+        let now = 1_800_000_000;
+        assert_eq!(notification_seen_at(None, 0, now), Ok(0));
+        assert_eq!(notification_seen_at(None, now - 10, now), Ok(now - 10));
+        assert_eq!(notification_seen_at(Some(now - 5), now - 10, now), Ok(now - 5));
+        assert_eq!(notification_seen_at(Some(now - 10), now - 5, now), Ok(now - 5));
+        assert_eq!(notification_seen_at(Some(now - 5), now - 5, now), Ok(now - 5));
+        for values in [[now - 10, now - 5, now - 20], [now - 20, now - 5, now - 10]] {
+            let mut seen = None;
+            for value in values {
+                seen = Some(notification_seen_at(seen, value, now).unwrap());
+            }
+            assert_eq!(seen, Some(now - 5));
+        }
+    }
+
+    #[test]
+    fn notification_watermarks_never_persist_a_future_clock() {
+        let now = 1_800_000_000;
+        assert_eq!(notification_seen_at(None, now, now), Ok(now));
+        assert_eq!(notification_seen_at(None, now + NOTIFICATION_FUTURE_ALLOWANCE_SECS, now), Ok(now));
+        assert!(notification_seen_at(None, now + NOTIFICATION_FUTURE_ALLOWANCE_SECS + 1, now).is_err());
+        assert!(notification_seen_at(Some(now), -1, now).is_err());
+        assert!(notification_seen_at(None, i64::MAX, now).is_err());
+        assert_eq!(notification_seen_at(None, 0, -1), Ok(0));
+        assert_eq!(notification_seen_at(None, i64::MAX, i64::MAX), Ok(i64::MAX));
     }
 
     #[test]

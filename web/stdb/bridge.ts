@@ -8,8 +8,8 @@
 // AGPL and its license audit don't take; the TypeScript SDK is ISC.
 //
 // The native xtask bundles this through esbuild into one file, `assets/stdb-<hash>.js`,
-// which the app adds as a module script only when a signed-in reader opens
-// /messages: no other page fetches it. It sets
+// which the app adds once for Messages or eligible signed-in notification
+// read-state sync. The separate connections share the script. It sets
 // `window.allthingStdb`, and the app talks to it in JSON strings, so the
 // app's own module needs no glue for it.
 //
@@ -52,6 +52,7 @@ const TABLES: Record<string, string> = {
   typing: "typing",
   myDmInbox: "my_dm_inbox",
   myDmOutbox: "my_dm_outbox",
+  myNotificationState: "my_notification_state",
 };
 
 function table(conn: Any, accessor: string): Any {
@@ -88,11 +89,11 @@ class Bridge {
     for (const [accessor, name] of Object.entries(TABLES)) {
       const t = table(conn, accessor);
       if (!t) continue;
-      t.onInsert((_ctx: Any, row: Any) => emit(JSON.stringify({ t: "insert", table: name, row: plain(row) })));
-      t.onDelete((_ctx: Any, row: Any) => emit(JSON.stringify({ t: "delete", table: name, row: plain(row) })));
+        t.onInsert((_ctx: Any, row: Any) => this.emit(JSON.stringify({ t: "insert", table: name, row: plain(row) })));
+        t.onDelete((_ctx: Any, row: Any) => this.emit(JSON.stringify({ t: "delete", table: name, row: plain(row) })));
       if (typeof t.onUpdate === "function") {
         t.onUpdate((_ctx: Any, old: Any, row: Any) =>
-          emit(JSON.stringify({ t: "update", table: name, old: plain(old), row: plain(row) })),
+          this.emit(JSON.stringify({ t: "update", table: name, old: plain(old), row: plain(row) })),
         );
       }
     }
@@ -118,6 +119,16 @@ class Bridge {
     return settle(() =>
       reducer(this.conn, "verifyFid")({ fid: BigInt(fid), expiry: BigInt(expiry), signature: unhex(signatureHex) }),
     );
+  }
+
+  verifyNotificationFid(fid: number, expiry: number, signatureHex: string) {
+    return settle(() =>
+      reducer(this.conn, "verifyNotificationFid")({ fid: BigInt(fid), expiry: BigInt(expiry), signature: unhex(signatureHex) }),
+    );
+  }
+
+  markNotificationsSeen(seenAt: number) {
+    return settle(() => reducer(this.conn, "markNotificationsSeen")({ seenAt: BigInt(seenAt) }));
   }
 
   setPublicKey(publicKeyHex: string) {
@@ -150,6 +161,8 @@ class Bridge {
   }
 
   disconnect() {
+    // Release the caller's Wasm closure before an asynchronous close event.
+    this.emit = () => {};
     this.conn.disconnect();
   }
 }
@@ -160,6 +173,7 @@ class Bridge {
  * and `disconnected`; `connected` resolves with the identity and token.
  */
 function connect(uri: string, database: string, token: string, emit: Emit): Bridge {
+  let bridge: Bridge | undefined;
   let settle: { resolve: (v: string) => void; reject: (e: Error) => void } | undefined;
   const connected = new Promise<string>((resolve, reject) => (settle = { resolve, reject }));
   const conn = DbConnection.builder()
@@ -170,11 +184,15 @@ function connect(uri: string, database: string, token: string, emit: Emit): Brid
       settle?.resolve(JSON.stringify({ identity: identity.toHexString(), token: newToken })),
     )
     .onConnectError((_ctx: Any, error: Any) => settle?.reject(new Error(String(error?.message ?? error))))
-    .onDisconnect((_ctx: Any, error: Any) =>
-      emit(JSON.stringify({ t: "disconnected", error: error ? String(error?.message ?? error) : null })),
-    )
+    .onDisconnect((_ctx: Any, error: Any) => {
+      // A socket can close before InitialConnection arrives. Wake callers
+      // awaiting connected immediately; rejecting an already settled promise
+      // is harmless for established connections.
+      settle?.reject(new Error(String(error?.message ?? error ?? "Disconnected from the database")));
+      bridge?.emit(JSON.stringify({ t: "disconnected", error: error ? String(error?.message ?? error) : null }));
+    })
     .build();
-  const bridge = new Bridge(conn, emit);
+  bridge = new Bridge(conn, emit);
   bridge.connected = connected;
   return bridge;
 }

@@ -36,12 +36,14 @@ import {
 // Import all reducer arg schemas
 import CreateRoomReducer from "./create_room_reducer";
 import DeleteDmReducer from "./delete_dm_reducer";
+import MarkNotificationsSeenReducer from "./mark_notifications_seen_reducer";
 import RegisterReducer from "./register_reducer";
 import SendDmReducer from "./send_dm_reducer";
 import SendMessageReducer from "./send_message_reducer";
 import SetPublicKeyReducer from "./set_public_key_reducer";
 import SetTypingReducer from "./set_typing_reducer";
 import VerifyFidReducer from "./verify_fid_reducer";
+import VerifyNotificationFidReducer from "./verify_notification_fid_reducer";
 
 // Import all procedure arg schemas
 
@@ -49,6 +51,7 @@ import VerifyFidReducer from "./verify_fid_reducer";
 import ChatMessageRow from "./chat_message_table";
 import MyDmInboxRow from "./my_dm_inbox_table";
 import MyDmOutboxRow from "./my_dm_outbox_table";
+import MyNotificationStateRow from "./my_notification_state_table";
 import RoomRow from "./room_table";
 import TypingRow from "./typing_table";
 import UserRow from "./user_table";
@@ -140,18 +143,27 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyDmOutboxRow),
+  myNotificationState: __table({
+    name: 'my_notification_state',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyNotificationStateRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("create_room", CreateRoomReducer),
   __reducerSchema("delete_dm", DeleteDmReducer),
+  __reducerSchema("mark_notifications_seen", MarkNotificationsSeenReducer),
   __reducerSchema("register", RegisterReducer),
   __reducerSchema("send_dm", SendDmReducer),
   __reducerSchema("send_message", SendMessageReducer),
   __reducerSchema("set_public_key", SetPublicKeyReducer),
   __reducerSchema("set_typing", SetTypingReducer),
   __reducerSchema("verify_fid", VerifyFidReducer),
+  __reducerSchema("verify_notification_fid", VerifyNotificationFidReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
@@ -168,6 +180,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "my_dm_inbox": Omit<typeof tablesSchema.schemaType.tables["myDmInbox"], "accessorName"> & { readonly accessorName: "my_dm_inbox" };
     /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
     readonly "my_dm_outbox": Omit<typeof tablesSchema.schemaType.tables["myDmOutbox"], "accessorName"> & { readonly accessorName: "my_dm_outbox" };
+    /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
+    readonly "my_notification_state": Omit<typeof tablesSchema.schemaType.tables["myNotificationState"], "accessorName"> & { readonly accessorName: "my_notification_state" };
   };
 };
 
@@ -190,6 +204,7 @@ const tableAccessorAliases = {
   "user_key": "userKey",
   "my_dm_inbox": "myDmInbox",
   "my_dm_outbox": "myDmOutbox",
+  "my_notification_state": "myNotificationState",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -218,6 +233,8 @@ export type DbView = __DbViewBase & {
   readonly "my_dm_inbox": __DbViewBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_outbox": __DbViewBase["myDmOutbox"];
+  /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
+  readonly "my_notification_state": __DbViewBase["myNotificationState"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
@@ -230,6 +247,8 @@ export type Tables = __TablesBase & {
   readonly "my_dm_inbox": __TablesBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_outbox": __TablesBase["myDmOutbox"];
+  /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
+  readonly "my_notification_state": __TablesBase["myNotificationState"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */
