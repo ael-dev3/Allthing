@@ -86,9 +86,10 @@ async function watchDismissal(page: Page) {
     const listeners = new Set<EventListenerOrEventListenerObject>();
     const describe = (target: EventTarget | null) => target instanceof Element
       ? `${target.tagName.toLowerCase()}.${target.className}`.slice(0, 120) : null;
-    const record = (action: string, target: EventTarget | null = null) => {
+    const record = (action: string, target: EventTarget | null = null, event?: Event) => {
       events.push({
         at: Math.round(performance.now()), action, target: describe(target),
+        point: event instanceof MouseEvent ? [event.clientX, event.clientY] : null,
         focus: describe(document.activeElement), windowKeys: listeners.size,
         panels: [...document.querySelectorAll(".popover-panel")].slice(0, 8)
           .map((panel) => ({ id: panel.id, class: panel.className })),
@@ -108,9 +109,9 @@ async function watchDismissal(page: Page) {
     for (const type of ["keydown", "keyup", "mouseenter", "mouseleave", "focusin", "focusout"]) {
       add(type, ((event: Event) => {
         if (event instanceof KeyboardEvent) {
-          if (event.key === "Escape") record(`${type}:${event.key}:${event.isTrusted}`, event.target);
+          if (event.key === "Escape") record(`${type}:${event.key}:${event.isTrusted}`, event.target, event);
         } else if (event.target instanceof Element && event.target.matches(".popover, .popover-panel, .user-link, .author, .display-name")) {
-          record(type, event.target);
+          record(type, event.target, event);
         }
       }) as EventListener, true);
     }
@@ -235,6 +236,61 @@ test("Escape stays dismissed when the pointer re-enters during the closing anima
   await page.mouse.move(5, 5);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await expect(profile).toBeVisible();
+});
+
+test("Escape stays dismissed across stationary-pointer layout changes after closing", async ({ page }) => {
+  await serve(page);
+  await watchDismissal(page);
+  await page.goto("/");
+  await appCame(page);
+  const picture = chipLink(feedCard(page), "user-link");
+  const chip = picture.locator("..");
+  const profile = profileOf(page, "Alice", "alice");
+  await picture.hover();
+  await expect(profile).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(profile).toHaveCount(0);
+
+  // The pointer stays still. Moving its trigger away and back creates
+  // real layout-driven boundary events after Closing has already ended.
+  // Those trusted events must not undo the reader's Escape dismissal.
+  type Boundary = { action: string; target: string | null; point: [number, number] | null };
+  const boundaries = () => page.evaluate(() =>
+    ((window as Window & { popoverDismissalEvents?: Boundary[] }).popoverDismissalEvents ?? [])
+      .filter((event) => ["mouseenter", "mouseleave"].includes(event.action) && event.target === "span.popover user-chip"));
+  const before = await boundaries();
+  const entered = before.filter((event) => event.action === "mouseenter").length;
+  const left = before.filter((event) => event.action === "mouseleave").length;
+  const parked = before.at(-1)!.point;
+  await chip.evaluate((element) => { (element as HTMLElement).style.transform = "translateX(400px)"; });
+  await expect.poll(async () => (await boundaries()).filter((event) => event.action === "mouseleave").length).toBe(left + 1);
+  await chip.evaluate((element) => { (element as HTMLElement).style.transform = ""; });
+  await expect.poll(async () => (await boundaries()).filter((event) => event.action === "mouseenter").length).toBe(entered + 1);
+  expect((await boundaries()).slice(-2).map((event) => event.point)).toEqual([parked, parked]);
+  await page.waitForTimeout(300);
+  try {
+    await expect(profile).toHaveCount(0, { timeout: 500 });
+  } catch (error) {
+    const events = await page.evaluate(() => (window as Window & { popoverDismissalEvents?: unknown[] }).popoverDismissalEvents);
+    await test.info().attach("popover-dismissal-events", { body: JSON.stringify(events, null, 2), contentType: "application/json" });
+    throw error;
+  }
+
+  // Deliberate movement out and back still starts a fresh hover.
+  await page.mouse.move(5, 5);
+  await picture.hover();
+  await expect(profile).toBeVisible();
+
+  // A hover-capable pen follows the same path; touch keeps its explicit
+  // tap behavior. Chromium delivers real pen pointer events through CDP.
+  await page.keyboard.press("Escape");
+  await expect(profile).toHaveCount(0);
+  const box = (await picture.boundingBox())!;
+  const input = await page.context().newCDPSession(page);
+  await input.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5, pointerType: "pen" });
+  await input.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x + box.width / 2, y: box.y + box.height / 2, pointerType: "pen" });
+  await expect(profile).toBeVisible({ timeout: 500 });
+  await input.detach();
 });
 
 test("a card's picture shows the small copy the feed loaded until its own has loaded", async ({ page }) => {

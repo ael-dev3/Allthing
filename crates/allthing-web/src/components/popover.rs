@@ -119,6 +119,12 @@ pub fn Popover(
 ) -> impl IntoView {
     let state = RwSignal::new(State::Closed);
     let timer = StoredValue::new(None::<TimeoutHandle>);
+    // Layout can send trusted leave/enter events to a stationary pointer
+    // after Escape's closing animation. Only a new pointer excursion or
+    // an explicit activation may arm that hover again.
+    let hover_dismissed = RwSignal::new(false);
+    let pointer_at = StoredValue::new(None::<(i32, i32)>);
+    let dismissed_at = StoredValue::new(None::<(i32, i32)>);
     let root = NodeRef::<leptos::html::Span>::new();
     let button = NodeRef::<leptos::html::Button>::new();
     let max_px = max_px.unwrap_or(MAX_PANEL_PX);
@@ -258,6 +264,7 @@ pub fn Popover(
     let open_by = move |press: bool| {
         cancel();
         place();
+        hover_dismissed.set(false);
         pressed_open.set_value(press);
         state.set(State::Open);
     };
@@ -280,6 +287,13 @@ pub fn Popover(
                 },
                 CLOSE_ANIMATION,
             );
+        }
+    };
+    let dismiss_hover = move || {
+        if state.try_get_untracked() == Some(State::Open) {
+            dismissed_at.set_value(pointer_at.get_value());
+            hover_dismissed.set(true);
+            close();
         }
     };
     if let Some(shut) = shut {
@@ -315,9 +329,10 @@ pub fn Popover(
             warm.run(());
         }
     };
-    let enter = move |_: ev::MouseEvent| {
+    let enter = move |ev: ev::MouseEvent| {
+        pointer_at.set_value(Some((ev.client_x(), ev.client_y())));
         warm();
-        if hovering() {
+        if hovering() && !hover_dismissed.get_untracked() {
             match state.get_untracked() {
                 State::Open => cancel(),
                 State::Closed => schedule(open_delay, Box::new(open)),
@@ -326,6 +341,11 @@ pub fn Popover(
                 // is shorter than its closing animation.
                 State::Closing => {}
             }
+        }
+    };
+    let pointer_move = move |ev: ev::PointerEvent| {
+        if ev.pointer_type() == "mouse" || ev.pointer_type() == "pen" && can_hover() {
+            pointer_at.set_value(Some((ev.client_x(), ev.client_y())));
         }
     };
     let leave = move |_: ev::MouseEvent| {
@@ -431,7 +451,7 @@ pub fn Popover(
         pointer.set_value(String::new());
         if ev.key() == "Escape" && state.get_untracked() == State::Open {
             ev.stop_propagation();
-            close();
+            dismiss_hover();
             if links {
                 // Back to the link focus rested on, or else the first one.
                 let back = focused_link.get_value().filter(|link| link.is_connected()).or_else(|| {
@@ -463,6 +483,7 @@ pub fn Popover(
     let outside_click = StoredValue::new(None::<WindowListenerHandle>);
     let escape_key = StoredValue::new(None::<WindowListenerHandle>);
     let pointer_up = StoredValue::new(None::<WindowListenerHandle>);
+    let hover_rearm = StoredValue::new(None::<WindowListenerHandle>);
     // The window's capture listeners: light dismissal's, and a fixed panel's.
     let captures = StoredValue::new_local(Vec::<Capture>::new());
     let remove_listeners = move || {
@@ -484,6 +505,26 @@ pub fn Popover(
         });
         !inside_root(target) && !over
     };
+    Effect::new(move |_| {
+        hover_rearm.update_value(|current| {
+            if let Some(handle) = current.take() {
+                handle.remove();
+            }
+        });
+        if !hover_dismissed.get() {
+            return;
+        }
+        hover_rearm.set_value(Some(window_event_listener(ev::pointermove, move |ev| {
+            let moved = dismissed_at.get_value().is_none_or(|point| point != (ev.client_x(), ev.client_y()));
+            let outside = ev
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
+                .is_some_and(|target| !inside_root(&target));
+            if (ev.pointer_type() == "mouse" || ev.pointer_type() == "pen" && can_hover()) && moved && outside {
+                let _ = hover_dismissed.try_set(false);
+            }
+        })));
+    });
     Effect::new(move |_| {
         remove_listeners();
         if state.get() != State::Open {
@@ -520,7 +561,7 @@ pub fn Popover(
         }
         escape_key.set_value(Some(window_event_listener(ev::keydown, move |ev| {
             if ev.key() == "Escape" {
-                close();
+                dismiss_hover();
             }
         })));
         pointer_up.set_value(Some(window_event_listener(ev::pointerup, move |ev| {
@@ -595,6 +636,11 @@ pub fn Popover(
     on_cleanup(move || {
         cancel();
         remove_listeners();
+        hover_rearm.update_value(|current| {
+            if let Some(handle) = current.take() {
+                handle.remove();
+            }
+        });
     });
 
     let id = format!("pop-{}", next_id());
@@ -653,6 +699,7 @@ pub fn Popover(
             on:focusout=focus_out
             on:keydown=keydown
             on:pointerdown=pointer_down
+            on:pointermove=pointer_move
             on:click=link_click
         >
             {lead.map(|lead| lead.run())}
