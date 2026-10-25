@@ -158,6 +158,10 @@ The Rust-first tooling work also tried an independent Rust Wasm first-card rende
 
 The JavaScript baseline used preserved pre-migration local assets; it was not independently rebuilt from an exact source commit. These are local prototype results, not production release evidence or a general Rust-versus-JavaScript benchmark. The Rust prototype needed an additional Wasm/glue download; the retained renderer does not. This supports keeping this measured exception, not a claim that native Rust tooling improves browser startup. Preserve the existing early-renderer regression tests and require matched performance evidence before revisiting it.
 
+#### Retained Node static test server
+
+The small `e2e/pages-server.mjs` and its three existing Node oracles remain. In [migration CI 40232102342](https://github.com/ael-dev3/Allthing/actions/runs/40232102342), the first static poll fixture at 1280 px stalled on the boot screen before the app mounted, then passed on retry. That first attempt remains rejected. The pending resource was not recorded, so the cause was not established. Keeping the existing test server is a conservative rollback while startup diagnostics improve, with no claim that Rust caused the stall or that the rollback improves performance. The existing assertions and their 25-second expectation deadline remain.
+
 ### 2. Prefetch, under a strict budget
 
 - **Hover or touch** on a card prefetches `/api/v1/cast?hash=…` (`pointerenter`, `touchstart`).

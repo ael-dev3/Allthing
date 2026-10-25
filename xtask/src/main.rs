@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 mod browser_assets;
-mod pages_server;
 mod tooling;
 
 type Result<T> = std::result::Result<T, String>;
@@ -38,8 +37,7 @@ fn main() -> ExitCode {
         Some("npm-audit") => tooling::commands::npm_audit(&root(), &args[1..]),
         Some("attest-key") => tooling::attest::run(&root(), &args[1..]),
         Some("wait-for-deploy") => tooling::deploy::run(&root(), &args[1..]),
-        Some("serve-pages") => pages_server::run(&root(), &args[1..]),
-        _ => Err("usage: cargo xtask dist | pages [base] | build | check | check-repo | check-credits | find-wasm-opt [cache...] | browser-fixtures | module-check | npm-audit | attest-key | wait-for-deploy <site-url> <full-commit> | serve-pages [port] [base] [root] | strip-worker [path]".into()),
+        _ => Err("usage: cargo xtask dist | pages [base] | build | check | check-repo | check-credits | find-wasm-opt [cache...] | browser-fixtures | module-check | npm-audit | attest-key | wait-for-deploy <site-url> <full-commit> | strip-worker [path]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

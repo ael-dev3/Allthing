@@ -75,7 +75,7 @@ E2E_PAGES=1 npx playwright test   # check it locally
 
 With the redirect in place, `…/Allthing/u/dwr` lands on `https://allthing.social/u/dwr`.
 
-The local static-site server is `cargo xtask serve-pages [port] [base] [root]` (defaults: `4173`, `/Allthing`, `dist-pages/`). Playwright selects it automatically with `E2E_PAGES=1`; it binds loopback and fences decoded traversal and symlinks outside the chosen root.
+The local static-site test server remains `node e2e/pages-server.mjs [port] [base] [root]` (defaults: `4173`, `/Allthing`, `dist-pages/`). Playwright selects it automatically with `E2E_PAGES=1`. It binds loopback and reproduces the static host's base-path redirect, directory index and `404.html` behavior. Its existing Node oracles remain; the migration CI startup stall and conservative rollback are documented in [PERFORMANCE.md](PERFORMANCE.md#retained-node-static-test-server).
 
 ## Secrets
 
