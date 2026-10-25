@@ -16,6 +16,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Live layout and interaction checks wait for loaded app content instead of loading placeholders or inert early cards; first-paint and navigation timing limits remain unchanged.
 - Browser checks wait for app handover after measuring the first painted card, compare Back with the position at the actual click, and await exact page-load counts. Local media checks run database commands asynchronously so CI's Node 22 client can retire closed connections, and retain bounded Worker diagnostics on failure. Existing timing limits, request counts and upload assertions remain.
 
 ## [0.5.1] - 2026-10-23
