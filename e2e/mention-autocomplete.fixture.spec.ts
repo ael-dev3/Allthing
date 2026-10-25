@@ -5,6 +5,7 @@ import { expectDraft } from "./helpers/composer";
 import { approvedKey, cast as castOf, signIn } from "./helpers/farcaster";
 import { standIn } from "./helpers/node";
 import { NOW } from "./fixture-time";
+import { showSeenPosts } from "./helpers/app";
 
 /*
  * The composer's "@" suggestions (components/mention.rs): typing "@al"
@@ -51,9 +52,13 @@ async function ready(page: Page) {
       : route.fulfill({ status: 400, headers: cors, json: { error: "Failed to get username proof", error_detail: "status: NotFound" } });
   });
   await page.goto("/");
+  await showSeenPosts(page);
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   key = await approvedKey(page, me.fid, 3_600_000);
   await page.reload();
+  // The first visit may have recorded the fixture's only cast as seen.
+  // Recover it through the reader's control, after the real app arrives.
+  await showSeenPosts(page);
   await expect(page.locator(".cast-card:not(.skeleton)").first()).toBeVisible();
   return { node, searched };
 }

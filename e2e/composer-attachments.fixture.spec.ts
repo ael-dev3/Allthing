@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Browser, type JSHandle, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { expectDraft } from "./helpers/composer";
@@ -31,7 +32,7 @@ const NODE = "https://haatz.quilibrium.com/v1";
 const KLIPY = "https://api.klipy.com/api/v1/fixture-key/gifs";
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
 const MB = 1024 * 1024;
-const LIMITS = { max_image_bytes: 10 * MB, max_video_bytes: 50 * MB, max_embeds: 2 };
+const LIMITS = { max_image_bytes: 10 * MB, max_video_bytes: 250 * MB, max_embeds: 2 };
 const FULL = "A cast takes two embeds: remove one to add another.";
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,video/webm";
 const EXT: Record<string, string> = {
@@ -412,7 +413,7 @@ test("at 1280, files attach from the button and a paste, show their uploads' pro
   const button = dialog.getByRole("button", { name: "Attach images or videos" });
   await expect(button).toBeVisible();
   expect(media.asked).toBe(1);
-  await expect(button).toHaveAccessibleDescription("Images up to 10 MB, videos up to 50 MB");
+  await expect(button).toHaveAccessibleDescription("Images up to 10 MB, videos up to 250 MB");
   const input = dialog.locator("input.attach-input");
   await expect(input).toHaveAttribute("type", "file");
   await expect(input).toHaveAttribute("accept", ACCEPT);
@@ -921,3 +922,174 @@ test("at 390, where Allthing doesn't post, the bar still fits with Post in Farca
   expect(new URL((await link.getAttribute("href"))!).searchParams.getAll("embeds[]")).toEqual(media.uploads.map((u) => u.url));
   await context.close();
 });
+
+
+/** The multipart endpoint, holding completion so its processing state is observable. */
+async function chunkedMedia(page: Page, failPartOnce = 0, failureStatus = 503, loseCreate = false, loseComplete = false) {
+  const chunks: { number: number; body: Buffer }[] = [];
+  const attempts: number[] = [];
+  let creates = 0;
+  const createIds: string[] = [];
+  let completes = 0;
+  const tag = (part: number) => `part-${part}-${"opaque".repeat(28)}`;
+  let aborted = false;
+  let finish: (() => void) | undefined;
+  let id = "";
+  await page.route("**/api/v1/media?*", async (route) => {
+    const url = new URL(route.request().url());
+    const action = url.searchParams.get("upload");
+    if (action === "create") {
+      creates += 1;
+      id = route.request().postDataJSON().id;
+      createIds.push(id);
+      expect(id).toMatch(/^[a-f0-9]{32}$/);
+      expect(route.request().postDataJSON()).toMatchObject({ type: "video/webm", bytes: 16 * MB + 17 });
+      if (loseCreate) {
+        loseCreate = false;
+        return route.fulfill({ status: 503, json: { error: "Create response lost; Retry." } });
+      }
+      return route.fulfill({ json: { id, part_bytes: 8 * MB } });
+    }
+    expect(url.searchParams.get("id")).toBe(id);
+    if (action === "part") {
+      const number = Number(url.searchParams.get("part"));
+      attempts.push(number);
+      if (number === failPartOnce) {
+        failPartOnce = 0;
+        return route.fulfill({ status: failureStatus, json: { error: "This part did not arrive. Retry to continue." } });
+      }
+      chunks.push({ number, body: route.request().postDataBuffer()! });
+      return route.fulfill({ json: { part_number: number, etag: tag(number) } });
+    }
+    if (action === "complete") {
+      completes += 1;
+      expect(route.request().postDataJSON()).toEqual({ parts: [1, 2, 3].map((part_number) => ({ part_number, etag: tag(part_number) })) });
+      if (loseComplete) {
+        loseComplete = false;
+        return route.fulfill({ status: 503, json: { error: "Completion response lost; Retry." } });
+      }
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return route.fulfill({ json: { url: `${new URL(route.request().url()).origin}/m/1234/${id}.webm`, type: "video/webm", bytes: 16 * MB + 17 } }).catch(() => {});
+    }
+    if (action === "abort") {
+      aborted = true;
+      return route.fulfill({ status: 204 });
+    }
+    throw new Error(`Unexpected multipart action ${action}`);
+  });
+  return { chunks, attempts, createIds, completes: () => completes, creates: () => creates, aborted: () => aborted, readyToFinish: () => !!finish, finish: () => finish?.() };
+}
+
+for (const width of [1280, 390]) {
+  test(`a large video uploads in chunks, resumes the failed chunk, and waits for completion at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await ready(page, new Media());
+    const media = await chunkedMedia(page, 2);
+    await page.getByRole("button", { name: "Write a cast" }).click();
+    const dialog = page.getByRole("dialog", { name: "New cast" });
+    const bytes = Buffer.alloc(16 * MB + 17, 0x5a);
+    await attach(page, dialog, [{ name: "large.webm", mimeType: "video/webm", buffer: bytes }]);
+    const error = dialog.getByRole("alert").filter({ hasText: "large.webm" });
+    await expect(error).toContainText("Retry to continue");
+    expect(media.attempts).toEqual([1, 2]);
+    await error.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(media.readyToFinish).toBe(true);
+    await expect(dialog.getByRole("status").filter({ hasText: "Finishing upload" })).toBeVisible();
+    await expect(dialog.locator(".compose-post")).toBeDisabled();
+    expect(media.creates()).toBe(1);
+    expect(media.attempts).toEqual([1, 2, 2, 3]);
+    expect(media.chunks.map((part) => part.body.length)).toEqual([8 * MB, 8 * MB, 17]);
+    expect(Buffer.concat(media.chunks.map((part) => part.body)).equals(bytes)).toBe(true);
+    media.finish();
+    await expect(dialog.getByRole("status").filter({ hasText: "Finishing upload" })).toHaveCount(0);
+    await expect(tiles(dialog).first()).not.toHaveClass(/sending|failed/);
+    await expect(dialog.getByRole("button", { name: "Cast", exact: true })).toBeEnabled();
+  });
+}
+
+test("removing a large video cancels its multipart reservation", async ({ page }) => {
+  await ready(page, new Media());
+  const media = await chunkedMedia(page, 2);
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  await attach(page, dialog, [{ name: "large.webm", mimeType: "video/webm", buffer: Buffer.alloc(16 * MB + 17, 0x5a) }]);
+  await expect(dialog.getByRole("alert")).toContainText("Retry to continue");
+  await dialog.getByRole("button", { name: "Remove large.webm", exact: true }).click();
+  await expect.poll(media.aborted).toBe(true);
+  await expect(tiles(dialog)).toHaveCount(0);
+  expect(media.creates()).toBe(1);
+});
+
+test("a video above 50 MB reads metadata only before lossless HLS preparation", async ({ page }) => {
+  const media = new Media();
+  await ready(page, media);
+  await page.evaluate(() => {
+    const original = Blob.prototype.arrayBuffer;
+    (window as unknown as { metadataReads: number[] }).metadataReads = [];
+    Blob.prototype.arrayBuffer = function () {
+      (window as unknown as { metadataReads: number[] }).metadataReads.push(this.size);
+      if (this.size > 8 * 1024 * 1024) throw new Error("Video payload must not be read into Wasm");
+      return original.call(this);
+    };
+  });
+  const original = readFileSync(path.join(__dirname, "../crates/allthing-core/tests/fixtures/video-h264-aac.mp4"));
+  const padding = Buffer.alloc(51 * MB);
+  padding.writeUInt32BE(padding.length, 0);
+  padding.write("free", 4, "latin1");
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  const folder = mkdtempSync(path.join(tmpdir(), "allthing-video-fixture-"));
+  const file = path.join(folder, "large.mp4");
+  writeFileSync(file, Buffer.concat([original, padding]));
+  try {
+  const chooser = page.waitForEvent("filechooser");
+  await dialog.getByRole("button", { name: "Attach images or videos" }).click();
+  await (await chooser).setFiles(file);
+  await expect.poll(() => media.uploads.length).toBe(1);
+  expect(media.uploads[0].hls).toMatch(/^1;/);
+  expect(media.uploads[0].body.length).toBeLessThan(original.length + 8192);
+  const reads = await page.evaluate(() => (window as unknown as { metadataReads: number[] }).metadataReads);
+  expect(reads.length).toBeGreaterThan(0);
+  expect(Math.max(...reads)).toBeLessThan(8 * MB);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+
+test("Retry starts a fresh session after the server reclaimed an expired video", async ({ page }) => {
+  await ready(page, new Media());
+  const media = await chunkedMedia(page, 2, 404);
+  await page.getByRole("button", { name: "Write a cast" }).click();
+  const dialog = page.getByRole("dialog", { name: "New cast" });
+  await attach(page, dialog, [{ name: "large.webm", mimeType: "video/webm", buffer: Buffer.alloc(16 * MB + 17, 0x5a) }]);
+  const error = dialog.getByRole("alert").filter({ hasText: "large.webm" });
+  await expect(error).toContainText("Retry to continue");
+  await error.getByRole("button", { name: "Retry" }).click();
+  await expect.poll(media.readyToFinish).toBe(true);
+  expect(media.creates()).toBe(2);
+  expect(media.attempts).toEqual([1, 2, 1, 2, 3]);
+  media.finish();
+  await expect(dialog.locator(".compose-post")).toBeEnabled();
+});
+
+
+for (const lost of ["create", "complete"]) {
+  test(`a lost ${lost} response retries the same video session without repeating acknowledged parts`, async ({ page }) => {
+    await ready(page, new Media());
+    const media = await chunkedMedia(page, 0, 503, lost === "create", lost === "complete");
+    await page.getByRole("button", { name: "Write a cast" }).click();
+    const dialog = page.getByRole("dialog", { name: "New cast" });
+    await attach(page, dialog, [{ name: "large.webm", mimeType: "video/webm", buffer: Buffer.alloc(16 * MB + 17, 0x5a) }]);
+    const error = dialog.getByRole("alert").filter({ hasText: "large.webm" });
+    await expect(error).toContainText("response lost");
+    await error.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(media.readyToFinish).toBe(true);
+    expect(new Set(media.createIds).size).toBe(1);
+    expect(media.creates()).toBe(lost === "create" ? 2 : 1);
+    expect(media.completes()).toBe(lost === "complete" ? 2 : 1);
+    expect(media.attempts).toEqual([1, 2, 3]);
+    media.finish();
+    await expect(dialog.locator(".compose-post")).toBeEnabled();
+  });
+}

@@ -30,7 +30,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Blob, BlobPropertyBag, File, ProgressEvent, XmlHttpRequest};
 
-use crate::components::compose::{Attachment, Composer, INCOMING, LIVE, Live, Sending};
+use crate::components::compose::{Attachment, ChunkUpload, Composer, INCOMING, LIVE, Live, Sending};
 
 /// A picture with a frame and a corner of sky: attach.
 const PICTURE: &str = "M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zM2.5 10.5l3.2-3.2 2.6 2.6 1.7-1.7 3.5 3.5";
@@ -70,10 +70,13 @@ pub fn add(composer: Composer, files: Vec<File>) {
 fn start(composer: Composer, file: File, media: MediaType) {
     let id = Attachment::next_id();
     let local = web_sys::Url::create_object_url_with_blob(&file).ok();
-    let state = Sending::Up { sent: 0.0, of: file.size() };
+    let state = if media.is_video() { Sending::Preparing } else { Sending::Up { sent: 0.0, of: file.size() } };
     composer.files.update(|files| files.push(Attachment { id, name: file.name(), media, local, state }));
     LIVE.with(|live| {
-        live.borrow_mut().insert(id, Live { file, body: None, hls: None, request: None, progress: None, ended: None })
+        live.borrow_mut().insert(
+            id,
+            Live { file, body: None, hls: None, multipart: None, request: None, progress: None, ended: None },
+        )
     });
     send(composer, id);
 }
@@ -81,13 +84,18 @@ fn start(composer: Composer, file: File, media: MediaType) {
 /// Try a file that didn't go again.
 pub fn retry(composer: Composer, id: u64) {
     if LIVE.with(|live| live.borrow().contains_key(&id)) {
-        set(composer, id, Sending::Up { sent: 0.0, of: 0.0 });
+        let state = if media_of(composer, id).is_some_and(MediaType::is_video) {
+            Sending::Preparing
+        } else {
+            Sending::Up { sent: 0.0, of: 0.0 }
+        };
+        set(composer, id, state);
         send(composer, id);
     }
 }
 
 fn set(composer: Composer, id: u64, state: Sending) {
-    composer.files.update(|files| {
+    let _ = composer.files.try_update(|files| {
         if let Some(file) = files.iter_mut().find(|f| f.id == id) {
             file.state = state;
         }
@@ -103,6 +111,9 @@ fn media_of(composer: Composer, id: u64) -> Option<MediaType> {
 fn send(composer: Composer, id: u64) {
     spawn_local(async move {
         let Some(media) = media_of(composer, id) else { return };
+        let maximum = composer.limits.get_untracked().map_or(media.max_bytes(), |limits| {
+            if media.is_video() { limits.max_video_bytes } else { limits.max_image_bytes }
+        });
         let Some((file, kept, hls)) =
             LIVE.with(|live| live.borrow().get(&id).map(|l| (l.file.clone(), l.body.clone(), l.hls.clone())))
         else {
@@ -114,14 +125,36 @@ fn send(composer: Composer, id: u64) {
                 Ok(body) => (body, None),
                 Err(why) => return set(composer, id, Sending::Failed { why }),
             },
-            None if matches!(media, MediaType::Mp4 | MediaType::Mov) => match remuxed(&file).await {
+            None if matches!(media, MediaType::Mp4 | MediaType::Mov) => match remuxed(&file, id).await {
                 Some((body, index)) => (body, Some(index)),
                 None => (file.clone().into(), None),
             },
             None => (file.clone().into(), None),
         };
+        if body.size() > maximum as f64 {
+            return set(
+                composer,
+                id,
+                Sending::Failed {
+                    why: format!("The prepared file is too large: the limit is {}.", size_label(maximum)),
+                },
+            );
+        }
         // A remuxed video goes as an MP4, whatever it was.
         let mime = if hls.is_some() { MediaType::Mp4.mime() } else { media.mime() };
+        if media.is_video() && body.size() > allthing_core::media::VIDEO_PART_BYTES as f64 {
+            LIVE.with(|live| {
+                if let Some(live) = live.borrow_mut().get_mut(&id) {
+                    live.body = Some(body.clone());
+                    live.hls = hls.clone();
+                }
+            });
+            if let Err(why) = send_chunks(composer, id, &body, mime, hls.as_deref()).await {
+                set(composer, id, Sending::Failed { why });
+            }
+            return;
+        }
+        set(composer, id, Sending::Up { sent: 0.0, of: body.size() });
         // Removed meanwhile, or the draft cleared.
         let Some(request) = LIVE.with(|live| {
             let mut live = live.borrow_mut();
@@ -136,7 +169,12 @@ fn send(composer: Composer, id: u64) {
         };
         let progress = Closure::<dyn FnMut(ProgressEvent)>::new(move |ev: ProgressEvent| {
             if ev.length_computable() {
-                set(composer, id, Sending::Up { sent: ev.loaded(), of: ev.total() });
+                let state = if media.is_video() && ev.loaded() >= ev.total() {
+                    Sending::Finishing
+                } else {
+                    Sending::Up { sent: ev.loaded(), of: ev.total() }
+                };
+                set(composer, id, state);
             }
         });
         let answer = request.clone();
@@ -164,6 +202,8 @@ fn send(composer: Composer, id: u64) {
             });
         request.set_onload(Some(ended.as_ref().unchecked_ref()));
         request.set_onerror(Some(ended.as_ref().unchecked_ref()));
+        request.set_ontimeout(Some(ended.as_ref().unchecked_ref()));
+        request.set_timeout(180_000);
         // Kept until the file is let go: a handler isn't dropped while it runs.
         LIVE.with(|live| {
             if let Some(live) = live.borrow_mut().get_mut(&id) {
@@ -173,6 +213,196 @@ fn send(composer: Composer, id: u64) {
         });
         if !sent || request.send_with_opt_blob(Some(&body)).is_err() {
             set(composer, id, Sending::Failed { why: LOST.to_owned() });
+        }
+    });
+}
+
+/// A chunked upload keeps the acknowledged parts in this draft. Retry
+/// continues with the first missing part, rather than sending a video again.
+async fn send_chunks(composer: Composer, id: u64, body: &Blob, mime: &str, hls: Option<&str>) -> Result<(), String> {
+    let kept = LIVE.with(|live| live.borrow().get(&id).and_then(|l| l.multipart.clone()));
+    let mut upload = match kept {
+        Some(kept) => kept,
+        None => {
+            let key = web_sys::window().and_then(|w| w.crypto().ok()).ok_or(LOST)?.random_uuid().replace('-', "");
+            let upload = ChunkUpload {
+                id: key,
+                part_bytes: allthing_core::media::VIDEO_PART_BYTES,
+                created: false,
+                parts: Vec::new(),
+            };
+            LIVE.with(|live| {
+                if let Some(live) = live.borrow_mut().get_mut(&id) {
+                    live.multipart = Some(upload.clone());
+                }
+            });
+            upload
+        }
+    };
+    if !upload.created {
+        let data = serde_json::json!({"id":upload.id,"type": mime, "bytes": body.size() as u64, "hls": hls});
+        let created = chunk_request(
+            composer,
+            id,
+            &format!("{MEDIA_PATH}?upload=create"),
+            json_blob(&data)?,
+            "application/json",
+            None,
+        )
+        .await?;
+        if created.get("id").and_then(serde_json::Value::as_str) != Some(upload.id.as_str())
+            || created.get("part_bytes").and_then(serde_json::Value::as_u64) != Some(upload.part_bytes)
+        {
+            return Err(LOST.to_owned());
+        }
+        upload.created = true;
+        let kept = LIVE.with(|live| {
+            let mut live = live.borrow_mut();
+            let Some(live) = live.get_mut(&id) else { return false };
+            live.multipart = Some(upload.clone());
+            true
+        });
+        if !kept {
+            abort_upload(&upload.id);
+            return Ok(());
+        }
+    }
+    let total = body.size() as u64;
+    let count = total.div_ceil(upload.part_bytes);
+    while (upload.parts.len() as u64) < count {
+        if !LIVE.with(|live| live.borrow().contains_key(&id)) {
+            return Ok(());
+        }
+        let number = upload.parts.len() as u32 + 1;
+        let first = u64::from(number - 1) * upload.part_bytes;
+        let end = (first + upload.part_bytes).min(total);
+        let part = body.slice_with_f64_and_f64(first as f64, end as f64).map_err(|_| LOST)?;
+        set(composer, id, Sending::Up { sent: first as f64, of: total as f64 });
+        let url = format!("{MEDIA_PATH}?upload=part&id={}&part={number}", upload.id);
+        let answer = chunk_request(composer, id, &url, part, "application/octet-stream", Some((first, total))).await?;
+        if answer.get("part_number").and_then(serde_json::Value::as_u64) != Some(u64::from(number)) {
+            return Err(LOST.to_owned());
+        }
+        let etag = answer
+            .get("etag")
+            .and_then(serde_json::Value::as_str)
+            .filter(|tag| !tag.is_empty() && tag.len() <= 512)
+            .ok_or(LOST)?;
+        upload.parts.push((number, etag.to_owned()));
+        LIVE.with(|live| {
+            if let Some(live) = live.borrow_mut().get_mut(&id) {
+                live.multipart = Some(upload.clone());
+            }
+        });
+    }
+    if !LIVE.with(|live| live.borrow().contains_key(&id)) {
+        return Ok(());
+    }
+    set(composer, id, Sending::Finishing);
+    let parts: Vec<_> =
+        upload.parts.iter().map(|(number, etag)| serde_json::json!({"part_number":number,"etag":etag})).collect();
+    let url = format!("{MEDIA_PATH}?upload=complete&id={}", upload.id);
+    let answer =
+        chunk_request(composer, id, &url, json_blob(&serde_json::json!({"parts":parts}))?, "application/json", None)
+            .await?;
+    let url = answer.get("url").and_then(serde_json::Value::as_str).ok_or(LOST)?;
+    LIVE.with(|live| {
+        if let Some(live) = live.borrow_mut().get_mut(&id) {
+            live.multipart = None;
+        }
+    });
+    set(composer, id, Sending::Done { url: url.to_owned() });
+    Ok(())
+}
+
+fn json_blob(value: &serde_json::Value) -> Result<Blob, String> {
+    let parts = js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(&value.to_string()));
+    Blob::new_with_str_sequence(&parts).map_err(|_| LOST.to_owned())
+}
+
+/// One network request, with its callbacks scoped to this future. Aborting
+/// a removed attachment fires loadend too, so nothing waits indefinitely.
+async fn chunk_request(
+    composer: Composer,
+    id: u64,
+    url: &str,
+    body: Blob,
+    mime: &str,
+    progress: Option<(u64, u64)>,
+) -> Result<serde_json::Value, String> {
+    let request = XmlHttpRequest::new().map_err(|_| LOST)?;
+    request.open_with_async("POST", url, true).map_err(|_| LOST)?;
+    request.set_timeout(180_000);
+    request.set_request_header("content-type", mime).map_err(|_| LOST)?;
+    let live = LIVE.with(|live| {
+        let mut live = live.borrow_mut();
+        let Some(live) = live.get_mut(&id) else { return false };
+        live.request = Some(request.clone());
+        true
+    });
+    if !live {
+        return Err(LOST.to_owned());
+    }
+    let progress_handler = Closure::<dyn FnMut(ProgressEvent)>::new(move |ev: ProgressEvent| {
+        if let Some((offset, total)) = progress {
+            set(composer, id, Sending::Up { sent: (offset as f64 + ev.loaded()).min(total as f64), of: total as f64 });
+        }
+    });
+    let upload = request.upload().map_err(|_| LOST)?;
+    upload.set_onprogress(Some(progress_handler.as_ref().unchecked_ref()));
+    let (promise, ended) = {
+        let mut ended = None;
+        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+            let callback = Closure::<dyn FnMut()>::new(move || {
+                let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
+            });
+            request.set_onloadend(Some(callback.as_ref().unchecked_ref()));
+            ended = Some(callback);
+        });
+        (promise, ended)
+    };
+    let sent = request.send_with_opt_blob(Some(&body));
+    if sent.is_ok() {
+        let _ = JsFuture::from(promise).await;
+    }
+    request.set_onloadend(None);
+    upload.set_onprogress(None);
+    drop(ended);
+    drop(progress_handler);
+    LIVE.with(|live| {
+        if let Some(live) = live.borrow_mut().get_mut(&id) {
+            live.request = None;
+        }
+    });
+    if sent.is_err() {
+        return Err(LOST.to_owned());
+    }
+    let status = request.status().unwrap_or(0);
+    let text = request.response_text().ok().flatten().unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if matches!(status, 404 | 410) {
+        LIVE.with(|live| {
+            if let Some(live) = live.borrow_mut().get_mut(&id) {
+                live.multipart = None;
+            }
+        });
+    }
+    if status != 200 {
+        return Err(value.get("error").and_then(serde_json::Value::as_str).unwrap_or(LOST).to_owned());
+    }
+    Ok(value)
+}
+
+/// Cancel on Remove. The server also reclaims abandoned uploads, including
+/// when a browser disappears before it can send this request.
+pub fn abort_upload(id: &str) {
+    let url = format!("{MEDIA_PATH}?upload=abort&id={id}");
+    spawn_local(async move {
+        let options = web_sys::RequestInit::new();
+        options.set_method("POST");
+        let _ = js_sys::Reflect::set(options.as_ref(), &"keepalive".into(), &true.into());
+        if let Some(window) = web_sys::window() {
+            let _ = JsFuture::from(window.fetch_with_str_and_init(&url, &options)).await;
         }
     });
 }
@@ -198,16 +428,81 @@ async fn without_metadata(file: &File, media: MediaType) -> Result<Blob, String>
 }
 
 /// A video as a fragmented MP4 and its HLS index, if it can be remuxed.
-async fn remuxed(file: &File) -> Option<(Blob, String)> {
-    let buffer = JsFuture::from(file.array_buffer()).await.ok()?;
-    let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-    let remuxed = fmp4::remux(&bytes).ok()?;
-    drop(bytes);
-    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(remuxed.bytes.as_slice()));
-    let options = BlobPropertyBag::new();
-    options.set_type(MediaType::Mp4.mime());
-    let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
-    Some((blob, remuxed.index.encode()))
+async fn remuxed(file: &File, id: u64) -> Option<(Blob, String)> {
+    let length = file.size() as u64;
+    let mut offset = 0_u64;
+    // Top-level boxes can put moov after a very large mdat. Read only
+    // headers and moov: never copy the video's payload into WebAssembly.
+    for n in 0..1024 {
+        if n % 16 == 0 && !yield_upload(id).await {
+            return None;
+        }
+        if offset.checked_add(8)? > length {
+            return None;
+        }
+        let head = read_slice(file, offset, (offset + 16).min(length)).await?;
+        let short = u32::from_be_bytes(head.get(..4)?.try_into().ok()?) as u64;
+        let (size, header) = match short {
+            0 => (length - offset, 8),
+            1 => (u64::from_be_bytes(head.get(8..16)?.try_into().ok()?), 16),
+            n => (n, 8),
+        };
+        if size < header || offset.checked_add(size)? > length {
+            return None;
+        }
+        if head.get(4..8)? == b"moov" {
+            if size - header > fmp4::MAX_MOOV_BYTES as u64 {
+                return None;
+            }
+            let moov = read_slice(file, offset + header, offset + size).await?;
+            if !yield_upload(id).await {
+                return None;
+            }
+            let plan = fmp4::plan(&moov, length).ok()?;
+            let parts = js_sys::Array::new();
+            for (n, part) in plan.parts.into_iter().enumerate() {
+                if n % 256 == 0 && !yield_upload(id).await {
+                    return None;
+                }
+                match part {
+                    fmp4::RemuxPart::Bytes(bytes) => {
+                        parts.push(&js_sys::Uint8Array::from(bytes.as_slice()));
+                    }
+                    fmp4::RemuxPart::Source { offset, len } => {
+                        parts.push(&file.slice_with_f64_and_f64(offset as f64, (offset + len) as f64).ok()?.into());
+                    }
+                }
+            }
+            let options = BlobPropertyBag::new();
+            options.set_type(MediaType::Mp4.mime());
+            let blob = Blob::new_with_blob_sequence_and_options(&parts, &options).ok()?;
+            return Some((blob, plan.index.encode()));
+        }
+        offset += size;
+    }
+    None
+}
+
+/// Give paint, input and cancellation a task between bounded preparation steps.
+async fn yield_upload(id: u64) -> bool {
+    if !LIVE.with(|live| live.borrow().contains_key(&id)) {
+        return false;
+    }
+    if let Some(window) = web_sys::window() {
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            if window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0).is_err() {
+                let _ = reject.call0(&wasm_bindgen::JsValue::NULL);
+            }
+        });
+        let _ = JsFuture::from(promise).await;
+    }
+    LIVE.with(|live| live.borrow().contains_key(&id))
+}
+
+async fn read_slice(file: &File, first: u64, end: u64) -> Option<Vec<u8>> {
+    let blob = file.slice_with_f64_and_f64(first as f64, end as f64).ok()?;
+    let buffer = JsFuture::from(blob.array_buffer()).await.ok()?;
+    Some(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
 /// "a JPEG", for what is said of a file.
@@ -333,6 +628,14 @@ fn Tile(composer: Composer, id: u64) -> impl IntoView {
     };
     let label = format!("Remove {name}");
     let progress = move || match state.get() {
+        Some(Sending::Preparing | Sending::Finishing) => {
+            let label = if matches!(state.get(), Some(Sending::Preparing)) {
+                "Preparing video…"
+            } else {
+                "Finishing upload…"
+            };
+            Some(view! { <span class="compose-processing" role="status">{label}</span> }.into_any())
+        }
         Some(Sending::Up { sent, of }) => {
             let percent = if of > 0.0 { (sent / of * 100.0).clamp(0.0, 100.0).round() } else { 0.0 };
             let name = name.clone();
@@ -360,7 +663,7 @@ fn Tile(composer: Composer, id: u64) -> impl IntoView {
     view! {
         <li
             class="compose-tile"
-            class:sending=move || matches!(state.get(), Some(Sending::Up { .. }))
+            class:sending=move || matches!(state.get(), Some(Sending::Preparing | Sending::Up { .. } | Sending::Finishing))
             class:failed=move || matches!(state.get(), Some(Sending::Failed { .. }))
         >
             {shown}

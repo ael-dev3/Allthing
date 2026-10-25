@@ -16,7 +16,7 @@ use std::rc::Rc;
 use allthing_core::activity::{ActiveWeek, Fids, week_set};
 use allthing_core::emoji::ReactionReply;
 use allthing_core::index::{Entry, RANKED, Ranking, RankingMeta, Span, sql_statements};
-use allthing_core::media::{Usage, WINDOW, day_row};
+use allthing_core::media::{self, Usage, WINDOW, day_row};
 use allthing_core::scheduled::{self, Cancelled, Checked, ScheduledCast, State};
 use allthing_data::activity::{ActivityStore, AppCount, SUMMARY, Saving};
 use allthing_data::indexer::{Index, IndexError, Saved, Snapshot};
@@ -27,7 +27,7 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 9] = [
+const SCHEMA: [&str; 10] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
@@ -37,6 +37,7 @@ const SCHEMA: [&str; 9] = [
     include_str!("../../../migrations/0007_media.sql"),
     include_str!("../../../migrations/0008_poll.sql"),
     include_str!("../../../migrations/0009_presence.sql"),
+    include_str!("../../../migrations/0010_media_uploads.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -164,15 +165,16 @@ const SAVE_HOME_SNAPSHOT: &str = "INSERT INTO snapshots (name, built, body) VALU
 /// many bytes and when the oldest came; everyone's uploads on the UTC day
 /// whose row is ?3; and the bytes stored in all. Reads the reader's index
 /// entries in the window, and two rows of totals.
-const MEDIA_USAGE: &str = "SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes, MIN(created_at) AS oldest, \
-      COALESCE((SELECT files FROM media_total WHERE name = ?3), 0) AS today, \
-      COALESCE((SELECT bytes FROM media_total WHERE name = 'all'), 0) AS stored \
-    FROM media WHERE fid = ?1 AND created_at > ?2";
-/// An attachment R2 has kept; then it is added to the total (`all`) and to
-/// its day's row.
-const RECORD_MEDIA: &str = "INSERT INTO media (key, fid, bytes, type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
-const ADD_MEDIA: &str = "INSERT INTO media_total (name, bytes, files) VALUES (?1, ?2, 1) \
-    ON CONFLICT (name) DO UPDATE SET bytes = bytes + excluded.bytes, files = files + 1";
+const MEDIA_USAGE: &str = "SELECT \
+      (SELECT COUNT(*) FROM media WHERE fid = ?1 AND created_at > ?2) + \
+        (SELECT COUNT(*) FROM media_uploads WHERE fid = ?1 AND state <> 'done') AS files, \
+      (SELECT COALESCE(SUM(bytes), 0) FROM media WHERE fid = ?1 AND created_at > ?2) + \
+        (SELECT COALESCE(SUM(bytes), 0) FROM media_uploads WHERE fid = ?1 AND state <> 'done') AS bytes, \
+      (SELECT MIN(created_at) FROM media WHERE fid = ?1 AND created_at > ?2) AS oldest, \
+      COALESCE((SELECT files FROM media_total WHERE name = ?3), 0) + \
+        (SELECT COUNT(*) FROM media_uploads WHERE state <> 'done' AND created_at >= ?4) AS today, \
+      COALESCE((SELECT bytes FROM media_total WHERE name = 'all'), 0) + \
+        (SELECT COALESCE(SUM(bytes), 0) FROM media_uploads WHERE state <> 'done') AS stored";
 /// Count voter ?2's vote ?3 in poll ?1, unless that voter has voted in it:
 /// run before the vote is kept, in the same transaction, so a vote counts
 /// once. Reads one vote's row by its key, not every vote.
@@ -320,6 +322,27 @@ struct MetaRow {
     built: f64,
     total: f64,
     floor: f64,
+}
+
+/// A resumable upload. Its R2 identifier never leaves the Worker.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MediaUploadRow {
+    pub id: String,
+    pub key: String,
+    pub fid: u64,
+    pub bytes: u64,
+    #[serde(rename = "type")]
+    pub media_type: String,
+    pub hls: Option<String>,
+    pub upload_id: Option<String>,
+    pub mode: String,
+    pub state: String,
+    pub parts: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub lock_id: String,
+    pub lock_until: i64,
+    pub cancel_requested: u32,
 }
 
 pub struct D1Index {
@@ -734,11 +757,322 @@ impl D1Index {
 
 /// What readers' attachments take, for `crate::media`.
 impl D1Index {
+    /// Reserve quota in one conditional INSERT, before R2 sees any bytes.
+    /// Other requests see every active reservation, including expired ones
+    /// whose R2 parts have not yet been confirmed deleted.
+    pub async fn reserve_media(&self, row: &MediaUploadRow) -> Result<bool, IndexError> {
+        ensure_schema(&self.db).await?;
+        const SQL: &str = "INSERT INTO media_uploads \
+          (id, key, fid, bytes, type, hls, mode, created_at, expires_at, lock_id, lock_until) \
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 WHERE \
+          COALESCE((SELECT bytes FROM media_total WHERE name = 'all'), 0) + \
+            (SELECT COALESCE(SUM(bytes), 0) FROM media_uploads WHERE state <> 'done') + ?4 <= ?12 AND \
+          (SELECT COALESCE(SUM(bytes), 0) FROM media WHERE fid = ?3 AND created_at > ?13) + \
+            (SELECT COALESCE(SUM(bytes), 0) FROM media_uploads WHERE fid = ?3 AND state <> 'done') + ?4 <= ?14 AND \
+          (SELECT COUNT(*) FROM media WHERE fid = ?3 AND created_at > ?13) + \
+            (SELECT COUNT(*) FROM media_uploads WHERE fid = ?3 AND state <> 'done') < ?15 AND \
+          COALESCE((SELECT files FROM media_total WHERE name = ?16), 0) + \
+            (SELECT COUNT(*) FROM media_uploads WHERE state <> 'done' AND created_at >= ?17) < ?18 AND \
+          (SELECT COUNT(*) FROM media_uploads WHERE fid = ?3 AND state <> 'done') < 2 AND \
+          NOT EXISTS (SELECT 1 FROM media_upload_cancellations WHERE id = ?1 AND fid = ?3 AND expires_at > ?8) AND \
+          (SELECT COUNT(*) FROM media_uploads WHERE state <> 'done') < ?19 AND \
+          NOT EXISTS (SELECT 1 FROM media WHERE key = ?2) RETURNING id";
+        #[derive(Deserialize)]
+        struct Id {
+            id: String,
+        }
+        let saved: Option<Id> = self
+            .db
+            .prepare(SQL)
+            .bind(&[
+                row.id.clone().into(),
+                row.key.clone().into(),
+                number(row.fid as f64),
+                number(row.bytes as f64),
+                row.media_type.clone().into(),
+                row.hls.clone().map_or(JsValue::NULL, Into::into),
+                row.mode.clone().into(),
+                number(row.created_at as f64),
+                number(row.expires_at as f64),
+                row.lock_id.clone().into(),
+                number(row.lock_until as f64),
+                number(media::TOTAL_BYTES as f64),
+                number((row.created_at - WINDOW) as f64),
+                number(media::READER_BYTES as f64),
+                number(media::READER_FILES as f64),
+                day_row(row.created_at).into(),
+                number((row.created_at.div_euclid(86_400) * 86_400) as f64),
+                number(media::UPLOADS_PER_DAY as f64),
+                number(media::MAX_PENDING_UPLOADS as f64),
+            ])
+            .map_err(failed)?
+            .first(None)
+            .await
+            .map_err(failed)?;
+        Ok(saved.is_some_and(|saved| saved.id == row.id))
+    }
+
+    /// Charge every R2 write attempt, including failures and retries.
+    pub async fn media_operation(&self, now: i64) -> Result<bool, IndexError> {
+        ensure_schema(&self.db).await?;
+        #[derive(Deserialize)]
+        struct Count {
+            operations: u32,
+        }
+        const SQL: &str = "INSERT INTO media_operations (day, operations) VALUES (?1, 1) \
+          ON CONFLICT(day) DO UPDATE SET operations = operations + 1 WHERE operations < ?2 RETURNING operations";
+        let saved: Option<Count> = self
+            .db
+            .prepare(SQL)
+            .bind(&[number(now.div_euclid(86_400) as f64), number(media::MEDIA_R2_OPERATIONS_PER_DAY as f64)])
+            .map_err(failed)?
+            .first(None)
+            .await
+            .map_err(failed)?;
+        Ok(saved.is_some_and(|saved| saved.operations <= media::MEDIA_R2_OPERATIONS_PER_DAY))
+    }
+
+    pub async fn media_upload(&self, id: &str, fid: u64) -> Result<Option<MediaUploadRow>, IndexError> {
+        ensure_schema(&self.db).await?;
+        self.db
+            .prepare("SELECT * FROM media_uploads WHERE id = ?1 AND fid = ?2")
+            .bind(&[id.into(), number(fid as f64)])
+            .map_err(failed)?
+            .first(None)
+            .await
+            .map_err(failed)
+    }
+
+    /// Acquire a lease for one network operation. There is no parallel part
+    /// replacement, complete or abort while a live request holds this lease.
+    pub async fn claim_media(
+        &self,
+        id: &str,
+        fid: u64,
+        token: &str,
+        now: i64,
+        cleanup: bool,
+    ) -> Result<Option<MediaUploadRow>, IndexError> {
+        const SQL: &str = "UPDATE media_uploads SET lock_id = ?3, lock_until = ?4 \
+          WHERE id = ?1 AND fid = ?2 AND state <> 'done' AND lock_until <= ?5 AND (?6 OR (state = 'active' AND expires_at > ?5 AND cancel_requested = 0)) RETURNING *";
+        self.db
+            .prepare(SQL)
+            .bind(&[
+                id.into(),
+                number(fid as f64),
+                token.into(),
+                number((now + media::UPLOAD_LEASE_SECONDS) as f64),
+                number(now as f64),
+                number(u8::from(cleanup) as f64),
+            ])
+            .map_err(failed)?
+            .first(None)
+            .await
+            .map_err(failed)
+    }
+
+    pub async fn media_open(&self, row: &MediaUploadRow, upload_id: &str, now: i64) -> Result<bool, IndexError> {
+        let result = self
+            .db
+            .prepare(
+                "UPDATE media_uploads SET upload_id = ?3, lock_id = ?5, lock_until = ?6, expires_at = ?4 \
+          WHERE id = ?1 AND lock_id = ?2 AND state = 'active' AND cancel_requested = 0",
+            )
+            .bind(&[
+                row.id.clone().into(),
+                row.lock_id.clone().into(),
+                upload_id.into(),
+                number((now + media::UPLOAD_IDLE_SECONDS) as f64),
+                if row.mode == "single" { row.lock_id.clone().into() } else { "".into() },
+                number(if row.mode == "single" { row.lock_until } else { 0 } as f64),
+            ])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        Ok(result.meta().map_err(failed)?.and_then(|m| m.changes) == Some(1))
+    }
+
+    pub async fn media_parts(&self, row: &MediaUploadRow, parts: &str, now: i64) -> Result<bool, IndexError> {
+        let result = self
+            .db
+            .prepare(
+                "UPDATE media_uploads SET parts = ?3, lock_id = '', lock_until = 0, expires_at = ?4 \
+          WHERE id = ?1 AND lock_id = ?2 AND state = 'active' AND cancel_requested = 0",
+            )
+            .bind(&[
+                row.id.clone().into(),
+                row.lock_id.clone().into(),
+                parts.into(),
+                number((now + media::UPLOAD_IDLE_SECONDS) as f64),
+            ])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        Ok(result.meta().map_err(failed)?.and_then(|m| m.changes) == Some(1))
+    }
+
+    pub async fn release_media_lock(&self, row: &MediaUploadRow) -> Result<(), IndexError> {
+        self.db
+            .prepare("UPDATE media_uploads SET lock_id = '', lock_until = 0 WHERE id = ?1 AND lock_id = ?2")
+            .bind(&[row.id.clone().into(), row.lock_id.clone().into()])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        Ok(())
+    }
+
+    /// The object, total and pending reservation change in one transaction.
+    /// Only the lease holder can count this file, exactly once.
+    pub async fn finish_media(&self, row: &MediaUploadRow, now: i64) -> Result<bool, IndexError> {
+        let source = " FROM media_uploads WHERE id = ?1 AND lock_id = ?2 AND state = 'active' AND cancel_requested = 0";
+        let args = [row.id.clone().into(), row.lock_id.clone().into(), number(now as f64)];
+        let record = self
+            .db
+            .prepare(format!(
+                "INSERT INTO media (key, fid, bytes, type, created_at) SELECT key, fid, bytes, type, ?3{source}"
+            ))
+            .bind(&args)
+            .map_err(failed)?;
+        let total = self
+            .db
+            .prepare(format!(
+                "INSERT INTO media_total (name, bytes, files) SELECT 'all', bytes, 1{source} \
+          ON CONFLICT(name) DO UPDATE SET bytes = bytes + excluded.bytes, files = files + 1"
+            ))
+            .bind(&args[..2])
+            .map_err(failed)?;
+        let day_args = [args[0].clone(), args[1].clone(), day_row(now).into()];
+        let day = self
+            .db
+            .prepare(format!(
+                "INSERT INTO media_total (name, bytes, files) SELECT ?3, bytes, 1{source} \
+          ON CONFLICT(name) DO UPDATE SET bytes = bytes + excluded.bytes, files = files + 1"
+            ))
+            .bind(&day_args)
+            .map_err(failed)?;
+        let done_args = [args[0].clone(), args[1].clone(), number((now + 86_400) as f64)];
+        let done = self
+            .db
+            .prepare(
+                "UPDATE media_uploads SET state = 'done', lock_id = '', lock_until = 0, expires_at = ?3 \
+          WHERE id = ?1 AND lock_id = ?2 AND state = 'active' AND cancel_requested = 0",
+            )
+            .bind(&done_args)
+            .map_err(failed)?;
+        let results = self.db.batch(vec![record, total, day, done]).await.map_err(failed)?;
+        Ok(results.first().and_then(|r| r.meta().ok().flatten()).and_then(|m| m.changes) == Some(1))
+    }
+
+    /// Fence cleanup before R2 I/O. A stale lease holder cannot delete an
+    /// object another request already completed, or race a new complete.
+    pub async fn begin_media_cleanup(&self, row: &MediaUploadRow, now: i64) -> Result<bool, IndexError> {
+        let result = self
+            .db
+            .prepare(
+                "UPDATE media_uploads SET state = 'cleaning', expires_at = MIN(expires_at, ?3), lock_until = ?4 \
+          WHERE id = ?1 AND lock_id = ?2 AND state <> 'done'",
+            )
+            .bind(&[
+                row.id.clone().into(),
+                row.lock_id.clone().into(),
+                number(now as f64),
+                number((now + media::UPLOAD_LEASE_SECONDS) as f64),
+            ])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        Ok(result.meta().map_err(failed)?.and_then(|m| m.changes) == Some(1))
+    }
+
+    /// Call only once R2 confirmed no parts or object remain.
+    pub async fn forget_media(&self, row: &MediaUploadRow) -> Result<(), IndexError> {
+        self.db
+            .prepare("DELETE FROM media_uploads WHERE id = ?1 AND lock_id = ?2 AND state <> 'done'")
+            .bind(&[row.id.clone().into(), row.lock_id.clone().into()])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        Ok(())
+    }
+
+    pub async fn media_cancelled(&self, id: &str, fid: u64, now: i64) -> Result<bool, IndexError> {
+        ensure_schema(&self.db).await?;
+        #[derive(Deserialize)]
+        struct CancelledRow {
+            id: String,
+        }
+        let row: Option<CancelledRow> = self
+            .db
+            .prepare("SELECT id FROM media_upload_cancellations WHERE id = ?1 AND fid = ?2 AND expires_at > ?3")
+            .bind(&[id.into(), number(fid as f64), number(now as f64)])
+            .map_err(failed)?
+            .first(None)
+            .await
+            .map_err(failed)?;
+        Ok(row.is_some_and(|row| row.id == id))
+    }
+
+    /// Persist cancellation before attempting R2 cleanup. Even if a create
+    /// request or part is still in flight, it cannot subsequently publish.
+    pub async fn cancel_media(&self, id: &str, fid: u64, now: i64) -> Result<(), IndexError> {
+        ensure_schema(&self.db).await?;
+        let tombstone = self
+            .db
+            .prepare(
+                "INSERT INTO media_upload_cancellations (id, fid, expires_at) VALUES (?1, ?2, ?3) \
+          ON CONFLICT(id, fid) DO NOTHING",
+            )
+            .bind(&[id.into(), number(fid as f64), number((now + 86_400) as f64)])
+            .map_err(failed)?;
+        let cancel = self.db.prepare("UPDATE media_uploads SET cancel_requested = 1, expires_at = MIN(expires_at, ?3) WHERE id = ?1 AND fid = ?2 AND state <> 'done' AND cancel_requested = 0")
+            .bind(&[id.into(), number(fid as f64), number(now as f64)]).map_err(failed)?;
+        self.db.batch(vec![tombstone, cancel]).await.map_err(failed)?;
+        Ok(())
+    }
+
+    /// A bounded sweep, shared by the existing minute cron (no new trigger).
+    pub async fn expired_media(&self, now: i64) -> Result<Vec<MediaUploadRow>, IndexError> {
+        ensure_schema(&self.db).await?;
+        self.db
+            .prepare("DELETE FROM media_uploads WHERE state = 'done' AND expires_at <= ?1")
+            .bind(&[number(now as f64)])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        self.db
+            .prepare("DELETE FROM media_upload_cancellations WHERE expires_at <= ?1")
+            .bind(&[number(now as f64)])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        self.db
+            .prepare("DELETE FROM media_operations WHERE day < ?1")
+            .bind(&[number((now.div_euclid(86_400) - 2) as f64)])
+            .map_err(failed)?
+            .run()
+            .await
+            .map_err(failed)?;
+        self.db.prepare("SELECT * FROM media_uploads WHERE state <> 'done' AND expires_at <= ?1 AND lock_until <= ?1 ORDER BY expires_at LIMIT 1")
+            .bind(&[number(now as f64)]).map_err(failed)?.all().await.map_err(failed)?.results().map_err(failed)
+    }
+
     /// What `fid` has uploaded in the 24 hours to `now` (Unix seconds),
     /// what everyone has today, and what is stored in all.
     pub async fn media_usage(&self, fid: u64, now: i64) -> Result<Usage, IndexError> {
         ensure_schema(&self.db).await?;
-        let args = [number(fid as f64), number((now - WINDOW) as f64), day_row(now).into()];
+        let args = [
+            number(fid as f64),
+            number((now - WINDOW) as f64),
+            day_row(now).into(),
+            number((now.div_euclid(86_400) * 86_400) as f64),
+        ];
         let statement = self.db.prepare(MEDIA_USAGE).bind(&args).map_err(failed)?;
         let row: Option<UsageRow> = statement.first(None).await.map_err(failed)?;
         Ok(row.map_or_else(Usage::default, |row| Usage {
@@ -748,18 +1082,6 @@ impl D1Index {
             today: row.today as u32,
             stored: row.stored as u64,
         }))
-    }
-
-    /// Record an attachment that R2 has kept, and add it to the total and
-    /// to its day's count, in one transaction.
-    pub async fn record_media(&self, key: &str, fid: u64, bytes: u64, mime: &str, now: i64) -> Result<(), IndexError> {
-        let size = number(bytes as f64);
-        let args = [key.into(), number(fid as f64), size.clone(), mime.into(), number(now as f64)];
-        let record = self.db.prepare(RECORD_MEDIA).bind(&args).map_err(failed)?;
-        let total = self.db.prepare(ADD_MEDIA).bind(&["all".into(), size.clone()]).map_err(failed)?;
-        let day = self.db.prepare(ADD_MEDIA).bind(&[day_row(now).into(), size]).map_err(failed)?;
-        self.db.batch(vec![record, total, day]).await.map_err(failed)?;
-        Ok(())
     }
 }
 
