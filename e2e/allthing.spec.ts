@@ -235,6 +235,7 @@ test.describe("front page", () => {
       } });
     });
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     await expect
       .poll(
@@ -561,6 +562,7 @@ test.describe("media", () => {
     await page.goto(at(`/p/${VIDEO_CAST}`));
     await unchangedOnHover(page.locator(".post .video video").first());
     await page.goto(at("/"));
+    await appCame(page);
     await unchangedOnHover(page.locator(".cast-card .tile-image img").first());
   });
 
@@ -758,6 +760,7 @@ test.describe("threads and navigation", () => {
     // Keep this image/navigation check read-only on the live deployment.
     await page.route("**/api/v1/presence", (route) => route.fulfill({ status: 404, json: { error: "Read-only test" } }));
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     // A card with a single image, scrolled past so its image has loaded.
     const image = page.locator(".cast-card > .media-grid.n1 .tile-image img").first();
@@ -1031,6 +1034,7 @@ test.describe("threads and navigation", () => {
           .map((card) => card.getAttribute("data-hash")),
       );
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     expect(await spammy(page.locator(".cast-card"))).toEqual([]);
     for (const q of ["gig-bot", "DEGEN rewards", "vercel.app"]) {
@@ -1129,6 +1133,7 @@ test.describe("threads and navigation", () => {
       if (r.method() !== "GET" && r.method() !== "HEAD" && url.origin === new URL(page.url() || "http://x").origin) writes.push(r.url());
     });
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     // Sign In With Farcaster where the Worker is; no other sign-in, and none
     // in the static copy.
@@ -1152,7 +1157,8 @@ test.describe("threads and navigation", () => {
     });
     for (const path of ["/", `/p/${VIDEO_CAST}`, "/u/0xael.eth"]) {
       await page.goto(at(path));
-      await expect(page.locator("main .cast-card, main .post").first()).toBeVisible();
+      await appCame(page);
+      await expect(page.locator("#app main .cast-card:not(.skeleton), #app main .post:not(.skeleton)").first()).toBeVisible();
       await page.waitForTimeout(1500);
     }
     expect(violations).toEqual([]);
@@ -1245,7 +1251,8 @@ test.describe("phone width", () => {
   test("pages fit the screen without sideways scrolling", async ({ page }) => {
     for (const path of ["/", "/u/0xael.eth", `/p/${VIDEO_CAST}`, "/search?q=farcaster", "/c/farcaster", "/channels"]) {
       await page.goto(at(path));
-      await expect(page.locator("main .cast-card, main .person, main .channel-card, main .post").first()).toBeVisible();
+      await appCame(page);
+      await expect(page.locator("#app main .cast-card:not(.skeleton), #app main .person, #app main .channel-card, #app main .post:not(.skeleton)").first()).toBeVisible();
       await page.waitForTimeout(500);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, `${path} scrolls sideways`).toBeLessThanOrEqual(0);
@@ -1256,10 +1263,13 @@ test.describe("phone width", () => {
   test("profiles show the wallet panel in their header, before the casts", async ({ page }) => {
     await page.goto(at("/u/0xael.eth"));
     const panel = page.locator(".profile .profile-wallets");
-    const firstCast = page.locator(".cast-card").first();
-    await expect(firstCast).toBeVisible();
+    const firstCast = firstCard(page);
     await expect(panel.locator(".share-list li").first()).toContainText(/%/);
+    await expect(firstCast).toBeVisible();
     const [p, c, h] = await Promise.all([panel.boundingBox(), firstCast.boundingBox(), page.locator(".profile").boundingBox()]);
+    expect(p, "the loaded wallet panel has a box").not.toBeNull();
+    expect(c, "the loaded first cast has a box").not.toBeNull();
+    expect(h, "the loaded profile has a box").not.toBeNull();
     expect(p!.x).toBeGreaterThanOrEqual(h!.x);
     expect(p!.x + p!.width).toBeLessThanOrEqual(h!.x + h!.width + 1);
     expect(p!.y + p!.height).toBeLessThanOrEqual(h!.y + h!.height + 1);
@@ -1274,6 +1284,7 @@ test.describe("phone width", () => {
 
   test("tapping a replies count opens the preview", async ({ page }) => {
     await page.goto(at("/"));
+    await appCame(page);
     const button = page.locator(".cast-card button.stat-replies").first();
     await expect(button).toBeVisible();
     await button.tap();
