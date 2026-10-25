@@ -42,7 +42,7 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : PAGES
-      ? { command: `node e2e/pages-server.mjs ${PORT}`, url: `${localURL}/Allthing/`, reuseExistingServer: true }
+      ? { command: `cargo xtask serve-pages ${PORT}`, url: `${localURL}/Allthing/`, reuseExistingServer: true }
       : {
           command: `npx wrangler dev --port ${PORT} --ip 127.0.0.1`,
           url: `${localURL}/api/v1/status`,

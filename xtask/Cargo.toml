@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "xtask"
-description = "Build tasks for Allthing: bundle the browser app and its static copy"
+description = "Native build, validation and deployment tooling for Allthing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,3 +16,17 @@ publish = false
 allthing-core = { path = "../crates/allthing-core" }
 # Cuts the browser app's #[wasm_split] parts into modules of their own.
 wasm_split_cli_support = "0.2.4"
+# Native build and validation tools; none of these ship to the browser or Worker.
+base64 = "0.22.1"
+brotli = "8"
+ed25519-dalek = "2.2.0"
+getrandom = "0.4.3"
+libc = "0.2"
+percent-encoding = "2.3.2"
+serde_json.workspace = true
+sha2 = "0.10.9"
+tiny_http = "0.12"
+toml = "1.1.8"
+unicode-normalization = "0.1.25"
+url = "2.5.8"
+zeroize = "1"

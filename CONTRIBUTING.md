@@ -32,7 +32,7 @@ Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT
   - `npx playwright test`: the whole suite, including `e2e/allthing.spec.ts` against live Farcaster data. Playwright starts `wrangler dev` on port 8787. Tests run at 1280×900; the phone-width tests and some fixture tests run at 390×844.
   - `npx playwright test e2e/perf.spec.ts`, for anything on the reading path.
   - `bash scripts/build-pages.sh && E2E_PAGES=1 npx playwright test`, if you touched the static copy.
-- `npm run test:tools`, if you changed the static test server (`e2e/pages-server.mjs`).
+- `cargo test --locked -p xtask`, if you changed native build/check tooling or the static test server (`xtask/src/pages_server.rs`). Run `npm run test:tools` for the independent cryptography, SQL and SDK codec checks.
 - For UI changes, attach before-and-after screenshots at both widths to the pull request.
 
 The live-data suite saves screenshots in `docs/screenshots/` (set `E2E_SCREENSHOT_DIR` to save them elsewhere). Only the WebP images the README shows (`home.webp`, `profile.webp`, `dau.webp`) are tracked; replace one only when the README should change.

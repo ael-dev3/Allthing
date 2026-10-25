@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 [alias]
-xtask = "run --quiet --release --package xtask --"
+xtask = "run --quiet --release --locked --package xtask --"
 
 # The browser app's Leptos views are type-erased (`--cfg erase_components`):
 # each reactive closure is boxed instead of monomorphizing the view code for

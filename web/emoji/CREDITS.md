@@ -14,7 +14,7 @@ The images in `v1/` are not covered by Allthing's AGPL license: each belongs to 
 
 Anything with a stated restriction was left out, among them emoji.gg's default license, which allows only platforms that don't charge for access. Some animations were re-encoded smaller, at most 150 KB, and some at half their frame rate.
 
-Each source was checked again on 21 October 2026 with `node scripts/check-emoji-sources.mjs`. It reads each one and checks that it is still there under the same terms (listed with no flags on 7TV; public, not hidden and approved on FrankerFaceZ; under the free license on emoji.gg), and that the maker credited is still its owner. All 219 are. `:pepe_eat:`'s maker has deleted their 7TV account: 7TV still lists the emote, with no owner, as `*DeletedUser`, and so does its credit. Run the script again before adding to the pack, and take out any Pepe it names.
+Each source was checked again on 21 October 2026 with `cargo xtask check-credits`. It reads each one and checks that it is still there under the same terms (listed with no flags on 7TV; public, not hidden and approved on FrankerFaceZ; under the free license on emoji.gg), and that the maker credited is still its owner. All 219 are. `:pepe_eat:`'s maker has deleted their 7TV account: 7TV still lists the emote, with no owner, as `*DeletedUser`, and so does its credit. Run the script again before adding to the pack, and take out any Pepe it names.
 
 In Allthing, the picker names each Pepe's maker beside its shortcode when it is pointed at or focused, and its **Credits** link opens this page. `allthing_core::emoji::MAKERS` holds the makers, and a unit test keeps it the same as the table below.
 

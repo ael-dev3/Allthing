@@ -7,7 +7,7 @@
 // browser too, but under the Business Source License, which Allthing's
 // AGPL and its license audit don't take; the TypeScript SDK is ISC.
 //
-// `scripts/build-stdb.mjs` bundles this into one file, `assets/stdb-<hash>.js`,
+// The native xtask bundles this through esbuild into one file, `assets/stdb-<hash>.js`,
 // which the app adds as a module script only when a signed-in reader opens
 // /messages: no other page fetches it. It sets
 // `window.allthingStdb`, and the app talks to it in JSON strings, so the

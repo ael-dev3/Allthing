@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Allthing SpacetimeDB module — handoff
 
-Module: `spacetime/spacetimedb` in this repository (Rust, spacetimedb 2.13). Builds with `spacetime build`; `sh spacetime/check.sh` runs its checks (CI's `SpacetimeDB module` job).
+Module: `spacetime/spacetimedb` in this repository (Rust, spacetimedb 2.13). Builds with `spacetime build`; from the repository root, `cargo xtask module-check` runs its isolated checks (CI's `SpacetimeDB module` job). `sh spacetime/check.sh` is a thin compatibility wrapper. The native command clears workspace `RUSTFLAGS` and retains rustfmt, native/Wasm Clippy, unit tests, the release Wasm build and the license audit when `cargo-deny` is installed (required by CI).
 Target DB name: **`allthing`** (fall back to `allthing-chat` if the name is taken) on maincloud.
 URL once published: `https://maincloud.spacetimedb.com` / ws, database `allthing`. Dashboard: https://spacetimedb.com/allthing
 STATUS: published to maincloud as `allthing` (checked 21 October 2026: `GET /v1/database/allthing` answers, and its schema has
@@ -12,7 +12,7 @@ these tables and reducers, with `general` seeded as room 1).
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
 spacetime login            # interactive, as ael
 cd spacetime && spacetime publish -s maincloud allthing -y
-spacetime generate --lang typescript --out-dir <allthing-web>/src/module_bindings --module-path spacetimedb
+spacetime generate --lang typescript --out-dir ../web/stdb/module_bindings --module-path spacetimedb
 ```
 
 ## Schema
@@ -31,23 +31,23 @@ Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. Tha
 ## E2E design (the server sees only ciphertext)
 - The client generates an X25519 keypair. The private key stays in IndexedDB (non-extractable where possible), and only the public key goes to `set_public_key`.
 - Per message: shared = X25519(my_priv, their_pub), then key = HKDF-SHA256(shared, info="allthing-dm-v1"|sorted identities|key versions).
-  Encrypt with XChaCha20-Poly1305 (libsodium / @noble/ciphers), a random 24-byte nonce, and AAD = sender|recipient|key versions.
+  Encrypt with XChaCha20-Poly1305 (`allthing-core::e2e` in Rust), a random 24-byte nonce, and AAD = sender|recipient|key versions.
 - Both parties can decrypt (static-static DH), so the outbox can be read back. Key versions let clients pick the right key after a rotation.
 - Future: X3DH/Double Ratchet for forward secrecy, plus multi-device keys (one key row per device).
 
 ## TODOs
 1. ~~FID verification~~: done. `verify_fid(fid, expiry, signature)` checks the Worker's Ed25519 attestation of
-   `allthing-spacetimedb-fid-v1|identity_hex|fid|expiry` against the key pinned in `src/attest_key.rs` (all zeros until
-   `node scripts/attest-key.mjs` sets it; see docs/DEPLOY.md#secrets). Once pinned, only verified identities may speak.
+   `allthing-spacetimedb-fid-v1|identity_hex|fid|expiry` against the key pinned in `src/attest_key.rs`. `cargo xtask attest-key` generates a replacement only when explicitly rotating it; pipe its private output directly to Wrangler as described in docs/DEPLOY.md#secrets. Only verified identities may speak once the key is pinned.
 2. Pruning of expired typing rows (add a scheduled reducer; clients can filter by `expires_at` for now). Message retention/pagination.
 3. Rooms are public, with no membership or moderation. Add `room_member` plus visibility views for private rooms.
 4. RLS: views are used instead of `client_visibility_filter`. Users can still query the public `user_key`/`user` tables, which is intended.
 5. Run wasm-opt for a smaller module.
 
 ## Client integration (Allthing web)
-1. `npm i spacetimedb`, then generate TS bindings (see above).
-2. `DbConnection.builder().withUri('wss://maincloud.spacetimedb.com').withModuleName('allthing').withToken(localStorage token)`.
-   Persist the token that comes back in onConnect.
-3. After Farcaster sign-in, call `register(fid)` (later `verify_fid`), then `set_public_key`.
+The UI and encryption logic are Rust. `web/stdb/bridge.ts` is the narrow adapter to the official TypeScript SDK; generated bindings live in `web/stdb/module_bindings`. The Rust SDK is not substituted because its BSL-1.1 license fails the repository's current license policy. `cargo xtask dist` bundles the adapter through the installed esbuild CLI and checks the pinned SDK version; the CSP codec adapter remains covered by wire-format and browser tests.
+
+1. Use `npm ci` for the pinned SDK and regenerate bindings from the Rust module when its schema changes (see above).
+2. The Messages-only adapter connects to `wss://maincloud.spacetimedb.com`, database `allthing`, keeping its per-account token in IndexedDB.
+3. After Farcaster sign-in, call `register`, obtain the Worker's identity-bound attestation, call `verify_fid`, then `set_public_key`.
 4. Subscribe to `room`, `chat_message WHERE room_id=…`, `typing`, `user`, `user_key`, `my_dm_inbox`, `my_dm_outbox`.
 5. Throttle `set_typing` (~every 3 s while typing). DMs are encrypted/decrypted entirely on the client.

@@ -6,7 +6,7 @@ Allthing's Pepe stickers: 32 of the animated emotes in its emoji pack ([../emoji
 
 A sticker goes out as an image embed of its GIF at `https://allthing.social/assets/stickers/v1/`, so every Farcaster app shows it, and Allthing shows it as a sticker. GIF is what every Farcaster app plays.
 
-The images in `v1/` are not covered by Allthing's AGPL license: each belongs to whoever made it, credited below with where it came from. They were chosen as the emoji were: public emotes, listed on 7TV with no flags, with no stated restriction. `node scripts/check-emoji-sources.mjs` checks them with the emoji, and found all 32 as credited on 21 October 2026. The picker names each one's maker when it is pointed at or focused.
+The images in `v1/` are not covered by Allthing's AGPL license: each belongs to whoever made it, credited below with where it came from. They were chosen as the emoji were: public emotes, listed on 7TV with no flags, with no stated restriction. `cargo xtask check-credits` checks them with the emoji, and found all 32 as credited on 21 October 2026. The picker names each one's maker when it is pointed at or focused.
 
 If you made one of these and would rather it were credited differently, or not here, please open an issue.
 

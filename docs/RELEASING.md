@@ -9,8 +9,8 @@ How Allthing is versioned, how changes reach `main`, and how a release is cut. `
   - **MINOR** (`0.3.0` → `0.4.0`) for new features or anything a reader would notice as a change;
   - **PATCH** (`0.3.0` → `0.3.1`) for fixes only.
   - `1.0.0` will mean the API paths and URLs are stable.
-- **One source of truth**: `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it (`version.workspace = true`). `package.json` repeats it for npm tooling, and `scripts/check.sh` fails if the two differ.
-- **Where it shows**: the site footer (`v0.3.0 (abc1234)`), the Worker's `/version` endpoint (`{"name":"allthing","version":"0.3.0","commit":"abc1234"}`), and the Worker's upstream `User-Agent`. The commit is stamped at build time from `WORKERS_CI_COMMIT_SHA` (Workers Builds) or `git rev-parse` (`scripts/build.sh`).
+- **One source of truth**: `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it (`version.workspace = true`). `package.json` repeats it for npm tooling, and `cargo xtask check-repo` (also run by `cargo xtask check`) fails if the two differ.
+- **Where it shows**: the site footer (`v0.3.0 (abc1234)`), the Worker's `/version` endpoint (`{"name":"allthing","version":"0.3.0","commit":"abc1234"}`), and the Worker's upstream `User-Agent`. The commit is stamped at build time from `WORKERS_CI_COMMIT_SHA` (Workers Builds) or `git rev-parse` (the native `cargo xtask build` invoked by `scripts/build.sh`).
 - Releases are not named v1, v2, v3. A release is its version number, and its notes say what changed.
 
 ## Commits
@@ -42,7 +42,7 @@ Scopes are optional, for example `feat(profile): …`, `fix(worker): …` or `pe
 2. On a branch `chore/release-X.Y.Z`:
    - set `version` in `Cargo.toml` (workspace) and `package.json`, and run `cargo check` so `Cargo.lock` follows;
    - in `CHANGELOG.md`, move `[Unreleased]` items under `## [X.Y.Z] - YYYY-MM-DD` and update the compare links at the bottom;
-   - run `bash scripts/check.sh` and the end-to-end suite (`npx playwright test`).
+   - run `cargo xtask check`, `cargo xtask module-check` for the isolated SpacetimeDB module, and the end-to-end suite (`npx playwright test`).
 3. Open the PR `chore(release): X.Y.Z`, wait for green CI, and squash-merge it.
 4. Tag the merge commit on `main` and push the tag:
    ```sh
@@ -54,7 +54,7 @@ Scopes are optional, for example `feat(profile): …`, `fix(worker): …` or `pe
    ```sh
    gh release create vX.Y.Z --title "Allthing X.Y.Z" --notes-file <(awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
    ```
-6. Workers Builds deploys the merge. Check that `https://allthing.social/version` reports `X.Y.Z` and the merge commit. Then run `E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test`. The readiness contract defaults to `false` for local development without a custody secret; deployments that endorse keys set it explicitly to `true` (`true` and `false` are the only accepted values).
+6. Workers Builds deploys the merge. `cargo xtask wait-for-deploy https://allthing.social <full-merge-commit>` waits for its version stamp, accepting a later deployment only when local Git ancestry proves it includes that commit. It requests only `/version`, with no Home/API warming. Check that `https://allthing.social/version` reports `X.Y.Z` and the merge commit. Then run `E2E_BASE_URL=https://allthing.social E2E_EXPECT_WRITES_READY=true npx playwright test`. The readiness contract defaults to `false` for local development without a custody secret; deployments that endorse keys set it explicitly to `true` (`true` and `false` are the only accepted values).
 
 ## Hotfixes
 
