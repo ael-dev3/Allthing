@@ -8,8 +8,9 @@ import { NOW } from "./fixture-time";
  * there from the start, and the wallets' block is one height whatever it
  * says, like a profile card's. An account with no verified wallets, which
  * the profile itself says, shows the line that says so at once, and keeps
- * no room for a chart. Here the vote comes 1.2 s after it's asked for, and
- * the wallets 1.5 s; nothing under the header moves when they do.
+ * no room for a chart. Their responses wait until the initial loading
+ * geometry is measured, then retain the vote's 1.2 s and wallets' 1.5 s
+ * delays; nothing under the header moves when they come.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
@@ -36,26 +37,35 @@ const chains = [
 ];
 const later = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
-/** The profile at once, its vote 1.2 s and its wallets 1.5 s after they're asked for. */
+/** The profile at once; release the delayed facts after measuring its loading geometry. */
 async function serve(page: Page, user: { eth_addresses?: string[] }, vote: "stay" | "fails" = "stay") {
   const asked: string[] = [];
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  page.once("close", release);
+  const afterRelease = async (ms: number) => {
+    await pending;
+    if (page.isClosed()) return false;
+    await later(ms);
+    return !page.isClosed();
+  };
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   const pool = Array.from({ length: 8 }, (_, i) => ({ hash: hex(i + 1), author: base, text: `Cast ${i} by Alice`, ts: ts - i * 60 }));
   await page.route("**/api/v1/user?*", (route) => route.fulfill({ json: { user, pool, notes: {}, meta } }));
   await page.route("**/api/v1/vote?*", async (route) => {
     asked.push("vote");
-    await later(1200);
+    if (!await afterRelease(1200)) return;
     return vote === "stay" ? route.fulfill({ json: { fid: 42, onchain: "stay", meta } }) : route.fulfill({ status: 503, json: { error: "Upstream unavailable" } });
   });
   await page.route("**/api/v1/wallets?*", async (route) => {
     asked.push("wallets");
-    await later(1500);
+    if (!await afterRelease(1500)) return;
     // What the Worker would say: the account's addresses, and what they did.
     if (!user.eth_addresses) return route.fulfill({ json: { fid: 42, addresses: [], chains: [], total: 0, sources: [], fetched_at: Date.now() } });
     const addresses = [...wallets.eth_addresses.map((address) => ({ address, kind: "evm" })), { address: wallets.sol_addresses[0], kind: "solana" }];
     return route.fulfill({ json: { fid: 42, addresses, chains, total: 1000, sources: [], fetched_at: Date.now() } });
   });
-  return asked;
+  return { asked, release };
 }
 
 /** Records layout shifts from the start, and whether each moved only the footer. */
@@ -109,7 +119,7 @@ for (const width of [1280, 390]) {
     });
 
     test("an account with wallets keeps its header's height as its vote and wallet activity come", async ({ page }) => {
-      await serve(page, { ...base, ...wallets });
+      const { release } = await serve(page, { ...base, ...wallets });
       await page.goto("/u/alice");
       const header = page.locator("section.profile");
       await expect(page.locator(".cast-list .cast-card[data-hash]").first()).toBeVisible();
@@ -119,6 +129,7 @@ for (const width of [1280, 390]) {
       await expect(header.locator(".share-bar.loading")).toHaveCount(1);
       const before = await below(page);
       const from = await shiftCount(page);
+      release();
       await expect(header.locator(".vote-yes")).toBeVisible({ timeout: 10_000 });
       await expect(header.locator(".share-bar:not(.loading)")).toBeVisible({ timeout: 10_000 });
       await settled(page);
@@ -145,7 +156,7 @@ for (const width of [1280, 390]) {
     });
 
     test("an account with no verified wallets says so at once, and keeps no room for a chart", async ({ page }) => {
-      const asked = await serve(page, base);
+      const { asked, release } = await serve(page, base);
       await page.goto("/u/alice");
       await expect(page.locator("section.profile .profile-name")).toHaveText("Alice");
       const section = page.getByRole("region", { name: "Wallet activity by chain", exact: true });
@@ -157,6 +168,7 @@ for (const width of [1280, 390]) {
       expect(box.height).toBeLessThanOrEqual(24);
       const before = await below(page);
       const from = await shiftCount(page);
+      release();
       await expect(page.locator("section.profile .vote-yes")).toBeVisible({ timeout: 10_000 });
       await settled(page);
       expect(await below(page)).toEqual(before);
@@ -166,12 +178,13 @@ for (const width of [1280, 390]) {
     });
 
     test("a vote that can't be read keeps its row, and says so", async ({ page }) => {
-      await serve(page, { ...base, ...wallets }, "fails");
+      const { release } = await serve(page, { ...base, ...wallets }, "fails");
       await page.goto("/u/alice");
       await expect(page.locator(".cast-list .cast-card[data-hash]").first()).toBeVisible();
       await settled(page);
       const before = await below(page);
       const vote = page.locator("section.profile .vote-fact");
+      release();
       await expect(vote.locator(".vote-unknown")).toHaveText("Unknown", { timeout: 10_000 });
       await expect(page.locator("section.profile .share-bar:not(.loading)")).toBeVisible({ timeout: 10_000 });
       await settled(page);

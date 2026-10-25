@@ -165,6 +165,10 @@ pub struct Attachment {
 /// How an attachment's upload goes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Sending {
+    /// Reading video metadata and preparing it for playback.
+    Preparing,
+    /// All bytes sent; the server is finishing the attachment.
+    Finishing,
     /// On its way: bytes sent, of how many.
     Up { sent: f64, of: f64 },
     /// Kept by the Worker, at the URL the cast embeds.
@@ -225,23 +229,38 @@ pub struct Live {
     /// A video remuxed for HLS: its index (`allthing_core::fmp4`), sent with
     /// `body`, which is then the remuxed MP4.
     pub hls: Option<String>,
+    /// A larger video continues from its last acknowledged chunk on Retry.
+    pub multipart: Option<ChunkUpload>,
     pub request: Option<web_sys::XmlHttpRequest>,
     pub progress: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::ProgressEvent)>>,
     pub ended: Option<wasm_bindgen::closure::Closure<dyn FnMut()>>,
 }
 
+/// Browser-local multipart progress; no upload credential is persisted.
+#[derive(Clone)]
+pub struct ChunkUpload {
+    pub id: String,
+    pub part_bytes: u64,
+    pub created: bool,
+    pub parts: Vec<(u32, String)>,
+}
+
 /// Let an attachment go: its upload stopped if it's on its way, and its
 /// preview's object URL let go.
 pub fn let_go(file: &Attachment) {
-    if let Some(live) = LIVE.with(|l| l.borrow_mut().remove(&file.id))
-        && let Some(request) = &live.request
-    {
-        request.set_onload(None);
-        request.set_onerror(None);
-        if let Ok(upload) = request.upload() {
-            upload.set_onprogress(None);
+    if let Some(live) = LIVE.with(|l| l.borrow_mut().remove(&file.id)) {
+        if let Some(request) = &live.request {
+            request.set_onload(None);
+            request.set_onerror(None);
+            request.set_ontimeout(None);
+            if let Ok(upload) = request.upload() {
+                upload.set_onprogress(None);
+            }
+            let _ = request.abort();
         }
-        let _ = request.abort();
+        if let Some(upload) = live.multipart {
+            super::attach::abort_upload(&upload.id);
+        }
     }
     if let Some(local) = &file.local {
         let _ = web_sys::Url::revoke_object_url(local);
@@ -752,7 +771,9 @@ impl Composer {
 
     /// Whether a file is on its way.
     pub fn uploading(self) -> bool {
-        self.files.with(|files| files.iter().any(|f| matches!(f.state, Sending::Up { .. })))
+        self.files.with(|files| {
+            files.iter().any(|f| matches!(f.state, Sending::Preparing | Sending::Up { .. } | Sending::Finishing))
+        })
     }
 
     /// Whether a file didn't go.

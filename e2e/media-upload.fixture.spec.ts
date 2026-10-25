@@ -31,6 +31,7 @@ const now = () => Math.floor(Date.now() / 1000);
 let worker: ChildProcess | undefined;
 let folder = "";
 let config = "";
+let lastUploadRequestAt = 0;
 
 /** A session cookie as the Worker's sign-in sets it: `<fid>.<expiry>.<HMAC-SHA256>`. */
 function session(fid: number) {
@@ -112,6 +113,7 @@ async function upload(body: Buffer | string, type: string | null, fid: number | 
   if (fid !== null) headers.cookie = session(fid);
   if (origin !== null) headers.origin = origin;
   const res = await fetch(`${ORIGIN}/api/v1/media`, { method: "POST", headers, body });
+  lastUploadRequestAt = Date.now();
   return { status: res.status, json: await res.json(), headers: res.headers };
 }
 
@@ -145,7 +147,7 @@ test("a reader uploads an image and a video, and anyone gets them back byte for 
   const asked = await fetch(`${ORIGIN}/api/v1/media`, { headers: { cookie: session(1234) } });
   expect(asked.status).toBe(200);
   expect(asked.headers.get("cache-control")).toBe("private, max-age=300");
-  expect(await asked.json()).toEqual({ max_image_bytes: 10 * MIB, max_video_bytes: 50 * MIB, max_embeds: 2 });
+  expect(await asked.json()).toEqual({ max_image_bytes: 10 * MIB, max_video_bytes: 250 * MIB, max_embeds: 2 });
   expect((await fetch(`${ORIGIN}/api/v1/media`)).status).toBe(401);
 
   // The URL is on the origin the Worker was asked at (wrangler dev presents
@@ -183,7 +185,7 @@ test("a reader uploads an image and a video, and anyone gets them back byte for 
       "access-control-allow-origin": "*",
     });
     expect(headers["content-security-policy"]).toMatch(/^default-src 'none'; .*; sandbox$/);
-    expect(headers.etag).toMatch(/^"[0-9a-f]+"$/);
+    expect(headers.etag).toMatch(/^"[0-9a-f]+(?:-[0-9]+)?"$/);
 
     // HEAD: the same, without the body.
     const head = await fetch(local(url), { method: "HEAD" });
@@ -262,7 +264,7 @@ test("a video remuxed for HLS is embedded as its playlist, which the Worker writ
     "access-control-allow-origin": "*",
     "x-content-type-options": "nosniff",
   });
-  expect(headers.etag).toMatch(/^"[0-9a-f]+-m3u8"$/);
+  expect(headers.etag).toMatch(/^"[0-9a-f]+(?:-[0-9]+)?-m3u8"$/);
   expect(headers["accept-ranges"]).toBeUndefined();
   const head = await fetch(local(url), { method: "HEAD" });
   expect(head.status).toBe(200);
@@ -365,7 +367,7 @@ test("uploads are refused clearly: their type, size, session, origin and pace", 
   await refused(upload(image, null, 7), 400, /^Attach a PNG/);
   await refused(upload(Buffer.alloc(0), "image/png", 7), 400, /^That file is empty$/);
   await refused(upload(Buffer.alloc(10 * MIB + 1), "image/jpeg", 7), 413, /^Images can be up to 10 MB$/);
-  await refused(upload(Buffer.alloc(50 * MIB + 1), "video/webm", 7), 413, /^Videos can be up to 50 MB$/);
+  await refused(upload(Buffer.alloc(50 * MIB + 1), "video/webm", 7), 413, /^Large videos use a chunked upload:/);
   await refused(upload(image, "image/png", null), 401, /^Sign in to attach images and videos$/);
   await refused(upload(image, "image/png", 7, "https://elsewhere.example"), 403, /^Uploads must come from Allthing itself$/);
   await refused(upload(image, "image/png", 7, null), 403, /^Uploads must come from Allthing itself$/);
@@ -419,6 +421,172 @@ test("quotas: 60 files a reader a day, 2,000 uploads a day in all, and 9 GiB sto
   d1(`UPDATE media_total SET bytes = ${bytes} WHERE name = 'all'`);
 });
 
+type Part = { part_number: number; etag: string };
+const chunkBytes = 8 * MIB;
+const chunkId = (value: number) => value.toString(16).padStart(32, "0");
+
+async function videoControl(action: string, fid: number | null, body?: object | Buffer, id?: string, part?: number, origin: string | null = ORIGIN) {
+  const query = new URLSearchParams({ upload: action });
+  if (id) query.set("id", id);
+  if (part !== undefined) query.set("part", String(part));
+  const headers: Record<string, string> = {};
+  if (fid !== null) headers.cookie = session(fid);
+  if (origin !== null) headers.origin = origin;
+  headers["content-type"] = Buffer.isBuffer(body) ? "video/mp4" : "application/json";
+  const res = await fetch(`${ORIGIN}/api/v1/media?${query}`, {
+    method: "POST", headers, body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
+  });
+  lastUploadRequestAt = Date.now();
+  return { status: res.status, json: res.status === 204 ? null : await res.json(), headers: res.headers };
+}
+
+// Real local R2/D1, not an intercepted upload: request chunks are streamed,
+// then assembled, served and accounted exactly once.
+test("a large video uses bounded parts, resumes a lost response, and completes exactly once", async ({}, info) => {
+  const fid = 501;
+  const id = chunkId(501);
+  const bytes = Buffer.alloc(chunkBytes + 43, 0x62);
+  bytes.fill(0x31, chunkBytes - 12, chunkBytes + 12);
+  const asked = { id, type: "video/mp4", bytes: bytes.length, hls: `1;64x36;avc1.64000a;100;4000:${bytes.length - 100}` };
+  const created = await videoControl("create", fid, asked);
+  expect(created.status, JSON.stringify(created.json)).toBe(200);
+  expect(created.json).toEqual({ id, part_bytes: chunkBytes });
+  // Losing the create response doesn't reserve or create another upload.
+  expect((await videoControl("create", fid, asked)).json).toEqual(created.json);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE fid = ${fid} AND state <> 'done'`)).toEqual([{ n: 1 }]);
+  const first = await videoControl("part", fid, bytes.subarray(0, chunkBytes), id, 1);
+  expect(first.status, JSON.stringify(first.json)).toBe(200);
+  const day = Math.floor(now() / 86_400);
+  const before = d1(`SELECT operations FROM media_operations WHERE day = ${day}`);
+  const replay = await videoControl("part", fid, bytes.subarray(0, chunkBytes), id, 1);
+  expect(replay.json).toEqual(first.json);
+  expect(d1(`SELECT operations FROM media_operations WHERE day = ${day}`)).toEqual(before);
+  const last = await videoControl("part", fid, bytes.subarray(chunkBytes), id, 2);
+  expect(last.status, JSON.stringify(last.json)).toBe(200);
+  const parts: Part[] = [first.json, last.json];
+  await info.attach("multipart-manifest-diagnostic", { body: JSON.stringify({ parts, stored: d1(`SELECT bytes,parts FROM media_uploads WHERE fid = ${fid}`) }), contentType: "application/json" });
+  const complete = await videoControl("complete", fid, { parts }, id);
+  expect(complete.status, JSON.stringify(complete.json)).toBe(200);
+  expect(complete.json.url).toMatch(/\.m3u8$/);
+  expect((await videoControl("complete", fid, { parts }, id)).json).toEqual(complete.json);
+  expect(d1(`SELECT COUNT(*) AS n, SUM(bytes) AS bytes FROM media WHERE fid = ${fid}`)).toEqual([{ n: 1, bytes: bytes.length }]);
+  const mp4 = local(complete.json.url.replace(/\.m3u8$/, ".mp4"));
+  expect(Buffer.from(await (await fetch(mp4)).arrayBuffer()).equals(bytes)).toBe(true);
+  const range = await fetch(mp4, { headers: { range: `bytes=${chunkBytes - 12}-${chunkBytes + 11}` } });
+  expect(range.status).toBe(206);
+  expect(Buffer.from(await range.arrayBuffer()).equals(bytes.subarray(chunkBytes - 12, chunkBytes + 12))).toBe(true);
+  expect(await (await fetch(local(complete.json.url))).text()).toContain('CODECS="avc1.64000a"');
+  // Removing a completed draft attachment preserves its public URL.
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  expect((await fetch(mp4, { method: "HEAD" })).status).toBe(200);
+  // Once short-lived replay state/tombstones expire, its public immutable
+  // key still cannot be reused to overwrite a cast's existing attachment.
+  d1(`DELETE FROM media_uploads WHERE id = '${id}'; DELETE FROM media_upload_cancellations WHERE id = '${id}'`);
+  expect((await videoControl("create", fid, asked)).status).toBe(409);
+  expect(Buffer.from(await (await fetch(mp4)).arrayBuffer()).equals(bytes)).toBe(true);
+});
+
+test("multipart control verifies ownership, descriptors, exact part lengths and manifests", async () => {
+  const fid = 502, id = chunkId(502), asked = { id, type: "video/mp4", bytes: chunkBytes + 9 };
+  expect((await videoControl("create", null, asked)).status).toBe(401);
+  expect((await videoControl("create", fid, asked, undefined, undefined, "https://elsewhere.example")).status).toBe(403);
+  expect((await videoControl("create", fid, { ...asked, type: "image/png" })).status).toBe(400);
+  expect((await videoControl("create", fid, { ...asked, bytes: 250 * MIB + 1 })).status).toBe(413);
+  expect((await videoControl("create", fid, { ...asked, hls: "nonsense" })).status).toBe(400);
+  expect((await videoControl("create", fid, { ...asked, id: "../bad" })).status).toBe(400);
+  expect((await videoControl("create", fid, asked)).status).toBe(200);
+  expect((await videoControl("create", fid, { ...asked, bytes: asked.bytes + 1 })).status).toBe(409);
+  expect((await videoControl("part", fid + 10, Buffer.alloc(chunkBytes), id, 1)).status).toBe(404);
+  expect((await videoControl("part", fid, Buffer.alloc(9), id, 2)).status).toBe(400);
+  expect((await videoControl("part", fid, Buffer.alloc(chunkBytes - 1), id, 1)).status).toBe(400);
+  expect((await videoControl("part", fid, Buffer.alloc(1), id, 0)).status).toBe(400);
+  expect((await videoControl("complete", fid, { parts: [] }, id)).status).toBe(400);
+  const first = await videoControl("part", fid, Buffer.alloc(chunkBytes), id, 1);
+  expect(first.status, JSON.stringify(first.json)).toBe(200);
+  expect((await videoControl("complete", fid, { parts: [{ part_number: 1, etag: "invented" }] }, id)).status).toBe(400);
+  expect((await videoControl("abort", fid + 10, undefined, id)).status).toBe(204);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE id = '${id}' AND fid = ${fid}`)).toEqual([{ n: 1 }]);
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE id = '${id}'`)).toEqual([{ n: 0 }]);
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  expect((await videoControl("create", fid, asked)).status).toBe(410);
+});
+
+test("pending videos reserve quotas atomically, including legacy uploads, until R2 is cancelled", async () => {
+  const fid = 503;
+  const a = { id: chunkId(5031), type: "video/mp4", bytes: 200 * MIB };
+  const b = { ...a, id: chunkId(5032) };
+  const results = await Promise.all([videoControl("create", fid, a), videoControl("create", fid, b)]);
+  expect(results.map(r => r.status).sort()).toEqual([200, 507]);
+  expect(d1(`SELECT SUM(bytes) AS bytes FROM media_uploads WHERE fid = ${fid} AND state <> 'done'`)).toEqual([{ bytes: 200 * MIB }]);
+  // An expired session still reserves its bytes while it has R2 parts.
+  const id = results[0].status === 200 ? a.id : b.id;
+  d1(`UPDATE media_uploads SET expires_at = ${now() - 1} WHERE id = '${id}'`);
+  expect((await videoControl("part", fid, Buffer.alloc(chunkBytes), id, 1)).status).toBe(410);
+  expect((await videoControl("create", fid, { ...a, id: chunkId(5033), bytes: 101 * MIB })).status).toBe(507);
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  const next = { ...a, id: chunkId(5034), bytes: 250 * MIB };
+  expect((await videoControl("create", fid, next)).status).toBe(200);
+  expect((await upload(Buffer.alloc(50 * MIB), "video/mp4", fid)).status).toBe(200);
+  expect((await upload(png(1), "image/png", fid)).status).toBe(507);
+  expect((await videoControl("abort", fid, undefined, next.id)).status).toBe(204);
+  expect((await upload(png(1), "image/png", fid)).status).toBe(200);
+});
+
+test("removal before create stays cancelled, and every R2 attempt has a daily work budget", async () => {
+  const fid = 504, id = chunkId(504), asked = { id, type: "video/mp4", bytes: 250 * MIB };
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  expect((await videoControl("create", fid, asked)).status).toBe(410);
+  const openId = chunkId(5041);
+  expect((await videoControl("create", fid, { ...asked, id: openId })).status).toBe(200);
+  const day = Math.floor(now() / 86_400);
+  const [{ operations }] = d1(`SELECT operations FROM media_operations WHERE day = ${day}`);
+  d1(`UPDATE media_operations SET operations = 1000 WHERE day = ${day}`);
+  try {
+    expect((await videoControl("part", fid, Buffer.alloc(chunkBytes), openId, 1)).status).toBe(503);
+    expect((await videoControl("create", fid + 1, { ...asked, id: chunkId(5042) })).status).toBe(503);
+    expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE fid = ${fid + 1}`)).toEqual([{ n: 0 }]);
+    // Aborting a known upload is never blocked by exhausted write work.
+    expect((await videoControl("abort", fid, undefined, openId)).status).toBe(204);
+    expect(d1(`SELECT cancel_requested FROM media_uploads WHERE id = '${openId}'`)).toEqual([{ cancel_requested: 1 }]);
+  } finally {
+    d1(`UPDATE media_operations SET operations = ${operations} WHERE day = ${day}`);
+  }
+  expect((await videoControl("abort", fid, undefined, openId)).status).toBe(204);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE id = '${openId}'`)).toEqual([{ n: 0 }]);
+});
+
+test("cancelling an in-flight lease fences completion, and the pending pool is bounded", async () => {
+  const fid = 506, id = chunkId(506), body = Buffer.alloc(chunkBytes);
+  expect((await videoControl("create", fid, { id, type: "video/mp4", bytes: body.length })).status).toBe(200);
+  const part = await videoControl("part", fid, body, id, 1);
+  expect(part.status, JSON.stringify(part.json)).toBe(200);
+  // A request still receiving bytes holds a lease. Removal marks it now,
+  // while the lease keeps R2 cleanup from racing its active I/O.
+  d1(`UPDATE media_uploads SET lock_id = 'held-request', lock_until = ${now() + 600} WHERE id = '${id}'`);
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(409);
+  expect(d1(`SELECT cancel_requested FROM media_uploads WHERE id = '${id}'`)).toEqual([{ cancel_requested: 1 }]);
+  expect((await videoControl("complete", fid, { parts: [part.json] }, id)).status).toBe(410);
+  expect((await videoControl("part", fid, body, id, 1)).status).toBe(410);
+  d1(`UPDATE media_uploads SET lock_until = 0 WHERE id = '${id}'`);
+  expect((await videoControl("abort", fid, undefined, id)).status).toBe(204);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE id = '${id}'`)).toEqual([{ n: 0 }]);
+
+  // Seed only reservations: no R2 object or part is fabricated. Aggregate
+  // quota reads cannot grow with arbitrarily many tiny pending uploads.
+  const seed = Array.from({ length: 128 }, (_, i) => {
+    const name = chunkId(800000 + i);
+    return `('${name}', '700/${name}.mp4', 700, 1, 'video/mp4', 'single', ${now()}, ${now() + 3600})`;
+  });
+  d1(`INSERT INTO media_uploads (id,key,fid,bytes,type,mode,created_at,expires_at) VALUES ${seed.join(",")}`);
+  try {
+    expect((await videoControl("create", 507, { id: chunkId(507), type: "video/mp4", bytes: 1 })).status).toBe(409);
+    expect(d1("SELECT COUNT(*) AS n FROM media_uploads WHERE state <> 'done'")).toEqual([{ n: 128 }]);
+  } finally {
+    d1("DELETE FROM media_uploads WHERE fid = 700");
+  }
+});
+
 test("without the R2 binding, uploads and /m/ answer 404", async () => {
   test.setTimeout(150_000);
   // A Worker of its own, from wrangler.toml without its R2 block.
@@ -447,4 +615,48 @@ test("without the R2 binding, uploads and /m/ answer 404", async () => {
   } finally {
     if (server.pid) process.kill(-server.pid, "SIGTERM");
   }
+});
+
+test("a 250 MiB video completes all 32 parts with bounded buffers and exact accounting", async () => {
+  // The real API allows 120 requests/minute. Keep this 34-request boundary
+  // transfer in a fresh window after the ordinary upload/security cases,
+  // rather than weakening the production limiter to fit a fixture burst.
+  const rest = Math.max(0, lastUploadRequestAt + 60_250 - Date.now());
+  if (rest) await new Promise(resolve => setTimeout(resolve, rest));
+  const fid = 508, id = chunkId(508), total = 250 * MIB;
+  const created = await videoControl("create", fid, { id, type: "video/mp4", bytes: total });
+  expect(created.status, JSON.stringify(created.json)).toBe(200);
+  expect(created.json).toEqual({ id, part_bytes: chunkBytes });
+  expect((await videoControl("create", fid, { id: chunkId(5081), type: "video/mp4", bytes: total + 1 })).status).toBe(413);
+  const reusable = Buffer.alloc(chunkBytes);
+  const parts: Part[] = [];
+  for (let part = 1; part <= 32; part += 1) {
+    reusable.fill(part);
+    const length = part === 32 ? 2 * MIB : chunkBytes;
+    const sent = await videoControl("part", fid, reusable.subarray(0, length), id, part);
+    expect(sent.status, `part${part}: ${JSON.stringify(sent.json)}`).toBe(200);
+    expect(sent.json.part_number).toBe(part);
+    parts.push(sent.json);
+  }
+  const completed = await videoControl("complete", fid, { parts }, id);
+  expect(completed.status, JSON.stringify(completed.json)).toBe(200);
+  expect(completed.json.bytes).toBe(total);
+  const url = local(completed.json.url);
+  const head = await fetch(url, { method: "HEAD" });
+  expect(head.status).toBe(200);
+  expect(Number(head.headers.get("content-length"))).toBe(total);
+  const ranges: [string, number[]][] = [
+    ["bytes=0-2", [1, 1, 1]],
+    [`bytes=${chunkBytes - 2}-${chunkBytes + 2}`, [1, 1, 2, 2, 2]],
+    [`bytes=${total - 3}-${total - 1}`, [32, 32, 32]],
+  ];
+  for (const [range, expected] of ranges) {
+    const got = await fetch(url, { headers: { range } });
+    expect(got.status).toBe(206);
+    expect(Array.from(new Uint8Array(await got.arrayBuffer()))).toEqual(expected);
+  }
+  expect(d1(`SELECT COUNT(*) AS n, SUM(bytes) AS bytes FROM media WHERE fid = ${fid}`)).toEqual([{ n: 1, bytes: total }]);
+  expect(d1(`SELECT COUNT(*) AS n FROM media_uploads WHERE fid = ${fid} AND state <> 'done'`)).toEqual([{ n: 0 }]);
+  expect((await videoControl("complete", fid, { parts }, id)).json).toEqual(completed.json);
+  expect(d1(`SELECT COUNT(*) AS n FROM media WHERE fid = ${fid}`)).toEqual([{ n: 1 }]);
 });

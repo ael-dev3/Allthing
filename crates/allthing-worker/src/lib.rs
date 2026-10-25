@@ -275,7 +275,14 @@ pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
         return;
     };
     let host = WorkerHost::new(Lifetime::Schedule(ctx), Some(index.clone()), solana_rpc(&env), node_stand_in(&env));
-    let inv = Invocation::new(Rc::new(host), SUBREQUEST_BUDGET);
+    // The index tick reserves sixteen of the existing 45 subrequests for
+    // bounded multipart cleanup. Latest/activity keep their original budget.
+    let budget = if event.cron() != LATEST_CRON && event.cron() != ACTIVITY_CRON && media::ready(&env) {
+        SUBREQUEST_BUDGET - 16
+    } else {
+        SUBREQUEST_BUDGET
+    };
+    let inv = Invocation::new(Rc::new(host), budget);
     if event.cron() == LATEST_CRON {
         match pages::store_latest(Rc::new(inv)).await {
             Ok(()) => console_log!("latest: stored"),
@@ -300,6 +307,7 @@ pub async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
         Ok(report) => console_log!("indexer: {report:?}"),
         Err(error) => console_error!("indexer: {error}"),
     }
+    media::cleanup(&env, index.as_ref(), (inv.now() / 1000.0) as i64).await;
 }
 
 /// `/wasm/<name>`: the app's WebAssembly. For a browser that accepts brotli,

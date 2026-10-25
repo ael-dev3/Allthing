@@ -3,9 +3,11 @@
 //! app plays in a cast: it shows any `.m3u8` embed as a video, wherever it
 //! is hosted, and a plain `.mp4` as "No preview found for shared link".
 //!
-//! The browser remuxes the MP4 or MOV the reader picked ([`remux`]): the
+//! The browser plans the MP4 or MOV the reader picked ([`plan`]): the
 //! same coded samples, without a byte decoded or re-encoded, put back
-//! together as one fragmented MP4 (an init segment, then a `moof` and an
+//! together as one fragmented MP4 from small headers and original File
+//! slices, without loading the video payload into WebAssembly (an init
+//! segment, then a `moof` and an
 //! `mdat` for each few seconds, each starting at a key frame). That file is
 //! uploaded and kept as `<id>.mp4`, which any browser plays by itself, and
 //! where its fragments are is sent with it as an [`HlsIndex`], a line short
@@ -28,6 +30,15 @@ pub const MAX_SEGMENTS: usize = 80;
 pub const SEGMENT_SECONDS: f64 = 4.0;
 /// The longest an index is, in bytes.
 pub const MAX_INDEX_BYTES: usize = 1_800;
+/// The most MP4 movie metadata the browser reads into WebAssembly. Video
+/// payload stays in the selected File and is referenced by source ranges.
+pub const MAX_MOOV_BYTES: usize = 8 * 1024 * 1024;
+/// A combined sample-table budget, including extra tracks we inspect.
+pub const MAX_SAMPLES: usize = 250_000;
+/// The most owned headers and source ranges in a browser remux plan.
+pub const MAX_PLAN_PARTS: usize = 32_768;
+/// Empty or malicious box lists must not allocate unbounded descriptors.
+const MAX_BOXES: usize = 32_768;
 /// The header the browser sends an index in, with the upload.
 pub const INDEX_HEADER: &str = "x-allthing-hls";
 /// The custom metadata key the Worker keeps it under, in R2.
@@ -155,6 +166,21 @@ pub struct Remuxed {
     pub index: HlsIndex,
 }
 
+/// One ordered piece of a fragmented MP4. Only headers are owned: the
+/// browser appends `File.slice(offset, offset + len)` for source pieces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemuxPart {
+    Bytes(Vec<u8>),
+    Source { offset: u64, len: u64 },
+}
+
+/// A fragmented MP4 described without reading or copying sample payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemuxPlan {
+    pub parts: Vec<RemuxPart>,
+    pub index: HlsIndex,
+}
+
 /// Why a file wasn't remuxed: it is kept as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotRemuxed {
@@ -162,7 +188,8 @@ pub enum NotRemuxed {
     Unreadable,
     /// No H.264 or HEVC video track, or audio that isn't AAC.
     Unsupported,
-    /// Already fragmented, or with no samples.
+    /// Already fragmented, no samples, or beyond the bounded metadata,
+    /// sample, source-piece or playlist limits.
     Unsuitable,
 }
 
@@ -186,6 +213,9 @@ fn boxes(data: &[u8]) -> Option<Vec<([u8; 4], &[u8])>> {
             n => (8, n),
         };
         if size < header || size > rest.len() as u64 {
+            return None;
+        }
+        if out.len() == MAX_BOXES {
             return None;
         }
         out.push((kind, &rest[header as usize..size as usize]));
@@ -288,7 +318,11 @@ fn handler(trak: &[u8]) -> Option<[u8; 4]> {
     path(trak, &[b"mdia", b"hdlr"])?.get(8..12)?.try_into().ok()
 }
 
-fn read_track(trak: &[u8], file_len: u64) -> Result<Option<Track<'_>>, NotRemuxed> {
+fn read_track<'a>(
+    trak: &'a [u8],
+    file_len: u64,
+    remaining_samples: &mut usize,
+) -> Result<Option<Track<'a>>, NotRemuxed> {
     use NotRemuxed::*;
     let kind = match handler(trak).ok_or(Unreadable)? {
         h if &h == b"vide" => Kind::Video,
@@ -323,6 +357,11 @@ fn read_track(trak: &[u8], file_len: u64) -> Result<Option<Track<'_>>, NotRemuxe
     if timescale == 0 {
         return Err(Unreadable);
     }
+    let count = u32_at(child(stbl, b"stsz").ok_or(Unreadable)?, 8).ok_or(Unreadable)? as usize;
+    if count > *remaining_samples {
+        return Err(Unsuitable);
+    }
+    *remaining_samples -= count;
     let samples = samples(stbl, file_len, kind).ok_or(Unreadable)?;
     if samples.is_empty() {
         return Err(Unsuitable);
@@ -335,7 +374,7 @@ fn samples(stbl: &[u8], file_len: u64, kind: Kind) -> Option<Vec<Sample>> {
     // Sizes.
     let stsz = child(stbl, b"stsz")?;
     let (fixed, count) = (u32_at(stsz, 4)?, u32_at(stsz, 8)?);
-    if count == 0 || count > 2_000_000 {
+    if count == 0 || count as usize > MAX_SAMPLES {
         return Some(Vec::new());
     }
     let sizes: Vec<u32> = if fixed != 0 { vec![fixed; count as usize] } else { words(table(stsz, 8, 4)?.1) };
@@ -351,15 +390,28 @@ fn samples(stbl: &[u8], file_len: u64, kind: Kind) -> Option<Vec<Sample>> {
     let (_, stsc) = table(child(stbl, b"stsc")?, 4, 12)?;
     let stsc = words(stsc);
     let runs: Vec<(u32, u32)> = stsc.as_chunks::<3>().0.iter().map(|[first, per, _]| (*first, *per)).collect();
+    if chunks.len() > count
+        || runs.first()?.0 != 1
+        || runs.iter().any(|(_, per)| *per == 0)
+        || runs.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+    {
+        return None;
+    }
     let mut offsets = Vec::with_capacity(count);
+    let mut run = 0;
     for (i, chunk_offset) in chunks.iter().enumerate() {
         let chunk = i as u32 + 1;
-        let per = runs.iter().rev().find(|(first, _)| *first <= chunk)?.1;
+        while runs.get(run + 1).is_some_and(|(first, _)| *first <= chunk) {
+            run += 1;
+        }
+        let per = runs[run].1 as usize;
+        if offsets.len().checked_add(per)? > count {
+            return None;
+        }
         let mut at = *chunk_offset;
-        for _ in 0..per {
-            let Some(size) = sizes.get(offsets.len()) else { break };
+        for size in &sizes[offsets.len()..offsets.len() + per] {
             offsets.push(at);
-            at += u64::from(*size);
+            at = at.checked_add(u64::from(*size))?;
         }
     }
     if offsets.len() != count {
@@ -492,21 +544,27 @@ fn audio_codec(kind: &[u8; 4], entry: &[u8]) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Remuxing
 
-/// `file`, an MP4 or MOV, as one fragmented MP4 with its index; or why not.
-pub fn remux(file: &[u8]) -> Result<Remuxed, NotRemuxed> {
+/// Plan a remux from the body of the source file's `moov` box alone.
+/// `file_len` is the entire original file's length, used to validate every
+/// source range. The caller reads only bounded metadata, then constructs
+/// a Blob from the owned headers and slices of its original File. No media
+/// sample payload is passed through WebAssembly.
+pub fn plan(moov: &[u8], file_len: u64) -> Result<RemuxPlan, NotRemuxed> {
     use NotRemuxed::*;
-    let top = boxes(file).ok_or(Unreadable)?;
-    let moov = top.iter().find(|(k, _)| k == b"moov").map(|(_, b)| *b).ok_or(Unreadable)?;
+    if moov.len() > MAX_MOOV_BYTES {
+        return Err(Unsuitable);
+    }
     if child(moov, b"mvex").is_some() {
         return Err(Unsuitable);
     }
     let mut video = None;
     let mut audio = None;
+    let mut remaining_samples = MAX_SAMPLES;
     for (kind, trak) in boxes(moov).ok_or(Unreadable)? {
         if &kind != b"trak" {
             continue;
         }
-        match read_track(trak, file.len() as u64) {
+        match read_track(trak, file_len, &mut remaining_samples) {
             Ok(Some(t)) if t.kind == Kind::Video && video.is_none() => video = Some(t),
             Ok(Some(t)) if t.kind == Kind::Audio && audio.is_none() => audio = Some(t),
             Ok(_) => {}
@@ -515,7 +573,10 @@ pub fn remux(file: &[u8]) -> Result<Remuxed, NotRemuxed> {
         }
     }
     let video = video.ok_or(Unsupported)?;
-    if video.width == 0 || video.height == 0 || audio.as_ref().is_some_and(|a| a.id == video.id) {
+    if !(1..=16_384).contains(&video.width)
+        || !(1..=16_384).contains(&video.height)
+        || audio.as_ref().is_some_and(|a| a.id == video.id)
+    {
         return Err(Unreadable);
     }
     let tracks: Vec<&Track> = std::iter::once(&video).chain(audio.as_ref()).collect();
@@ -545,9 +606,20 @@ pub fn remux(file: &[u8]) -> Result<Remuxed, NotRemuxed> {
         .map(|&(_, b)| video.samples.get(b).map_or(f64::INFINITY, |s| s.dts as f64 / f64::from(video.timescale)))
         .collect();
 
-    let mut out = Vec::with_capacity(file.len() + 4096);
-    init_segment(&mut out, moov, &tracks).ok_or(Unreadable)?;
-    let init = out.len() as u64;
+    // A corrupt table must not duplicate a small file into an enormous
+    // output, even when all of its individual ranges are in bounds.
+    let payload_bytes = tracks
+        .iter()
+        .flat_map(|t| &t.samples)
+        .try_fold(0u64, |n, s| n.checked_add(u64::from(s.size)))
+        .ok_or(Unreadable)?;
+    if payload_bytes > file_len {
+        return Err(Unreadable);
+    }
+    let mut init_bytes = Vec::new();
+    init_segment(&mut init_bytes, moov, &tracks).ok_or(Unreadable)?;
+    let init = init_bytes.len() as u64;
+    let mut pieces = vec![RemuxPart::Bytes(init_bytes)];
     let mut segments = Vec::with_capacity(bounds.len());
     let mut audio_at = 0usize;
     for (k, &(a, b)) in bounds.iter().enumerate() {
@@ -563,25 +635,76 @@ pub fn remux(file: &[u8]) -> Result<Remuxed, NotRemuxed> {
                 parts.push((audio, &audio.samples[from..audio_at]));
             }
         }
-        let start = out.len();
-        fragment(&mut out, k as u32 + 1, &parts, file);
+        let (header, len) = fragment_header(k as u32 + 1, &parts).ok_or(Unreadable)?;
+        append_part(&mut pieces, RemuxPart::Bytes(header))?;
+        for (_, samples) in &parts {
+            for s in *samples {
+                append_part(&mut pieces, RemuxPart::Source { offset: s.offset, len: u64::from(s.size) })?;
+            }
+        }
         let ticks: u64 = video.samples[a..b].iter().map(|s| u64::from(s.duration)).sum();
         let ms = ((ticks as f64 * 1000.0 / f64::from(video.timescale)).round() as u32).max(1);
-        segments.push((ms, (out.len() - start) as u64));
+        segments.push((ms, len));
     }
     let codecs = tracks.iter().map(|t| t.codec.as_str()).collect::<Vec<_>>().join(",");
     let index = HlsIndex { width: video.width, height: video.height, codecs, init, segments };
-    if index.encode().len() > MAX_INDEX_BYTES {
+    if HlsIndex::parse(&index.encode()).as_ref() != Some(&index) {
         return Err(Unsuitable);
     }
-    Ok(Remuxed { bytes: out, index })
+    Ok(RemuxPlan { parts: pieces, index })
+}
+
+/// Append a piece, joining adjacent source ranges without crossing a
+/// fragment header. Bounding the list also bounds browser Blob objects.
+fn append_part(parts: &mut Vec<RemuxPart>, part: RemuxPart) -> Result<(), NotRemuxed> {
+    if let RemuxPart::Source { offset, len } = part {
+        if len == 0 {
+            return Ok(());
+        }
+        if let Some(RemuxPart::Source { offset: previous, len: previous_len }) = parts.last_mut()
+            && previous.checked_add(*previous_len) == Some(offset)
+        {
+            *previous_len = previous_len.checked_add(len).ok_or(NotRemuxed::Unreadable)?;
+            return Ok(());
+        }
+        if parts.len() == MAX_PLAN_PARTS {
+            return Err(NotRemuxed::Unsuitable);
+        }
+        parts.push(RemuxPart::Source { offset, len });
+    } else {
+        if parts.len() == MAX_PLAN_PARTS {
+            return Err(NotRemuxed::Unsuitable);
+        }
+        parts.push(part);
+    }
+    Ok(())
+}
+
+/// `file`, an MP4 or MOV, as one fragmented MP4 with its index; or why not.
+/// Native callers concatenate the same plan the browser uses with slices.
+pub fn remux(file: &[u8]) -> Result<Remuxed, NotRemuxed> {
+    let moov = child(file, b"moov").ok_or(NotRemuxed::Unreadable)?;
+    let planned = plan(moov, file.len() as u64)?;
+    let mut bytes = Vec::new();
+    for piece in planned.parts {
+        match piece {
+            RemuxPart::Bytes(header) => bytes.extend_from_slice(&header),
+            RemuxPart::Source { offset, len } => {
+                let start = usize::try_from(offset).map_err(|_| NotRemuxed::Unreadable)?;
+                let end = usize::try_from(offset.checked_add(len).ok_or(NotRemuxed::Unreadable)?)
+                    .map_err(|_| NotRemuxed::Unreadable)?;
+                bytes.extend_from_slice(file.get(start..end).ok_or(NotRemuxed::Unreadable)?);
+            }
+        }
+    }
+    Ok(Remuxed { bytes, index: planned.index })
 }
 
 /// `ftyp` and a `moov` of the tracks, without samples, with `mvex`.
 fn init_segment(out: &mut Vec<u8>, moov: &[u8], tracks: &[&Track]) -> Option<()> {
     put_raw(out, b"ftyp", b"iso6\0\0\0\0iso6isomiso5dashmp41");
     let mvhd = child(moov, b"mvhd")?;
-    let next_id = tracks.iter().map(|t| t.id).max()? + 1;
+    let next_id = tracks.iter().map(|t| t.id).max()?.checked_add(1)?;
     let mut trak_bodies = Vec::new();
     for t in tracks {
         let mut trak = Vec::new();
@@ -642,11 +765,12 @@ fn mdia(out: &mut Vec<u8>, body: &[u8]) {
     }
 }
 
-/// One `moof` and its `mdat`: each part's samples, as a track fragment.
-fn fragment(out: &mut Vec<u8>, sequence: u32, parts: &[(&Track, &[Sample])], file: &[u8]) {
-    let moof_start = out.len();
+/// One `moof` and the `mdat` header, without reading any sample data.
+/// Returns its owned bytes and the complete fragment's length.
+fn fragment_header(sequence: u32, parts: &[(&Track, &[Sample])]) -> Option<(Vec<u8>, u64)> {
+    let mut out = Vec::new();
     let mut data_offsets = Vec::new();
-    put_box(out, b"moof", |m| {
+    put_box(&mut out, b"moof", |m| {
         put_full(m, b"mfhd", 0, 0, |b| b.extend_from_slice(&sequence.to_be_bytes()));
         for (track, samples) in parts {
             put_box(m, b"traf", |t| {
@@ -670,21 +794,18 @@ fn fragment(out: &mut Vec<u8>, sequence: u32, parts: &[(&Track, &[Sample])], fil
             });
         }
     });
-    let moof_len = out.len() - moof_start;
+    let moof_len = out.len() as u64;
     // Each part's data, in order, after the mdat's header.
     let mut at = moof_len + 8;
     for (i, (_, samples)) in parts.iter().enumerate() {
         let field = data_offsets[i];
-        out[field..field + 4].copy_from_slice(&(at as u32).to_be_bytes());
-        at += samples.iter().map(|s| s.size as usize).sum::<usize>();
+        out[field..field + 4].copy_from_slice(&i32::try_from(at).ok()?.to_be_bytes());
+        at = samples.iter().try_fold(at, |n, s| n.checked_add(u64::from(s.size)))?;
     }
-    put_box(out, b"mdat", |d| {
-        for (_, samples) in parts {
-            for s in *samples {
-                d.extend_from_slice(&file[s.offset as usize..s.offset as usize + s.size as usize]);
-            }
-        }
-    });
+    let mdat_len = u32::try_from(at.checked_sub(moof_len)?).ok()?;
+    out.extend_from_slice(&mdat_len.to_be_bytes());
+    out.extend_from_slice(b"mdat");
+    Some((out, at))
 }
 
 #[cfg(test)]
@@ -702,11 +823,12 @@ mod tests {
     /// Every sample of `track` in `file`, as (dts, bytes), in order.
     fn source_samples(file: &[u8], kind: Kind) -> Vec<(u64, Vec<u8>)> {
         let moov = child(file, b"moov").unwrap();
+        let mut remaining_samples = MAX_SAMPLES;
         let trak = boxes(moov)
             .unwrap()
             .into_iter()
             .filter(|(k, _)| k == b"trak")
-            .map(|(_, b)| read_track(b, file.len() as u64).unwrap().unwrap())
+            .map(|(_, b)| read_track(b, file.len() as u64, &mut remaining_samples).unwrap().unwrap())
             .find(|t| t.kind == kind)
             .unwrap();
         trak.samples
@@ -747,6 +869,86 @@ mod tests {
             at += header + body.len();
         }
         out
+    }
+
+    #[test]
+    fn a_metadata_only_plan_preserves_samples_and_ranges() {
+        for name in ["video-h264-aac.mp4", "video-silent.mov", "video-hevc.mp4"] {
+            let source = fixture(name);
+            let planned = plan(child(&source, b"moov").unwrap(), source.len() as u64).unwrap();
+            let mut joined = Vec::new();
+            let mut owned = 0;
+            let mut ranges = 0;
+            for part in &planned.parts {
+                match part {
+                    RemuxPart::Bytes(header) => {
+                        owned += header.len();
+                        joined.extend_from_slice(header);
+                    }
+                    RemuxPart::Source { offset, len } => {
+                        assert!(*len > 0);
+                        assert!(offset.checked_add(*len).unwrap() <= source.len() as u64);
+                        ranges += 1;
+                        joined.extend_from_slice(&source[*offset as usize..(*offset + *len) as usize]);
+                    }
+                }
+            }
+            assert!(owned < source.len(), "only headers are owned for {name}");
+            assert!(ranges > 0 && planned.parts.len() <= MAX_PLAN_PARTS);
+            assert_eq!(joined.len() as u64, planned.index.total());
+            assert_eq!(fragment_samples(&joined, 1), source_samples(&source, Kind::Video));
+            if planned.index.codecs.contains(',') {
+                assert_eq!(fragment_samples(&joined, 2), source_samples(&source, Kind::Audio));
+            }
+            let native = remux(&source).unwrap();
+            assert_eq!(native.index, planned.index);
+            assert_eq!(native.bytes, joined);
+        }
+    }
+
+    #[test]
+    fn planning_rejects_oversized_metadata_and_sample_tables_before_expansion() {
+        assert_eq!(plan(&vec![0; MAX_MOOV_BYTES + 1], u64::MAX), Err(NotRemuxed::Unsuitable));
+        let source = fixture("video-h264-aac.mp4");
+        let mut moov = child(&source, b"moov").unwrap().to_vec();
+        let size_at = moov.windows(4).position(|bytes| bytes == b"stsz").unwrap();
+        // The fixed-size form occupies only twelve bytes but could ask for
+        // billions of decoded table entries. Refuse it before allocating.
+        moov[size_at + 8..size_at + 12].copy_from_slice(&1u32.to_be_bytes());
+        moov[size_at + 12..size_at + 16].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert_eq!(plan(&moov, u64::MAX), Err(NotRemuxed::Unsuitable));
+    }
+
+    #[test]
+    fn source_pieces_coalesce_and_the_plan_cannot_grow_without_bound() {
+        let mut pieces = Vec::new();
+        append_part(&mut pieces, RemuxPart::Source { offset: 12, len: 4 }).unwrap();
+        append_part(&mut pieces, RemuxPart::Source { offset: 16, len: 3 }).unwrap();
+        append_part(&mut pieces, RemuxPart::Source { offset: 19, len: 0 }).unwrap();
+        assert_eq!(pieces, vec![RemuxPart::Source { offset: 12, len: 7 }]);
+        append_part(&mut pieces, RemuxPart::Bytes(vec![0; 8])).unwrap();
+        append_part(&mut pieces, RemuxPart::Source { offset: 19, len: 2 }).unwrap();
+        assert_eq!(pieces.len(), 3, "a header separates source ranges");
+        pieces.resize(MAX_PLAN_PARTS, RemuxPart::Source { offset: 0, len: 1 });
+        assert_eq!(append_part(&mut pieces, RemuxPart::Source { offset: 2, len: 1 }), Err(NotRemuxed::Unsuitable));
+        assert_eq!(pieces.len(), MAX_PLAN_PARTS);
+    }
+
+    #[test]
+    fn bad_metadata_cannot_overflow_source_ranges_or_track_ids() {
+        let source = fixture("video-h264-aac.mp4");
+        let original = child(&source, b"moov").unwrap();
+        assert_eq!(plan(original, 1), Err(NotRemuxed::Unreadable));
+        let mut moov = original.to_vec();
+        let tkhd = moov.windows(4).position(|bytes| bytes == b"tkhd").unwrap();
+        // tkhd version zero: twelve bytes from its body to the track id.
+        moov[tkhd + 16..tkhd + 20].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert_eq!(plan(&moov, source.len() as u64), Err(NotRemuxed::Unreadable));
+        // A prefix is refused or is itself readable metadata, never a
+        // panic (for example it may end after the complete video track).
+        for end in (0..original.len()).step_by(113) {
+            let _ = plan(&original[..end], source.len() as u64);
+        }
     }
 
     #[test]

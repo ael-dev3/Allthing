@@ -12,7 +12,7 @@
 //! sandbox policy ([`served_headers`]), so a file that isn't what it says
 //! can't run as a page.
 //!
-//! Limits: 10 MiB an image and 50 MiB a video; per reader, 300 MiB and 60
+//! Limits: 10 MiB an image and 250 MiB a video; per reader, 300 MiB and 60
 //! files in any 24 hours; 2,000 uploads a day from everyone together, which
 //! keeps R2's writes and D1's rows within their free plans; and 9 GiB
 //! stored in all, under R2's free 10 GB-month ([`admit`]). Pure logic,
@@ -35,7 +35,21 @@ pub const SERVED_PREFIX: &str = "/m/";
 const MIB: u64 = 1024 * 1024;
 /// The largest image, and the largest video.
 pub const MAX_IMAGE_BYTES: u64 = 10 * MIB;
-pub const MAX_VIDEO_BYTES: u64 = 50 * MIB;
+pub const MAX_VIDEO_BYTES: u64 = 250 * MIB;
+/// A video travels in uniform 8 MiB parts, below the zone request limit.
+pub const VIDEO_PART_BYTES: u64 = 8 * MIB;
+/// R2 returns opaque part tags (local R2 tokens exceed 128 bytes).
+pub const MAX_VIDEO_PART_ETAG_BYTES: usize = 512;
+/// Bound all R2 writes, including failed/retried multipart attempts.
+/// At most 31,000 Class A operations in a 31-day month.
+pub const MEDIA_R2_OPERATIONS_PER_DAY: u32 = 1_000;
+/// An idle upload can resume for an hour. Its storage reservation is only
+/// released after R2 confirms cancellation/deletion, never just on expiry.
+pub const UPLOAD_IDLE_SECONDS: i64 = 3_600;
+/// Bound aggregate quota reads, including tiny incomplete files.
+pub const MAX_PENDING_UPLOADS: u32 = 128;
+/// A request holds a lease while R2 consumes its stream.
+pub const UPLOAD_LEASE_SECONDS: i64 = 600;
 /// The most embeds a cast carries: Farcaster's limit.
 pub const MAX_EMBEDS: u32 = 2;
 /// The longest URL a cast can embed: Farcaster's limit, in bytes.
@@ -298,6 +312,63 @@ pub struct Uploaded {
     pub bytes: u64,
 }
 
+/// Start an authenticated, account-bound multipart video upload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewVideoUpload {
+    /// A browser-generated correlation id makes a lost create response recoverable.
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub media_type: String,
+    pub bytes: u64,
+    #[serde(default)]
+    pub hls: Option<String>,
+}
+
+/// Only the opaque app id is sent to the browser, never R2's upload id.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VideoUploadSession {
+    pub id: String,
+    pub part_bytes: u64,
+}
+
+/// A part R2 kept, in order. The server retains its own copy for replays.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoPart {
+    pub part_number: u16,
+    pub etag: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteVideoUpload {
+    pub parts: Vec<VideoPart>,
+}
+
+/// Exactly the expected size of one 1-based video part.
+pub fn video_part_bytes(total: u64, part: u16) -> Option<u64> {
+    if total == 0 || total > MAX_VIDEO_BYTES || part == 0 {
+        return None;
+    }
+    let offset = u64::from(part - 1).checked_mul(VIDEO_PART_BYTES)?;
+    (offset < total).then(|| (total - offset).min(VIDEO_PART_BYTES))
+}
+
+/// A completed manifest is contiguous, bounded, and names real part tags.
+pub fn complete_video_parts(total: u64, parts: &[VideoPart]) -> bool {
+    let count = total.div_ceil(VIDEO_PART_BYTES);
+    total > 0
+        && total <= MAX_VIDEO_BYTES
+        && parts.len() as u64 == count
+        && parts.iter().enumerate().all(|(i, part)| {
+            usize::from(part.part_number) == i + 1
+                && !part.etag.is_empty()
+                && part.etag.len() <= MAX_VIDEO_PART_ETAG_BYTES
+        })
+}
+
 /// Why an upload is refused: its HTTP status, what the reader is told, and
 /// when to try again, in seconds, when that is known.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,7 +386,7 @@ pub const BAD_TYPE: Refused = refused(400, "Attach a PNG, JPEG, GIF or WebP imag
 pub const NO_LENGTH: Refused = refused(400, "An upload needs its size, in its Content-Length");
 pub const EMPTY: Refused = refused(400, "That file is empty");
 pub const IMAGE_TOO_LARGE: Refused = refused(413, "Images can be up to 10 MB");
-pub const VIDEO_TOO_LARGE: Refused = refused(413, "Videos can be up to 50 MB");
+pub const VIDEO_TOO_LARGE: Refused = refused(413, "Videos can be up to 250 MB");
 pub const READER_FILES_USED: Refused =
     refused(507, "You've attached 60 files in the past 24 hours, the most a day takes");
 pub const READER_BYTES_USED: Refused =
@@ -577,9 +648,9 @@ mod tests {
                 ("image/jpeg", "jpg", 10_485_760),
                 ("image/gif", "gif", 10_485_760),
                 ("image/webp", "webp", 10_485_760),
-                ("video/mp4", "mp4", 52_428_800),
-                ("video/quicktime", "mov", 52_428_800),
-                ("video/webm", "webm", 52_428_800),
+                ("video/mp4", "mp4", 262_144_000),
+                ("video/quicktime", "mov", 262_144_000),
+                ("video/webm", "webm", 262_144_000),
             ]
         );
         for media in MediaType::ALL {
@@ -694,10 +765,10 @@ mod tests {
     #[test]
     fn an_upload_declares_its_type_and_length() {
         assert_eq!(check_upload(Some("image/png"), Some("1234")), Ok((MediaType::Png, 1234)));
-        assert_eq!(check_upload(Some("video/webm"), Some(" 52428800 ")), Ok((MediaType::Webm, MAX_VIDEO_BYTES)));
+        assert_eq!(check_upload(Some("video/webm"), Some(" 262144000 ")), Ok((MediaType::Webm, MAX_VIDEO_BYTES)));
         assert_eq!(check_upload(Some("image/gif"), Some("10485760")), Ok((MediaType::Gif, MAX_IMAGE_BYTES)));
         assert_eq!(check_upload(Some("image/gif"), Some("10485761")), Err(IMAGE_TOO_LARGE));
-        assert_eq!(check_upload(Some("video/quicktime"), Some("52428801")), Err(VIDEO_TOO_LARGE));
+        assert_eq!(check_upload(Some("video/quicktime"), Some("262144001")), Err(VIDEO_TOO_LARGE));
         assert_eq!(check_upload(Some("image/jpeg"), Some("0")), Err(EMPTY));
         for length in
             [None, Some(""), Some("-1"), Some("12a"), Some("+5"), Some("1e6"), Some("99999999999999999999999")]
@@ -953,8 +1024,8 @@ mod tests {
             "big.jpg is too large: images can be up to 10 MB."
         );
         assert_eq!(
-            check_file("long.mp4", "video/mp4", 60 * MIB, &limits).unwrap_err(),
-            "long.mp4 is too large: videos can be up to 50 MB."
+            check_file("long.mp4", "video/mp4", 251 * MIB, &limits).unwrap_err(),
+            "long.mp4 is too large: videos can be up to 250 MB."
         );
         assert_eq!(check_file("none.gif", "image/gif", 0, &limits).unwrap_err(), "none.gif is empty.");
         // The server's limits, whatever they are.
@@ -971,6 +1042,31 @@ mod tests {
     }
 
     #[test]
+    fn video_parts_are_bounded_contiguous_and_exact() {
+        assert_eq!(video_part_bytes(0, 1), None);
+        assert_eq!(video_part_bytes(MAX_VIDEO_BYTES + 1, 1), None);
+        assert_eq!(video_part_bytes(MAX_VIDEO_BYTES, 0), None);
+        assert_eq!(video_part_bytes(MAX_VIDEO_BYTES, 1), Some(VIDEO_PART_BYTES));
+        assert_eq!(video_part_bytes(MAX_VIDEO_BYTES, 32), Some(2 * MIB));
+        assert_eq!(video_part_bytes(MAX_VIDEO_BYTES, 33), None);
+        assert_eq!(video_part_bytes(1, 1), Some(1));
+        assert_eq!(video_part_bytes(VIDEO_PART_BYTES, 2), None);
+        let parts: Vec<_> = (1..=32).map(|part_number| VideoPart { part_number, etag: "part-tag".into() }).collect();
+        assert!(complete_video_parts(MAX_VIDEO_BYTES, &parts));
+        assert!(!complete_video_parts(MAX_VIDEO_BYTES, &parts[..31]));
+        assert!(!complete_video_parts(0, &[]));
+        let mut wrong = parts.clone();
+        wrong[1].part_number = 1;
+        assert!(!complete_video_parts(MAX_VIDEO_BYTES, &wrong));
+        wrong = parts;
+        wrong[0].etag = "x".repeat(MAX_VIDEO_PART_ETAG_BYTES + 1);
+        assert!(!complete_video_parts(MAX_VIDEO_BYTES, &wrong));
+        let opaque = vec![VideoPart { part_number: 1, etag: "x".repeat(176) }];
+        assert!(complete_video_parts(1, &opaque), "R2 part tags are opaque, not fixed-size MD5s");
+        const { assert!(MEDIA_R2_OPERATIONS_PER_DAY as u64 * 31 < 1_000_000) };
+    }
+
+    #[test]
     fn a_cast_takes_two_embeds_with_its_gif_and_its_quote() {
         assert_eq!(embeds_left(0, false, false), 2);
         assert_eq!(embeds_left(1, false, false), 1);
@@ -984,7 +1080,7 @@ mod tests {
     fn the_answers_are_as_the_composer_reads_them() {
         assert_eq!(
             serde_json::to_string(&LIMITS).unwrap(),
-            r#"{"max_image_bytes":10485760,"max_video_bytes":52428800,"max_embeds":2}"#
+            r#"{"max_image_bytes":10485760,"max_video_bytes":262144000,"max_embeds":2}"#
         );
         let uploaded =
             Uploaded { url: "https://allthing.social/m/1/x.png".into(), media_type: "image/png".into(), bytes: 7 };
