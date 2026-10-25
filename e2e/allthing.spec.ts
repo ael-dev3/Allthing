@@ -123,6 +123,9 @@ test.describe("front page", () => {
     // The static copy builds the page in the browser (several upstream round trips, no edge cache).
     expect(elapsed, `first casts after ${elapsed} ms`).toBeLessThan(PAGES ? 6000 : LIVE ? 3000 : 5000);
 
+    // First paint above keeps its original timing budget. Interactive
+    // branding is checked after the app replaces its early boot header.
+    await appCame(page);
     // Branding: the wordmark only, no logo mark.
     await expect(page.locator("header .wordmark")).toHaveText("Allthing");
     await expect(page.locator(".site-header img, .wordmark svg, .logo-mark")).toHaveCount(0);
@@ -789,6 +792,7 @@ test.describe("threads and navigation", () => {
 
   test("opening a post from the feed renders at once, and back restores the scroll position", async ({ page }) => {
     await page.goto(at("/"));
+    await appCame(page);
     await expect(firstCard(page)).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 1600));
     await page.waitForTimeout(300);
@@ -804,30 +808,48 @@ test.describe("threads and navigation", () => {
     // estimated height, and images above it load: measure once the card has
     // stopped moving.
     await page.waitForLoadState("networkidle").catch(() => {});
-    let before = await top();
+    let settledTop = await top();
     await expect
       .poll(async () => {
-        const [was, now] = [before, (before = await top())];
+        const [was, now] = [settledTop, (settledTop = await top())];
         return was === now;
       }, { intervals: [250] })
       .toBe(true);
-    // Measure in the page: from the click to the post's text in the DOM.
-    await page.evaluate(() => {
+    // Playwright may scroll again while making the click actionable. As
+    // in kept-front.fixture.spec.ts, Back must restore the actual departure
+    // position, not the earlier, possibly off-screen layout measurement.
+    // The capture-phase point is also when nav.rs saves the reader's place.
+    // Measure from this same real click to the post's text in the DOM.
+    await page.evaluate((hash) => {
       (window as any).__openedIn = null;
+      (window as any).__openedFrom = null;
       document.addEventListener("click", () => {
         const t0 = performance.now();
+        const card = document.querySelector(`.cast-card[data-hash="${hash}"]`);
+        (window as any).__openedFrom = {
+          hash, path: location.pathname + location.search,
+          top: card ? Math.round(card.getBoundingClientRect().top) : null,
+          y: Math.round(scrollY), viewport: innerHeight,
+        };
         const check = () => document.querySelector(".post .post-text, .post .mini-app-note")
           ? ((window as any).__openedIn = performance.now() - t0)
           : requestAnimationFrame(check);
         requestAnimationFrame(check);
       }, { capture: true, once: true });
-    });
+    }, hash);
     await card.locator(".cast-text").click({ position: { x: 4, y: 8 } });
     await expect(page).toHaveURL(new RegExp(`/p/${hash}$`));
     await expect.poll(() => page.evaluate(() => (window as any).__openedIn)).not.toBeNull();
     const openedIn = await page.evaluate(() => (window as any).__openedIn as number);
     console.log(`post opened in ${openedIn.toFixed(0)} ms`);
     expect(openedIn, "post renders from feed data").toBeLessThan(100);
+    const departed = await page.evaluate(() => (window as any).__openedFrom as {
+      hash: string; path: string; top: number | null; y: number; viewport: number;
+    } | null);
+    expect(departed?.hash, "the real click's source card").toBe(hash);
+    expect(departed?.path, "the real click leaves Home").toBe(at("/"));
+    expect(departed?.top, "a laid-out source card at departure").not.toBeNull();
+    const before = departed!.top!;
 
     await page.goBack();
     await expect(left).toBeVisible();

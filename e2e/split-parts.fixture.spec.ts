@@ -85,14 +85,15 @@ test("a part that can't be fetched loads the page again once, then offers to try
   await page.goto("/dau");
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("This part of Allthing couldn't load");
-  expect(loads).toBe(2);
+  // The app can render before the document's load event has arrived.
+  await expect.poll(() => loads).toBe(2);
   await expect(page.locator(".dau-meter")).toHaveCount(0);
 
   blocked = false;
   await alert.getByRole("button", { name: "Try again" }).click();
   await expect(page.locator(".dau-meter")).toContainText("6,174");
   await expect(page.getByRole("alert")).toHaveCount(0);
-  expect(loads).toBe(3);
+  await expect.poll(() => loads).toBe(3);
   expect(errors).toEqual([]);
 });
 

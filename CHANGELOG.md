@@ -10,6 +10,10 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - Videos up to 250 MB upload in 8 MB chunks. Retry continues from the last acknowledged chunk; Remove cancels the pending upload. Preparation and finishing have visible states, and the cast stays disabled until its attachments are ready.
 - Compatible MP4 and MOV videos are prepared for HLS from bounded metadata and file slices, preserving their frames and sound without copying the entire video into WebAssembly. Existing image limits and storage safeguards remain.
 
+### Development
+
+- Browser checks wait for app handover after measuring the first painted card, compare Back with the position at the actual click, and await exact page-load counts. Local media checks run database commands asynchronously so CI's Node 22 client can retire closed connections, and retain bounded Worker diagnostics on failure. Existing timing limits, request counts and upload assertions remain.
+
 ## [0.5.1] - 2026-10-23
 
 ### Changed
