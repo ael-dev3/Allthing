@@ -199,18 +199,22 @@ pub fn ComposeText(
             // Dropped text would bring its markup along. Dropped files go on
             // to the composer around the box, which attaches them.
             on:drop=move |ev: web_sys::DragEvent| ev.prevent_default()
+            // Replacing a draft or closing its dialog can move focus while
+            // the old editor's DOM remains, after its reactive owner retired.
+            // Those final focus/blur events must not read disposed handles.
             on:focus=move |_| {
-                if let Some(root) = node_ref.get_untracked()
+                if let Some(root) = node_ref.try_get_untracked().flatten()
                     && caret_in(&root).is_none()
+                    && let Some(end) = text.try_with_untracked(|t| t.encode_utf16().count())
+                    && let Some(caret) = caret.try_get_value()
                 {
-                    let end = text.with_untracked(|t| t.encode_utf16().count());
-                    let (from, to) = caret.get_value().unwrap_or((end, end));
+                    let (from, to) = caret.unwrap_or((end, end));
                     place(&root, from, to);
                 }
             }
             on:blur=move |_| {
-                if let Some(root) = node_ref.get_untracked() {
-                    caret.set_value(caret_in(&root));
+                if let Some(root) = node_ref.try_get_untracked().flatten() {
+                    let _ = caret.try_update_value(|at| *at = caret_in(&root));
                 }
             }
         ></div>

@@ -30,7 +30,7 @@ const key = (value: unknown) => JSON.stringify(value, (_key, value) => typeof va
 type Filter = { key: string; fid: number; targetFid: number; targetUsername: string; muted: boolean; blocked: boolean; muteRevision: number; blockRevision: number; updatedAt: number };
 type Selection = { querySetId: unknown; queries: string[]; tables: { table: string; values: object[] }[] };
 type Connection = { label: string; id: number; socket: WebSocketRoute; identity: string; active: boolean; fid?: number; selections: Map<string, Selection> };
-type Call = { label: string; name: string; fid?: number; args: Record<string, any>; rejected?: string };
+type Call = { label: string; connection: number; name: string; fid?: number; args: Record<string, any>; rejected?: string };
 
 class Peer {
   filters = new Map<string, Filter>();
@@ -44,6 +44,13 @@ class Peer {
   pausedPushes = new Set<string>();
   loseNextAck = new Set<string>();
   failNextWrite = new Set<string>();
+  failNextNotificationWrite = new Set<string>();
+  connectionGates = new Map<string, Promise<void>>();
+  holdNewConnections(label: string) {
+    let open!: () => void;
+    this.connectionGates.set(label, new Promise<void>(resolve => { open = resolve; }));
+    return () => { this.connectionGates.delete(label); open(); };
+  }
   filter(fid: number, targetFid = hush.fid): Filter {
     return { ...(this.filters.get(`${fid}:${targetFid}`) ?? { key: `${fid}:${targetFid}`, fid, targetFid, targetUsername: hush.username, muted: false, blocked: false, muteRevision: 0, blockRevision: 0, updatedAt: 0 }) };
   }
@@ -81,7 +88,10 @@ class Peer {
   }
   mutate(connection: Connection, name: string, args: Record<string, any>) {
     if (connection.fid === undefined) throw new Error("Verify the reader first");
-    if (name === "mark_notifications_seen") return;
+    if (name === "mark_notifications_seen") {
+      if (this.failNextNotificationWrite.delete(connection.label)) throw new Error("Fixture notification watermark unavailable");
+      return;
+    }
     if (name !== "set_account_filter") throw new Error(`Unexpected mutation ${name}`);
     if (this.failNextWrite.delete(connection.label)) throw new Error("Fixture preference save unavailable");
     const targetFid = Number(args.targetFid), kind = Number(args.kind), desired = Boolean(args.desired);
@@ -102,7 +112,9 @@ class Peer {
       if (new URL(route.request().url()).pathname !== "/v1/identity/websocket-token" || !token || !this.tokens.has(token)) return route.fulfill({ status: 401, json: { error: "Unknown fixture token" }, headers });
       return this.offline.has(label) ? route.fulfill({ status: 503, json: { error: "Fixture offline" }, headers }) : route.fulfill({ json: { token }, headers });
     });
-    await page.routeWebSocket("wss://maincloud.spacetimedb.com/**", socket => {
+    await page.routeWebSocket("wss://maincloud.spacetimedb.com/**", async socket => {
+      const gate = this.connectionGates.get(label);
+      if (gate) await gate;
       if (this.offline.has(label)) { void socket.close({ code: 1013, reason: "Fixture offline" }); return; }
       const requested = new URL(socket.url()).searchParams.get("token");
       const token = requested && this.tokens.has(requested) ? requested : `moderation-token-${this.tokens.size + 1}`;
@@ -126,7 +138,7 @@ class Peer {
           socket.send(wire.unsubscribed(message.value.requestId, message.value.querySetId, selection?.tables ?? []));
         } else if (message.tag === "CallReducer") {
           const { reducer: name, args, requestId } = message.value;
-          const call: Call = { label, name, fid: connection.fid, args: {} }; this.calls.push(call);
+          const call: Call = { label, connection: connection.id, name, fid: connection.fid, args: {} }; this.calls.push(call);
           try {
             const decoded = wire.reducer(name, args); call.args = JSON.parse(key(decoded));
             if (name === "verify_notification_fid") {
@@ -157,8 +169,9 @@ function cookieFid(cookie: string) {
 }
 async function reader(browser: Browser, peer: Peer, label: string, who: typeof alice | null, options: { pool?: ReturnType<typeof cast>[]; quotes?: object; groups?: object[]; holdAttestation?: number; touch?: boolean } = {}) {
   const context = await browser.newContext({ viewport: options.touch ? { width: 390, height: 844 } : { width: 1280, height: 900 }, hasTouch: options.touch });
-  const page = await context.newPage(), errors: string[] = [], publicWrites: string[] = [], attest: number[] = [];
-  page.on("pageerror", error => errors.push(error.message));
+  const page = await context.newPage(), errors: string[] = [], errorStacks: string[] = [], consoleEvents: { type: string; text: string; location: object }[] = [], publicWrites: string[] = [], attest: number[] = [];
+  page.on("pageerror", error => { errors.push(error.message); errorStacks.push(error.stack ?? error.message); });
+  page.on("console", message => { if (consoleEvents.length < 100) consoleEvents.push({ type: message.type(), text: message.text().slice(0, 20_000), location: message.location() }); });
   page.on("request", request => { if (request.method() === "POST" && /submitMessage|auth\/(?:signer|key|start)/.test(request.url())) publicWrites.push(request.url()); });
   await page.addInitScript(() => {
     Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: () => false });
@@ -201,7 +214,7 @@ async function reader(browser: Browser, peer: Peer, label: string, who: typeof a
   });
   await page.route("https://haatz.quilibrium.com/**", route => route.fulfill({ headers: { "access-control-allow-origin": "*" }, json: { messages: [] } }));
   await peer.attach(page, label);
-  return { context, page, errors, publicWrites, attest, releaseAttestation: release };
+  return { context, page, errors, errorStacks, consoleEvents, publicWrites, attest, releaseAttestation: release };
 }
 type Reader = Awaited<ReturnType<typeof reader>>;
 const cards = (page: Page) => page.locator("#app .cast-card[data-hash]");
@@ -232,7 +245,7 @@ async function switchReader(page: Page, user: typeof alice | null) {
   }, user);
 }
 async function finish(peer: Peer, ...values: Reader[]) {
-  await test.info().attach("moderation-diagnostics", { contentType: "application/json", body: JSON.stringify({ filters: [...peer.filters.values()], calls: peer.calls, queries: peer.queries, frames: peer.frames.slice(-100), readers: await Promise.all(values.map(async value => ({ errors: value.errors, publicWrites: value.publicWrites, url: value.page.url(), text: await value.page.locator("#app").innerText().catch(() => "unavailable") }))) }, null, 2) });
+  await test.info().attach("moderation-diagnostics", { contentType: "application/json", body: JSON.stringify({ filters: [...peer.filters.values()], calls: peer.calls, queries: peer.queries, frames: peer.frames.slice(-100), readers: await Promise.all(values.map(async value => ({ errors: value.errors, errorStacks: value.errorStacks, consoleEvents: value.consoleEvents, publicWrites: value.publicWrites, url: value.page.url(), text: await value.page.locator("#app").innerText().catch(() => "unavailable") }))) }, null, 2) });
   await Promise.all(values.map(value => value.context.close()));
 }
 
@@ -381,6 +394,43 @@ test("a failed preference write is explained and Retry sync preserves the reques
     expect(peer.calls.filter(call => call.name === "set_account_filter").map(call => Boolean(call.args.desired))).toEqual([true, true]);
     expect(a.errors).toEqual([]);
   } finally { await finish(peer, a); }
+});
+
+test("a failed notification watermark reconnects automatically and drains a filter queued during backoff", async ({ browser }) => {
+  const peer = new Peer();
+  const a = await reader(browser, peer, "a", alice, { groups: [{ kind: "follow", actors: [safe], count: 1, ts: at - 1 }] });
+  let releaseConnection = () => {};
+  try {
+    await profile(a); await ready(peer, a, "a");
+    const first = peer.connections.find(connection => connection.label === "a" && connection.active)!;
+    // A slow actionability check must not accidentally give the queued gesture
+    // a replacement binding first. Only the new handshake is held; the real
+    // automatic backoff/reconnect timer and the real SDK remain in use.
+    releaseConnection = peer.holdNewConnections("a");
+    peer.failNextNotificationWrite.add("a");
+    const started = await a.page.evaluate(() => performance.timeOrigin);
+    await a.page.getByRole("link", { name: /^Notifications, \d+ unread$/ }).click();
+    await expect(a.page).toHaveURL(/\/notifications$/);
+    await expect.poll(() => peer.calls.some(call => call.connection === first.id && call.name === "mark_notifications_seen" && call.rejected?.includes("Fixture notification watermark unavailable"))).toBe(true);
+    await expect.poll(() => first.active).toBe(false);
+    await a.page.goBack({ waitUntil: "commit" });
+    expect(await a.page.evaluate(() => performance.timeOrigin)).toBe(started);
+    await profileControls(a.page).getByRole("button", { name: "Mute", exact: true }).click();
+    // Unmute labels only committed local intent. No manual Retry, focus/online
+    // wakeup, navigation reload or fresh session may rescue this operation.
+    await expect(profileControls(a.page).getByRole("button", { name: "Unmute", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(peer.filter(alice.fid).muted).toBe(false);
+    expect(peer.calls.filter(call => call.name === "set_account_filter")).toEqual([]);
+    releaseConnection();
+    await expect.poll(() => peer.filter(alice.fid).muted).toBe(true);
+    await expect(profileControls(a.page).getByRole("button", { name: "Unmute", exact: true })).toBeEnabled();
+    expect(peer.calls.filter(call => call.name === "mark_notifications_seen" && call.rejected)).toHaveLength(1);
+    const accepted = peer.calls.filter(call => call.name === "set_account_filter" && !call.rejected);
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].connection).not.toBe(first.id);
+    expect(a.consoleEvents.filter(event => /WebSocket.*(?:CLOSING|CLOSED)|(?:CLOSING|CLOSED).*WebSocket/i.test(event.text))).toEqual([]);
+    expect(a.publicWrites).toEqual([]); expect(a.errors).toEqual([]);
+  } finally { releaseConnection(); await finish(peer, a); }
 });
 
 test("changing accounts cannot expose or apply the previous reader's private preferences", async ({ browser }) => {

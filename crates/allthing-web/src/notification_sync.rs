@@ -205,6 +205,13 @@ impl Sync {
         if !self.active() || self.inner.connecting.get() || self.inner.writing.get() {
             return;
         }
+        // An automatic watermark/subscription retry also retires consumers'
+        // reducer handles: disconnect intentionally suppresses its callback.
+        crate::moderation::connection_failed(
+            self.fid,
+            "Account preferences reconnecting; saved filters and pending changes are kept.".into(),
+        );
+        crate::library::connection_failed(self.fid, "Library reconnecting; your offline changes are kept".into());
         self.detach();
         let failures = self.inner.failures.get().saturating_add(1);
         self.inner.failures.set(failures);
