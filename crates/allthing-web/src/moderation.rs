@@ -393,6 +393,7 @@ impl Moderation {
         #[cfg(not(feature = "static-host"))]
         {
             self.0.update(|s| s.paused = false);
+            retry_storage();
             persist_staged(self);
             crate::notification_sync::retry_preferences();
         }
@@ -593,6 +594,15 @@ fn observe(m: Moderation, row: Row) {
 fn signal_disk() {
     if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = s.set_item("allthing.account-filters.changed", &js_sys::Date::now().to_string());
+    }
+}
+
+#[cfg(not(feature = "static-host"))]
+pub(crate) fn retry_storage() {
+    if let Some(m) = handle() {
+        // Retry the same account/epoch-fenced merge without discarding cached
+        // filters or assuming a failed storage read returned an empty list.
+        reload_disk(m);
     }
 }
 

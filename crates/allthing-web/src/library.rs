@@ -248,6 +248,7 @@ impl Library {
         }
     }
     pub fn retry(self) {
+        crate::moderation::retry_storage();
         crate::notification_sync::wake_urgent();
         if let Some(b) = current() {
             b.inner.disk_failed.set(false);

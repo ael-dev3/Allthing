@@ -90,6 +90,10 @@ pub fn account(fid: Option<u64>, notifications: Notifications) {
         })),
     };
     CURRENT.with(|s| *s.borrow_mut() = Some(sync.clone()));
+    // Private filters gate foreground content before cards can register a
+    // Library watch. Keep the two-second startup delay, but do not let an
+    // unrelated API request prevent this account's privacy bootstrap.
+    sync.inner.urgent.set(true);
     sync.schedule(2000);
 }
 

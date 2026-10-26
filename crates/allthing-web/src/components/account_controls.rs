@@ -58,7 +58,6 @@ pub fn AccountControls(fid: u64, username: String) -> impl IntoView {
                         class:active=move || preference.get().muted
                         aria-pressed=move || preference.get().muted.to_string()
                         aria-description=MUTE_WHAT
-                        title=MUTE_WHAT
                         disabled=move || preference.get().pending || moderation.status() == SyncStatus::Connecting
                         on:click={let username = mute_username.clone(); move |event| {
                             event.stop_propagation();
@@ -71,7 +70,6 @@ pub fn AccountControls(fid: u64, username: String) -> impl IntoView {
                         class:active=move || preference.get().blocked
                         aria-pressed=move || preference.get().blocked.to_string()
                         aria-description=BLOCK_WHAT
-                        title=BLOCK_WHAT
                         disabled=move || preference.get().pending || moderation.status() == SyncStatus::Connecting
                         on:click={let username = username.clone(); move |event| {
                             event.stop_propagation();
@@ -162,10 +160,10 @@ pub fn AccountManagement() -> impl IntoView {
                                         <div class="account-management-id"><strong>{label}</strong><span>{format!("Account ID {fid}")}</span></div>
                                         <div class="account-management-actions" aria-busy=move || current.get().pending.then_some("true")>
                                             <Show when=move || current.get().muted>
-                                                <button type="button" class="account-control active" aria-label=mute_label.clone() title="Undo Mute; Block, if enabled, stays on" disabled=move || current.get().pending on:click={let username = muted_username.clone(); move |_| moderation.set_muted(fid, &username, false)}>"Unmute"</button>
+                                                <button type="button" class="account-control active" aria-label=mute_label.clone() aria-description="Undo Mute; Block, if enabled, stays on" disabled=move || current.get().pending on:click={let username = muted_username.clone(); move |_| moderation.set_muted(fid, &username, false)}>"Unmute"</button>
                                             </Show>
                                             <Show when=move || current.get().blocked>
-                                                <button type="button" class="account-control active" aria-label=block_label.clone() title="Undo Block; Mute, if enabled, stays on" disabled=move || current.get().pending on:click={let username = username.clone(); move |_| moderation.set_blocked(fid, &username, false)}>"Unblock"</button>
+                                                <button type="button" class="account-control active" aria-label=block_label.clone() aria-description="Undo Block; Mute, if enabled, stays on" disabled=move || current.get().pending on:click={let username = username.clone(); move |_| moderation.set_blocked(fid, &username, false)}>"Unblock"</button>
                                             </Show>
                                             {move || current.get().pending.then(|| view! { <span class="account-management-saving">"Sync pending…"</span> })}
                                         </div>
