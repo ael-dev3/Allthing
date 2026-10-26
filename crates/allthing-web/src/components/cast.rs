@@ -400,7 +400,7 @@ pub fn CastList(
     };
 
     view! {
-        <Show when=move || casts.with(|c| !c.is_empty()) fallback=move || {
+        <Show when=move || casts.with(|c| !c.is_empty()) fallback=move || move || {
             if crate::moderation::waiting() { view! { <crate::moderation::FilterNotice/><CastSkeletons/> }.into_any() }
             else if seen_feed.pending() { view! { <CastSkeletons/> }.into_any() }
             else { view! { <p class="empty">"Nothing here yet."</p> }.into_any() }

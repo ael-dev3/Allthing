@@ -508,6 +508,26 @@ for (const width of [1280, 390]) {
         await expect(a.page.getByRole("list", { name: "Encrypted messages with @bob" }).getByText(secret)).toBeVisible();
         expect(db.dms).toHaveLength(1);
 
+        // A third-party mention changes privacy, not this conversation's
+        // encrypted rows. Hide already decrypted text without navigation,
+        // while preserving unrelated history, the composer and ciphertext.
+        const mentioned = "An already decrypted message mentioning @carol";
+        await composer.fill(mentioned); await composer.press("Enter");
+        const thread = a.page.getByRole("list", { name: "Encrypted messages with @bob" });
+        await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
+        const encryptedHistory = db.dms.map(row => ({ ...row }));
+        expect(encryptedHistory).toHaveLength(2);
+        await db.setFilter(alice.fid, 303, 0, true, 0, "carol");
+        await expect(thread.getByText(mentioned, { exact: true })).toHaveCount(0);
+        await expect(thread.getByText(secret, { exact: true })).toBeVisible();
+        await expect(composer).toBeVisible();
+        expect(new URL(a.page.url()).searchParams.get("to")).toBe(String(bob.fid));
+        expect(db.dms).toEqual(encryptedHistory);
+        await db.setFilter(alice.fid, 303, 0, false, 1, "carol");
+        await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
+        await expect(thread.getByText(secret, { exact: true })).toBeVisible();
+        expect(db.dms).toEqual(encryptedHistory);
+
         // A newly arriving key/message from a blocked peer must never start
         // an X25519 derivation, even when it is not in the secret cache.
         await db.setFilter(alice.fid, bob.fid, 1, true, 2, bob.username);

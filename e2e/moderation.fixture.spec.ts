@@ -462,6 +462,8 @@ test("profile controls require another signed-in account; help opens on keyboard
     await profile(signedOut); await appCame(signedOut.page); await expect(profileControls(signedOut.page)).toHaveCount(0);
     await profile(own, alice.username); await expect(profileControls(own.page)).toHaveCount(0);
     await profile(own); await ready(peer, own, "own");
+    await expect(own.page.locator(".account-filters-waiting")).toHaveCount(0);
+    await expect(own.page.getByText("Nothing here yet.", { exact: true })).toBeVisible();
     await profileControls(own.page).getByRole("button", { name: "About mute and block", exact: true }).focus();
     const help = own.page.getByRole("dialog", { name: "About mute and block", exact: true });
     await expect(help).toBeVisible();
@@ -483,6 +485,8 @@ test("profile controls require another signed-in account; help opens on keyboard
     await expect(own.page.getByRole("dialog", { name: "Settings", exact: true })).toBeHidden();
     await own.page.keyboard.press("Escape");
     await profile(touch); await ready(peer, touch, "touch");
+    await expect(touch.page.locator(".account-filters-waiting")).toHaveCount(0);
+    await expect(touch.page.getByText("Nothing here yet.", { exact: true })).toBeVisible();
     await profileControls(touch.page).getByRole("button", { name: "About mute and block", exact: true }).tap();
     await expect(touch.page.getByRole("dialog", { name: "About mute and block", exact: true })).toBeVisible();
     expect(await touch.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -117,6 +117,11 @@ pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTree
     let messages = {
         let identity = identity.clone();
         move || {
+            // Read privacy before rows: a third-party mention can become
+            // hidden while the conversation's encrypted row IDs stay equal.
+            if crate::moderation::waiting() {
+                return Vec::new();
+            }
             let me = identity.get().unwrap_or_default();
             rows.get()
                 .into_iter()
