@@ -248,8 +248,35 @@ impl State {
     }
 }
 
+/// Only privacy changes invalidate rendered content. Sync status and outbox
+/// bookkeeping must not replace a focused editor or a visible thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Visibility {
+    waiting: bool,
+    filters: FilterSet,
+    blocked: BTreeSet<u64>,
+}
+impl Visibility {
+    fn of(state: &State, current: Option<u64>) -> Self {
+        let blocked = state
+            .rows
+            .iter()
+            .filter(|(_, row)| row.server.blocked || row.pending_block.as_ref().is_some_and(|p| p.desired))
+            .map(|(fid, _)| *fid)
+            .chain(
+                state
+                    .staged
+                    .iter()
+                    .filter(|((_, kind), (_, desired, _, _))| *kind == 1 && *desired)
+                    .map(|((fid, _), _)| *fid),
+            )
+            .collect();
+        Self { waiting: state.waiting_for(current), filters: state.filters.clone(), blocked }
+    }
+}
+
 #[derive(Clone, Copy)]
-pub struct Moderation(RwSignal<State>, Signal<Option<u64>>);
+pub struct Moderation(RwSignal<State>, Signal<Option<u64>>, Memo<Visibility>);
 thread_local! { static HANDLE: Cell<Option<Moderation>> = const { Cell::new(None) }; }
 pub fn use_moderation() -> Moderation {
     use_context::<Moderation>().expect("Account filters context")
@@ -267,7 +294,9 @@ impl Moderation {
         };
         #[cfg(feature = "static-host")]
         let current = Signal::stored(None);
-        let m = Self(RwSignal::new(State::default()), current);
+        let state = RwSignal::new(State::default());
+        let visibility = Memo::new(move |_| state.with(|state| Visibility::of(state, current.get())));
+        let m = Self(state, current, visibility);
         HANDLE.with(|h| h.set(Some(m)));
         #[cfg(not(feature = "static-host"))]
         {
@@ -286,8 +315,7 @@ impl Moderation {
         self.1.get().is_some()
     }
     fn waiting(self) -> bool {
-        let current = self.1.get();
-        self.0.with(|state| state.waiting_for(current))
+        self.2.with(|visibility| visibility.waiting)
     }
     pub fn status(self) -> SyncStatus {
         if self.1.get() != self.0.with(|s| s.fid) {
@@ -375,33 +403,25 @@ pub fn waiting() -> bool {
     handle().is_some_and(Moderation::waiting)
 }
 pub fn hides_cast(cast: &Cast, quotes: &BTreeMap<String, Cast>) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_cast(cast, quotes)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_cast(cast, quotes)))
 }
 pub fn hides_user(user: &UserSummary) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_user(user)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_user(user)))
 }
 pub fn hides_text(text: &str) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_text(text)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_text(text)))
 }
 pub fn hides_references(references: &allthing_core::moderation::References) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_references(references)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_references(references)))
 }
 pub fn hides_group(group: &Group) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_group(group)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_group(group)))
 }
 pub fn hides_group_time(group: &GroupTime) -> bool {
-    handle().is_some_and(|m| m.waiting() || m.0.with(|s| s.filters.hides_group_time(group)))
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.filters.hides_group_time(group)))
 }
 pub fn blocks_fid(fid: u64) -> bool {
-    handle().is_some_and(|m| {
-        m.waiting()
-            || m.0.with(|s| {
-                s.staged.get(&(fid, 1)).is_some_and(|p| p.1)
-                    || s.rows
-                        .get(&fid)
-                        .is_some_and(|r| r.server.blocked || r.pending_block.as_ref().is_some_and(|p| p.desired))
-            })
-    })
+    handle().is_some_and(|m| m.2.with(|v| v.waiting || v.blocked.contains(&fid)))
 }
 
 #[component]
@@ -961,5 +981,167 @@ mod tests {
         local.merge_disk(&stale);
         assert!(!local.hides());
         assert!(local.pending_mute.is_none());
+    }
+
+    fn ready_state() -> State {
+        State {
+            fid: Some(1),
+            capability: Some(true),
+            hydrated: true,
+            disk_loaded: true,
+            status: SyncStatus::Synced,
+            ..State::default()
+        }
+    }
+
+    #[test]
+    fn visibility_ignores_sync_only_changes_on_an_unconfigured_empty_fixture() {
+        let mut state = State { capability: Some(false), ..ready_state() };
+        let visible = Visibility::of(&state, Some(1));
+        assert!(!visible.waiting);
+        assert!(visible.filters.is_empty());
+        for status in [
+            SyncStatus::Connecting,
+            SyncStatus::Failed("Fixture endpoint".into()),
+            SyncStatus::Saving,
+            SyncStatus::Pending,
+            SyncStatus::Synced,
+        ] {
+            state.status = status;
+            state.paused = !state.paused;
+            assert_eq!(Visibility::of(&state, Some(1)), visible);
+        }
+        // Capability discovery and a durable clear/outbox record do not
+        // change which content is allowed after readiness is established.
+        state.capability = Some(true);
+        let mut cleared = stored();
+        cleared.set_intent(0, false).unwrap();
+        state.rows.insert(2, cleared);
+        state.stage_sequence = 12;
+        state.saving.insert((2, 0));
+        state.rebuild();
+        assert_eq!(Visibility::of(&state, Some(1)), visible);
+        let row = state.rows.get_mut(&2).unwrap();
+        let intent = row.pending_mute.clone().unwrap();
+        row.acknowledge(0, &intent);
+        state.saving.clear();
+        state.rebuild();
+        assert_eq!(Visibility::of(&state, Some(1)), visible);
+    }
+
+    #[test]
+    fn visibility_outbox_commit_and_ack_do_not_remount_already_hidden_content() {
+        let mut state = ready_state();
+        let visible = Visibility::of(&state, Some(1));
+        state.stage(2, "two", 0, true).unwrap();
+        let hidden = Visibility::of(&state, Some(1));
+        assert_ne!(hidden, visible);
+        assert!(hidden.filters.hides_text("hello @two"));
+        assert!(!hidden.blocked.contains(&2));
+        let mut committed = stored();
+        committed.server.target_username = "two".into();
+        committed.set_intent(0, true).unwrap();
+        state.rows.insert(2, committed);
+        state.staged.clear();
+        state.status = SyncStatus::Pending;
+        state.rebuild();
+        assert_eq!(Visibility::of(&state, Some(1)), hidden);
+        let mut acknowledged = stored();
+        acknowledged.server.target_username = "two".into();
+        acknowledged.server.muted = true;
+        acknowledged.server.mute_revision = 1;
+        state.rows.get_mut(&2).unwrap().merge_disk(&acknowledged);
+        state.status = SyncStatus::Synced;
+        state.rebuild();
+        assert!(state.rows[&2].pending_mute.is_none());
+        assert_eq!(Visibility::of(&state, Some(1)), hidden);
+    }
+
+    #[test]
+    fn visibility_pending_undo_never_reveals_before_authoritative_clear() {
+        let mut row = stored();
+        row.server.target_username = "two".into();
+        row.server.blocked = true;
+        row.server.block_revision = 1;
+        let mut state = State { rows: BTreeMap::from([(2, row)]), ..ready_state() };
+        state.rebuild();
+        let hidden = Visibility::of(&state, Some(1));
+        assert!(hidden.blocked.contains(&2));
+        state.stage(2, "two", 1, false).unwrap();
+        assert_eq!(Visibility::of(&state, Some(1)), hidden);
+        state.rows.get_mut(&2).unwrap().set_intent(1, false).unwrap();
+        state.staged.clear();
+        state.rebuild();
+        assert_eq!(Visibility::of(&state, Some(1)), hidden);
+        let mut clear = stored();
+        clear.server.target_username = "two".into();
+        clear.server.block_revision = 2;
+        state.rows.get_mut(&2).unwrap().merge_disk(&clear);
+        state.rebuild();
+        let revealed = Visibility::of(&state, Some(1));
+        assert_ne!(revealed, hidden);
+        assert!(!revealed.waiting);
+        assert!(revealed.filters.is_empty());
+        assert!(!revealed.blocked.contains(&2));
+    }
+
+    #[test]
+    fn visibility_distinguishes_alias_filters_and_block_delivery_from_mutes() {
+        let mut row = stored();
+        row.server.target_username = "oldname".into();
+        row.server.muted = true;
+        let mut state = State { rows: BTreeMap::from([(2, row)]), ..ready_state() };
+        state.rebuild();
+        let muted = Visibility::of(&state, Some(1));
+        assert!(muted.filters.hides_text("@oldname"));
+        assert!(!muted.filters.hides_text("@newname"));
+        state.rows.get_mut(&2).unwrap().aliases.insert("newname".into());
+        state.rebuild();
+        let renamed = Visibility::of(&state, Some(1));
+        assert_ne!(renamed, muted);
+        assert!(renamed.filters.hides_text("@newname"));
+        // A block changes messaging even when an existing mute already hides
+        // the same posts; clearing just that mute must not reveal anything.
+        state.rows.get_mut(&2).unwrap().server.blocked = true;
+        state.rebuild();
+        let blocked = Visibility::of(&state, Some(1));
+        assert_eq!(blocked.filters, renamed.filters);
+        assert_ne!(blocked, renamed);
+        assert!(blocked.blocked.contains(&2));
+        state.rows.get_mut(&2).unwrap().server.muted = false;
+        state.rebuild();
+        assert_eq!(Visibility::of(&state, Some(1)), blocked);
+        // A newly staged block also protects delivery before its disk write.
+        let mut staged = ready_state();
+        staged.stage(2, "two", 1, true).unwrap();
+        assert!(Visibility::of(&staged, Some(1)).blocked.contains(&2));
+    }
+
+    #[test]
+    fn visibility_keeps_disk_snapshot_and_account_switch_privacy_barriers() {
+        assert!(!Visibility::of(&State::default(), None).waiting);
+        assert!(Visibility::of(&State::default(), Some(1)).waiting);
+        let mut state = State { capability: Some(false), disk_loaded: false, ..ready_state() };
+        assert!(Visibility::of(&state, Some(1)).waiting);
+        state.disk_loaded = true;
+        let visible = Visibility::of(&state, Some(1));
+        assert!(!visible.waiting);
+        state.capability = Some(true);
+        state.hydrated = false;
+        assert_ne!(Visibility::of(&state, Some(1)), visible);
+        assert!(Visibility::of(&state, Some(1)).waiting);
+        state.hydrated = true;
+        assert_eq!(Visibility::of(&state, Some(1)), visible);
+        assert!(Visibility::of(&state, Some(2)).waiting);
+        assert!(Visibility::of(&state, None).waiting);
+        // An unconfigured server cannot bypass an already cached active
+        // filter, even though empty legacy fixture state is permitted.
+        let mut row = stored();
+        row.server.muted = true;
+        state.rows.insert(2, row);
+        state.capability = Some(false);
+        state.rebuild();
+        assert!(Visibility::of(&state, Some(1)).waiting);
+        assert!(!Visibility::of(&ready_state(), Some(1)).waiting);
     }
 }
