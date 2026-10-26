@@ -159,7 +159,7 @@ jobs:
       - name: Test the static copy
         run: |
           bash scripts/build-pages.sh
-          E2E_PAGES=1 npx playwright test e2e/static-body-limit.fixture.spec.ts e2e/static-metadata.fixture.spec.ts e2e/static-navigation.fixture.spec.ts e2e/static-follows.fixture.spec.ts e2e/preloaded-replies.fixture.spec.ts e2e/poll.fixture.spec.ts --output=test-results/static
+          E2E_PAGES=1 npx playwright test e2e/static-body-limit.fixture.spec.ts e2e/static-metadata.fixture.spec.ts e2e/static-navigation.fixture.spec.ts e2e/static-follows.fixture.spec.ts e2e/preloaded-replies.fixture.spec.ts e2e/poll.fixture.spec.ts e2e/library.fixture.spec.ts --output=test-results/static
         env:
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/static
       - name: Upload browser failure reports

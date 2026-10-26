@@ -181,7 +181,13 @@ pub fn Engagement(
     };
     // The ranking note is for screen readers: a native tooltip on the row
     // would sit on top of the counts' own popovers.
-    view! { <div class="engagement">{likes}{recasts}{replies}<span class="visually-hidden">{title}</span></div> }
+    view! {
+        <div class="engagement">
+            {likes}{recasts}{replies}
+            <crate::components::bookmark::BookmarkButton hash=cast.hash/>
+            <span class="visually-hidden">{title}</span>
+        </div>
+    }
 }
 
 /// The reply count of the cast `hash`, `read` as the page has it, with the

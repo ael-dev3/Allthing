@@ -3,6 +3,7 @@
 use spacetimedb::{Identity, ReducerContext, Table, TimeDuration, Timestamp, ViewContext, view};
 
 mod attest_key;
+mod library;
 pub use attest_key::ATTEST_PUBLIC_KEY;
 
 const MAX_MSG: usize = 4000;

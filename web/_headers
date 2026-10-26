@@ -9,7 +9,7 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' https://static.cloudflareinsights.com 'sha256-7MR8usYANrh7vyUz5TYodWF71FASRetYK9s8dhW7ohY=' 'sha256-OCdcCySGf2C2Sgd561xC2Uhc6d8FplAkPrG7w63LhsE=' 'sha256-1gdBaW0yThq+josqCs7OObm5bNyHQ7o10smaUr0ZIrY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https: wss://maincloud.spacetimedb.com; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://streamable.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' https://static.cloudflareinsights.com 'sha256-7MR8usYANrh7vyUz5TYodWF71FASRetYK9s8dhW7ohY=' 'sha256-sRrwKjqHT1qGbGjlpIO5jxMbyYntwB4HLAzVyr2HXFA=' 'sha256-OCdcCySGf2C2Sgd561xC2Uhc6d8FplAkPrG7w63LhsE='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https: wss://maincloud.spacetimedb.com; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://streamable.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

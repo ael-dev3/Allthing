@@ -10436,3 +10436,118 @@ p.jumbo .emoji img {
   border-radius: 12px;
 }
 .seen-notice p { margin: 0 0 6px; }
+
+
+/* Library and private bookmarks. */
+.library-page {
+  max-width: var(--content-width, 720px);
+  margin: 0 auto;
+  min-width: 0;
+}
+.library-heading { display: flex; align-items: baseline; gap: 16px; }
+.library-heading .page-title { margin-bottom: 8px; }
+.library-privacy { color: var(--ink-3); font-size: 13px; line-height: 1.55; margin: 0 0 20px; }
+.library-tabs { margin-bottom: 20px; overflow-x: auto; scrollbar-width: thin; }
+.library-tabs a { flex: 1; text-align: center; white-space: nowrap; }
+.library-filter { margin: 0 0 16px; }
+.library-filter label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 7px; }
+.library-filter-row { display: flex; gap: 8px; align-items: center; }
+.library-filter input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface, rgba(255, 255, 255, 0.7));
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+}
+.library-filter input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.library-filter .small { margin: 6px 0 0; }
+.library-sync {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.library-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 40px; }
+.library-controls p { margin: 0; }
+/* These compact page actions share the account-link treatment, not the
+   account menu's full-width rows. Keep labels and controls on one line. */
+.library-sync > .account-link,
+.library-controls > .account-link,
+.library-change > .account-link,
+.library-filter-row > .account-link,
+.library-history-controls > .account-link,
+.library-confirm > .account-link,
+.library-activity > .account-link { display: inline-flex; align-items: center; width: auto; flex: none; }
+.library-change, .library-note, .library-error, .library-empty, .library-unavailable, .library-confirm {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+  line-height: 1.55;
+}
+.library-change { background: var(--accent-soft); font-size: 13px; }
+.library-note { color: var(--ink-3); font-size: 13px; }
+.library-empty { text-align: center; color: var(--ink-2); padding: 32px 20px; }
+.library-empty p { margin: 0 0 16px; }
+.library-error { color: var(--ink-2); }
+.library-error p { margin-top: 0; overflow-wrap: anywhere; }
+.library-unavailable { position: relative; color: var(--ink-3); }
+.library-unavailable > .bookmark-action { float: right; }
+.library-unavailable > p { margin-top: 0; }
+.library-activity { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; color: var(--ink-3); font-size: 12px; }
+.library-action-result { flex-basis: 100%; }
+.library-more { text-align: center; padding: 20px 0; }
+.library-history-controls { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 14px; }
+.library-confirm .button { margin: 0 10px 8px 0; }
+.library-result { color: var(--ink-2); font-size: 13px; }
+/* Like the existing reaction actions, the hit target extends beyond the
+   icon row. Keep its layout height so anonymous early cards do not jump. */
+.bookmark-action { position: relative; display: inline-flex; align-items: center; height: 15px; margin-left: auto; flex: none; }
+.bookmark-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  border-radius: 7px;
+  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.bookmark-button .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+.bookmark-button.saved { color: var(--accent); }
+.bookmark-button.saved .icon { fill: currentColor; }
+.bookmark-button:hover { background: var(--accent-soft); color: var(--accent); }
+.bookmark-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.bookmark-button:disabled { cursor: wait; opacity: 0.5; }
+.bookmark-button[data-press="down"] .icon { transform: scale(0.85); }
+.bookmark-message:not(:empty) { position: absolute; z-index: 4; bottom: 36px; right: 0; width: min(260px, 65vw); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--paper, #f6f4ee); color: var(--ink-2); box-shadow: 0 5px 18px #00000012; font-size: 12px; line-height: 1.45; }
+@media (pointer: coarse) {
+  .bookmark-button::after { content: ""; position: absolute; min-width: 44px; min-height: 44px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  .library-tabs a, .library-filter button, .library-more button, .library-activity button { min-height: 44px; }
+}
+@media (max-width: 640px) {
+  .main-nav .library-nav, .boot-nav .library-nav { display: none; }
+  .library-privacy { font-size: 12px; }
+  .library-filter-row { flex-wrap: wrap; }
+  .library-filter input { flex-basis: calc(100% - 82px); flex-grow: 1; }
+  .library-filter-row .account-link { margin-left: auto; }
+  .library-tabs a { padding-left: 8px; padding-right: 8px; }
+}
+
+/* Keep Save and the existing reply actions together in deeply nested phone
+   threads. Compact the indentation while preserving each control's tap area. */
+@media (max-width: 520px) {
+  .comment-inner { padding-left: 8px; }
+  .children > .comment { margin-left: 2px; padding-left: 4px; }
+  .comment-foot .engagement { margin-right: 2px; }
+}

@@ -7,8 +7,8 @@ use std::rc::Rc;
 use allthing_core::activity::AppsWindow;
 use allthing_core::api::{
     self, Annotations, CastPayload, ChannelPayload, ChannelsPayload, EngagementPayload, EngagementRequest, FollowsDir,
-    FollowsPayload, HomePayload, IndexCoverage, LatestPayload, Meta, QuotedCast, ReactionKind, ReactionsPayload,
-    RepliesPayload, SearchPayload, UserPayload,
+    FollowsPayload, HomePayload, IndexCoverage, LatestPayload, LibraryCastsPayload, LibraryPayload, Meta, QuotedCast,
+    ReactionKind, ReactionsPayload, RepliesPayload, SearchPayload, UserPayload,
 };
 use allthing_core::channels::{channel_id_for_url, channel_url_for_id, is_channel_id};
 use allthing_core::embeds::link_key;
@@ -531,6 +531,268 @@ pub async fn following(
     notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
     let payload = FollowingPayload { pool, notes, meta: meta(&inv), next };
     Built::json(&payload, following::FOLLOWING_CACHE)
+}
+
+/// Hydrate a bounded Library page in the caller's order. The provider's bulk
+/// order is not the list's order. Errors retain the caller's cursor for Retry;
+/// successful omissions and content filtering have separate classifications.
+async fn hydrate_library(
+    inv: &Invocation,
+    hashes: &[String],
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<LibraryCastsPayload, Failure> {
+    let raw = hypersnap::library_casts(inv, hashes).await.map_err(Failure::upstream)?;
+    let mut by_hash: HashMap<String, Cast> =
+        raw.iter().map(normalize::cast).map(|cast| (cast.hash.clone(), cast)).collect();
+    let unavailable = hashes.iter().filter(|hash| !by_hash.contains_key(*hash)).cloned().collect();
+    let ordered: Vec<Cast> = hashes.iter().filter_map(|hash| by_hash.remove(hash)).collect();
+    let filtered = ordered.iter().filter(|cast| cast.spam).map(|cast| cast.hash.clone()).collect();
+    let mut notes = carried(previous.as_deref().map(Vec::as_slice));
+    let known_links = std::mem::take(&mut notes.links);
+    let pool = drop_hidden(inv, ordered, &mut notes, &known_links, true).await;
+    let quoted = annotate_listing(inv, &mut notes, &pool, ORIGIN_AUTHORS, &known_links).await;
+    notes.keep_users(read_cards(&raw, quoted), listed_accounts(&pool, &notes.quotes));
+    keep_shown(&mut notes, &pool);
+    Ok(LibraryCastsPayload { pool, unavailable, filtered, notes, meta: meta(inv) })
+}
+
+/// The account's retained active likes or recasts, newest reaction first,
+/// including older pages until the hub has no continuation token. The
+/// browser's recent-reaction cache does not limit this history.
+pub async fn library(
+    inv: Rc<Invocation>,
+    fid: u64,
+    kind: ReactionKind,
+    cursor: Option<String>,
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<Built, Failure> {
+    let (entries, next) =
+        hypersnap::library_reactions(&inv, fid, kind, cursor.as_deref()).await.map_err(Failure::upstream)?;
+    let hashes: Vec<String> = entries.iter().map(|entry| entry.hash.clone()).collect();
+    let LibraryCastsPayload { pool, unavailable, filtered, notes, meta } =
+        hydrate_library(&inv, &hashes, previous).await?;
+    Built::json(
+        &LibraryPayload { fid, kind, entries, pool, next, unavailable, filtered, notes, meta },
+        api::LIBRARY_CACHE,
+    )
+}
+
+/// Public cast data for bookmarks/seen metadata supplied by the browser, at
+/// most 25 hashes. This does not read or expose any private Library records.
+pub async fn library_casts(
+    inv: Rc<Invocation>,
+    hashes: Vec<String>,
+    previous: Option<Rc<Vec<u8>>>,
+) -> Result<Built, Failure> {
+    Built::json(&hydrate_library(&inv, &hashes, previous).await?, api::LIBRARY_CACHE)
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+    use crate::{FetchError, Host, HttpRequest, HttpResponse};
+    use allthing_core::provenance::{base64_decode, base64_encode};
+    use futures::future::{FutureExt, LocalBoxFuture};
+    use serde_json::json;
+    use std::cell::{Cell, RefCell};
+
+    struct Hub {
+        total: usize,
+        missing: HashSet<usize>,
+        reaction_status: u16,
+        reaction_body: Option<String>,
+        bulk_status: u16,
+        bulk_body: Option<String>,
+        timeout: bool,
+        clock: Cell<f64>,
+        requests: RefCell<Vec<String>>,
+    }
+    impl Hub {
+        fn new(total: usize) -> Self {
+            Self {
+                total,
+                missing: HashSet::new(),
+                reaction_status: 200,
+                reaction_body: None,
+                bulk_status: 200,
+                bulk_body: None,
+                timeout: false,
+                clock: Cell::new(1_800_000_000_000.0),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+    }
+    fn hash(n: usize) -> String {
+        format!("0x{n:040x}")
+    }
+    fn query(url: &str, name: &str) -> Option<String> {
+        url.split_once('?')?.1.split('&').find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            (key == name).then(|| allthing_core::params::percent_decode(value)).flatten()
+        })
+    }
+    impl Host for Hub {
+        fn now(&self) -> f64 {
+            // Independent invocations can refill the upstream test bucket;
+            // no timing or performance behavior is being measured here.
+            let now = self.clock.get();
+            self.clock.set(now + 10_000.0);
+            now
+        }
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            let url = request.url;
+            assert!(url.starts_with(hypersnap::BASE), "Library never switches read providers: {url}");
+            self.requests.borrow_mut().push(url.clone());
+            let answer = |status, body: String| {
+                Ok(HttpResponse { status, retry_after: None, body: (status == 200).then(|| body.into_bytes()) })
+            };
+            let response = if url.contains("/v1/reactionsByFid?") {
+                if self.timeout {
+                    return async { Err(FetchError::Timeout) }.boxed_local();
+                }
+                assert_eq!(query(&url, "fid").as_deref(), Some("3"));
+                assert_eq!(query(&url, "pageSize").as_deref(), Some("25"));
+                assert_eq!(query(&url, "reverse").as_deref(), Some("true"));
+                let offset = query(&url, "pageToken")
+                    .map(|token| String::from_utf8(base64_decode(&token).unwrap()).unwrap().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                let end = (offset + api::LIBRARY_PAGE_SIZE).min(self.total);
+                let kind = if query(&url, "reaction_type").as_deref() == Some("Recast") {
+                    "REACTION_TYPE_RECAST"
+                } else {
+                    "REACTION_TYPE_LIKE"
+                };
+                let messages: Vec<_> = (offset..end)
+                    .map(|n| {
+                        json!({"data": {
+                            "fid":3,"type":"MESSAGE_TYPE_REACTION_ADD","timestamp":1_000_000 - n,
+                            "reactionBody":{"type":kind,"targetCastId":{"fid":n+1000,"hash":hash(n)}}
+                        }})
+                    })
+                    .collect();
+                let next = if end < self.total { base64_encode(end.to_string().as_bytes()) } else { String::new() };
+                answer(
+                    self.reaction_status,
+                    self.reaction_body
+                        .clone()
+                        .unwrap_or_else(|| json!({"messages":messages,"nextPageToken":next}).to_string()),
+                )
+            } else if url.contains("/v2/farcaster/casts?") {
+                let hashes = query(&url, "casts").unwrap();
+                let casts: Vec<_> = hashes.split(',').rev().filter_map(|h| {
+                    let n = usize::from_str_radix(h.trim_start_matches("0x"),16).unwrap();
+                    if self.missing.contains(&n) { return None; }
+                    let text = if n == 2 { "Just unlocked my DEGEN rewards" } else { "A saved cast" };
+                        Some(json!({"hash":h,"author":{"fid":n+1000,"username":format!("author{n}"),"follower_count":1},"text":text,
+                        "timestamp":"2026-01-01T00:00:00Z","embeds": if n == 3 { vec![json!({"url":"https://farcaster.xyz/miniapps/abc/game"})] } else { vec![] }}))
+                }).collect();
+                answer(self.bulk_status, self.bulk_body.clone().unwrap_or_else(|| json!({"casts":casts}).to_string()))
+            } else {
+                answer(404, String::new())
+            };
+            async move { response }.boxed_local()
+        }
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+    fn read(hub: Rc<Hub>, kind: ReactionKind, cursor: Option<String>) -> Result<LibraryPayload, Failure> {
+        let built = library(Rc::new(Invocation::new(hub, 43)), 3, kind, cursor, None).now_or_never().unwrap()?;
+        Ok(serde_json::from_slice(&built.body).unwrap())
+    }
+
+    #[test]
+    fn library_pages_continue_past_recent_cache_limits_to_the_actual_end() {
+        for kind in [ReactionKind::Likes, ReactionKind::Recasts] {
+            let hub = Rc::new(Hub::new(131));
+            let (mut cursor, mut entries, mut pages) = (None, Vec::new(), 0);
+            loop {
+                let page = read(hub.clone(), kind, cursor).unwrap();
+                assert_eq!((page.fid, page.kind), (3, kind));
+                entries.extend(page.entries);
+                pages += 1;
+                cursor = page.next;
+                if cursor.is_none() {
+                    break;
+                }
+                assert!(pages < 10, "cursor must finish");
+            }
+            assert_eq!(entries.len(), 131);
+            assert_eq!(
+                entries.iter().map(|entry| entry.hash.clone()).collect::<Vec<_>>(),
+                (0..131).map(hash).collect::<Vec<_>>()
+            );
+            assert!(entries.windows(2).all(|rows| rows[0].at > rows[1].at));
+            assert_eq!(pages, 6);
+            assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v1/reactionsByFid?")).count(), 6);
+            assert_eq!(hub.requests.borrow().iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 6);
+        }
+    }
+
+    #[test]
+    fn library_hydration_keeps_list_order_and_separates_unavailable_from_filtered() {
+        let mut hub = Hub::new(0);
+        hub.missing.insert(1);
+        let hub = Rc::new(hub);
+        let ordered = [3, 1, 2, 4].map(hash).to_vec();
+        let built = library_casts(Rc::new(Invocation::new(hub, 43)), ordered, None).now_or_never().unwrap().unwrap();
+        let page: LibraryCastsPayload = serde_json::from_slice(&built.body).unwrap();
+        assert_eq!(page.pool.iter().map(|cast| cast.hash.clone()).collect::<Vec<_>>(), [hash(3), hash(4)]);
+        assert_eq!(page.unavailable, [hash(1)]);
+        assert_eq!(page.filtered, [hash(2)]);
+        assert!(page.pool[0].mini_app, "settings, not server hydration, decide whether mini apps show");
+        assert!(page.notes.users.contains_key(&1003));
+        assert!(!page.notes.users.contains_key(&1002));
+    }
+
+    #[test]
+    fn library_source_failures_and_bad_shapes_never_become_empty_success() {
+        for status in [400, 404, 500] {
+            let mut hub = Hub::new(1);
+            hub.reaction_status = status;
+            assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+            let mut hub = Hub::new(1);
+            hub.bulk_status = status;
+            assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+        }
+        let mut hub = Hub::new(1);
+        hub.timeout = true;
+        assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+        for body in ["{}", r#"{"messages":[]}"#, r#"{"messages":[],"nextPageToken":"invalid!"}"#] {
+            let mut hub = Hub::new(1);
+            hub.reaction_body = Some(body.into());
+            assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+        }
+        let mut hub = Hub::new(1);
+        hub.bulk_body = Some("{}".into());
+        assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+        let mut hub = Hub::new(1);
+        hub.reaction_body = Some(json!({"messages":[{"data":{"fid":3,"timestamp":1,"type":"MESSAGE_TYPE_REACTION_ADD","reactionBody":{"type":"REACTION_TYPE_LIKE"}}}],"nextPageToken":""}).to_string());
+        assert!(read(Rc::new(hub), ReactionKind::Likes, None).is_err());
+        let mut hub = Hub::new(1);
+        hub.reaction_body = Some(json!({"messages":[{"data":{"fid":3,"timestamp":1,"type":"MESSAGE_TYPE_REACTION_ADD","reactionBody":{"type":"REACTION_TYPE_LIKE","targetUrl":"https://example.org"}}}],"nextPageToken":""}).to_string());
+        assert!(read(Rc::new(hub), ReactionKind::Likes, None).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn library_empty_history_is_explicit_and_does_not_fetch_casts() {
+        let hub = Rc::new(Hub::new(0));
+        let page = read(hub.clone(), ReactionKind::Likes, None).unwrap();
+        assert!(page.entries.is_empty() && page.pool.is_empty() && page.unavailable.is_empty() && page.next.is_none());
+        assert_eq!(hub.requests.borrow().len(), 1);
+    }
+
+    #[test]
+    fn library_annotations_stay_within_the_shared_request_budget() {
+        let hub = Rc::new(Hub::new(25));
+        let page = read(hub.clone(), ReactionKind::Recasts, None).unwrap();
+        assert_eq!(page.entries.len(), 25);
+        let urls = hub.requests.borrow();
+        assert!(urls.len() <= 43, "the cache reserves its two calls from the45 budget: {}", urls.len());
+        assert_eq!(urls.iter().filter(|url| url.contains("/v2/farcaster/casts?")).count(), 1);
+        assert!(
+            urls.iter().filter(|url| url.contains("/v1/castById?")).count() <= ORIGIN_AUTHORS,
+            "only the existing bounded provenance annotator may read individual casts"
+        );
+    }
 }
 
 /// How many voted each way in Allthing's poll, so a reader who voted sees

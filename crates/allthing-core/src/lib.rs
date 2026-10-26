@@ -26,6 +26,7 @@ pub mod guard;
 pub mod hls;
 pub mod index;
 pub mod latest;
+pub mod library;
 pub mod listing;
 pub mod media;
 pub mod message;

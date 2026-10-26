@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{API_PREFIX, Annotations, CachePolicy, Meta};
 use crate::model::Cast;
+use crate::ranking::Sort;
 
 /// Where the app reads it.
 pub const FOLLOWING_PATH: &str = "/api/v1/following";
@@ -36,6 +37,19 @@ pub enum Feed {
 }
 
 impl Feed {
+    /// Following starts chronologically; For you starts with its hot ranking.
+    pub fn default_sort(self) -> Sort {
+        match self {
+            Feed::ForYou => Sort::Hot,
+            Feed::Following => Sort::New,
+        }
+    }
+
+    /// An explicit supported sort always wins over the tab's default.
+    pub fn sort(self, param: Option<&str>) -> Sort {
+        Sort::parse(param, self.default_sort())
+    }
+
     /// The tab a reader sees for the page's `feed` query: Following only
     /// signed in and asked for; signed out, For you is the only one.
     pub fn of(signed_in: bool, param: Option<&str>) -> Feed {
@@ -160,6 +174,19 @@ mod tests {
         assert_eq!(Feed::of(false, Some(FOLLOWING)), Feed::ForYou);
         assert_eq!(Feed::Following.param().as_deref(), Some(FOLLOWING));
         assert_eq!(Feed::ForYou.param(), None);
+    }
+
+    #[test]
+    fn following_starts_new_while_explicit_sorts_and_signed_out_defaults_are_preserved() {
+        assert_eq!(Feed::Following.sort(None), Sort::New);
+        assert_eq!(Feed::Following.sort(Some("unsupported")), Sort::New);
+        assert_eq!(Feed::ForYou.sort(None), Sort::Hot);
+        assert_eq!(Feed::of(false, Some(FOLLOWING)).sort(None), Sort::Hot);
+        for feed in [Feed::ForYou, Feed::Following] {
+            for sort in Sort::ALL {
+                assert_eq!(feed.sort(Some(sort.as_str())), sort);
+            }
+        }
     }
 
     #[test]

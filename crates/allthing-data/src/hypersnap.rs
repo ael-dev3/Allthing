@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use allthing_core::api::FollowsDir;
+use allthing_core::api::{FollowsDir, LIBRARY_PAGE_SIZE, LibraryEntry, ReactionKind, library_cursor};
 use allthing_core::channels::{
     canonical_parent_url, channel_id_for_url, channel_url_for_id, legacy_url, parent_url_variants,
     short_parent_url_label,
@@ -123,6 +123,138 @@ pub async fn casts_bulk(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCa
     let list = hashes.join(",");
     let found: Option<CastList> = get_json(inv, Upstream::Hypersnap, &v2("casts", &[("casts", &list)]), true).await?;
     Ok(found.map(|l| l.casts).unwrap_or_default())
+}
+
+/// Library hydration must not mistake an unavailable endpoint, an error JSON
+/// object or a failed bulk read for a successful lookup with missing casts.
+pub async fn library_casts(inv: &Invocation, hashes: &[String]) -> Result<Vec<RawCast>, UpstreamError> {
+    #[derive(Deserialize)]
+    struct Found {
+        casts: Vec<RawCast>,
+    }
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    if hashes.len() > LIBRARY_PAGE_SIZE {
+        return Err(UpstreamError::Parse("too many Library casts".into()));
+    }
+    let list = hashes.join(",");
+    let found: Found = get_json(inv, Upstream::Hypersnap, &v2("casts", &[("casts", &list)]), false)
+        .await?
+        .ok_or(UpstreamError::Status(404))?;
+    if found.casts.len() > LIBRARY_PAGE_SIZE
+        || found.casts.iter().any(|cast| {
+            allthing_core::params::hash_from_param(&cast.hash).is_none()
+                || cast.author.as_ref().is_none_or(|author| author.fid == 0)
+        })
+    {
+        return Err(UpstreamError::Parse("invalid Library cast lookup".into()));
+    }
+    Ok(found.casts)
+}
+
+#[derive(Deserialize)]
+struct LibraryReactionPage {
+    messages: Vec<LibraryReactionMessage>,
+    #[serde(rename = "nextPageToken")]
+    next: String,
+}
+#[derive(Deserialize)]
+struct LibraryReactionMessage {
+    data: LibraryReactionData,
+}
+#[derive(Deserialize)]
+struct LibraryReactionData {
+    fid: u64,
+    timestamp: u64,
+    #[serde(rename = "type")]
+    kind: serde_json::Value,
+    #[serde(rename = "reactionBody")]
+    reaction: LibraryReactionBody,
+}
+#[derive(Deserialize)]
+struct LibraryReactionBody {
+    #[serde(rename = "type")]
+    kind: serde_json::Value,
+    #[serde(rename = "targetCastId")]
+    target: Option<LibraryTarget>,
+    #[serde(rename = "targetUrl")]
+    target_url: Option<String>,
+}
+#[derive(Deserialize)]
+struct LibraryTarget {
+    fid: u64,
+    hash: String,
+}
+
+/// A page of the account's retained active reactions. Follow the opaque
+/// `next` key to the end; unlike a target's reactors this is a single shard.
+pub async fn library_reactions(
+    inv: &Invocation,
+    fid: u64,
+    kind: ReactionKind,
+    cursor: Option<&str>,
+) -> Result<(Vec<LibraryEntry>, Option<String>), UpstreamError> {
+    let fid_text = fid.to_string();
+    let size = LIBRARY_PAGE_SIZE.to_string();
+    let (number, name, query_kind) = match kind {
+        ReactionKind::Likes => (1, "REACTION_TYPE_LIKE", "Like"),
+        ReactionKind::Recasts => (2, "REACTION_TYPE_RECAST", "Recast"),
+    };
+    let mut query = vec![
+        ("fid", fid_text.as_str()),
+        ("reaction_type", query_kind),
+        ("pageSize", size.as_str()),
+        ("reverse", "true"),
+    ];
+    if let Some(cursor) = cursor {
+        query.push(("pageToken", cursor));
+    }
+    let page: LibraryReactionPage = get_json(inv, Upstream::Hypersnap, &v1("reactionsByFid", &query), false)
+        .await?
+        .ok_or(UpstreamError::Status(404))?;
+    let invalid = || UpstreamError::Parse("invalid Library reaction page".into());
+    if page.messages.len() > LIBRARY_PAGE_SIZE {
+        return Err(invalid());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+    for message in page.messages {
+        let data = message.data;
+        let matches =
+            |value: &serde_json::Value, number, name| value.as_u64() == Some(number) || value.as_str() == Some(name);
+        if data.fid != fid
+            || !matches(&data.kind, 3, "MESSAGE_TYPE_REACTION_ADD")
+            || !matches(&data.reaction.kind, number, name)
+        {
+            return Err(invalid());
+        }
+        // A reaction to a URL is valid network history, but is not a cast.
+        let Some(target) = data.reaction.target else {
+            if data.reaction.target_url.as_deref().is_some_and(|url| !url.trim().is_empty()) {
+                continue;
+            }
+            return Err(invalid());
+        };
+        let hash = allthing_core::params::hash_from_param(&target.hash).ok_or_else(invalid)?;
+        let at = i64::try_from(data.timestamp)
+            .ok()
+            .and_then(|at| at.checked_add(allthing_core::message::EPOCH))
+            .ok_or_else(invalid)?;
+        if target.fid == 0 {
+            return Err(invalid());
+        }
+        if seen.insert(hash.clone()) {
+            entries.push(LibraryEntry { hash, author_fid: target.fid, at });
+        }
+    }
+    let next = (!page.next.is_empty()).then_some(page.next);
+    if let Some(next) = &next
+        && (library_cursor(next).is_none() || Some(next.as_str()) == cursor)
+    {
+        return Err(invalid());
+    }
+    Ok((entries, next))
 }
 
 /// Who liked (`likes`) or recasted (`recasts`) a cast, at most 100

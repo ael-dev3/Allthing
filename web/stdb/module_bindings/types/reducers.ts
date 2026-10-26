@@ -6,23 +6,31 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClearSeenReducer from "../clear_seen_reducer";
 import CreateRoomReducer from "../create_room_reducer";
 import DeleteDmReducer from "../delete_dm_reducer";
+import ForgetSeenReducer from "../forget_seen_reducer";
 import MarkNotificationsSeenReducer from "../mark_notifications_seen_reducer";
+import MarkSeenBatchReducer from "../mark_seen_batch_reducer";
 import RegisterReducer from "../register_reducer";
 import SendDmReducer from "../send_dm_reducer";
 import SendMessageReducer from "../send_message_reducer";
+import SetBookmarkReducer from "../set_bookmark_reducer";
 import SetPublicKeyReducer from "../set_public_key_reducer";
 import SetTypingReducer from "../set_typing_reducer";
 import VerifyFidReducer from "../verify_fid_reducer";
 import VerifyNotificationFidReducer from "../verify_notification_fid_reducer";
 
+export type ClearSeenParams = __Infer<typeof ClearSeenReducer>;
 export type CreateRoomParams = __Infer<typeof CreateRoomReducer>;
 export type DeleteDmParams = __Infer<typeof DeleteDmReducer>;
+export type ForgetSeenParams = __Infer<typeof ForgetSeenReducer>;
 export type MarkNotificationsSeenParams = __Infer<typeof MarkNotificationsSeenReducer>;
+export type MarkSeenBatchParams = __Infer<typeof MarkSeenBatchReducer>;
 export type RegisterParams = __Infer<typeof RegisterReducer>;
 export type SendDmParams = __Infer<typeof SendDmReducer>;
 export type SendMessageParams = __Infer<typeof SendMessageReducer>;
+export type SetBookmarkParams = __Infer<typeof SetBookmarkReducer>;
 export type SetPublicKeyParams = __Infer<typeof SetPublicKeyReducer>;
 export type SetTypingParams = __Infer<typeof SetTypingReducer>;
 export type VerifyFidParams = __Infer<typeof VerifyFidReducer>;

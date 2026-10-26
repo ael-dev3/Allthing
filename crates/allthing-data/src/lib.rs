@@ -217,6 +217,10 @@ pub enum Endpoint {
     Wallets(u64),
     Channels(Option<String>),
     Search(String),
+    /// One page of an account's retained active likes or recasts.
+    Library(u64, ReactionKind, Option<String>),
+    /// Public cast hydration for an ordered private Library page.
+    LibraryCasts(Vec<String>),
     Reactions(String, ReactionKind, u32),
     /// An account's followers or following, by name (`fid:<n>` for later
     /// pages), from the start or from a cursor.
@@ -260,6 +264,25 @@ impl Endpoint {
             }
             "/latest" => Ok(Endpoint::Latest),
             "/activity" => Ok(Endpoint::Activity),
+            "/library" => {
+                let fid = query("fid")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|fid| *fid > 0)
+                    .ok_or(bad("Expected ?fid=<positive number>"))?;
+                let kind =
+                    query("kind").and_then(|v| ReactionKind::parse(&v)).ok_or(bad("Expected ?kind=likes|recasts"))?;
+                let cursor = match query("cursor") {
+                    None => None,
+                    Some(cursor) => Some(
+                        allthing_core::api::library_cursor(&cursor)
+                            .ok_or(bad("Expected ?cursor=<the previous Library page's next>"))?,
+                    ),
+                };
+                Ok(Endpoint::Library(fid, kind, cursor))
+            }
+            "/library/casts" => allthing_core::api::parse_library_hashes(query("hashes").as_deref())
+                .map(Endpoint::LibraryCasts)
+                .ok_or(bad("Expected ?hashes=<up to 25 comma-separated cast hashes>")),
             "/reactions" => {
                 let hash = query("hash").and_then(|v| hash_from_param(&v)).ok_or(bad("Expected ?hash=<cast hash>"))?;
                 let kind =
@@ -365,6 +388,14 @@ impl Endpoint {
             }
             Endpoint::Latest => "latest".into(),
             Endpoint::Activity => "activity".into(),
+            Endpoint::Library(fid, kind, cursor) => allthing_core::api::library_path(*fid, *kind, cursor.as_deref())
+                .trim_start_matches(API_PREFIX)
+                .trim_start_matches('/')
+                .to_owned(),
+            Endpoint::LibraryCasts(hashes) => allthing_core::api::library_casts_path(hashes)
+                .trim_start_matches(API_PREFIX)
+                .trim_start_matches('/')
+                .to_owned(),
             Endpoint::Reactions(hash, kind, limit) => {
                 format!("reactions?hash={hash}&type={}&limit={limit}", kind.as_str())
             }
@@ -396,6 +427,8 @@ impl Endpoint {
             Endpoint::Home(offset, window) => pages::home(inv, offset, window, previous).await,
             Endpoint::Latest => pages::latest(inv, previous).await,
             Endpoint::Activity => pages::activity(inv).await,
+            Endpoint::Library(fid, kind, cursor) => pages::library(inv, fid, kind, cursor, previous).await,
+            Endpoint::LibraryCasts(hashes) => pages::library_casts(inv, hashes, previous).await,
             Endpoint::Reactions(hash, kind, limit) => pages::reactions(inv, hash, kind, limit).await,
             Endpoint::Engagement(request) => pages::engagement(inv, request).await,
             Endpoint::Replies(hash) => pages::replies(inv, hash).await,
@@ -415,6 +448,26 @@ impl Endpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_routes_scope_and_escape_pages_and_keep_hydration_order() {
+        let page = Endpoint::from_path("/api/v1/library?fid=3&kind=recasts&cursor=%2B%2F8%3D").unwrap();
+        assert_eq!(page, Endpoint::Library(3, ReactionKind::Recasts, Some("+/8=".into())));
+        assert_eq!(page.cache_name(), "library?fid=3&kind=recasts&cursor=%2B%2F8%3D");
+        let (a, b) = (format!("0x{:040x}", 1), format!("0x{:040x}", 2));
+        let batch = Endpoint::from_path(&format!("/api/v1/library/casts?hashes={b},{},{b}", a.to_uppercase())).unwrap();
+        assert_eq!(batch, Endpoint::LibraryCasts(vec![b.clone(), a.clone()]));
+        assert_eq!(batch.cache_name(), format!("library/casts?hashes={b},{a}"));
+        for path in [
+            "/api/v1/library",
+            "/api/v1/library?fid=0&kind=likes",
+            "/api/v1/library?fid=3&kind=other",
+            "/api/v1/library?fid=3&kind=likes&cursor=bad!",
+            "/api/v1/library/casts?hashes=0x12",
+        ] {
+            assert_eq!(Endpoint::from_path(path).map_err(|error| error.status), Err(400));
+        }
+    }
 
     #[test]
     fn counts_share_one_entry_whatever_the_order() {

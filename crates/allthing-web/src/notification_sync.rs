@@ -34,7 +34,8 @@ struct Sync {
 }
 
 struct Inner {
-    not_before: f64,
+    not_before: Cell<f64>,
+    urgent: Cell<bool>,
     stopped: Cell<bool>,
     connecting: Cell<bool>,
     disconnected: Cell<bool>,
@@ -60,6 +61,7 @@ fn visible_online() -> bool {
 /// Called by the app's account effect, including sign-out. A stopped
 /// instance fences every asynchronous completion, even after A → B → A.
 pub fn account(fid: Option<u64>, notifications: Notifications) {
+    crate::library::account(fid);
     if CURRENT.with(|s| s.borrow().as_ref().map(|s| s.fid)) == fid {
         return;
     }
@@ -71,7 +73,8 @@ pub fn account(fid: Option<u64>, notifications: Notifications) {
         fid,
         notifications,
         inner: Arc::new(SendWrapper::new(Inner {
-            not_before: js_sys::Date::now() + 2000.0,
+            not_before: Cell::new(js_sys::Date::now() + 2000.0),
+            urgent: Cell::new(false),
             stopped: Cell::new(false),
             connecting: Cell::new(false),
             disconnected: Cell::new(false),
@@ -111,6 +114,17 @@ pub fn wake() {
     }
 }
 
+/// Foreground Library/feed readiness must not wait for an unrelated signer
+/// request. It still yields to browser idle and requires a visible online page;
+/// background-only notification sync retains its API-quiet startup delay.
+pub(crate) fn wake_urgent() {
+    if let Some(sync) = CURRENT.with(|s| s.borrow().clone()) {
+        sync.inner.urgent.set(true);
+        sync.inner.not_before.set(0.0);
+        wake();
+    }
+}
+
 impl Sync {
     fn active(&self) -> bool {
         !self.inner.stopped.get() && self.notifications.are_for(self.fid)
@@ -136,13 +150,15 @@ impl Sync {
                 }
                 if sync.inner.ready.get() {
                     sync.flush();
-                } else if !api::quiet() {
+                } else if !sync.inner.urgent.get() && !api::quiet() {
                     sync.schedule(250);
                 } else {
                     crate::components::cast::idle(move || sync.connect());
                 }
             },
-            Duration::from_millis(millis.max((self.inner.not_before - js_sys::Date::now()).max(0.0).ceil() as u64)),
+            Duration::from_millis(
+                millis.max((self.inner.not_before.get() - js_sys::Date::now()).max(0.0).ceil() as u64),
+            ),
         );
         *self.inner.timer.borrow_mut() = timer.ok();
     }
@@ -190,11 +206,13 @@ impl Sync {
                 sync.detach();
                 return;
             }
-            if result.is_err() {
+            if let Err(error) = result {
+                crate::library::connection_failed(sync.fid, error);
                 sync.retry();
                 return;
             }
             sync.inner.failures.set(0);
+            sync.inner.urgent.set(false);
             sync.inner.ready.set(true);
             sync.flush();
         });
@@ -213,14 +231,31 @@ impl Sync {
         // service. Unconfigured servers/fixtures never load the SDK or dial.
         #[derive(serde::Deserialize)]
         struct Status {
+            #[serde(default)]
             spacetime: Capability,
         }
-        #[derive(serde::Deserialize)]
+        #[derive(Default, serde::Deserialize)]
         struct Capability {
+            #[serde(default)]
             attest: bool,
+            #[serde(default)]
+            library: bool,
         }
-        let status = api::get::<Status>("/api/v1/status").await.map_err(|e| e.message())?;
+        let status = match api::get::<Status>("/api/v1/status").await {
+            Ok(status) => status,
+            Err(api::Failure::NotFound(error)) => {
+                crate::library::capability(self.fid, Some(false));
+                self.inner.urgent.set(false);
+                return Err(error);
+            }
+            Err(error) => return Err(error.message()),
+        };
         self.check()?;
+        let library = status.data.spacetime.library;
+        crate::library::capability(self.fid, Some(library));
+        if !library {
+            self.inner.urgent.set(false);
+        }
         if !status.data.spacetime.attest {
             return Err("Notification sync is not configured".into());
         }
@@ -278,8 +313,23 @@ impl Sync {
         )
         .await?;
         self.check()?;
-        bounded(self.raw("subscribe", &[QUERY.into()])?).await?;
+        if library {
+            crate::library::bind(
+                self.fid,
+                self.inner.attempt.get(),
+                self.inner.bridge.borrow().clone().ok_or("Not connected")?,
+            );
+        }
+        let query = if library {
+            "[\"SELECT * FROM my_notification_state\",\"SELECT * FROM my_library_state\"]"
+        } else {
+            QUERY
+        };
+        bounded(self.raw("subscribe", &[query.into()])?).await?;
         self.check()?;
+        if library {
+            crate::library::base_applied(self.fid)?;
+        }
         self.inner.state.borrow_mut().hydrated();
         let state = self.inner.state.borrow();
         self.notifications.synced(self.fid, state.seen(), state.baseline());
@@ -297,6 +347,7 @@ impl Sync {
     }
 
     fn event(&self, json: &str) {
+        crate::library::event(self.fid, json);
         #[derive(serde::Deserialize)]
         struct Event {
             t: String,
@@ -312,6 +363,10 @@ impl Sync {
         let Ok(event) = serde_json::from_str::<Event>(json) else { return };
         if event.t == "disconnected" {
             self.inner.disconnected.set(true);
+            crate::library::connection_failed(
+                self.fid,
+                "Library connection interrupted; your offline changes are kept".into(),
+            );
             self.retry();
         } else if event.table == "my_notification_state"
             && matches!(event.t.as_str(), "insert" | "update")
@@ -350,7 +405,7 @@ impl Sync {
 }
 
 /// A stalled connection/subscription/reducer cannot hold a retry forever.
-async fn bounded(value: JsValue) -> Result<JsValue, String> {
+pub(crate) async fn bounded(value: JsValue) -> Result<JsValue, String> {
     let timer = RefCell::new(None);
     let timeout = Promise::new(&mut |_, reject| {
         let reject = reject.bind1(&JsValue::NULL, &"Notification sync timed out".into());

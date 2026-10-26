@@ -45,6 +45,9 @@ pub fn CastCard(
     #[prop(optional)] index: usize,
     #[prop(optional)] show_parent: bool,
     #[prop(optional)] track_seen: bool,
+    /// A Library activity line/action, inside the existing card element.
+    #[prop(optional_no_strip)]
+    row_footer: Option<Callback<Cast, AnyView>>,
 ) -> impl IntoView {
     let href = cast_href(&cast.hash);
     // Quoted casts the payload carries show as cards; others as links.
@@ -64,13 +67,18 @@ pub fn CastCard(
     let reactions = crate::components::reactions::card_reactions(&cast, &notes);
     #[cfg(feature = "static-host")]
     let reactions = ();
+    let extra = row_footer.map(|footer| footer.run(cast.clone()));
     let gone = crate::components::deleted(&cast.hash);
     // Drawn as Back or Forward puts the reader's place back, a card is where
     // it was: it doesn't rise into place again.
     let entrance = if crate::nav::restoring() { "; animation: none" } else { "" };
     let node = NodeRef::<leptos::html::Article>::new();
     let seen = crate::seen::use_seen();
+    let read_mark = track_seen.then(|| seen.read_mark(cast.hash.clone()));
     Effect::new(move |_| {
+        if let Some(read_mark) = read_mark {
+            read_mark.track();
+        }
         if let Some(element) = node.get() {
             if track_seen {
                 crate::seen::watch(&element, seen);
@@ -133,6 +141,7 @@ pub fn CastCard(
                 <Engagement cast=cast.clone() reply_href=href.clone()/>
             </footer>
             {reactions}
+            {extra}
         </article>
     }
 }
@@ -166,14 +175,29 @@ pub fn CastList(
     /// and keeping its place as they reorder: the front page's poll.
     #[prop(default = None)]
     inset: Option<fn() -> AnyView>,
+    /// Optional per-cast Library metadata, without wrapping card elements.
+    #[prop(optional_no_strip)]
+    row_footer: Option<Callback<Cast, AnyView>>,
 ) -> impl IntoView {
     // Mini app casts, which payloads keep marked, are left out unless the
     // reader chose to see them in the Settings panel (`crate::miniapps`).
     let all = casts;
-    let seen_feed = crate::seen::Feed::new(hide_seen);
+    let candidates = Signal::derive(move || {
+        let show = crate::miniapps::shown();
+        all.with(|casts| {
+            casts
+                .iter()
+                .filter(|cast| !cast.hidden_for(show))
+                .filter_map(|cast| allthing_core::library::canonical_hash(&cast.hash))
+                .collect()
+        })
+    });
+    let seen_feed = crate::seen::Feed::new(hide_seen, candidates);
     let hidden_seen = Memo::new(move |_| {
         let show_apps = crate::miniapps::shown();
-        all.with(|casts| casts.iter().filter(|cast| !cast.hidden_for(show_apps) && seen_feed.hides(&cast.hash)).count())
+        all.with(|casts| {
+            casts.iter().filter(|cast| !cast.hidden_for(show_apps) && seen_feed.hidden(&cast.hash)).count()
+        })
     });
     let casts: Signal<Vec<Cast>> = Memo::new(move |_| {
         let show = crate::miniapps::shown();
@@ -277,6 +301,9 @@ pub fn CastList(
         }
     });
     let grow = move || {
+        if seen_feed.pending() {
+            return;
+        }
         // Still drawing what is shown: its end isn't the list's end yet.
         if drawn.with_value(|(count, _)| *count) < shown.get_untracked().min(casts.with_untracked(Vec::len)) {
             return;
@@ -298,7 +325,7 @@ pub fn CastList(
     // A short or filtered page can leave the sentinel inside the observer's
     // margin, so there is no new intersection event to continue the feed.
     Effect::new(move |_| {
-        let _ = (casts.with(Vec::len), shown.get(), drew_more.get(), page_cursor.get());
+        let _ = (casts.with(Vec::len), shown.get(), drew_more.get(), page_cursor.get(), seen_feed.pending());
         request_animation_frame(move || {
             let Some(element) = sentinel.try_get_untracked().flatten() else { return };
             if !element.is_connected() {
@@ -320,8 +347,13 @@ pub fn CastList(
     // fewer, as while the first card waits for its image's size, it was at
     // the list's top, and was pushed down as they came.
     let items = move || {
-        let mut items: Vec<(String, Option<(usize, Cast)>)> =
-            visible().into_iter().map(|(index, cast)| (cast.hash.clone(), Some((index, cast)))).collect();
+        let mut items: Vec<(String, Option<(usize, Cast)>)> = visible()
+            .into_iter()
+            .map(|(index, cast)| {
+                seen_feed.preserve(&cast.hash);
+                (cast.hash.clone(), Some((index, cast)))
+            })
+            .collect();
         let all = casts.with(Vec::len);
         if inset.is_some() && !items.is_empty() && items.len() >= INSET_AFTER.min(all) {
             let at = INSET_AFTER.min(items.len());
@@ -332,13 +364,16 @@ pub fn CastList(
     };
 
     view! {
-        <Show when=move || casts.with(|c| !c.is_empty()) fallback=|| view! { <p class="empty">"Nothing here yet."</p> }>
+        <Show when=move || casts.with(|c| !c.is_empty()) fallback=move || {
+            if seen_feed.pending() { view! { <CastSkeletons/> }.into_any() }
+            else { view! { <p class="empty">"Nothing here yet."</p> }.into_any() }
+        }>
             <div class="cast-list" node_ref=list>
                 <For
                     each=items
                     key=|(key, _)| key.clone()
                     children=move |(_, item)| match item {
-                        Some((index, cast)) => view! { <CastCard cast notes=notes.get_untracked() index show_parent track_seen=hide_seen/> }.into_any(),
+                        Some((index, cast)) => view! { <CastCard cast notes=notes.get_untracked() index show_parent track_seen=hide_seen row_footer/> }.into_any(),
                         None => inset.map(|inset| inset()).into_any(),
                     }
                 />

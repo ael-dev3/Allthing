@@ -274,6 +274,8 @@ test.describe("in front of the Worker", () => {
     await expect(chip).toBeVisible({ timeout: 15_000 });
     await page.getByRole("link", { name: "Home", exact: true }).focus();
     await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Library", exact: true })).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(chip).toBeFocused();
     // Focus alone doesn't open it: Enter does, as a press would.
     await page.waitForTimeout(400);

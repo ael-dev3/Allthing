@@ -31,8 +31,8 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 
 ### Reading, no account needed
 
-- **Feeds.** A front page sorted **hot**, **new** or **top**, with a time filter in every sort. Signed in, **For you** lifts casts from recently active accounts you follow, while **Following** shows their casts only. New stays chronological. Channel feeds, a channel directory and one search box cover casts, people and channels; the client bar filters casts by the app they came from.
-- **Seen posts.** Front-page feeds leave out posts you already read on a later visit, with Show seen posts and Reset seen posts to bring them back. History stays in this browser for 30 days, separate for each reader; cards stay put while you read.
+- **Feeds.** A front page sorted **hot**, **new** or **top**, with a time filter in every sort. Signed in, **For you** defaults to **hot** and lifts casts from recently active accounts you follow, while **Following** defaults to **new** and shows their casts only. New stays chronological. Channel feeds, a channel directory and one search box cover casts, people and channels; the client bar filters casts by the app they came from.
+- **Seen posts.** Home leaves out posts you already read on future visits. Signed-in history stays private and syncs across devices through SpacetimeDB without a 30-day expiry or 2,000-post limit. Cards stay put while you read; anonymous history stays in this browser for 30 days.
 - **Who is here.** An online count beside Home, including on phones. Signed-in readers can choose whether their name appears.
 - **Posts and threads.** A post with its parent, quoted casts (inline up to three levels) and threaded replies that collapse and expand.
 - **Honest engagement.** Likes, recasts and replies, the only counts Farcaster has. Hovering or tapping a count lists who liked, recasted or replied.
@@ -50,6 +50,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Sign in by one QR code.** Approve Allthing once in the Farcaster app (a QR code on a computer, a button on a phone). That one approval signs you in and gives your browser a key to write with; the key never leaves it.
 - **Write from Allthing.** Cast, reply, quote, like, recast, follow, delete your own casts and [schedule casts](docs/ARCHITECTURE.md#scheduled-casts) (listed at /scheduled), shown "via Allthing". Each is a Farcaster message signed in your browser and sent to Hypersnap; Allthing asks for keys as its own account, @allthingapp.
 - **A composer like the Farcaster app's.** Images and videos (PNG, JPEG, GIF, WebP; MP4, MOV, WebM) by the attach button, paste or drop, with photo location data stripped in the browser; @mention autocomplete; a Pepe emoji picker, animated Pepe stickers and GIFs (from [KLIPY](https://klipy.com)); drafts that last; a sheet on the keyboard on a phone.
+- **Library.** Bookmarks, Likes, Recasts and Seen, with paginated history, activity times, a filter for loaded posts and Back restoration. Save posts privately without a Farcaster signing key; mark posts unread or clear reading history across devices while keeping bookmarks.
 - **Notifications.** A bell with what's new, and /notifications with likes, recasts, replies, mentions, quotes and follows, grouped as the Farcaster app groups them.
 - **Messages.** One inbox on SpacetimeDB at /messages: Allthing's public `#general` room and end-to-end encrypted conversations ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#messages-on-spacetimedb)).
 - **Signed out**, a write opens the cast, the profile or a ready draft in the Farcaster app instead.
@@ -57,7 +58,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 ### Fast and frugal
 
 - **One API call per page**, cached at the edge, so the whole site runs on the Cloudflare Workers Free plan.
-- **Early paint.** A small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
+- **Early paint.** For anonymous readers, a small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. Signed-in Home waits for private history membership to avoid flashing previously read posts. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
 - **Split WebAssembly.** Pages, the composer, writing, sign-in and the DAU dashboard are code of their own, fetched when used, so every visit downloads less.
 - **Instant navigation.** Posts open from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. CI holds smoothness to budgets ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - **Accessible.** Keyboard throughout, alt text, focus kept in dialogs, reduced motion respected, and it fits a phone.

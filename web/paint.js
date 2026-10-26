@@ -73,10 +73,10 @@ function front(path) {
   // Reading history is applied by the app from its per-reader snapshot.
   // Skip early cards rather than flashing posts that snapshot will hide.
   try { if (localStorage.getItem("allthing.seen.v1")) return null; } catch {}
-  // A signed-in reader's Following tab (/api/v1/following): the app draws it.
-  // Their For you is drawn here, under the same tabs as the app's.
+  // A fresh device has no local history yet. Only the signed-in app can
+  // check private SpacetimeDB membership before drawing these candidates.
   const reader = signedIn();
-  if (reader !== null && query.get("feed") === "following") return null;
+  if (reader !== null) return null;
   const sort = query.get("sort") === "top" ? "top" : query.get("sort") === "new" ? "new" : "hot";
   const range = RANGES.some(([value]) => value === query.get("t")) ? query.get("t") : "day";
   // "new" is the event stream's; the index's ranges say what they were ranked from.

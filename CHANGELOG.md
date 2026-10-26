@@ -7,9 +7,14 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- A private Library for bookmarks and seen history synced across signed-in devices through SpacetimeDB, plus paginated Farcaster likes and recasts. Seen history no longer expires after 30 days or 2,000 posts; fresh Home candidates wait for synced history, while already drawn cards keep their place. Library includes loaded-post filtering, activity times, retry, Back restoration, Mark unread and Clear history controls.
 - Sync notification read progress across signed-in sessions with a private, attested SpacetimeDB watermark. The existing local cache works offline; a delayed background connection uses separate credentials without creating chat presence or DM keys.
 - Videos up to 250 MB upload in 8 MB chunks. Retry continues from the last acknowledged chunk; Remove cancels the pending upload. Preparation and finishing have visible states, and the cast stays disabled until its attachments are ready.
 - Compatible MP4 and MOV videos are prepared for HLS from bounded metadata and file slices, preserving their frames and sound without copying the entire video into WebAssembly. Existing image limits and storage safeguards remain.
+
+### Changed
+
+- Following opens with New selected; For you still opens with Hot. Explicit sort choices remain selected when changing the time range.
 
 ### Fixed
 

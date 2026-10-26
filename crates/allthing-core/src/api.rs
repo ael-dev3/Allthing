@@ -15,7 +15,7 @@ use crate::latest::Cursor;
 use crate::model::{Cast, Channel, ThreadNode, User, UserSummary};
 use crate::params::{channel_key_from_param, hash_from_param, percent_decode, percent_encode, username_from_param};
 use crate::profile::UserCard;
-use crate::provenance::{Backend, Origin};
+use crate::provenance::{Backend, Origin, base64_decode};
 use crate::ranking::{Sort, TimeRange, TrendingWindow};
 use crate::website::Website;
 
@@ -240,6 +240,100 @@ impl ReactionKind {
             _ => None,
         }
     }
+}
+
+/// Library reads are small batches, independent of the account's history size.
+pub const LIBRARY_PAGE_SIZE: usize = 25;
+pub const LIBRARY_PATH: &str = "/api/v1/library";
+pub const LIBRARY_CASTS_PATH: &str = "/api/v1/library/casts";
+
+/// An active like/recast and the cast it targets. `at` is the reaction's
+/// Unix time, not the cast's publication time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryEntry {
+    pub hash: String,
+    pub author_fid: u64,
+    pub at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryPayload {
+    pub fid: u64,
+    pub kind: ReactionKind,
+    pub entries: Vec<LibraryEntry>,
+    /// Available casts in reaction order, with mini apps marked for settings.
+    pub pool: Vec<Cast>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    /// Omitted by a successful provider lookup; this does not assert deletion.
+    #[serde(default)]
+    pub unavailable: Vec<String>,
+    /// Hydrated, but omitted by the app's content rules, not by the provider.
+    #[serde(default)]
+    pub filtered: Vec<String>,
+    #[serde(default)]
+    pub notes: Annotations,
+    pub meta: Meta,
+}
+
+/// Public cast hydration for a private list. This endpoint knows only the
+/// requested public cast hashes, not whether they were bookmarked or seen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryCastsPayload {
+    pub pool: Vec<Cast>,
+    #[serde(default)]
+    pub unavailable: Vec<String>,
+    #[serde(default)]
+    pub filtered: Vec<String>,
+    #[serde(default)]
+    pub notes: Annotations,
+    pub meta: Meta,
+}
+
+/// An opaque hub key: validate its bounded encoding, never reinterpret it as
+/// a multi-shard cursor. An account's outgoing reactions live in one shard.
+pub fn library_cursor(value: &str) -> Option<String> {
+    if value.is_empty()
+        || value.len() > 1024
+        || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+    {
+        return None;
+    }
+    let bytes = base64_decode(value)?;
+    (!bytes.is_empty() && bytes.len() <= 512).then(|| value.to_owned())
+}
+
+/// Canonical, unique hashes in the caller's order. Never silently truncate a
+/// request: the limit applies to its raw slots too, keeping URLs bounded.
+pub fn parse_library_hashes(value: Option<&str>) -> Option<Vec<String>> {
+    let value = value?;
+    if value.is_empty() || value.len() > LIBRARY_PAGE_SIZE * 45 {
+        return None;
+    }
+    let mut hashes = Vec::new();
+    let mut seen = HashSet::new();
+    for (index, value) in value.split(',').enumerate() {
+        if index >= LIBRARY_PAGE_SIZE {
+            return None;
+        }
+        let hash = hash_from_param(value)?;
+        if seen.insert(hash.clone()) {
+            hashes.push(hash);
+        }
+    }
+    (!hashes.is_empty()).then_some(hashes)
+}
+
+pub fn library_path(fid: u64, kind: ReactionKind, cursor: Option<&str>) -> String {
+    let mut path = format!("{LIBRARY_PATH}?fid={fid}&kind={}", kind.as_str());
+    if let Some(cursor) = cursor {
+        path.push_str(&format!("&cursor={}", percent_encode(cursor)));
+    }
+    path
+}
+
+pub fn library_casts_path(hashes: &[String]) -> String {
+    format!("{LIBRARY_CASTS_PATH}?hashes={}", hashes.join(","))
 }
 
 /// Who liked or recasted a cast, newest first.
@@ -978,6 +1072,8 @@ pub const WALLET_RETRY_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 600
 pub const CHANNELS_CACHE: CachePolicy = CachePolicy { fresh: 3600, stale: 86_400, keep: 172_800, browser: 600 };
 pub const SEARCH_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 1800, keep: 86_400, browser: 120 };
 pub const REACTIONS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 3600, keep: 86_400, browser: 300 };
+/// Short freshness for lists changed by writes in other Farcaster clients.
+pub const LIBRARY_CACHE: CachePolicy = CachePolicy { fresh: 60, stale: 300, keep: 3600, browser: 0 };
 /// A batch of like, recast and replies previews: as fresh as a like or
 /// recast preview, since that is what most of them become in the browser.
 /// Its replies previews may be a few minutes older than `/replies`' own,
@@ -1010,6 +1106,34 @@ pub const MISS_CACHE: CachePolicy = CachePolicy { fresh: 300, stale: 300, keep: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_batches_preserve_order_without_silent_truncation() {
+        let (a, b) = (format!("0x{:040x}", 1), format!("0x{:040x}", 2));
+        assert_eq!(
+            parse_library_hashes(Some(&format!("{b},{},{b}", a.to_uppercase()))),
+            Some(vec![b.clone(), a.clone()])
+        );
+        let batch = vec![a; LIBRARY_PAGE_SIZE];
+        assert!(parse_library_hashes(Some(&batch.join(","))).is_some());
+        assert!(parse_library_hashes(Some(&[batch, vec![b]].concat().join(","))).is_none());
+        for value in [None, Some(""), Some("0x12"), Some("https://example.org"), Some(",")] {
+            assert!(parse_library_hashes(value).is_none());
+        }
+    }
+
+    #[test]
+    fn library_cursors_are_bounded_opaque_bytes_and_escaped_once() {
+        let token = "+/8=";
+        assert_eq!(library_cursor(token).as_deref(), Some(token));
+        assert_eq!(
+            library_path(7, ReactionKind::Likes, Some(token)),
+            "/api/v1/library?fid=7&kind=likes&cursor=%2B%2F8%3D"
+        );
+        for token in ["", "%%%", "a b", "\n", &"A".repeat(1025)] {
+            assert!(library_cursor(token).is_none());
+        }
+    }
 
     #[test]
     fn pages_read_what_they_ask_for() {

@@ -650,6 +650,7 @@ pub fn Account() -> impl IntoView {
                             <span class="muted">"@"{username.clone()}</span>
                         </p>
                         <a class="account-link" href=profile.clone()>"Your profile"</a>
+                        <a class="account-link" href=crate::util::library_href()>"Library"</a>
                         <crate::pages::messages::MessagesMenuItem/>
                         <crate::components::writer::ScheduledMenuItem/>
                         <crate::components::writer::WriterMenuItem/>

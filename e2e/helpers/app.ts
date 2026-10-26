@@ -14,7 +14,8 @@ export async function appCame(page: Page) {
 /** Recover a revisited feed through its visible control before testing another feature. */
 export async function showSeenPosts(page: Page) {
   await appCame(page);
-  await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
   const show = page.getByRole("button", { name: "Show seen posts", exact: true });
+  // The private-history readiness notice is not the local recovery control.
+  await expect(page.locator("#app .cast-list .cast-card[data-hash]").or(show).first()).toBeVisible();
   if (await show.isVisible()) await show.click();
 }

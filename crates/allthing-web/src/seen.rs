@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Local reading history: foreground viewport dwell, never fetched payloads.
+//! Foreground viewport dwell, never fetched payloads. Signed-in history is
+//! authoritative in the private Library; anonymous readers keep a local cache.
 //! Feed snapshots only change on a new query/load/account or explicit reset.
 
 use std::cell::{Cell, RefCell};
@@ -98,15 +99,47 @@ fn record(scope: &str, hash: &str) {
     });
 }
 
+/// Import only the current FID's old browser cache after private metadata has
+/// arrived. The Library fences the migration against remote clears/tombstones.
+#[cfg(not(feature = "static-host"))]
+pub(crate) fn legacy_entries(fid: u64) -> Vec<(String, i64)> {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        reload(&mut state);
+        state.history.entries(&allthing_core::seen::scope(Some(fid)))
+    })
+}
+
 /// Shared account and reset generation. Reading a cast never changes this
 /// signal: cards on screen keep their place while the history is recorded.
 #[derive(Clone, Copy)]
 pub struct Seen {
     scope: Memo<String>,
     epoch: RwSignal<u32>,
+    generation: Memo<u64>,
+    #[cfg(not(feature = "static-host"))]
+    library: crate::library::Library,
 }
 
 impl Seen {
+    /// A per-card memo keeps unrelated Library updates out of the dwell
+    /// registration effect, but lets an explicit Mark unread start a new read.
+    pub fn read_mark(self, hash: String) -> Memo<Option<bool>> {
+        #[cfg(not(feature = "static-host"))]
+        {
+            Memo::new(move |_| self.library.seen(&hash))
+        }
+        #[cfg(feature = "static-host")]
+        {
+            let _ = hash;
+            Memo::new(move |_| None)
+        }
+    }
+
+    fn generation(self) -> u64 {
+        self.generation.get()
+    }
+
     pub fn new() -> Self {
         #[cfg(not(feature = "static-host"))]
         let scope = {
@@ -115,7 +148,19 @@ impl Seen {
         };
         #[cfg(feature = "static-host")]
         let scope = Memo::new(move |_| allthing_core::seen::scope(None));
-        let seen = Self { scope, epoch: RwSignal::new(0) };
+        #[cfg(not(feature = "static-host"))]
+        let library = crate::library::use_library();
+        #[cfg(not(feature = "static-host"))]
+        let generation = Memo::new(move |_| library.generation());
+        #[cfg(feature = "static-host")]
+        let generation = Memo::new(move |_| 0);
+        let seen = Self {
+            scope,
+            epoch: RwSignal::new(0),
+            generation,
+            #[cfg(not(feature = "static-host"))]
+            library,
+        };
         let _ = window_event_listener(leptos::ev::storage, move |event| {
             if event.key().is_none_or(|key| key == KEY) {
                 STATE.with(|state| {
@@ -157,31 +202,71 @@ pub fn use_seen() -> Seen {
     expect_context()
 }
 
-/// Settings' reversible reset affects the current reader only, in this browser.
+/// Signed-in history controls are in Library, where scope and consequences are
+/// explicit. Anonymous/legacy readers can still reset their local cache here.
 #[component]
 pub fn ResetSeen() -> impl IntoView {
     let seen = use_seen();
     let cleared = RwSignal::new(false);
+    let remote = move || {
+        #[cfg(not(feature = "static-host"))]
+        {
+            seen.library.remote_required()
+        }
+        #[cfg(feature = "static-host")]
+        {
+            false
+        }
+    };
     view! {
-        <button type="button" class="account-link" on:click=move |_| { seen.reset(); cleared.set(true); }>"Reset seen posts"</button>
-        <p class="muted small" role="status">{move || if cleared.get() { "Seen history reset for this reader." } else { "Reading history stays in this browser for 30 days." }}</p>
+        <Show when=remote fallback=move || view! {
+            <button type="button" class="account-link" on:click=move |_| { seen.reset(); cleared.set(true); }>"Reset seen posts"</button>
+            <p class="muted small" role="status">{move || if cleared.get() { "Seen history reset for this reader." } else { "This reader's local history stays in this browser for 30 days. Sign in on allthing.social to sync durable history." }}</p>
+        }>
+            <a class="account-link" href=crate::util::href("/library?tab=seen")>"Manage seen posts"</a>
+            <p class="muted small">"Seen posts stay hidden on future Home visits across your signed-in devices. Manage or clear your private history in Library."</p>
+        </Show>
     }
 }
 
+type FeedKey = (String, u32, String, bool, u64);
+
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Snapshot {
-    key: (String, u32, String),
+    key: FeedKey,
     hashes: BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct Pins {
+    key: FeedKey,
+    drawn: BTreeSet<String>,
+    hidden: BTreeSet<String>,
+}
+
+impl Pins {
+    fn select(&mut self, key: &FeedKey) {
+        if &self.key != key {
+            self.key = key.clone();
+            self.drawn.clear();
+            self.hidden.clear();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 pub struct Feed {
     snapshot: Memo<Snapshot>,
-    shown: RwSignal<Option<(String, u32, String)>>,
+    shown: RwSignal<Option<FeedKey>>,
+    pinned: StoredValue<Pins>,
+    candidates: Signal<Vec<String>>,
+    enabled: bool,
+    #[cfg(not(feature = "static-host"))]
+    library: crate::library::Library,
 }
 
 impl Feed {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new(enabled: bool, candidates: Signal<Vec<String>>) -> Self {
         let seen = use_seen();
         let url = use_url();
         // A query selects a new feed generation. As with Home's ranking,
@@ -204,6 +289,18 @@ impl Feed {
             }
         });
         let previous = StoredValue::new(Snapshot::default());
+        #[cfg(not(feature = "static-host"))]
+        let library = seen.library;
+        #[cfg(not(feature = "static-host"))]
+        if enabled {
+            let owner = format!("feed:{}", js_sys::Math::random());
+            let watched = owner.clone();
+            Effect::new(move |_| {
+                let hashes = candidates.get();
+                untrack(|| library.watch_batch(&watched, &hashes));
+            });
+            on_cleanup(move || library.unwatch_batch(&owner));
+        }
         let snapshot = Memo::new(move |_| {
             if !enabled {
                 return Snapshot::default();
@@ -211,26 +308,98 @@ impl Feed {
             let before = previous.get_value();
             // Home is kept, detached, while reading a post/profile. Preserve
             // that generation for Back, rather than shortening its scroll.
-            let key = (seen.scope.get(), seen.epoch.get(), query.get());
+            #[cfg(not(feature = "static-host"))]
+            let (remote, generation) = (library.remote_required(), library.generation());
+            #[cfg(feature = "static-host")]
+            let (remote, generation) = (false, 0);
+            let key = (seen.scope.get(), seen.epoch.get(), query.get(), remote, generation);
             if key == before.key {
                 return before;
             }
-            let hashes = STATE.with(|state| {
-                let mut state = state.borrow_mut();
-                reload(&mut state);
-                state.history.hashes(&key.0)
-            });
+            let hashes = if remote {
+                BTreeSet::new()
+            } else {
+                STATE.with(|state| {
+                    let mut state = state.borrow_mut();
+                    reload(&mut state);
+                    state.history.hashes(&key.0)
+                })
+            };
             let snapshot = Snapshot { key, hashes };
             previous.set_value(snapshot.clone());
             snapshot
         });
-        Self { snapshot, shown: RwSignal::new(None) }
+        Self {
+            snapshot,
+            shown: RwSignal::new(None),
+            pinned: StoredValue::new(Pins::default()),
+            candidates,
+            enabled,
+            #[cfg(not(feature = "static-host"))]
+            library,
+        }
     }
 
     pub fn hides(self, hash: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
         self.snapshot.with(|snapshot| {
+            #[cfg(not(feature = "static-host"))]
+            if snapshot.key.3 {
+                if self.pinned.with_value(|pins| pins.key == snapshot.key && pins.drawn.contains(hash)) {
+                    return false;
+                }
+                if self.pinned.with_value(|pins| pins.key == snapshot.key && pins.hidden.contains(hash)) {
+                    return true;
+                }
+                if self.library.seen(hash) == Some(true) {
+                    if self.library.membership_ready(&[hash.to_owned()]) {
+                        self.pinned.update_value(|pins| {
+                            pins.select(&snapshot.key);
+                            pins.hidden.insert(hash.to_owned());
+                        });
+                    }
+                    return true;
+                }
+                return !self.library.membership_ready(&[hash.to_owned()]) || self.library.seen(hash) != Some(false);
+            }
             self.shown.get().as_ref() != Some(&snapshot.key) && snapshot.hashes.contains(&hash.to_ascii_lowercase())
         })
+    }
+
+    /// Freeze only cards actually drawn, so reading one never moves the page.
+    /// Candidates below the drawn window still honor newly synced history.
+    pub fn preserve(self, hash: &str) {
+        let snapshot = self.snapshot.get_untracked();
+        self.pinned.update_value(|pins| {
+            pins.select(&snapshot.key);
+            pins.drawn.insert(hash.to_owned());
+        });
+    }
+
+    pub fn pending(self) -> bool {
+        #[cfg(not(feature = "static-host"))]
+        {
+            self.enabled && self.library.remote_required() && !self.library.membership_ready(&self.candidates.get())
+        }
+        #[cfg(feature = "static-host")]
+        {
+            let _ = self.candidates;
+            false
+        }
+    }
+
+    pub fn hidden(self, hash: &str) -> bool {
+        #[cfg(not(feature = "static-host"))]
+        if self.enabled && self.library.remote_required() {
+            return self.hides(hash)
+                && (self.library.seen(hash) == Some(true)
+                    || self.pinned.with_value(|pins| {
+                        pins.key == self.snapshot.with_untracked(|s| s.key.clone()) && pins.hidden.contains(hash)
+                    }));
+        }
+        self.hides(hash)
     }
 }
 
@@ -239,13 +408,41 @@ impl Feed {
 pub fn SeenNotice(feed: Feed, #[prop(into)] hidden: Signal<usize>, #[prop(into)] empty: Signal<bool>) -> impl IntoView {
     let seen = use_seen();
     view! {
+        <Show when=move || feed.pending()>
+            <SyncNotice/>
+        </Show>
         <Show when=move || { hidden.get() > 0 }>
             <div class="seen-notice">
                 <p>{move || if empty.get() { "You're caught up in this feed. Previously seen posts are hidden." } else { "Previously seen posts are hidden." }}</p>
-                <button type="button" class="account-link" on:click=move |_| feed.shown.set(Some(feed.snapshot.with_untracked(|s| s.key.clone())))>"Show seen posts"</button>
-                <button type="button" class="account-link" on:click=move |_| seen.reset()>"Reset seen posts"</button>
+                <Show when=move || !feed.snapshot.with(|s| s.key.3) fallback=|| view! { <a class="account-link" href=crate::util::href("/library?tab=seen")>"View seen posts in Library"</a> }>
+                    <button type="button" class="account-link" on:click=move |_| feed.shown.set(Some(feed.snapshot.with_untracked(|s| s.key.clone())))>"Show seen posts"</button>
+                    <button type="button" class="account-link" on:click=move |_| seen.reset()>"Reset seen posts"</button>
+                </Show>
             </div>
         </Show>
+    }
+}
+
+#[component]
+fn SyncNotice() -> impl IntoView {
+    #[cfg(not(feature = "static-host"))]
+    {
+        let library = crate::library::use_library();
+        view! {
+            <div class="seen-notice" role="status">
+                <p>{move || match library.status() {
+                    crate::library::SyncStatus::Failed(error) => format!("Couldn't sync reading history: {error}"),
+                    crate::library::SyncStatus::Offline => "You're offline. New Home posts will wait until your reading history can sync.".to_owned(),
+                    _ => "Syncing reading history before showing new posts…".to_owned(),
+                }}</p>
+                <button type="button" class="account-link" on:click=move |_| library.retry()>"Retry history sync"</button>
+                <a class="account-link" href=crate::util::href("/library?tab=seen")>"Open Library"</a>
+            </div>
+        }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        ().into_any()
     }
 }
 
@@ -254,6 +451,7 @@ struct Watch {
     seen: Seen,
     scope: String,
     epoch: u32,
+    generation: u64,
     started: Option<f64>,
     timer: Option<TimeoutHandle>,
     done: bool,
@@ -297,6 +495,7 @@ fn notice(element: &Element) {
         if !eligible(element)
             || watch.seen.scope.get_untracked() != watch.scope
             || watch.seen.epoch.get_untracked() != watch.epoch
+            || untrack(|| watch.seen.generation()) != watch.generation
         {
             stop(watch);
             return;
@@ -319,14 +518,21 @@ fn finish(element: &Element) {
             || !eligible(element)
             || watch.seen.scope.get_untracked() != watch.scope
             || watch.seen.epoch.get_untracked() != watch.epoch
+            || untrack(|| watch.seen.generation()) != watch.generation
         {
             return None;
         }
         watch.done = true;
-        Some((watch.scope.clone(), element.get_attribute("data-hash")?))
+        Some((watch.seen, watch.scope.clone(), element.get_attribute("data-hash")?))
     });
-    if let Some((scope, hash)) = record {
+    if let Some((seen, scope, hash)) = record {
         self::record(&scope, &hash);
+        #[cfg(not(feature = "static-host"))]
+        if seen.library.remote_required() {
+            let _ = seen.library.record_seen(&hash, now());
+        }
+        #[cfg(feature = "static-host")]
+        let _ = seen;
     }
 }
 
@@ -358,12 +564,14 @@ pub fn watch(element: &Element, seen: Seen) {
     unwatch(element);
     let scope = seen.scope.get();
     let epoch = seen.epoch.get();
+    let generation = seen.generation();
     WATCHED.with(|watched| {
         watched.borrow_mut().push(Watch {
             element: element.clone(),
             seen,
             scope,
             epoch,
+            generation,
             started: None,
             timer: None,
             done: false,
