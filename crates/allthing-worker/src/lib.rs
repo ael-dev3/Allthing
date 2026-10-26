@@ -11,7 +11,9 @@
 //! the pages it changes are rebuilt on their next read (`refresh`).
 //!
 //! Static assets (the WebAssembly app, styles, fonts) are served by
-//! Workers Static Assets without invoking this code; `/api/*` runs here,
+//! Workers Static Assets without invoking this code. HTML document routes
+//! run here so their no-store shell uses this version's asset manifest;
+//! `/api/*` runs here,
 //! `/wasm/*`, the app's WebAssembly compressed at brotli's highest level
 //! (`wasm_module`), and `/m/*`, readers' attachments.
 //! Every page costs one API call, every payload is edge-cached with
@@ -29,6 +31,7 @@ mod poll;
 mod presence;
 mod refresh;
 mod scheduled_casts;
+mod shell;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -98,7 +101,7 @@ pub async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return media::serve(&req, &env, url.path()).await;
     }
     if !url.path().starts_with("/api/") {
-        return error(404, "Not found", None);
+        return shell::serve(&req, &env, &url).await;
     }
     // Signing in is the one exchange that isn't a read (POST, never cached).
     if let Some(name) = url.path().strip_prefix("/api/v1/auth/") {
@@ -321,7 +324,7 @@ async fn wasm_module(req: &Request, env: &Env, url: &Url, name: &str) -> Result<
         && name.ends_with(".wasm")
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
     if !ours {
-        return error(404, "Not found", None);
+        return shell::not_found();
     }
     let assets = env.assets("ASSETS")?;
     let origin = url.origin().ascii_serialization();
@@ -347,7 +350,7 @@ async fn wasm_module(req: &Request, env: &Env, url: &Url, name: &str) -> Result<
         }
     }
     let module = assets.fetch(format!("{origin}/assets/{name}"), None).await?;
-    if found(&module)? { Ok(module) } else { error(404, "Not found", None) }
+    if found(&module)? { Ok(module) } else { shell::not_found() }
 }
 
 /// Per-client limit from the `API_LIMITER` binding, when configured: a
