@@ -98,10 +98,13 @@ fn PostPage() -> impl IntoView {
         let Some(hash) = hash.get() else {
             return view! { <NotFound/> }.into_any();
         };
-        let loaded = ready.get();
+        // Read privacy before the image-readiness memo, which also uses it.
+        // Otherwise an unchanged image list can consume that dependency's
+        // update before this render checks it, leaving the old notice/body.
         if crate::moderation::waiting() {
             return view! { <crate::moderation::FilterNotice/> }.into_any();
         }
+        let loaded = ready.get();
         if let Some(Some(Ok(fetched))) = &loaded
             && private_hidden(&fetched.data)
         {
