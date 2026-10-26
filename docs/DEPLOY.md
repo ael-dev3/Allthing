@@ -34,6 +34,8 @@ Pushing to `main` then builds and deploys. The first deploy also:
 3. the Worker: `worker-build --release` in `crates/allthing-worker` → `crates/allthing-worker/build/`, then `cargo xtask strip-worker`, which drops from its WebAssembly the relocations the workspace's `--emit-relocs` leaves for the app's wasm-split (`linking` and `reloc.*`, more than half its bytes);
 4. the browser app: `cargo xtask dist` → `dist/` (fingerprinted app WebAssembly and its Brotli-11 copy written in Rust, generated glue, the app's split parts, the JavaScript loader and early-card renderer, CSS, fonts, `index.html`, `_headers`). Native Rust checks the pinned SpacetimeDB SDK and invokes the installed esbuild CLI to bundle its TypeScript adapter.
 
+Keep the Worker and `dist/` deployment together. Document routes are served by the versioned Worker/static binding with `Cache-Control: no-store`, CDN no-store and the existing security policy; `/` and `/index.html` run the Worker first. `assets.html_handling` and `assets.not_found_handling` stay `none`: existing fingerprinted assets remain asset-first/immutable, while absent JavaScript or Wasm paths are real no-store 404s. The deployment-cache fixture checks shell/asset consistency and deep-link behavior. Do not enable an edge cache rule that overrides no-store for document responses.
+
 The earlier clean-build timing below predates the native tooling migration; it is historical evidence, not a timing guarantee for this build. `npx wrangler deploy` then uploads the Worker and the `dist/` assets. Only changed assets are uploaded.
 
 ### Build timing

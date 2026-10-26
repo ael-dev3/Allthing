@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Headers for static assets (Workers Static Assets). API responses set their own.
+# Headers for static assets (Workers Static Assets). The Worker shell reuses
+# this global security block; document responses add no-store separately.
+# API responses set their own headers.
 # connect-src allows any https origin because HLS playlists and segments are
 # fetched straight from wherever a cast's video is hosted, never proxied.
 # wss://maincloud.spacetimedb.com is Allthing's SpacetimeDB database, which

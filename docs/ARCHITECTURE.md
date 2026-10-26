@@ -6,10 +6,11 @@ Allthing is a Farcaster client for reading: it shows Farcaster, and the Worker p
 ```text
  Browser                                   Cloudflare (one Worker, Free plan)            Upstreams
  ───────                                   ──────────────────────────────────            ─────────
- index.html, boot.js,       ── static ──▶  Workers Static Assets (free, no Worker run)
- paint.js
+ HTML document routes      ── Worker ──▶  this deployment's ASSETS index.html (no-store)
+ boot.js, paint.js,         ── static ──▶  Workers Static Assets (free, no Worker run)
+ app JS, CSS, fonts, packs                 dist/: fingerprinted, cached for a year
  /wasm/allthing-*.wasm      ── Worker ──▶  the module's brotli-11 copy from ASSETS (boot.js falls back to /assets/)
- allthing-*.wasm/.js/.css                  dist/: hashed, cached for a year
+ /assets/allthing-*.wasm                  immutable static fallback
 
  one call per page          ── /api/* ──▶  allthing-worker (Rust, workers-rs)
  GET /api/v1/home …                          rate limit (per IP) → edge cache (Cache API)
@@ -44,6 +45,8 @@ Allthing is a Farcaster client for reading: it shows Farcaster, and the Worker p
 | `xtask` | native | Build orchestration, Brotli-11 compression, esbuild CLI/SDK-version checks, metadata and credit audits, attestation key generation, optimizer discovery, fixture phases, npm audit, isolated SpacetimeDB validation and deployment waiting. `dist` builds `dist/`; `pages` builds `dist-pages/`. |
 
 `scripts/build.sh` only bootstraps rustup and the pinned toolchain on images without Rust, then runs `cargo xtask build`. The native build selects the locked tools, builds the Worker, strips its relocations and builds the browser assets. `cargo xtask dist` runs `cargo build`, wasm-split for the interactive app, `wasm-bindgen --target web` and `wasm-opt -Oz`. It writes fingerprinted Wasm, glue, loaders, CSS and HTML, and compresses the optional `.wasm.br` copies in Rust at quality 11, window 24. The shared SpacetimeDB adapter is bundled through the installed esbuild CLI after checking its SDK version. WebAssembly release builds use `opt-level = "z"`, LTO, one codegen unit and `panic = "abort"`.
+
+HTML document routes run through `allthing-worker::shell`: the versioned `ASSETS` binding reads `/index.html`, and the response carries `no-store` for browsers/CDNs plus `X-Allthing-Commit`. It reuses the global security policy from `web/_headers`, including the checked inline CSP hashes. Existing fingerprinted code, styles, fonts and pack assets remain free asset-first requests with immutable caching. Automatic SPA/HTML fallbacks are disabled: absent asset URLs return a no-store 404 rather than an HTML200 cached under an old JavaScript path. Known app routes and unknown document navigations still render the client router. A document invocation adds no API payload read; its separate request cost is in [BUDGET.md](BUDGET.md#1-what-a-page-view-costs).
 
 ## Language boundaries
 
