@@ -27,7 +27,11 @@ async function serve(page: Page) {
 
 /** Playwright's 1e12 timer IDs must survive the browser's WebIDL i32 ABI. */
 async function browserClock(page: Page) {
-  await page.clock.install({ time: Date.now() });
+  const at = Date.now();
+  await page.clock.install({ time: at });
+  // Pause before navigation: an in-flight real-time clock callback from the
+  // mounted app can otherwise finish after pauseAt and move ticks backward.
+  await page.clock.pauseAt(at + 1000);
   await page.addInitScript(() => {
     // Native browser handles fit i32. Without aliases, web-sys truncates the
     // clock's 1e12 handles and cancellation silently leaves old timers live.
@@ -70,7 +74,6 @@ test("suggestions appear as you type: people, channels and posts", async ({ page
   const box = page.getByRole("combobox", { name: "Search casts, people and channels", exact: true });
   // Keep real keyboard/input events, but control the gaps: a busy host can
   // otherwise turn a requested 40 ms gap into a genuine 250 ms pause.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   const handles = await page.evaluate(() => {
     (window as any).__clockProbe = [];
     const note = (...args: unknown[]) => (window as any).__clockProbe.push(args);
