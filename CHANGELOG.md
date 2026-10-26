@@ -25,6 +25,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Pause the search fixture's clock before navigation so an old real-time timer cannot move it backward; preserve the exact timer-cancellation and 250 ms debounce checks.
 - Keep the live front-page check's exact navigation contract in step with the Home and Library links; first-paint, layout and interaction limits remain unchanged.
 - Library Back checks compare with the card position at the actual click, after browser actionability scrolling, while retaining the two-pixel restoration limit and exact cached-page checks.
 
