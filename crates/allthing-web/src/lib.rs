@@ -18,6 +18,11 @@ mod library;
 #[cfg(not(feature = "static-host"))]
 mod library_disk;
 mod miniapps;
+#[cfg(not(feature = "static-host"))]
+mod moderation;
+#[cfg(feature = "static-host")]
+#[path = "moderation_static.rs"]
+mod moderation;
 mod nav;
 #[cfg(not(feature = "static-host"))]
 mod notification_sync;
@@ -84,6 +89,7 @@ fn App() -> impl IntoView {
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(library::Library::new());
+    provide_context(moderation::Moderation::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::notifications::Notifications::new());
     #[cfg(not(feature = "static-host"))]

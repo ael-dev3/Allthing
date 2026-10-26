@@ -105,8 +105,21 @@ pub fn Settings() -> impl IntoView {
                 <p class="settings-title">"Settings"</p>
                 <MiniAppsSwitch class="account-link"/>
                 <crate::seen::ResetSeen/>
+                {account_management()}
             }
         />
+    }
+}
+
+/// The public-only static copy has no private account preferences.
+fn account_management() -> AnyView {
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <crate::components::account_controls::AccountManagement/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        ().into_any()
     }
 }
 

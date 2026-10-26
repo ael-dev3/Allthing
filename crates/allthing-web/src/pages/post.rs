@@ -61,7 +61,7 @@ fn PostPage() -> impl IntoView {
     // replies down. A post shows once; it doesn't wait again (for another
     // sort of its replies, say).
     let top = Memo::new(move |_| match data.get() {
-        Some(Some(Ok(fetched))) => top_images(&fetched.data, sort.get_untracked()),
+        Some(Some(Ok(fetched))) if !private_hidden(&fetched.data) => top_images(&fetched.data, sort.get_untracked()),
         _ => Vec::new(),
     });
     let shown_post = StoredValue::new(None::<String>);
@@ -81,6 +81,10 @@ fn PostPage() -> impl IntoView {
     Effect::new(move |_| {
         if let Some(Some(Ok(fetched))) = data.get() {
             let cast = &fetched.data.thread.cast;
+            if private_hidden(&fetched.data) {
+                set_title("Post");
+                return;
+            }
             let title = truncate_title(&cast.text, 60);
             set_title(&format!(
                 "{} — @{}",
@@ -95,7 +99,18 @@ fn PostPage() -> impl IntoView {
             return view! { <NotFound/> }.into_any();
         };
         let loaded = ready.get();
+        if crate::moderation::waiting() {
+            return view! { <crate::moderation::FilterNotice/> }.into_any();
+        }
+        if let Some(Some(Ok(fetched))) = &loaded
+            && private_hidden(&fetched.data)
+        {
+            return view! { <p class="empty">"This post is hidden by your account preferences."</p> }.into_any();
+        }
         if let (None | Some(None), Some(cast)) = (&loaded, api::seen_cast(&hash)) {
+            if crate::moderation::hides_cast(&cast, &Default::default()) {
+                return view! { <p class="empty">"This post is hidden by your account preferences."</p> }.into_any();
+            }
             // Seen in a feed: show the cast now, with the quoted casts the
             // feed carried; replies arrive with the thread.
             let notes = allthing_core::api::Annotations::default();
@@ -113,6 +128,9 @@ fn PostPage() -> impl IntoView {
                 notes: notes.clone(),
                 meta: allthing_core::api::Meta { backend: Default::default(), fetched_at: 0, stale: false },
             });
+            if private_hidden(&payload) {
+                return view! { <p class="empty">"This post is hidden by your account preferences."</p> }.into_any();
+            }
             // The reader's "Cast your reply" from the first frame, so it's
             // where it will stay once the thread comes.
             let prompt = crate::components::reply_prompt(&cast);
@@ -277,6 +295,17 @@ fn PostPage() -> impl IntoView {
     }
 }
 
+fn private_hidden(payload: &CastPayload) -> bool {
+    let mut quotes = payload.notes.quotes.clone();
+    for quote in &payload.quotes {
+        if let Some(cast) = &quote.cast {
+            quotes.insert(cast.hash.clone(), cast.clone());
+        }
+    }
+    crate::moderation::hides_cast(&payload.thread.cast, &quotes)
+        || payload.ancestors.iter().any(|cast| crate::moderation::hides_cast(cast, &quotes))
+}
+
 /// Read the post again until it lists `want` replies, or three tries: the
 /// first read after its edge copy aged may answer that copy while the
 /// Worker rebuilds it.
@@ -298,6 +327,14 @@ async fn newer_replies(hash: &str, want: u64) {
 
 #[component]
 fn MainCast(cast: Cast, notes: Notes, payload: Arc<CastPayload>) -> impl IntoView {
+    let mut cast = cast;
+    let mut quotes = notes.quotes.clone();
+    for quote in &payload.quotes {
+        if let Some(quoted) = &quote.cast {
+            quotes.insert(quoted.hash.clone(), quoted.clone());
+        }
+    }
+    cast.references = allthing_core::moderation::References::with_quotes(&cast, &quotes);
     // Whether the reader liked and recasted this cast, which may be older
     // than their latest likes and recasts.
     #[cfg(not(feature = "static-host"))]
@@ -415,14 +452,24 @@ fn top_images(payload: &CastPayload, sort: CommentSort) -> Vec<String> {
     let cast = &payload.thread.cast;
     let mut images: Vec<&str> =
         if crate::miniapps::hides(cast) { Vec::new() } else { single_image(cast).into_iter().collect() };
-    for quote in payload.quotes.iter().filter_map(|quote| quote.cast.as_ref()).filter(|q| !crate::miniapps::hides(q)) {
+    for quote in payload
+        .quotes
+        .iter()
+        .filter_map(|quote| quote.cast.as_ref())
+        .filter(|q| !crate::miniapps::hides(q) && !crate::moderation::hides_cast(q, &payload.notes.quotes))
+    {
         images.extend(single_images(quote, &payload.notes.quotes));
     }
     let mut replies = payload.thread.children.clone();
     sort_thread(&mut replies, sort);
     let mut first = Vec::new();
     first_nodes(&replies, &mut first);
-    images.extend(first.into_iter().filter(|c| !crate::miniapps::hides(c)).filter_map(single_image));
+    images.extend(
+        first
+            .into_iter()
+            .filter(|c| !crate::miniapps::hides(c) && !crate::moderation::hides_cast(c, &payload.notes.quotes))
+            .filter_map(single_image),
+    );
     images.into_iter().map(str::to_owned).collect()
 }
 

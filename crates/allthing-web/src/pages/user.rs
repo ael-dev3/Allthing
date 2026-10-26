@@ -184,6 +184,7 @@ fn ProfileHeader(
                 </div>
                 {corner_buttons(user.fid, &user.username)}
             </div>
+            {account_controls(user.fid, user.username.clone())}
             {if !has_card {
                 view! { <div class="bio"><span class="sk sk-title"></span></div> }.into_any()
             } else if user.bio.trim().is_empty() {
@@ -203,6 +204,19 @@ fn ProfileHeader(
 }
 
 const LINK: &str = "M6.8 9.2l2.4-2.4M7.4 4.6l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.6 11.4l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1";
+
+/// Signed-in readers can mute or block another account without a public write.
+fn account_controls(fid: u64, username: String) -> AnyView {
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <crate::components::account_controls::AccountControls fid username/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = (fid, username);
+        ().into_any()
+    }
+}
 
 /// The account's website, under its bio, as the profile's payload gives it:
 /// a link out, on one line. It comes with the bio, whose whole text the

@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use allthing_core::embeds::{ImageSize, embed_domain, inline_size_url, is_gif, resized_image_url};
 use allthing_core::emoji::{self, STICKER_HEIGHT, Sticker};
 use allthing_core::model::{Cast, Embed};
+use allthing_core::moderation::References;
 use allthing_core::text::truncate_title;
 use allthing_core::video::{self, VideoLink};
 use leptos::ev;
@@ -42,6 +43,10 @@ pub struct Gallery {
     /// The cast's words, cut short: the rest of the caption. Each item's
     /// alt text stays on the item, for screen readers.
     pub caption: String,
+    /// The complete owning cast, not its shortened caption or image alt.
+    /// The global viewer can outlive the inline card that opened it.
+    pub references: References,
+    pub origin: String,
 }
 
 /// How much of a cast's words the media viewer's caption shows, at most:
@@ -321,6 +326,9 @@ impl Viewer {
     }
 
     pub fn open(&self, gallery: Gallery) {
+        if untrack(|| crate::moderation::hides_references(&gallery.references)) {
+            return;
+        }
         let active = document().active_element().and_then(|e| e.dyn_into::<HtmlElement>().ok());
         RETURN_FOCUS.with(|r| *r.borrow_mut() = active);
         self.gallery.set(Some(gallery));
@@ -328,7 +336,7 @@ impl Viewer {
 
     pub fn close(&self) {
         self.gallery.set(None);
-        if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()) {
+        if let Some(element) = RETURN_FOCUS.with(|r| r.borrow_mut().take()).filter(|element| element.is_connected()) {
             let _ = element.focus();
         }
     }
@@ -440,7 +448,18 @@ pub fn MediaGrid(cast: Cast) -> impl IntoView {
         index: 0,
         author: cast.author.username.clone(),
         caption: truncate_title(&cast.text, CAPTION_CHARS),
+        references: References::of_cast(&cast),
+        origin: cast.hash.clone(),
     };
+    let origin = cast.hash.clone();
+    on_cleanup(move || {
+        // A parent cast/quote/ancestor can become hidden even when this
+        // media belongs to a safe nested quote. Retiring its inline owner
+        // must retire the detached global viewer too.
+        if viewer.gallery.with_untracked(|gallery| gallery.as_ref().is_some_and(|gallery| gallery.origin == origin)) {
+            viewer.close();
+        }
+    });
     let count = items.len();
     let tiles = items
         .into_iter()
@@ -592,6 +611,14 @@ pub fn Lightbox() -> impl IntoView {
         viewer.gallery.set(None);
         RETURN_FOCUS.with(|r| r.borrow_mut().take());
     });
+    Effect::new(move |_| {
+        let hidden = viewer.gallery.with(|gallery| {
+            gallery.as_ref().is_some_and(|gallery| crate::moderation::hides_references(&gallery.references))
+        });
+        if hidden {
+            viewer.close();
+        }
+    });
 
     let keys = window_event_listener(ev::keydown, move |ev| {
         if viewer.gallery.with_untracked(Option::is_none) {
@@ -669,6 +696,11 @@ pub fn Lightbox() -> impl IntoView {
 
     move || {
         let gallery = viewer.gallery.get()?;
+        // Gate the render itself as well as closing state, so scheduling
+        // order cannot leave media/alt/caption exposed for another frame.
+        if crate::moderation::hides_references(&gallery.references) {
+            return None;
+        }
         let total = gallery.items.len();
         let item = gallery.items.get(gallery.index)?.clone();
         let counter = (total > 1).then(|| format!("{} of {total}", gallery.index + 1));

@@ -10554,3 +10554,39 @@ p.jumbo .emoji img {
   .children > .comment { margin-left: 2px; padding-left: 4px; }
   .comment-foot .engagement { margin-right: 2px; }
 }
+
+/* Private account controls. These rules stay scoped so Settings keeps its
+   existing Cast dismissal behavior and other account actions keep their size. */
+.account-controls { margin: 12px 0; font-family: var(--font-ui); }
+.account-controls-buttons, .account-management-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.account-control, .account-controls-help, .account-controls-retry { min-height: 36px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--card); color: var(--ink-2); padding: 7px 12px; font: 600 12.5px/1.3 var(--font-ui); cursor: pointer; }
+.account-control.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.account-control:disabled { opacity: 0.6; cursor: wait; }
+.account-control:focus-visible, .account-controls-help:focus-visible, .account-controls-retry:focus-visible, .account-management > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.account-controls-help { display: inline-flex; align-items: center; justify-content: center; width: 36px; padding: 0; border-radius: 50%; }
+.account-controls-help-wrap .account-controls-explanation { width: min(350px, calc(100vw - 32px)); padding: 14px; font: 400 12.5px/1.5 var(--font-ui); color: var(--ink-2); }
+.account-controls-explanation p { margin: 0 0 10px; }
+.account-controls-explanation p:last-child { margin-bottom: 0; }
+.account-controls-status { margin: 7px 0 0; color: var(--ink-3); font: 400 12px/1.45 var(--font-ui); overflow-wrap: anywhere; }
+.account-controls-error p { margin: 0 0 6px; }
+.account-controls-retry { min-height: 32px; padding: 5px 9px; }
+.profile-card .account-controls { margin: 10px 0 0; }
+.account-management { margin: 6px 0 0; border-top: 1px solid var(--line); font: 400 12.5px/1.45 var(--font-ui); }
+.account-management > summary { min-height: 44px; padding: 12px 8px; color: var(--ink-2); font-weight: 600; cursor: pointer; }
+.account-management-body { padding: 0 8px 8px; }
+.account-management-intro { margin: 0 0 8px; color: var(--ink-3); }
+.account-management-search { display: grid; gap: 5px; margin: 10px 0; font-weight: 600; color: var(--ink-2); }
+.account-management-search input { min-width: 0; width: 100%; min-height: 40px; border: 1px solid var(--line-2); border-radius: 8px; padding: 8px; background: var(--card); color: var(--ink); font: 400 12.5px var(--font-ui); }
+.account-management-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.account-management-list { list-style: none; padding: 0; margin: 10px 0 0; }
+.account-management-row { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+.account-management-id { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }
+.account-management-id span, .account-management-saving, .account-management-empty { color: var(--ink-3); font-size: 12px; }
+.account-management-empty { margin: 10px 0 0; }
+@media (hover: hover) and (pointer: fine) {
+  .account-control:hover:not(:disabled), .account-controls-help:hover, .account-controls-retry:hover { border-color: var(--accent); color: var(--accent); }
+}
+@media (pointer: coarse) {
+  .account-control, .account-controls-help, .account-controls-retry, .account-management-search input { min-height: 44px; }
+  .account-controls-help { width: 44px; }
+}

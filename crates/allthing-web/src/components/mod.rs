@@ -174,3 +174,5 @@ pub fn reply_prompt(cast: &allthing_core::model::Cast) -> leptos::prelude::AnyVi
         ().into_any()
     }
 }
+#[cfg(not(feature = "static-host"))]
+pub mod account_controls;

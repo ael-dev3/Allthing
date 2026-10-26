@@ -64,6 +64,7 @@ pub fn OutgoingCasts(place: Place, #[prop(into)] listed: Signal<HashSet<String>>
             .outgoing()
             .into_iter()
             .filter(|cast| place.holds(cast, reader))
+            .filter(|cast| !crate::moderation::hides_references(&cast.account_references()))
             .filter(|cast| {
                 cast.hash
                     .as_ref()

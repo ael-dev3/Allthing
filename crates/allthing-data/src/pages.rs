@@ -1724,6 +1724,11 @@ pub async fn notifications(
     }
     events.retain(|event| !is_cast(event.kind) || shown_cast(event).is_some_and(|cast| !cast.hidden()));
 
+    for event in &mut events {
+        if let Some(cast) = event.cast.as_mut() {
+            cast.references = allthing_core::moderation::References::with_quotes(cast, &notes.quotes);
+        }
+    }
     let groups = notifications::group(events, fid);
     // The profile cards of the people shown, from the user objects that came
     // with them: no request.
@@ -2523,6 +2528,7 @@ mod quote_tests {
             recasts: 0,
             replies: 0,
             mini_app: false,
+            references: Default::default(),
             spam: false,
         }
     }
@@ -3869,6 +3875,7 @@ mod reaction_tests {
             recasts: 0,
             replies,
             mini_app: false,
+            references: Default::default(),
             spam: false,
         }
     }

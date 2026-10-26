@@ -22,14 +22,32 @@ pub type Opened = Result<String, String>;
 /// Open every message this browser hasn't opened yet, as they come.
 pub fn open_all(live: &Live, opened: RwSignal<BTreeMap<u64, Opened>>) {
     let live = live.clone();
+    let session = crate::components::signin::use_session();
     Effect::new(move |_| {
         let Some(me) = live.identity.get() else { return };
+        if session.user.with(|user| user.as_ref().map(|user| user.fid)) != Some(live.fid)
+            || crate::moderation::waiting()
+        {
+            let _ = opened.try_update(BTreeMap::clear);
+            return;
+        }
         if !matches!(live.phase.get(), Phase::Ready { .. }) {
             return;
         }
-        let fresh: Vec<DmRow> = live
-            .mirror
-            .with(|m| m.dms.values().filter(|d| !opened.with_untracked(|o| o.contains_key(&d.id))).cloned().collect());
+        // Purge already opened plaintext as soon as a remote block arrives.
+        // The original encrypted history stays in the private SDK mirror.
+        let _ = opened.try_update(|opened| {
+            live.mirror.with(|mirror| {
+                opened.retain(|id, _| mirror.dms.get(id).is_some_and(|row| peer_visible(&live, &me, row)));
+            });
+        });
+        let fresh: Vec<DmRow> = live.mirror.with(|m| {
+            m.dms
+                .values()
+                .filter(|row| peer_visible(&live, &me, row) && !opened.with_untracked(|o| o.contains_key(&row.id)))
+                .cloned()
+                .collect()
+        });
         for row in fresh {
             opened.update(|o| {
                 o.insert(row.id, Err("Decrypting…".into()));
@@ -37,12 +55,26 @@ pub fn open_all(live: &Live, opened: RwSignal<BTreeMap<u64, Opened>>) {
             let (live, me) = (live.clone(), me.clone());
             leptos::task::spawn_local(async move {
                 let text = open_row(&live, &me, &row).await;
-                opened.update(|o| {
-                    o.insert(row.id, text);
-                });
+                // A WebCrypto await may finish after an account switch or a
+                // block from another session. Never put its plaintext back.
+                if session.user.with_untracked(|user| user.as_ref().map(|user| user.fid)) == Some(live.fid)
+                    && untrack(|| peer_visible(&live, &me, &row))
+                {
+                    let _ = opened.try_update(|opened| {
+                        opened.insert(row.id, text);
+                    });
+                }
             });
         }
     });
+}
+
+fn peer_visible(live: &Live, me: &str, row: &DmRow) -> bool {
+    if crate::moderation::waiting() {
+        return false;
+    }
+    let peer = if row.sender == me { &row.recipient } else { &row.sender };
+    live.mirror.with(|mirror| mirror.fid_of(peer).is_some_and(|fid| !crate::moderation::blocks_fid(fid)))
 }
 
 /// The messages with `fid`, and the box to write to them.
@@ -52,6 +84,9 @@ pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTree
     let rows = {
         let (mirror, identity) = (mirror.clone(), identity.clone());
         Memo::new(move |_| {
+            if crate::moderation::waiting() || crate::moderation::blocks_fid(fid) {
+                return Vec::new();
+            }
             let me = identity.get().unwrap_or_default();
             mirror.with(|m| {
                 let mut rows: Vec<DmRow> = m
@@ -85,11 +120,18 @@ pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTree
             let me = identity.get().unwrap_or_default();
             rows.get()
                 .into_iter()
-                .map(|row| {
+                .filter_map(|row| {
+                    if opened.with(|opened| {
+                        opened
+                            .get(&row.id)
+                            .is_some_and(|text| text.as_ref().is_ok_and(|text| crate::moderation::hides_text(text)))
+                    }) {
+                        return None;
+                    }
                     let mine = row.sender == me;
                     let id = row.id;
                     let text = move || opened.with(|o| o.get(&id).cloned());
-                    view! {
+                    Some(view! {
                         <li class="dm-message" class:dm-mine=mine>
                             {move || match text() {
                                 Some(Ok(text)) => view! { <p class="dm-bubble">{text}</p> }.into_any(),
@@ -98,14 +140,14 @@ pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTree
                             }}
                             <time class="dm-time" datetime=time_label(row.sent_at).0>{time_label(row.sent_at).1}</time>
                         </li>
-                    }
+                    })
                 })
                 .collect_view()
         }
     };
     let ready = {
         let phase = live.phase.clone();
-        move || matches!(phase.get(), Phase::Ready { .. })
+        move || matches!(phase.get(), Phase::Ready { verified: true })
     };
     let heading = move || people.handle(fid);
     view! {
@@ -131,7 +173,14 @@ pub fn Conversation(live: Live, people: People, fid: u64, opened: RwSignal<BTree
                     </p>
                 }
                 .into_any(),
-                Some((_, key)) => {
+                Some((verified, key)) => {
+                    if !verified || matches!(live.phase.get(), Phase::Ready { verified: false }) {
+                        return view! {
+                            <p class="dm-empty muted" role="status"
+                                title="Encrypted message delivery uses verified Farcaster account identities so account blocks apply across browsers and cannot be bypassed by an unverified account claim."
+                            >"Both accounts need Farcaster verification before sending encrypted messages."</p>
+                        }.into_any();
+                    }
                     let live = live.clone();
                     let identity = identity.clone();
                     view! { <Show when=ready.clone()><SealedComposer live=live.clone() identity=identity.clone() key=key.clone() label=heading()/></Show> }.into_any()
@@ -154,7 +203,12 @@ fn SealedComposer(live: Live, identity: ArcRwSignal<Option<String>>, key: KeyRow
     let bytes = move || text.with(|t| t.trim().len());
     let send = move || {
         let body = text.get_untracked().trim().to_owned();
-        if body.is_empty() || body.len() > MAX_TEXT || sending.get_untracked() {
+        if body.is_empty()
+            || body.len() > MAX_TEXT
+            || sending.get_untracked()
+            || crate::moderation::waiting()
+            || crate::moderation::blocks_fid(key.with_value(|key| key.fid))
+        {
             return;
         }
         let Some(me) = identity.get_untracked() else { return };
@@ -214,9 +268,15 @@ fn my_party(live: &Live, me: &str) -> Result<(u32, [u8; 32]), String> {
 }
 
 async fn seal_and_send(live: &Live, me: &str, theirs: &KeyRow, text: &str) -> Result<(), String> {
+    if crate::moderation::waiting() || crate::moderation::blocks_fid(theirs.fid) {
+        return Err("Messages hidden by your account preferences.".into());
+    }
     let (my_version, my_public) = my_party(live, me)?;
     let their_public = public_key(theirs).ok_or("Their key is malformed")?;
     let secret = live.secret(&their_public).await?;
+    if crate::moderation::waiting() || crate::moderation::blocks_fid(theirs.fid) {
+        return Err("Messages hidden by your account preferences.".into());
+    }
     let nonce = crate::keys::random::<24>().ok_or("This browser has no random numbers")?;
     let sender = Party { identity: me, key_version: my_version, public_key: &my_public };
     let recipient = Party { identity: &theirs.identity, key_version: theirs.key_version, public_key: &their_public };
@@ -236,6 +296,9 @@ async fn seal_and_send(live: &Live, me: &str, theirs: &KeyRow, text: &str) -> Re
 
 /// A message's text, opened with this browser's key, or why it can't be.
 async fn open_row(live: &Live, me: &str, row: &DmRow) -> Opened {
+    if !untrack(|| peer_visible(live, me, row)) {
+        return Err("Messages hidden by your account preferences.".into());
+    }
     let (my_version, my_public) = my_party(live, me)?;
     let mine = row.sender == me;
     let (peer, my_side, their_side) = if mine {
@@ -252,7 +315,13 @@ async fn open_row(live: &Live, me: &str, row: &DmRow) -> Opened {
         return Err("Sealed with an earlier key of theirs: it can't be read here.".into());
     }
     let their_public = public_key(&theirs).ok_or("Their key is malformed")?;
+    if !untrack(|| peer_visible(live, me, row)) {
+        return Err("Messages hidden by your account preferences.".into());
+    }
     let secret = live.secret(&their_public).await?;
+    if !untrack(|| peer_visible(live, me, row)) {
+        return Err("Messages hidden by your account preferences.".into());
+    }
     let me_party = Party { identity: me, key_version: my_version, public_key: &my_public };
     let them = Party { identity: peer, key_version: theirs.key_version, public_key: &their_public };
     let (sender, recipient) = if mine { (me_party, them) } else { (them, me_party) };

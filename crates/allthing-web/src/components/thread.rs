@@ -148,6 +148,23 @@ fn Comment(
     #[prop(optional)] mine: bool,
     #[prop(optional_no_strip)] posting: Option<&'static str>,
 ) -> AnyView {
+    let guarded = StoredValue::new(node.cast.clone());
+    let quotes = StoredValue::new(notes.quotes.clone());
+    let props = StoredValue::new((node, notes, listed));
+    view! { <Show when=move || !guarded.with_value(|cast| quotes.with_value(|quotes| crate::moderation::hides_cast(cast,quotes)))>
+        {move || {let (node,notes,listed)=props.get_value();view! { <VisibleComment node notes op_fid listed mine posting/> } }}
+    </Show> }.into_any()
+}
+
+#[component]
+fn VisibleComment(
+    node: ThreadNode,
+    notes: Notes,
+    op_fid: u64,
+    listed: Listed,
+    #[prop(optional)] mine: bool,
+    #[prop(optional_no_strip)] posting: Option<&'static str>,
+) -> AnyView {
     let collapsed = RwSignal::new(false);
     // The reply is clipped while it collapses or expands; at rest it isn't,
     // so its popovers (likes, profile cards) can reach past its edges.
@@ -167,7 +184,8 @@ fn Comment(
             std::time::Duration::from_millis(TOGGLE_MS),
         );
     };
-    let cast = node.cast.clone();
+    let mut cast = node.cast.clone();
+    cast.references = allthing_core::moderation::References::with_quotes(&cast, &notes.quotes);
     let hidden = count_descendants(&node);
     let shown_children = node.children.len() as u64;
     let more = cast.replies.saturating_sub(shown_children);
@@ -345,7 +363,7 @@ fn reply_cast(
         hash: reply.hash.clone().unwrap_or_else(|| format!("0x{:08x}{:032x}", reply.id as u32, reply.id)),
         author,
         text: reply.text.clone(),
-        mentions: Vec::new(),
+        mentions: reply.mentions.clone(),
         ts: if reply.at > 0 { reply.at } else { crate::util::now() },
         parent_hash: Some(parent.to_owned()),
         parent_url: None,
@@ -355,6 +373,7 @@ fn reply_cast(
         recasts: 0,
         replies: 0,
         mini_app: false,
+        references: reply.account_references(),
         spam: false,
     }
 }

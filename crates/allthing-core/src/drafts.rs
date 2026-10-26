@@ -130,6 +130,7 @@ mod tests {
                 fid: 42,
                 username: "alice".into(),
                 excerpt: "What next?".into(),
+                ..SavedCast::default()
             }),
             ..SavedDraft::default()
         };
@@ -139,7 +140,13 @@ mod tests {
     #[test]
     fn each_draft_is_kept_for_what_it_is_for() {
         let quote = SavedDraft {
-            quote: Some(SavedCast { hash: "0xAB".into(), fid: 7, username: "bob".into(), excerpt: String::new() }),
+            quote: Some(SavedCast {
+                hash: "0xAB".into(),
+                fid: 7,
+                username: "bob".into(),
+                excerpt: String::new(),
+                ..SavedCast::default()
+            }),
             ..SavedDraft::default()
         };
         let books = SavedDraft { channel: Some("books".into()), ..SavedDraft::default() };

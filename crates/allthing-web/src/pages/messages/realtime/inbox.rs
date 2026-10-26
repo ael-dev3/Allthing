@@ -52,11 +52,17 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
     let threads = {
         let (mirror, identity) = (mirror.clone(), identity.clone());
         Memo::new(move |_| {
+            if crate::moderation::waiting() {
+                return Vec::new();
+            }
             let me = identity.get().unwrap_or_default();
             mirror.with(|m| {
                 let mut seen = Vec::<(u64, i64)>::new();
                 for t in m.threads(&me) {
                     if let Some(fid) = m.fid_of(&t.peer) {
+                        if crate::moderation::blocks_fid(fid) {
+                            continue;
+                        }
                         match seen.iter_mut().find(|(f, _)| *f == fid) {
                             Some(entry) => entry.1 = entry.1.max(t.last_at),
                             None => seen.push((fid, t.last_at)),
@@ -70,11 +76,23 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
     };
     let room_last = {
         let mirror = mirror.clone();
-        Memo::new(move |_| mirror.with(|m| m.room_messages(GENERAL_ROOM).last().map(|m| m.sent_at)))
+        Memo::new(move |_| {
+            mirror.with(|m| {
+                m.room_messages(GENERAL_ROOM)
+                    .into_iter()
+                    .rfind(|message| {
+                        !people.hidden(message.sender_fid) && !crate::moderation::hides_text(&message.text)
+                    })
+                    .map(|message| message.sent_at)
+            })
+        })
     };
     Effect::new(move |_| people.want(threads.with(|t| t.iter().map(|(f, _)| *f).collect::<Vec<_>>())));
     Effect::new(move |_| {
-        if let Open::With(fid) = open.get() {
+        if let Open::With(fid) = open.get()
+            && !crate::moderation::waiting()
+            && !crate::moderation::blocks_fid(fid)
+        {
             people.want([fid]);
         }
     });
@@ -103,6 +121,9 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
     };
 
     let picked = Callback::new(move |user: UserSummary| {
+        if crate::moderation::waiting() || crate::moderation::blocks_fid(user.fid) {
+            return;
+        }
         people.add(vec![user.clone()]);
         go(&dm_href(user.fid), Default::default());
     });
@@ -110,6 +131,19 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
     let pane = {
         let live = live.clone();
         move || {
+            if crate::moderation::waiting() {
+                return view! { <crate::moderation::FilterNotice/> }.into_any();
+            }
+            if matches!(open.get(), Open::With(fid) if crate::moderation::blocks_fid(fid)) {
+                return view! {
+                    <div class="dm-thread">
+                        <header class="dm-thread-head"><BackLink/><h2 class="rt-peer">"Conversation hidden"</h2></header>
+                        <p class="dm-empty muted" role="status"
+                            title="Blocked conversations and their existing messages stay hidden. Unblock the account in Settings to show them again. Existing messages are kept; new messages are refused in both directions."
+                        >"Messages hidden by your account preferences."</p>
+                    </div>
+                }.into_any();
+            }
             match open.get() {
             Open::Nothing => view! {
                 <p class="dm-empty muted">"Open #general, or a conversation, or start one with New message."</p>

@@ -306,6 +306,35 @@ pub struct Outgoing {
     /// When it went (Unix seconds).
     #[serde(default)]
     pub at: i64,
+    /// The quoted/replied cast's full provenance, retained across reloads.
+    #[serde(default)]
+    pub references: allthing_core::moderation::References,
+    /// FIDs resolved before signing, not just the handles in display text.
+    #[serde(default)]
+    pub mentions: Vec<allthing_core::model::Mention>,
+}
+
+impl Outgoing {
+    pub fn resolve_mentions(&mut self, fids: &HashMap<String, u64>) {
+        self.mentions = fids
+            .iter()
+            .map(|(username, fid)| allthing_core::model::Mention { username: username.clone(), fid: *fid })
+            .collect();
+    }
+
+    pub fn account_references(&self) -> allthing_core::moderation::References {
+        let mut references = self.references.clone();
+        references.extend(&allthing_core::moderation::References::text_with_resolved(&self.text, &self.mentions));
+        for mention in &self.mentions {
+            references.add_fid(mention.fid);
+        }
+        if self.references.is_empty() && (self.quoting.is_some() || self.replying_to.is_some()) {
+            // Older ten-minute outgoing records kept only an excerpt/name.
+            // With active filters, unknown full provenance must fail closed.
+            references.incomplete = true;
+        }
+        references
+    }
 }
 
 /// How to take back what a hand-off shows before it's done.
@@ -882,6 +911,12 @@ impl Writer {
     /// Retry where the same message again may help; or, holding another
     /// draft by then, a notice says it.
     pub fn send_reply(self, id: u64, cast: Result<NewCast, String>, shown: Outgoing, reopen: Reopen) {
+        self.mine.update(|state| {
+            if let Some(reply) = state.outgoing.iter_mut().find(|reply| reply.id == id) {
+                reply.mentions.clone_from(&shown.mentions);
+                reply.references.clone_from(&shown.references);
+            }
+        });
         let Some(stored) = KEY.with(|k| k.borrow().clone()) else {
             // Forgotten meanwhile (in another tab): approved again, it goes.
             if let Some(fid) = self.fid() {

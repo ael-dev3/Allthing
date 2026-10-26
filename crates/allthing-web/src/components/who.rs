@@ -90,27 +90,31 @@ fn People(payload: std::sync::Arc<ReactionsPayload>, #[prop(optional)] cards: bo
     // from it shows them at once.
     api::remember_cards(&payload.cards);
     if !cards {
-        api::prefetch_row_facts(&payload.users.iter().map(|u| u.fid).collect::<Vec<_>>());
+        api::prefetch_row_facts(
+            &payload.users.iter().filter(|u| !crate::moderation::hides_user(u)).map(|u| u.fid).collect::<Vec<_>>(),
+        );
     }
-    view! {
-        <ul class="who-list">
-            {payload.users.iter().map(|u| {
-                let fid = u.fid;
-                let href = user_href(&u.username);
-                let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
-                view! {
-                    <li on:pointerenter=move |_| api::prefetch_facts_first(fid) on:focusin=move |_| api::prefetch_facts_first(fid)>
-                        <ProfileHover user=u.clone() in_dialog=cards beside=!cards class="who-links">
-                            <a class="who-link" href=href.clone()>
-                                <Avatar url=pfp.clone() size=28/>
-                                <span class="who-name">{name.clone()}</span>
-                                <span class="who-handle muted">"@"{username.clone()}</span>
-                            </a>
-                        </ProfileHover>
-                    </li>
-                }
-            }).collect_view()}
-        </ul>
+    move || {
+        view! {
+            <ul class="who-list">
+                {payload.users.iter().filter(|u|!crate::moderation::hides_user(u)).map(|u| {
+                    let fid = u.fid;
+                    let href = user_href(&u.username);
+                    let (pfp, name, username) = (u.pfp_url.clone(), u.name().to_owned(), u.username.clone());
+                    view! {
+                        <li on:pointerenter=move |_| api::prefetch_facts_first(fid) on:focusin=move |_| api::prefetch_facts_first(fid)>
+                            <ProfileHover user=u.clone() in_dialog=cards beside=!cards class="who-links">
+                                <a class="who-link" href=href.clone()>
+                                    <Avatar url=pfp.clone() size=28/>
+                                    <span class="who-name">{name.clone()}</span>
+                                    <span class="who-handle muted">"@"{username.clone()}</span>
+                                </a>
+                            </ProfileHover>
+                        </li>
+                    }
+                }).collect_view()}
+            </ul>
+        }
     }
 }
 
@@ -292,7 +296,7 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                     // and so do their votes and wallets, once preloaded.
                     api::remember_cards(&payload.notes.users);
                     let mut authors: Vec<u64> = Vec::new();
-                    for reply in &payload.replies {
+                    for reply in payload.replies.iter().filter(|reply|!crate::moderation::hides_cast(reply,&payload.notes.quotes)) {
                         if !authors.contains(&reply.author.fid) {
                             authors.push(reply.author.fid);
                         }
@@ -300,7 +304,7 @@ pub fn RepliesPreview(hash: String) -> impl IntoView {
                     api::prefetch_row_facts(&authors);
                     view! {
                         <ul class="reply-items">
-                            {payload.replies.iter().map(|reply| {
+                            {payload.replies.iter().filter(|reply|!crate::moderation::hides_cast(reply,&payload.notes.quotes)).map(|reply| {
                                 let thumbs: Vec<String> = reply.embeds.iter().filter_map(|e| match e {
                                     Embed::Image { url } => Some(resized_image_url(url, ImageSize::Thumb)),
                                     _ => None,

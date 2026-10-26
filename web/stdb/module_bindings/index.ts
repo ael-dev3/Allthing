@@ -43,6 +43,7 @@ import MarkSeenBatchReducer from "./mark_seen_batch_reducer";
 import RegisterReducer from "./register_reducer";
 import SendDmReducer from "./send_dm_reducer";
 import SendMessageReducer from "./send_message_reducer";
+import SetAccountFilterReducer from "./set_account_filter_reducer";
 import SetBookmarkReducer from "./set_bookmark_reducer";
 import SetPublicKeyReducer from "./set_public_key_reducer";
 import SetTypingReducer from "./set_typing_reducer";
@@ -53,6 +54,7 @@ import VerifyNotificationFidReducer from "./verify_notification_fid_reducer";
 
 // Import all table schema definitions
 import ChatMessageRow from "./chat_message_table";
+import MyAccountFiltersRow from "./my_account_filters_table";
 import MyDmInboxRow from "./my_dm_inbox_table";
 import MyDmOutboxRow from "./my_dm_outbox_table";
 import MyLibraryMembershipRow from "./my_library_membership_table";
@@ -136,6 +138,13 @@ const tablesSchema = __schema({
       { name: 'user_key_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, UserKeyRow),
+  myAccountFilters: __table({
+    name: 'my_account_filters',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyAccountFiltersRow),
   myDmInbox: __table({
     name: 'my_dm_inbox',
     indexes: [
@@ -191,6 +200,7 @@ const reducersSchema = __reducers(
   __reducerSchema("register", RegisterReducer),
   __reducerSchema("send_dm", SendDmReducer),
   __reducerSchema("send_message", SendMessageReducer),
+  __reducerSchema("set_account_filter", SetAccountFilterReducer),
   __reducerSchema("set_bookmark", SetBookmarkReducer),
   __reducerSchema("set_public_key", SetPublicKeyReducer),
   __reducerSchema("set_typing", SetTypingReducer),
@@ -208,6 +218,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "chat_message": Omit<typeof tablesSchema.schemaType.tables["chatMessage"], "accessorName"> & { readonly accessorName: "chat_message" };
     /** @deprecated Use `userKey` instead. This alias will be removed in the next major version. */
     readonly "user_key": Omit<typeof tablesSchema.schemaType.tables["userKey"], "accessorName"> & { readonly accessorName: "user_key" };
+    /** @deprecated Use `myAccountFilters` instead. This alias will be removed in the next major version. */
+    readonly "my_account_filters": Omit<typeof tablesSchema.schemaType.tables["myAccountFilters"], "accessorName"> & { readonly accessorName: "my_account_filters" };
     /** @deprecated Use `myDmInbox` instead. This alias will be removed in the next major version. */
     readonly "my_dm_inbox": Omit<typeof tablesSchema.schemaType.tables["myDmInbox"], "accessorName"> & { readonly accessorName: "my_dm_inbox" };
     /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
@@ -241,6 +253,7 @@ const REMOTE_MODULE = {
 const tableAccessorAliases = {
   "chat_message": "chatMessage",
   "user_key": "userKey",
+  "my_account_filters": "myAccountFilters",
   "my_dm_inbox": "myDmInbox",
   "my_dm_outbox": "myDmOutbox",
   "my_library_membership": "myLibraryMembership",
@@ -271,6 +284,8 @@ export type DbView = __DbViewBase & {
   readonly "chat_message": __DbViewBase["chatMessage"];
   /** @deprecated Use `userKey` instead. This alias will be removed in the next major version. */
   readonly "user_key": __DbViewBase["userKey"];
+  /** @deprecated Use `myAccountFilters` instead. This alias will be removed in the next major version. */
+  readonly "my_account_filters": __DbViewBase["myAccountFilters"];
   /** @deprecated Use `myDmInbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_inbox": __DbViewBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
@@ -291,6 +306,8 @@ export type Tables = __TablesBase & {
   readonly "chat_message": __TablesBase["chatMessage"];
   /** @deprecated Use `userKey` instead. This alias will be removed in the next major version. */
   readonly "user_key": __TablesBase["userKey"];
+  /** @deprecated Use `myAccountFilters` instead. This alias will be removed in the next major version. */
+  readonly "my_account_filters": __TablesBase["myAccountFilters"];
   /** @deprecated Use `myDmInbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_inbox": __TablesBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */

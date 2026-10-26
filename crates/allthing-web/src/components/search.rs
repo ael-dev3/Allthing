@@ -44,6 +44,7 @@ impl Kind {
 /// One suggestion: where it leads and what it shows.
 #[derive(Clone)]
 struct Suggestion {
+    references: allthing_core::moderation::References,
     kind: Kind,
     href: String,
     /// The API path of what it opens, fetched ahead when it's highlighted.
@@ -55,6 +56,11 @@ struct Suggestion {
 
 fn suggestions(query: &str, payload: &SearchPayload) -> Vec<Suggestion> {
     let people = payload.users.iter().take(PEOPLE).map(|u| Suggestion {
+        references: {
+            let mut references = allthing_core::moderation::References::default();
+            references.add_user(&u.summary());
+            references
+        },
         kind: Kind::Person,
         href: user_href(&u.username),
         data: Some(user_path(&u.username)),
@@ -63,6 +69,7 @@ fn suggestions(query: &str, payload: &SearchPayload) -> Vec<Suggestion> {
         detail: format!("@{}", u.username),
     });
     let channels = payload.channels.iter().take(CHANNELS).map(|c| Suggestion {
+        references: allthing_core::moderation::References::default(),
         kind: Kind::Channel,
         href: channel_href(&c.id),
         data: Some(channel_path(&c.id)),
@@ -73,6 +80,7 @@ fn suggestions(query: &str, payload: &SearchPayload) -> Vec<Suggestion> {
     let posts = payload.casts.iter().filter(|c| !c.hidden()).take(POSTS).map(|c| {
         let excerpt = truncate_title(&c.text, 90);
         Suggestion {
+            references: allthing_core::moderation::References::with_quotes(c, &payload.notes.quotes),
             kind: Kind::Post,
             href: cast_href(&c.hash),
             data: Some(cast_path(&c.hash)),
@@ -82,6 +90,7 @@ fn suggestions(query: &str, payload: &SearchPayload) -> Vec<Suggestion> {
         }
     });
     let all = Suggestion {
+        references: allthing_core::moderation::References::default(),
         kind: Kind::All,
         href: with_query(&href("/search"), &[("q", Some(query.to_owned()))]),
         data: None,
@@ -104,7 +113,12 @@ pub fn SearchBox() -> impl IntoView {
 
     // Suggestions for what is typed, which one is highlighted, and whether
     // the list shows.
-    let found = RwSignal::new(Vec::<Suggestion>::new());
+    let raw_found = RwSignal::new(Vec::<Suggestion>::new());
+    let found = Signal::derive(move || {
+        raw_found.with(|rows| {
+            rows.iter().filter(|row| !crate::moderation::hides_references(&row.references)).cloned().collect::<Vec<_>>()
+        })
+    });
     // The query `found` answers.
     let found_for = StoredValue::new(String::new());
     let active = RwSignal::new(None::<usize>);
@@ -153,7 +167,7 @@ pub fn SearchBox() -> impl IntoView {
                 return;
             }
             if let Ok(fetched) = result {
-                found.set(suggestions(&q, &fetched.data));
+                raw_found.set(suggestions(&q, &fetched.data));
                 found_for.set_value(q);
                 active.set(None);
                 let focused = input.get_untracked().is_some_and(|i| {
@@ -169,7 +183,7 @@ pub fn SearchBox() -> impl IntoView {
         // changes, not only after the next response arrives.
         close();
         if q.chars().count() < 2 {
-            found.set(Vec::new());
+            raw_found.set(Vec::new());
             return;
         }
         let requested = revision.get_value();

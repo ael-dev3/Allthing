@@ -32,6 +32,7 @@ pub mod media;
 pub mod message;
 pub mod metadata;
 pub mod model;
+pub mod moderation;
 pub mod normalize;
 pub mod notification_state;
 pub mod notifications;

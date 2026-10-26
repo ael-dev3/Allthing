@@ -343,6 +343,73 @@ async function observeSignedInBoot(page: Page) {
 }
 const observedSignedInBoot = (page: Page) => page.evaluate(() => (window as Window & { __signedInEarlyHashes: string[] }).__signedInEarlyHashes);
 
+for (const pausedAt of ["the Home response", "image sizing"]) {
+  test(`an anonymous early response cannot paint after sign-in while waiting for ${pausedAt}`, async ({ page }) => {
+    const held = await hold(page);
+    await serve(page, { pool: [rich], notes: {}, meta });
+    await observeSignedInBoot(page);
+    let reached!: () => void, release!: () => void;
+    const asked = new Promise<void>(resolve => { reached = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const path = pausedAt === "the Home response" ? "**/api/v1/home**" : "**/fit=scale-down,w=720,format=json";
+    await page.route(path, async route => {
+      reached();
+      await waiting;
+      return pausedAt === "the Home response"
+        ? route.fulfill({ json: { pool: [rich], notes: {}, meta } })
+        : route.fulfill({ json: { width: 720, height: 360 }, headers: { "access-control-allow-origin": "*" } });
+    });
+    try {
+      // paint.js has started for an anonymous visit, but the data/size it
+      // awaits has not completed. The app remains held throughout this probe.
+      await page.goto("/");
+      await asked;
+      await expect(page.locator("#boot .cast-card")).toHaveCount(0);
+      await page.evaluate(() => {
+        document.cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify({ fid: 1234, username: "reader", display_name: "Reader" }))}; Path=/; Secure; SameSite=Lax`;
+      });
+      const resumed = page.waitForResponse(response => pausedAt === "the Home response"
+        ? new URL(response.url()).pathname === "/api/v1/home"
+        : response.url().endsWith("/fit=scale-down,w=720,format=json"));
+      release();
+      await (await resumed).finished();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(page.locator("#boot .cast-card")).toHaveCount(0);
+      await expect(page.locator("#boot")).not.toHaveAttribute("data-painted", "");
+      expect(await observedSignedInBoot(page)).toEqual([]);
+      await expect(page.locator("#app")).toBeEmpty();
+    } finally {
+      release(); held.wasm("continue"); held.js("continue");
+    }
+  });
+}
+
+test("sign-in from another tab removes already painted anonymous cards while the app is held", async ({ page }) => {
+  const held = await hold(page);
+  await serve(page, { pool: [favorite], notes: {}, meta });
+  await observeSignedInBoot(page);
+  try {
+    await page.goto("/");
+    await expect(page.locator("#boot .cast-card")).toHaveCount(1);
+    expect([...new Set(await observedSignedInBoot(page))]).toEqual([favorite.hash]);
+    await page.evaluate(() => {
+      document.cookie = `__Host-allthing-user=${encodeURIComponent(JSON.stringify({ fid: 1234, username: "reader", display_name: "Reader" }))}; Path=/; Secure; SameSite=Lax`;
+      const channel = new BroadcastChannel("allthing-session");
+      channel.postMessage("changed"); channel.close();
+    });
+    await expect(page.locator("#boot .cast-card")).toHaveCount(0);
+    await expect(page.locator("#boot main")).toHaveCount(0);
+    await expect(page.locator("#boot")).not.toHaveAttribute("data-painted", "");
+    await expect(page.locator("#app")).toBeEmpty();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // The observer retains the anonymous card that preceded sign-in, but
+    // no later early rendering may bring it back under the private reader.
+    expect([...new Set(await observedSignedInBoot(page))]).toEqual([favorite.hash]);
+  } finally {
+    held.wasm("continue"); held.js("continue");
+  }
+});
+
 for (const width of [1280, 390]) {
   test(`a signed-in reader's For you waits for the app, which lifts followed accounts at width ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });

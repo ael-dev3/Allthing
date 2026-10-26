@@ -10,6 +10,19 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AccountFilter = __t.object("AccountFilter", {
+  key: __t.string(),
+  fid: __t.u64(),
+  targetFid: __t.u64(),
+  targetUsername: __t.string(),
+  muted: __t.bool(),
+  blocked: __t.bool(),
+  muteRevision: __t.u64(),
+  blockRevision: __t.u64(),
+  updatedAt: __t.i64(),
+});
+export type AccountFilter = __Infer<typeof AccountFilter>;
+
 export const ChatMessage = __t.object("ChatMessage", {
   id: __t.u64(),
   roomId: __t.u64(),

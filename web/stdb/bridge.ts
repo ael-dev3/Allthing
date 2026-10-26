@@ -56,6 +56,7 @@ const TABLES: Record<string, string> = {
   myLibraryState: "my_library_state",
   myLibraryMembership: "my_library_membership",
   myLibraryPage: "my_library_page",
+  myAccountFilters: "my_account_filters",
 };
 
 function table(conn: Any, accessor: string): Any {
@@ -194,6 +195,18 @@ class Bridge {
 
   clearSeen(expectedGeneration: number, operationId: string) {
     return settle(() => reducer(this.conn, "clearSeen")({ expectedGeneration: BigInt(expectedGeneration), operationId }));
+  }
+
+  /** Complete caller-scoped filter cache, including false revision tombstones.
+   * Rust waits for its watch to apply before treating this as authoritative. */
+  moderationState(): string {
+    return this.rows("myAccountFilters");
+  }
+
+  setAccountFilter(targetFid: number, targetUsername: string, kind: number, desired: boolean, expectedRevision: number) {
+    return settle(() => reducer(this.conn, "setAccountFilter")({
+      targetFid: BigInt(targetFid), targetUsername, kind, desired, expectedRevision: BigInt(expectedRevision),
+    }));
   }
 
   setPublicKey(publicKeyHex: string) {

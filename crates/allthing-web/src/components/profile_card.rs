@@ -143,6 +143,7 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
                     .into_any(),
             }}
             {leanings(fid, user.username.clone())}
+            {account_controls(fid, user.username.clone())}
             <dl class="facts">
                 {joined.map(|joined| view! { <JoinedFact joined/> })}
                 <VoteFact fid data=vote always=true/>
@@ -153,6 +154,19 @@ fn ProfileCard(user: UserSummary, card: Option<UserCard>) -> impl IntoView {
             </div>
             <a class="popover-foot" href=href>"View profile →"</a>
         </div>
+    }
+}
+
+/// A private reader choice, absent in the public-only static copy.
+fn account_controls(fid: u64, username: String) -> AnyView {
+    #[cfg(not(feature = "static-host"))]
+    {
+        view! { <crate::components::account_controls::AccountControls fid username/> }.into_any()
+    }
+    #[cfg(feature = "static-host")]
+    {
+        let _ = (fid, username);
+        ().into_any()
     }
 }
 

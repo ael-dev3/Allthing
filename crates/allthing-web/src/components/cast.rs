@@ -49,6 +49,30 @@ pub fn CastCard(
     #[prop(optional_no_strip)]
     row_footer: Option<Callback<Cast, AnyView>>,
 ) -> impl IntoView {
+    let guarded_cast = StoredValue::new(cast.clone());
+    let guarded_notes = StoredValue::new(notes.clone());
+    let props = StoredValue::new((cast, notes, row_footer));
+    view! {
+        <Show when=move || !guarded_cast.with_value(|cast| guarded_notes.with_value(|notes| crate::moderation::hides_cast(cast, &notes.quotes)))>
+            {move || { let (cast,notes,row_footer)=props.get_value();view! { <VisibleCastCard cast notes index show_parent track_seen row_footer/> } }}
+        </Show>
+    }
+}
+
+/// Kept behind the filter boundary: no media, prefetches, previews, or
+/// accessibility content are mounted for a hidden account reference.
+#[component]
+fn VisibleCastCard(
+    cast: Cast,
+    notes: Notes,
+    #[prop(optional)] index: usize,
+    #[prop(optional)] show_parent: bool,
+    #[prop(optional)] track_seen: bool,
+    #[prop(optional_no_strip)] row_footer: Option<Callback<Cast, AnyView>>,
+) -> impl IntoView {
+    let mut cast = cast;
+    // Detached media/composer previews retain all currently known involvement.
+    cast.references = allthing_core::moderation::References::with_quotes(&cast, &notes.quotes);
     let href = cast_href(&cast.hash);
     // Quoted casts the payload carries show as cards; others as links.
     let quotes: Vec<AnyView> = nested_quotes(&cast, Some(&notes), 0);
@@ -184,10 +208,12 @@ pub fn CastList(
     let all = casts;
     let candidates = Signal::derive(move || {
         let show = crate::miniapps::shown();
+        let annotations = notes.get();
         all.with(|casts| {
             casts
                 .iter()
                 .filter(|cast| !cast.hidden_for(show))
+                .filter(|cast| !crate::moderation::hides_cast(cast, &annotations.quotes))
                 .filter_map(|cast| allthing_core::library::canonical_hash(&cast.hash))
                 .collect()
         })
@@ -201,7 +227,17 @@ pub fn CastList(
     });
     let casts: Signal<Vec<Cast>> = Memo::new(move |_| {
         let show = crate::miniapps::shown();
-        all.with(|c| c.iter().filter(|c| !c.hidden_for(show) && !seen_feed.hides(&c.hash)).cloned().collect::<Vec<_>>())
+        let annotations = notes.get();
+        all.with(|c| {
+            c.iter()
+                .filter(|c| {
+                    !c.hidden_for(show)
+                        && !crate::moderation::hides_cast(c, &annotations.quotes)
+                        && !seen_feed.hides(&c.hash)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
     })
     .into();
     // Back to a list shows as many cards as before, so the reader's place
@@ -365,7 +401,8 @@ pub fn CastList(
 
     view! {
         <Show when=move || casts.with(|c| !c.is_empty()) fallback=move || {
-            if seen_feed.pending() { view! { <CastSkeletons/> }.into_any() }
+            if crate::moderation::waiting() { view! { <crate::moderation::FilterNotice/><CastSkeletons/> }.into_any() }
+            else if seen_feed.pending() { view! { <CastSkeletons/> }.into_any() }
             else { view! { <p class="empty">"Nothing here yet."</p> }.into_any() }
         }>
             <div class="cast-list" node_ref=list>
