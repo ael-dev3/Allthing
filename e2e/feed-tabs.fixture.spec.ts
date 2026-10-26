@@ -6,7 +6,7 @@ import { signIn } from "./helpers/farcaster";
  * The front page's two tabs for a signed-in reader, as X's: For you, the
  * trending pool with the casts of whom they follow lifted, and Following,
  * only theirs (`?feed=following`). Links with `aria-current`, reached by the
- * keyboard, 44 px tall, keeping the sort and the time range in the address;
+ * keyboard, 44 px tall, keeping the time range and choosing each feed's default sort;
  * an old `?feed=everyone` link opens For you. Whom they follow is kept from
  * their Following page, renewed once in the background when it's missing
  * (followed.rs), and the list on screen isn't re-sorted when it lands. At
@@ -103,25 +103,29 @@ for (const width of [1280, 390]) {
     await expectRanking(page, ["Followed cast", "Stranger trending"]);
     expect(asked.following).toBe(1);
 
-    // The keyboard reaches the tabs: Following, keeping the sort.
+    // The keyboard reaches Following in chronological order, keeping its range.
     await page.goto("/?sort=top&t=week");
     await expectRanking(page, ["Stranger trending", "Followed cast"]);
     await following.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/[?&]feed=following/);
-    await expect(page).toHaveURL(/[?&]sort=top/);
+    expect(new URL(page.url()).searchParams.get("sort")).toBeNull();
+    await expect(page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: "new", exact: true })).toHaveAttribute("aria-current", "page");
     await expect(page).toHaveURL(/[?&]t=week/);
     await expect(following).toHaveAttribute("aria-current", "page");
     await expectRanking(page, ["Followed cast"]);
     // The sort tabs and the time range keep the tab.
     await expect(page.locator(".sort-tabs a", { hasText: "hot" })).toHaveAttribute("href", /feed=following/);
+    await expect(page.locator(".sort-tabs a", { hasText: "hot" })).toHaveAttribute("href", /[?&]sort=hot/);
     await expect(page.getByRole("combobox", { name: "Time range" })).toBeVisible();
     // And back to For you, by the keyboard too.
     await forYou.focus();
     await page.keyboard.press("Enter");
     await expect(page).not.toHaveURL(/feed=/);
     await expect(forYou).toHaveAttribute("aria-current", "page");
-    await expectRanking(page, ["Stranger trending", "Followed cast"]);
+    await expect(page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: "hot", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(page).toHaveURL(/[?&]t=week/);
+    await expectRanking(page, ["Followed cast", "Stranger trending"]);
     await context.close();
   });
 }

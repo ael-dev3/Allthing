@@ -3,6 +3,7 @@
 
 #[cfg(not(feature = "static-host"))]
 pub mod attach;
+pub mod bookmark;
 pub mod cast;
 pub mod chips;
 pub mod clients;

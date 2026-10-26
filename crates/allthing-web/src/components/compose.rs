@@ -2,7 +2,7 @@
 //! Writing a cast, a reply or a quote, with a GIF or emoji, for any reader.
 //! Cast, at the top right of the front page's feed or a channel's (a round
 //! button over the feed on a phone), starts a cast, in the channel on a
-//! channel page, and so does the same pill on the reader's own profile;
+//! channel page, and so does the same pill on Notifications or the reader's own profile;
 //! Reply and Quote under a post or a reply start a reply to it or a cast
 //! that quotes it.
 //!
@@ -1271,11 +1271,13 @@ fn channel_in_view(path: &str) -> Option<String> {
     is_channel_id(&id).then_some(id)
 }
 
-/// Whether `path` is a feed with a Cast button: the front page's or a
-/// channel's.
-fn on_feed(path: &str) -> bool {
+/// Whether `path` has Cast for every reader: a feed or Notifications.
+fn casts_page(path: &str) -> bool {
     let path = path.strip_prefix(BASE).unwrap_or(path);
-    path.is_empty() || path == "/" || channel_in_view(path).is_some()
+    path.is_empty()
+        || path == "/"
+        || channel_in_view(path).is_some()
+        || matches!(path, "/notifications" | "/notifications/")
 }
 
 /// Whether `path` is `user`'s own profile, the reader's: `/u/<name>`, or
@@ -1293,15 +1295,14 @@ fn own_profile(path: &str, name: Option<&str>, user: &UserSummary) -> bool {
         .is_some_and(|named| named == user.username.to_lowercase() || fid_username(&named) == Some(user.fid))
 }
 
-/// Whether the page has Cast: the front page's feed, a channel's, and the
-/// reader's own profile.
+/// Whether the page has Cast: a feed, Notifications, or the reader's own profile.
 fn use_casts_here() -> Memo<bool> {
     let location = use_location();
     let query = use_query_map();
     let session = use_session();
     Memo::new(move |_| {
         let path = location.pathname.get();
-        on_feed(&path)
+        casts_page(&path)
             || session.user.with(|user| {
                 user.as_ref().is_some_and(|user| own_profile(&path, query.read().get("name").as_deref(), user))
             })
@@ -1336,7 +1337,7 @@ fn CastPill() -> impl IntoView {
 
 /// Cast on a computer: the pill in the site header, before the account,
 /// always in view as the page scrolls, on the pages that have Cast (the
-/// front page's feed, a channel's, the reader's own profile). On the others
+/// front page's feed, a channel's, Notifications, the reader's own profile). On the others
 /// its place is kept, unseen and out of reach, so the header doesn't move
 /// from page to page. On a phone, `CastFab` instead.
 #[component]
@@ -1365,7 +1366,7 @@ fn takes_typing(element: &web_sys::Element) -> bool {
 /// Cast on a phone: a round button floating at the bottom right of the
 /// pages that have Cast, within the thumb's reach. The page leaves room
 /// after its end for it, and it steps out of the way of a dialog, the
-/// lightbox and a popover (`style/allthing.css`), and of the keyboard,
+/// lightbox and content popovers (`style/allthing.css`), and of the keyboard,
 /// while a text box has focus (`away`).
 #[component]
 pub fn CastFab() -> impl IntoView {
@@ -2798,13 +2799,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cast_is_on_the_feeds_and_the_readers_own_profile() {
+    fn cast_is_on_feeds_notifications_and_the_readers_own_profile() {
         let reader = UserSummary { fid: 3, username: "reader.eth".into(), display_name: String::new(), pfp_url: None };
-        for path in ["/", "", "/c/dev", "/c/dev/"] {
-            assert!(on_feed(path), "{path}");
+        for path in ["/", "", "/c/dev", "/c/dev/", "/notifications", "/notifications/"] {
+            assert!(casts_page(path), "{path}");
         }
-        for path in ["/p/0x01", "/u/reader.eth", "/search", "/channels", "/scheduled", "/dau"] {
-            assert!(!on_feed(path), "{path}");
+        for path in [
+            "/p/0x01",
+            "/u/reader.eth",
+            "/search",
+            "/channels",
+            "/scheduled",
+            "/dau",
+            "/notifications-old",
+            "/notifications/settings",
+        ] {
+            assert!(!casts_page(path), "{path}");
         }
         for (path, name) in [
             ("/u/reader.eth", None),

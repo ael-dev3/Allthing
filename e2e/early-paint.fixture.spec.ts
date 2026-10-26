@@ -9,7 +9,8 @@ import { signIn } from "./helpers/farcaster";
  * A single image's tile has its box before the image comes, and no image is
  * asked for until the module is in. Then the app's own cards take their
  * places, in the same boxes, with no second entrance. Pages it doesn't draw,
- * payloads it can't trust and an app that can't load are here too.
+ * payloads it can't trust and an app that can't load are here too. Signed-in
+ * visits wait for the app to reconcile private reading history before any card.
  */
 
 test.skip(Boolean(process.env.E2E_PAGES), "the static copy has no early fetch");
@@ -152,6 +153,10 @@ const shown = (page: Page, root: string) =>
   page.evaluate((root) => {
     const markup = (node: Element) => {
       const copy = node.cloneNode(true) as Element;
+      // Saving is an app-only private action. Compare the anonymous early
+      // card's original content exactly; whole-card boxes still include the
+      // mounted action, whose existence/accessibility is asserted separately.
+      copy.querySelectorAll(".bookmark-action").forEach((action) => action.remove());
       const walker = document.createTreeWalker(copy, NodeFilter.SHOW_ALL);
       const drop: Node[] = [];
       for (let n: Node | null = walker.currentNode; n; n = walker.nextNode()) {
@@ -271,6 +276,9 @@ for (const width of [1280, 390]) {
     await expect(page.locator("#app .cast-card").first()).toBeVisible();
     const app = await shown(page, "#app");
     expect(app.slice(0, early.length)).toEqual(early);
+    for (const hash of painted) {
+      await expect(page.locator(`#app .cast-list > .cast-card[data-hash="${hash}"]`).getByRole("button", { name: "Save post", exact: true })).toBeVisible();
+    }
     const entrances = await page.evaluate(
       (n) => [...document.querySelectorAll("#app .page > *, #app .share-bar"), ...[...document.querySelectorAll("#app .cast-list > .cast-card")].slice(0, n)].map((e) => e.getAnimations().length),
       painted.length,
@@ -324,16 +332,28 @@ test("top's first cards come in top's order, with the time range the address nam
   expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
 });
 
+/** Records even a transient boot card: signed-in history must never flash. */
+async function observeSignedInBoot(page: Page) {
+  await page.addInitScript(() => {
+    const hashes: string[] = [];
+    Object.defineProperty(window, "__signedInEarlyHashes", { value: hashes });
+    const record = () => document.querySelectorAll("#boot .cast-card[data-hash]").forEach(card => hashes.push(card.getAttribute("data-hash")!));
+    new MutationObserver(record).observe(document, { childList: true, subtree: true });
+  });
+}
+const observedSignedInBoot = (page: Page) => page.evaluate(() => (window as Window & { __signedInEarlyHashes: string[] }).__signedInEarlyHashes);
+
 for (const width of [1280, 390]) {
-  test(`a signed-in reader's For you comes early under the app's tabs, whom they follow lifted, at width ${width}`, async ({ page }) => {
+  test(`a signed-in reader's For you waits for the app, which lifts followed accounts at width ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const held = await hold(page);
-    // Only casts inside the day's window, so the share bar counts the same casts as the app's.
-    await serve(page, { ...payload, pool: pool.filter((c) => c.ts > now - 20 * HOUR) });
+    const { images, probes } = await serve(page, { ...payload, pool: pool.filter((c) => c.ts > now - 20 * HOUR) });
+    // This legacy-service fixture checks app ordering separately. The real
+    // private SDK cases advertise library:true and prove cold seen exclusion.
+    await page.route("**/api/v1/status", route => route.fulfill({ json: { spacetime: { attest: false, library: false } } }));
     await page.route("**/api/v1/notifications**", (route) => route.fulfill({ json: { groups: [], meta }, headers: { "cache-control": "private, no-store" } }));
     await signIn(page, { fid: 1234, username: "reader", display_name: "Reader" });
-    // Permission discovery may still be pending when hydration finishes.
-    // Early and mounted cards must describe the same dialog action then.
+    await observeSignedInBoot(page);
     let releaseSigner!: () => void;
     const signer = new Promise<void>(resolve => { releaseSigner = resolve; });
     await page.route("**/api/v1/signer", async route => {
@@ -341,26 +361,33 @@ for (const width of [1280, 390]) {
       await route.fulfill({ status: 404, json: { error: "not set up" } });
     });
     try {
-      // The reader follows dee, as kept from their Following tab (followed.rs).
       await page.addInitScript(() => localStorage.setItem("allthing.followed", JSON.stringify({ reader: 1234, at: Date.now(), fids: [4] })));
+      const response = page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/home");
       await page.goto("/");
+      await response;
       const boot = page.locator("#boot");
-      // Hot, dee followed: dee's quiet pair, 20 times its 5 points, goes first.
-      await expect(boot.locator(".cast-card").first()).toHaveAttribute("data-hash", pair.hash);
-      await expect(boot.getByRole("link", { name: "For you", includeHidden: true })).toHaveAttribute("aria-current", "page");
-      await expect(boot.locator(".feed-tabs a")).toHaveCount(2);
-      await moduleIn(page, held);
-      await settled(page, "#boot");
-      const early = await shown(page, "#boot");
+      await expect(boot).toBeVisible();
+      await expect(boot.locator(".cast-card")).toHaveCount(0);
+      await expect(boot).not.toHaveAttribute("data-painted", "");
+      await expect(page.locator("#app")).toBeEmpty();
+      expect(images).toEqual([]);
+      expect(probes).toEqual([]);
+      // Downloading the module alone still cannot reveal unconfirmed cards.
+      held.wasm("continue");
+      await expect(boot.locator(".cast-card")).toHaveCount(0);
+      expect(await observedSignedInBoot(page)).toEqual([]);
       held.js("continue");
       await expect(boot).toHaveCount(0);
-      await expect(page.locator("#app .cast-card").first()).toBeVisible();
-      // The app's tabs and cards, in the same boxes: nothing moves.
-      expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+      const app = page.locator("#app");
+      // Hot, dee followed: the quiet pair's five points are weighted 20×.
+      await expect(app.locator(".cast-list > .cast-card").first()).toHaveAttribute("data-hash", pair.hash);
+      await expect(app.getByRole("link", { name: "For you", exact: true })).toHaveAttribute("aria-current", "page");
+      await expect(app.locator(".feed-tabs a")).toHaveCount(2);
       const permissionsRead = page.waitForResponse("**/api/v1/signer");
       releaseSigner();
       await permissionsRead;
-      await expect(page.locator("#app .cast-card").first().getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-haspopup", "dialog");
+      await expect(app.locator(".cast-card").first().getByRole("button", { name: "Like", exact: true })).toHaveAttribute("aria-haspopup", "dialog");
+      expect(await observedSignedInBoot(page)).toEqual([]);
     } finally {
       releaseSigner();
     }
@@ -370,16 +397,21 @@ for (const width of [1280, 390]) {
 test("a signed-in reader's Following tab isn't drawn early: the app draws it", async ({ page }) => {
   const held = await hold(page);
   await serve(page);
+  await page.route("**/api/v1/status", route => route.fulfill({ json: { spacetime: { attest: false, library: false } } }));
   await page.route("**/api/v1/following**", (route) => route.fulfill({ json: { pool: [pair], notes: {}, meta }, headers: { "cache-control": "private, no-store" } }));
   await signIn(page, { fid: 1234, username: "reader", display_name: "Reader" });
+  await observeSignedInBoot(page);
   const early = page.waitForResponse((response) => response.url().includes("/api/v1/following"));
   await page.goto("/?feed=following");
   await early;
-  await page.waitForTimeout(300);
   await expect(page.locator("#boot .cast-card")).toHaveCount(0);
   held.wasm("continue");
   held.js("continue");
   await expect(page.locator("#boot")).toHaveCount(0);
+  await expect(page.locator("#app .cast-list > .cast-card")).toHaveCount(1);
+  await expect(page.locator("#app .cast-list > .cast-card")).toHaveAttribute("data-hash", pair.hash);
+  await expect(page.getByRole("link", { name: "Following", exact: true })).toHaveAttribute("aria-current", "page");
+  expect(await observedSignedInBoot(page)).toEqual([]);
 });
 
 test("an account seen less of is lower in the first cards too, as in the app", async ({ page }) => {

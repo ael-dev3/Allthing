@@ -34,12 +34,16 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClearSeenReducer from "./clear_seen_reducer";
 import CreateRoomReducer from "./create_room_reducer";
 import DeleteDmReducer from "./delete_dm_reducer";
+import ForgetSeenReducer from "./forget_seen_reducer";
 import MarkNotificationsSeenReducer from "./mark_notifications_seen_reducer";
+import MarkSeenBatchReducer from "./mark_seen_batch_reducer";
 import RegisterReducer from "./register_reducer";
 import SendDmReducer from "./send_dm_reducer";
 import SendMessageReducer from "./send_message_reducer";
+import SetBookmarkReducer from "./set_bookmark_reducer";
 import SetPublicKeyReducer from "./set_public_key_reducer";
 import SetTypingReducer from "./set_typing_reducer";
 import VerifyFidReducer from "./verify_fid_reducer";
@@ -51,6 +55,9 @@ import VerifyNotificationFidReducer from "./verify_notification_fid_reducer";
 import ChatMessageRow from "./chat_message_table";
 import MyDmInboxRow from "./my_dm_inbox_table";
 import MyDmOutboxRow from "./my_dm_outbox_table";
+import MyLibraryMembershipRow from "./my_library_membership_table";
+import MyLibraryPageRow from "./my_library_page_table";
+import MyLibraryStateRow from "./my_library_state_table";
 import MyNotificationStateRow from "./my_notification_state_table";
 import RoomRow from "./room_table";
 import TypingRow from "./typing_table";
@@ -143,6 +150,27 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyDmOutboxRow),
+  myLibraryMembership: __table({
+    name: 'my_library_membership',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyLibraryMembershipRow),
+  myLibraryPage: __table({
+    name: 'my_library_page',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyLibraryPageRow),
+  myLibraryState: __table({
+    name: 'my_library_state',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyLibraryStateRow),
   myNotificationState: __table({
     name: 'my_notification_state',
     indexes: [
@@ -154,12 +182,16 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("clear_seen", ClearSeenReducer),
   __reducerSchema("create_room", CreateRoomReducer),
   __reducerSchema("delete_dm", DeleteDmReducer),
+  __reducerSchema("forget_seen", ForgetSeenReducer),
   __reducerSchema("mark_notifications_seen", MarkNotificationsSeenReducer),
+  __reducerSchema("mark_seen_batch", MarkSeenBatchReducer),
   __reducerSchema("register", RegisterReducer),
   __reducerSchema("send_dm", SendDmReducer),
   __reducerSchema("send_message", SendMessageReducer),
+  __reducerSchema("set_bookmark", SetBookmarkReducer),
   __reducerSchema("set_public_key", SetPublicKeyReducer),
   __reducerSchema("set_typing", SetTypingReducer),
   __reducerSchema("verify_fid", VerifyFidReducer),
@@ -180,6 +212,12 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "my_dm_inbox": Omit<typeof tablesSchema.schemaType.tables["myDmInbox"], "accessorName"> & { readonly accessorName: "my_dm_inbox" };
     /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
     readonly "my_dm_outbox": Omit<typeof tablesSchema.schemaType.tables["myDmOutbox"], "accessorName"> & { readonly accessorName: "my_dm_outbox" };
+    /** @deprecated Use `myLibraryMembership` instead. This alias will be removed in the next major version. */
+    readonly "my_library_membership": Omit<typeof tablesSchema.schemaType.tables["myLibraryMembership"], "accessorName"> & { readonly accessorName: "my_library_membership" };
+    /** @deprecated Use `myLibraryPage` instead. This alias will be removed in the next major version. */
+    readonly "my_library_page": Omit<typeof tablesSchema.schemaType.tables["myLibraryPage"], "accessorName"> & { readonly accessorName: "my_library_page" };
+    /** @deprecated Use `myLibraryState` instead. This alias will be removed in the next major version. */
+    readonly "my_library_state": Omit<typeof tablesSchema.schemaType.tables["myLibraryState"], "accessorName"> & { readonly accessorName: "my_library_state" };
     /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
     readonly "my_notification_state": Omit<typeof tablesSchema.schemaType.tables["myNotificationState"], "accessorName"> & { readonly accessorName: "my_notification_state" };
   };
@@ -191,6 +229,7 @@ const REMOTE_MODULE = {
     cliVersion: "2.13.0" as const,
   },
   tables: tablesSchema.schemaType.tables as __SchemaWithTableAccessorAliases["tables"],
+  viewsWithArgs: ["my_library_membership", "my_library_page"],
   reducers: reducersSchema.reducersType.reducers,
   ...proceduresSchema,
 } satisfies __RemoteModule<
@@ -204,6 +243,9 @@ const tableAccessorAliases = {
   "user_key": "userKey",
   "my_dm_inbox": "myDmInbox",
   "my_dm_outbox": "myDmOutbox",
+  "my_library_membership": "myLibraryMembership",
+  "my_library_page": "myLibraryPage",
+  "my_library_state": "myLibraryState",
   "my_notification_state": "myNotificationState",
 } as const;
 
@@ -233,6 +275,12 @@ export type DbView = __DbViewBase & {
   readonly "my_dm_inbox": __DbViewBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_outbox": __DbViewBase["myDmOutbox"];
+  /** @deprecated Use `myLibraryMembership` instead. This alias will be removed in the next major version. */
+  readonly "my_library_membership": __DbViewBase["myLibraryMembership"];
+  /** @deprecated Use `myLibraryPage` instead. This alias will be removed in the next major version. */
+  readonly "my_library_page": __DbViewBase["myLibraryPage"];
+  /** @deprecated Use `myLibraryState` instead. This alias will be removed in the next major version. */
+  readonly "my_library_state": __DbViewBase["myLibraryState"];
   /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
   readonly "my_notification_state": __DbViewBase["myNotificationState"];
 };
@@ -247,6 +295,12 @@ export type Tables = __TablesBase & {
   readonly "my_dm_inbox": __TablesBase["myDmInbox"];
   /** @deprecated Use `myDmOutbox` instead. This alias will be removed in the next major version. */
   readonly "my_dm_outbox": __TablesBase["myDmOutbox"];
+  /** @deprecated Use `myLibraryMembership` instead. This alias will be removed in the next major version. */
+  readonly "my_library_membership": __TablesBase["myLibraryMembership"];
+  /** @deprecated Use `myLibraryPage` instead. This alias will be removed in the next major version. */
+  readonly "my_library_page": __TablesBase["myLibraryPage"];
+  /** @deprecated Use `myLibraryState` instead. This alias will be removed in the next major version. */
+  readonly "my_library_state": __TablesBase["myLibraryState"];
   /** @deprecated Use `myNotificationState` instead. This alias will be removed in the next major version. */
   readonly "my_notification_state": __TablesBase["myNotificationState"];
 };

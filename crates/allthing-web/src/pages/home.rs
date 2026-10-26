@@ -53,7 +53,8 @@ thread_local! {
 #[component]
 pub fn Home() -> impl IntoView {
     let query = use_query_map();
-    let sort = Memo::new(move |_| Sort::parse(query.read().get("sort").as_deref(), Sort::Hot));
+    let feed = feed_memo();
+    let sort = Memo::new(move |_| feed.get().sort(query.read().get("sort").as_deref()));
     let range = Memo::new(move |_| TimeRange::parse(query.read().get("t").as_deref()));
     // Its title whenever it shows; kept while another page shows (kept.rs),
     // it leaves that page's alone.
@@ -77,7 +78,6 @@ pub fn Home() -> impl IntoView {
     // between them re-sorts in place). Following lists the casts of whom a
     // signed-in reader follows, in all three.
     let newest = Memo::new(move |_| listed.get() == Sort::New);
-    let feed = feed_memo();
     let who = reader();
     let previous = StoredValue::new(who.get_untracked());
     let identity = Memo::new(move |_| {
@@ -615,13 +615,13 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 let client = client_param(&query.read()).map(|fid| fid.to_string());
                 // So does the tab.
                 let tab = feed.get().param();
-                let sort_kept = (sort.get() != Sort::Hot).then(|| sort.get().as_str().to_owned());
+                let default_sort = feed.get().default_sort();
                 view! {
-                    {signed_in.get().then(|| view! { <FeedTabs current=feed.get() sort=sort_kept t=t.clone() client=client.clone()/> })}
+                    {signed_in.get().then(|| view! { <FeedTabs current=feed.get() t=t.clone() client=client.clone()/> })}
                     <div class="sort-row">
-                        <SortTabs path=with_query(&href("/"), &[("t", t), ("client", client.clone()), (FEED_PARAM, tab.clone())]) current=sort.get()/>
+                        <SortTabs path=with_query(&href("/"), &[("t", t), ("client", client.clone()), (FEED_PARAM, tab.clone())]) current=sort.get() default_sort=default_sort/>
                         {
-                            view! { <TimeFilter path=with_query(&href("/"), &[("client", client), (FEED_PARAM, tab)]) sort=sort.get() current=range.get()/> }
+                            view! { <TimeFilter path=with_query(&href("/"), &[("client", client), (FEED_PARAM, tab)]) sort=sort.get() current=range.get() default_sort=default_sort/> }
                         }
                     </div>
                 }
@@ -632,10 +632,10 @@ fn Heading(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
 
 /// A signed-in reader's two feeds, as X's: **For you** (the trending pool,
 /// with the casts of whom they follow lifted) and **Following** (only
-/// theirs, `?feed=following`). Links, keeping the sort, the time range and
-/// the client filter; signed out there is only For you, and no tabs.
+/// theirs, `?feed=following`). Entering a tab selects its default sort while
+/// keeping the time range and client filter. Signed out there are no tabs.
 #[component]
-fn FeedTabs(current: Feed, sort: Option<String>, t: Option<String>, client: Option<String>) -> impl IntoView {
+fn FeedTabs(current: Feed, t: Option<String>, client: Option<String>) -> impl IntoView {
     view! {
         <nav class="feed-tabs" aria-label="Feed">
             {[Feed::ForYou, Feed::Following]
@@ -643,7 +643,7 @@ fn FeedTabs(current: Feed, sort: Option<String>, t: Option<String>, client: Opti
                 .map(|feed| {
                     let to = with_query(
                         &href("/"),
-                        &[("sort", sort.clone()), ("t", t.clone()), ("client", client.clone()), (FEED_PARAM, feed.param())],
+                        &[("t", t.clone()), ("client", client.clone()), (FEED_PARAM, feed.param())],
                     );
                     view! {
                         <a href=to data-noscroll="" class:selected=feed == current aria-current=(feed == current).then_some("page")>

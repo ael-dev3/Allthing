@@ -536,8 +536,8 @@ async fn status(inv: &Invocation, url: &Url, env: &Env) -> Result<Response> {
         // messages (the ATTEST_KEY secret), and its public half, which the
         // module pins (spacetime/spacetimedb/src/attest_key.rs); never the key.
         "spacetime": match attest::public_key(env).await {
-            Some(public_key) => serde_json::json!({ "attest": true, "public_key": public_key }),
-            None => serde_json::json!({ "attest": attest::ready(env) }),
+            Some(public_key) => serde_json::json!({ "attest": true, "library": true, "public_key": public_key }),
+            None => serde_json::json!({ "attest": attest::ready(env), "library": false }),
         },
         // Whether votes in Allthing's poll are counted: SESSION_SECRET,
         // which keys the voters, and D1, which keeps them.

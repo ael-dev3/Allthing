@@ -28,7 +28,7 @@ const me = { fid: 1234, username: "reader", display_name: "Reader" };
 
 // Two casts by accounts the reader follows, and the stranger's busier one.
 const followedBusy = { hash: hex(1), author: ann, text: "Followed busy", ts, likes: 30, replies: 0 };
-const followedQuiet = { hash: hex(2), author: bob, text: "Followed quiet", ts, likes: 10, replies: 0 };
+const followedQuiet = { hash: hex(2), author: bob, text: "Followed quiet", ts: ts + 1, likes: 10, replies: 0 };
 const trending = { hash: hex(9), author: stranger, text: "Stranger trending", ts, likes: 500, replies: 0 };
 const PRIVATE = { "cache-control": "private, no-store" };
 
@@ -79,16 +79,18 @@ async function signedInSeesOnlyFollowed(page: Page) {
   // Nothing beside the feed reaches past the page's width.
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-  // For you: the trending pool, with the sort kept.
+  // Entering For you starts Hot, independently of Following's explicit Top.
   await tabs.getByRole("link", { name: "For you" }).click();
   await expect(page).not.toHaveURL(/feed=/);
-  await expect(page).toHaveURL(/[?&]sort=top/);
-  await expect.poll(() => order(page)).toEqual(["Stranger trending", "Followed busy"]);
-  // And back, the sort kept.
+  expect(new URL(page.url()).searchParams.get("sort")).toBeNull();
+  await expect(page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: "hot", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect.poll(() => order(page)).toEqual(["Followed busy", "Stranger trending"]);
+  // Following starts New: a quieter newer cast comes before a busy older one.
   await tabs.getByRole("link", { name: "Following" }).click();
   await expect(page).toHaveURL(/[?&]feed=following/);
-  await expect(page).toHaveURL(/[?&]sort=top/);
-  await expect.poll(() => order(page)).toEqual(["Followed busy", "Followed quiet"]);
+  expect(new URL(page.url()).searchParams.get("sort")).toBeNull();
+  await expect(page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: "new", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
 }
 
 test("a signed-in reader's Following tab ranks only whom they follow, at 1280", async ({ page }) => {
@@ -107,7 +109,7 @@ test("Show less demotes a followed account, and a favorite rises", async ({ page
   await serve(page);
   await page.goto("/?sort=top&feed=following");
   await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
-  await page.goto("/?feed=following");
+  await page.goto("/?sort=hot&feed=following");
   await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
 });
 
@@ -133,8 +135,15 @@ test("Following's new is theirs, newest first", async ({ page }) => {
   await signIn(page, me);
   const older = { ...followedBusy, ts: ts - 3600 };
   await serve(page, { pool: [older, followedQuiet], notes: {}, meta });
-  await page.goto("/?sort=new&feed=following");
+  await page.goto("/?feed=following");
+  await expect(page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: "new", exact: true })).toHaveAttribute("aria-current", "page");
   await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
+  // Explicit overrides still rank the very busy older cast first.
+  for (const sort of ["top", "hot"]) {
+    await page.getByRole("navigation", { name: "Sort" }).getByRole("link", { name: sort, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`[?&]sort=${sort}`));
+    await expect.poll(() => order(page)).toEqual(["Followed busy", "Followed quiet"]);
+  }
 });
 
 test("signed out, the front page is the trending pool, with no tabs, at 1280 and 390", async ({ page, browser }, testInfo) => {

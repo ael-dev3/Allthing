@@ -7,15 +7,24 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- A private Library for bookmarks and seen history synced across signed-in devices through SpacetimeDB, plus paginated Farcaster likes and recasts. Seen history no longer expires after 30 days or 2,000 posts; fresh Home candidates wait for synced history, while already drawn cards keep their place. Library includes loaded-post filtering, activity times, retry, Back restoration, Mark unread and Clear history controls.
 - Sync notification read progress across signed-in sessions with a private, attested SpacetimeDB watermark. The existing local cache works offline; a delayed background connection uses separate credentials without creating chat presence or DM keys.
 - Videos up to 250 MB upload in 8 MB chunks. Retry continues from the last acknowledged chunk; Remove cancels the pending upload. Preparation and finishing have visible states, and the cast stays disabled until its attachments are ready.
 - Compatible MP4 and MOV videos are prepared for HLS from bounded metadata and file slices, preserving their frames and sound without copying the entire video into WebAssembly. Existing image limits and storage safeguards remain.
 
+### Changed
+
+- Following opens with New selected; For you still opens with Hot. Explicit sort choices remain selected when changing the time range.
+
 ### Fixed
 
+- Keep Cast available on Notifications and while Settings is open, including the phone button; one press dismisses Settings and opens the composer.
+- Leave enough room between phone post actions for the Save button across platform fonts, preserving their tap targets.
 - After Escape closes a hover card, layout changes cannot reopen it under a stationary pointer. Moving away and back still opens it normally.
 
 ### Development
+
+- Library Back checks compare with the card position at the actual click, after browser actionability scrolling, while retaining the two-pixel restoration limit and exact cached-page checks.
 
 - Move build orchestration, Brotli compression, repository validation, asset-credit checks, deployment waiting, isolated database-module checks, audit handling and browser fixture orchestration into native Rust `xtask` commands. Retain official Playwright tests and independent cryptography, SQL and SDK codec checks.
 

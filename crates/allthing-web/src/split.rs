@@ -134,6 +134,7 @@ fn page_part(path: &str) -> Option<usize> {
         // The static copy has no notifications.
         cfg!(not(feature = "static-host")) && path == "/notifications",
         follows,
+        cfg!(not(feature = "static-host")) && path == "/library",
     ]
     .iter()
     .position(|&is| is)
@@ -155,7 +156,10 @@ pub fn preload_page(path: &str) {
             4 => crate::pages::channels::preload_channels().await,
             #[cfg(not(feature = "static-host"))]
             5 => crate::pages::notifications::with_worker::preload_notifications().await,
-            _ => crate::pages::follows::preload_follows().await,
+            6 => crate::pages::follows::preload_follows().await,
+            #[cfg(not(feature = "static-host"))]
+            7 => crate::pages::library::with_worker::preload_library().await,
+            _ => return,
         };
         // Couldn't come: the next intent asks again.
         if fetched.is_err() {

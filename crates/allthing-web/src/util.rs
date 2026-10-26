@@ -140,6 +140,11 @@ pub fn dau_href() -> String {
     href("/dau")
 }
 
+/// The reader's private bookmarks/history and public Farcaster reactions.
+pub fn library_href() -> String {
+    href("/library")
+}
+
 /// The reader's scheduled casts.
 #[cfg(not(feature = "static-host"))]
 pub fn scheduled_href() -> String {

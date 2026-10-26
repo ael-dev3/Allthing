@@ -10,7 +10,8 @@
 //! and doesn't also open the post under the tap, follow a link or open
 //! another panel; the next tap does. A panel the pointer opened by resting
 //! on it closes as the pointer leaves, and a click elsewhere does what it
-//! does.
+//! does. A caller can explicitly allow one outside control to activate as
+//! it dismisses the panel; Settings uses this for Cast.
 //!
 //! The trigger is a button, or the caller's own links (`links`), such as a
 //! profile's picture and name: a mouse click or the keyboard follows them as
@@ -91,6 +92,12 @@ pub fn Popover(
     /// Enter and Space open, as a press would.
     #[prop(optional)]
     no_focus_open: bool,
+    /// An explicitly permitted outside control dismisses this panel and also
+    /// activates on the same press (including keyboard-generated clicks).
+    /// Other outside presses retain light dismissal. Only trusted selectors
+    /// supplied by the component caller are used here.
+    #[prop(optional)]
+    outside_activation: Option<&'static str>,
     /// Place the panel against the viewport rather than inside the page's
     /// flow, so a container around the trigger that scrolls or clips (a
     /// dialog's list, say) does not cut it off. Anything scrolling closes it.
@@ -499,6 +506,9 @@ pub fn Popover(
     // A press on `target` dismisses the panel lightly: it is outside the
     // popover, and not in a modal dialog over it (one the popover is in, a
     // list of who liked a cast, is no exception).
+    let activates_outside = move |target: &web_sys::Element| {
+        outside_activation.is_some_and(|selector| target.closest(selector).ok().flatten().is_some())
+    };
     let dismisses = move |target: &web_sys::Element| {
         let over = target.closest(MODAL).ok().flatten().is_some_and(|layer| {
             !root.try_get_untracked().flatten().is_some_and(|root| layer.contains(Some(root.unchecked_ref())))
@@ -534,17 +544,19 @@ pub fn Popover(
             captures.update_value(|list| {
                 list.push(Capture::new("pointerdown", move |ev| {
                     let primary = ev.dyn_ref::<web_sys::MouseEvent>().is_some_and(|ev| ev.button() == 0);
-                    if primary && target_element(&ev).is_some_and(|target| dismisses(&target)) {
+                    if primary
+                        && target_element(&ev).is_some_and(|target| dismisses(&target) && !activates_outside(&target))
+                    {
                         ev.prevent_default();
                         ev.stop_propagation();
                     }
                 }));
                 list.push(Capture::new("click", move |ev| {
                     let Some(target) = target_element(&ev) else { return };
-                    if inside_root(&target) || selected_in_panel() {
+                    if inside_root(&target) || selected_in_panel() && !activates_outside(&target) {
                         return;
                     }
-                    if dismisses(&target) {
+                    if dismisses(&target) && !activates_outside(&target) {
                         ev.prevent_default();
                         ev.stop_propagation();
                     }

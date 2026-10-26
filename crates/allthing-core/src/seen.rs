@@ -79,6 +79,16 @@ impl History {
         self.scopes.iter().filter(|s| s.name == scope).flat_map(|s| s.posts.iter().map(|p| p.hash.clone())).collect()
     }
 
+    /// The existing, bounded browser cache, for a one-time private server
+    /// migration. The server, rather than this cache, owns durable history.
+    pub fn entries(&self, scope: &str) -> Vec<(String, i64)> {
+        self.scopes
+            .iter()
+            .filter(|s| s.name == scope)
+            .flat_map(|s| s.posts.iter().map(|p| (p.hash.clone(), p.at)))
+            .collect()
+    }
+
     pub fn record(&mut self, name: &str, value: &str, now: i64) {
         self.record_at(name, value, now, now);
     }

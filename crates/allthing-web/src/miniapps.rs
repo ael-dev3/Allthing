@@ -94,6 +94,7 @@ pub fn Settings() -> impl IntoView {
             trigger_class="settings-button"
             class="settings"
             panel_class="settings-panel"
+            outside_activation=".cast-pill, .cast-fab"
             trigger=|| view! {
                 <svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
                     <circle cx="8" cy="8" r="2.2"/>

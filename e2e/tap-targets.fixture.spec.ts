@@ -36,7 +36,7 @@ async function serve(page: Page) {
 /** For the screenshots only: each tap band, outlined. */
 const outlined = [
   ".main-nav a", ".sign-in-button", ".sort-tabs a", ".tabs a", ".engagement .act", ".engagement .popover-trigger",
-  ".reply-button", ".follow-button", ".favorite-button", ".show-less-button", ".site-footer a",
+  ".reply-button", ".bookmark-button", ".follow-button", ".favorite-button", ".show-less-button", ".site-footer a",
 ].map((target) => `${target}::after`).join(", ") + " { outline: 1px dashed #d6247a; outline-offset: -1px; }";
 
 /** The tap band of `target`: its ::after, as laid out. */
@@ -83,13 +83,14 @@ test("at 390 on a touch screen, the small targets take a 44 px tap", async ({ br
   };
 
   await page.goto("/");
-  await check("Home", page.locator(".main-nav a"));
+  await check("Home", page.getByRole("link", { name: "Home", exact: true }));
   await check("Sign in", page.locator(".sign-in-button"), { wide: true });
   await check("hot", page.locator(".sort-tabs a").first());
   const card = page.locator(`.cast-card[data-hash="${cast.hash}"]`);
   await check("the heart", card.getByRole("button", { name: "Like", exact: true }));
   await check("the likes count", card.locator(".stat-likes .popover-trigger"));
   await check("the replies count", card.locator(".stat-replies"));
+  await check("Save", card.getByRole("button", { name: "Save post", exact: true }), { wide: true });
   await page.screenshot({ path: info.outputPath("tap-targets-390-feed.png"), style: outlined });
 
   await page.goto(`/p/${cast.hash}`);

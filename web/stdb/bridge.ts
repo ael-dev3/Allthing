@@ -53,6 +53,9 @@ const TABLES: Record<string, string> = {
   myDmInbox: "my_dm_inbox",
   myDmOutbox: "my_dm_outbox",
   myNotificationState: "my_notification_state",
+  myLibraryState: "my_library_state",
+  myLibraryMembership: "my_library_membership",
+  myLibraryPage: "my_library_page",
 };
 
 function table(conn: Any, accessor: string): Any {
@@ -82,6 +85,7 @@ class Bridge {
   emit: Emit;
   /** Resolves with `{"identity","token"}` once connected; rejects if it can't. */
   connected!: Promise<string>;
+  private watches = new Map<string, { handle?: Any; reject: (e: Error) => void }>();
 
   constructor(conn: Any, emit: Emit) {
     this.conn = conn;
@@ -111,6 +115,48 @@ class Bridge {
     });
   }
 
+  /** Named, replaceable subscriptions. Rust owns their query policy/lifetime. */
+  watch(tag: string, queriesJson: string): Promise<void> {
+    this.unwatch(tag);
+    const queries = JSON.parse(queriesJson) as string[];
+    return new Promise((resolve, reject) => {
+      const watching: { handle?: Any; reject: (e: Error) => void } = { reject };
+      this.watches.set(tag, watching);
+      watching.handle = this.conn.subscriptionBuilder()
+        .onApplied(() => resolve())
+        .onError((_ctx: Any, error: Any) => reject(new Error(String(error?.message ?? error ?? "subscription failed"))))
+        .subscribe(queries);
+    });
+  }
+
+  unwatch(tag: string) {
+    const watching = this.watches.get(tag);
+    if (!watching) return;
+    this.watches.delete(tag);
+    watching.reject(new Error("Subscription closed"));
+    watching.handle?.unsubscribe();
+  }
+
+  /** Snapshot a bounded caller view, then retire it. Rust filters/sorts the
+   * SDK's union cache against the exact requested argument set. */
+  async snapshot(tag: string, accessor: string, queriesJson: string): Promise<string> {
+    const pending = this.watch(tag, queriesJson);
+    const watching = this.watches.get(tag);
+    try {
+      await pending;
+      return this.rows(accessor);
+    } finally {
+      // A replaced request can finish after its successor started. Retire
+      // only the subscription owned by this snapshot.
+      if (this.watches.get(tag) === watching) this.unwatch(tag);
+    }
+  }
+
+  /** Raw SDK cache only. Rust validates the caller's exact bounded view. */
+  rows(accessor: string): string {
+    return JSON.stringify(Array.from(table(this.conn, accessor).iter(), plain));
+  }
+
   register(fid: number) {
     return settle(() => reducer(this.conn, "register")({ fid: BigInt(fid) }));
   }
@@ -129,6 +175,25 @@ class Bridge {
 
   markNotificationsSeen(seenAt: number) {
     return settle(() => reducer(this.conn, "markNotificationsSeen")({ seenAt: BigInt(seenAt) }));
+  }
+
+  markSeenBatch(generation: number, entriesJson: string) {
+    const entries = (JSON.parse(entriesJson) as Any[]).map((e) => ({
+      hash: e.hash, at: BigInt(e.at), expectedRevision: BigInt(e.expected_revision),
+    }));
+    return settle(() => reducer(this.conn, "markSeenBatch")({ generation: BigInt(generation), entries }));
+  }
+
+  setBookmark(hash: string, desired: boolean, expectedRevision: number) {
+    return settle(() => reducer(this.conn, "setBookmark")({ hash, desired, expectedRevision: BigInt(expectedRevision) }));
+  }
+
+  forgetSeen(generation: number, hash: string, expectedRevision: number) {
+    return settle(() => reducer(this.conn, "forgetSeen")({ generation: BigInt(generation), hash, expectedRevision: BigInt(expectedRevision) }));
+  }
+
+  clearSeen(expectedGeneration: number, operationId: string) {
+    return settle(() => reducer(this.conn, "clearSeen")({ expectedGeneration: BigInt(expectedGeneration), operationId }));
   }
 
   setPublicKey(publicKeyHex: string) {
@@ -163,6 +228,7 @@ class Bridge {
   disconnect() {
     // Release the caller's Wasm closure before an asynchronous close event.
     this.emit = () => {};
+    for (const tag of this.watches.keys()) this.unwatch(tag);
     this.conn.disconnect();
   }
 }

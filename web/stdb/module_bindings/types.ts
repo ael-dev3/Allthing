@@ -32,6 +32,47 @@ export const DmMessage = __t.object("DmMessage", {
 });
 export type DmMessage = __Infer<typeof DmMessage>;
 
+export const LibraryAccount = __t.object("LibraryAccount", {
+  fid: __t.u64(),
+  generation: __t.u64(),
+  revision: __t.u64(),
+  seenCount: __t.u64(),
+  bookmarkCount: __t.u64(),
+  clearedAt: __t.i64(),
+  lastClearId: __t.string(),
+});
+export type LibraryAccount = __Infer<typeof LibraryAccount>;
+
+export const LibraryItem = __t.object("LibraryItem", {
+  fid: __t.u64(),
+  generation: __t.u64(),
+  hash: __t.string(),
+  seen: __t.bool(),
+  seenAt: __t.i64(),
+  seenRevision: __t.u64(),
+  bookmarked: __t.bool(),
+  bookmarkAt: __t.i64(),
+  bookmarkRevision: __t.u64(),
+  cursor: __t.string(),
+});
+export type LibraryItem = __Infer<typeof LibraryItem>;
+
+export const LibraryPost = __t.object("LibraryPost", {
+  key: __t.string(),
+  fid: __t.u64(),
+  hash: __t.string(),
+  generation: __t.u64(),
+  seen: __t.bool(),
+  seenAt: __t.i64(),
+  seenRevision: __t.u64(),
+  seenOrder: __t.string(),
+  bookmarked: __t.bool(),
+  bookmarkAt: __t.i64(),
+  bookmarkRevision: __t.u64(),
+  bookmarkOrder: __t.string(),
+});
+export type LibraryPost = __Infer<typeof LibraryPost>;
+
 export const NotificationReader = __t.object("NotificationReader", {
   identity: __t.identity(),
   fid: __t.u64(),
@@ -57,6 +98,13 @@ export const Room = __t.object("Room", {
   createdAt: __t.timestamp(),
 });
 export type Room = __Infer<typeof Room>;
+
+export const SeenInput = __t.object("SeenInput", {
+  hash: __t.string(),
+  at: __t.i64(),
+  expectedRevision: __t.u64(),
+});
+export type SeenInput = __Infer<typeof SeenInput>;
 
 export const Typing = __t.object("Typing", {
   identity: __t.identity(),

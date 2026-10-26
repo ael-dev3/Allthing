@@ -150,6 +150,44 @@ const shot = async (target: Page | Locator, name: string, testInfo: TestInfo) =>
   await target.screenshot({ path, animations: "disabled" });
 };
 
+/** Settings is nonmodal: Cast remains one accessible action, and one press
+ * dismisses Settings and opens the composer. Other dialog/FAB rules remain. */
+async function castFromSettings(page: Page, mobile: boolean) {
+  const write = page.getByRole("button", { name: "Write a cast", exact: true });
+  await expect(write).toHaveCount(1);
+  await expect(write).toBeVisible();
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
+  for (const activation of mobile ? ["tap"] : ["click", "keyboard"]) {
+    if (mobile) await settings.tap(); else await settings.click();
+    const panel = page.getByRole("dialog", { name: "Settings", exact: true });
+    await expect(panel).toBeVisible();
+    await expect(write).toBeInViewport({ ratio: 1 });
+    await expect(write).toBeEnabled();
+    if (mobile) {
+      await expect.poll(() => write.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return getComputedStyle(element).opacity === "1" && (target === element || element.contains(target));
+      })).toBe(true);
+      await write.tap();
+    } else if (activation === "click") {
+      // Actual pointer capture must permit this first press while Settings is open.
+      await write.click();
+    } else {
+      await write.focus();
+      await page.keyboard.press("Enter");
+    }
+    const dialog = page.getByRole("dialog", { name: "New cast", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(panel).toBeHidden();
+    await expect(page).toHaveURL(/\/notifications$/);
+    if (mobile) await expect.poll(() => write.evaluate(element => getComputedStyle(element).opacity)).toBe("0");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(write).toBeFocused();
+  }
+}
+
 async function phone(browser: Browser, testInfo: TestInfo) {
   const context = await browser.newContext({
     baseURL: testInfo.project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
@@ -206,6 +244,7 @@ test("the bell counts what's new, and the page groups it as Farcaster does and m
   expect(calls.first).toBe(1);
   await page.mouse.move(5, 5);
   await shot(page, "notifications-all-1280", testInfo);
+  await castFromSettings(page, false);
 
   // Load more: the next page, after; the last has no more.
   await page.getByRole("button", { name: "Load more" }).click();
@@ -604,6 +643,7 @@ test("at 390 on a touch screen it fits, and its targets take a fingertip", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await expect(page.getByRole("tab", { name: "Mentions" })).toBeInViewport({ ratio: 1 });
   await shot(page, "notifications-all-390", testInfo);
+  await castFromSettings(page, true);
 
   // Faces and names: each a 44 px tap of its own; a tap there opens the
   // person's card, not the row's cast.

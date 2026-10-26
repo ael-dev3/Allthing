@@ -13,6 +13,10 @@ mod kept;
 #[cfg(not(feature = "static-host"))]
 mod keys;
 mod leanings;
+#[cfg(not(feature = "static-host"))]
+mod library;
+#[cfg(not(feature = "static-host"))]
+mod library_disk;
 mod miniapps;
 mod nav;
 #[cfg(not(feature = "static-host"))]
@@ -79,6 +83,8 @@ fn App() -> impl IntoView {
     #[cfg(not(feature = "static-host"))]
     provide_context(components::signin::Session::new());
     #[cfg(not(feature = "static-host"))]
+    provide_context(library::Library::new());
+    #[cfg(not(feature = "static-host"))]
     provide_context(components::notifications::Notifications::new());
     #[cfg(not(feature = "static-host"))]
     provide_context(components::compose::Composer::new());
@@ -112,6 +118,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("/scheduled") view=ScheduledPage/>
                     <Route path=path!("/messages") view=MessagesPage/>
                     <Route path=path!("/notifications") view=pages::notifications::page/>
+                    <Route path=path!("/library") view=pages::library::page/>
                     <Route path=path!("/search") view=|| split::page(search_page())/>
                 </Routes>
             </main>

@@ -31,6 +31,7 @@ pub fn SiteHeader() -> impl IntoView {
                 <div class="header-nav">
                     <nav class="main-nav" aria-label="Main">
                         <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
+                        <a class="library-nav" href=crate::util::library_href() aria-current=move || current("/library").then_some("page")>"Library"</a>
                     </nav>
                     {presence()}
                 </div>
@@ -164,14 +165,20 @@ fn offered(range: TimeRange) -> bool {
 /// Reddit's time filter: how far back the front page reaches, kept in the
 /// URL as `t` next to the sort.
 #[component]
-pub fn TimeFilter(path: String, sort: Sort, current: TimeRange) -> impl IntoView {
+pub fn TimeFilter(
+    path: String,
+    sort: Sort,
+    current: TimeRange,
+    #[prop(optional)] default_sort: Option<Sort>,
+) -> impl IntoView {
+    let default_sort = default_sort.unwrap_or(Sort::Hot);
     let navigate = use_go();
     let change = move |ev: leptos::ev::Event| {
         let range = TimeRange::parse(Some(&event_target_value(&ev)));
         let href = with_query(
             &path,
             &[
-                ("sort", (sort != Sort::Hot).then(|| sort.as_str().to_owned())),
+                ("sort", (sort != default_sort).then(|| sort.as_str().to_owned())),
                 ("t", (range != TimeRange::default()).then(|| range.as_str().to_owned())),
             ],
         );
