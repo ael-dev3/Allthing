@@ -4,8 +4,7 @@
 Module: `spacetime/spacetimedb` in this repository (Rust, spacetimedb 2.13). Builds with `spacetime build`; from the repository root, `cargo xtask module-check` runs its isolated checks (CI's `SpacetimeDB module` job). `sh spacetime/check.sh` is a thin compatibility wrapper. The native command clears workspace `RUSTFLAGS` and retains rustfmt, native/Wasm Clippy, unit tests, the release Wasm build and the license audit when `cargo-deny` is installed (required by CI).
 Target DB name: **`allthing`** (fall back to `allthing-chat` if the name is taken) on maincloud.
 URL once published: `https://maincloud.spacetimedb.com` / ws, database `allthing`. Dashboard: https://spacetimedb.com/allthing
-STATUS: published to maincloud as `allthing` (checked 21 October 2026: `GET /v1/database/allthing` answers, and its schema has
-these tables and reducers, with `general` seeded as room 1).
+STATUS: the existing `allthing` database was confirmed on 21 October 2026, with `general` seeded as room 1. That historical check predates the notification-state additions below and does not confirm their deployment; publish the updated module and verify its schema/reducers before announcing sync live.
 
 ## Publish
 ```
@@ -19,14 +18,17 @@ spacetime generate --lang typescript --out-dir ../web/stdb/module_bindings --mod
 Public: `user(identity PK, fid idx, verified, online, last_seen)`; `user_key(identity PK, fid, x25519_pub[32], key_version, updated_at)`;
 `room(id, name unique, created_by, created_at)` (`general` is seeded as id 1); `chat_message(id, room_id idx, sender, sender_fid, text, sent_at)`;
 `typing(identity PK, room_id, expires_at)`.
-Private: `dm_message(id, sender idx, recipient idx, sender_key_version, recipient_key_version, nonce[24], ciphertext, sent_at)`, `rate_limit`.
-Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. That rule is enforced on the server. A test confirmed that `dm_message` cannot be queried by clients.
+Private: `dm_message(id, sender idx, recipient idx, sender_key_version, recipient_key_version, nonce[24], ciphertext, sent_at)`, `rate_limit`,
+`notification_reader(identity PK, fid)` and `notification_state(fid PK, seen_at)` (Unix seconds; no notification content).
+Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. That rule is enforced on the server. A test confirmed that `dm_message` cannot be queried by clients. `my_notification_state` returns zero or one row for the FID bound to the calling identity by `notification_reader`; unverified identities and public chat claims grant no access.
 
 ## Reducers
 `register(fid)`, `set_public_key(x25519_pub)` (bumps key_version), `create_room(name)` ([a-z0-9-_], 1–64 chars),
 `send_message(room_id, text)` (1–4000 bytes; also clears typing), `set_typing(room_id, bool)` (6 s TTL; also cleared on disconnect),
 `send_dm(recipient, sender_kv, recipient_kv, nonce, ciphertext)` (24-byte nonce, 16 B–16 KiB ciphertext, recipient must have a key),
-`delete_dm(id)` (sender or recipient). Rate limit: 1 write per 250 ms per identity. Presence is tracked through `user.online`, set on connect/disconnect.
+`delete_dm(id)` (sender or recipient). Chat writes are limited to 1 per 250 ms per identity. Presence is tracked through `user.online`, set on connect/disconnect.
+
+Notification reducers are separate: `verify_notification_fid(fid, expiry, signature)` requires the same pinned, identity-bound Worker attestation even when chat's development fallback is unverified; it locks a nonzero FID to this notification identity without creating/updating a public chat user, key or presence. `mark_notifications_seen(seen_at)` derives the FID from that private binding and takes the maximum with its existing watermark; stale/equal values do not rewrite it. Negative times and times over 60 seconds ahead of the server are rejected; accepted near-future values clamp to server time. These reducers do not use chat's send-rate limiter.
 
 ## E2E design (the server sees only ciphertext)
 - The client generates an X25519 keypair. The private key stays in IndexedDB (non-extractable where possible), and only the public key goes to `set_public_key`.
@@ -47,7 +49,13 @@ Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. Tha
 The UI and encryption logic are Rust. `web/stdb/bridge.ts` is the narrow adapter to the official TypeScript SDK; generated bindings live in `web/stdb/module_bindings`. The Rust SDK is not substituted because its BSL-1.1 license fails the repository's current license policy. `cargo xtask dist` bundles the adapter through the installed esbuild CLI and checks the pinned SDK version; the CSP codec adapter remains covered by wire-format and browser tests.
 
 1. Use `npm ci` for the pinned SDK and regenerate bindings from the Rust module when its schema changes (see above).
-2. The Messages-only adapter connects to `wss://maincloud.spacetimedb.com`, database `allthing`, keeping its per-account token in IndexedDB.
+2. The shared adapter connects to `wss://maincloud.spacetimedb.com`, database `allthing`. Messages keeps its per-account token and X25519 key in IndexedDB `allthing-stdb`, store `identities`; it does not reuse notification credentials.
 3. After Farcaster sign-in, call `register`, obtain the Worker's identity-bound attestation, call `verify_fid`, then `set_public_key`.
 4. Subscribe to `room`, `chat_message WHERE room_id=…`, `typing`, `user`, `user_key`, `my_dm_inbox`, `my_dm_outbox`.
 5. Throttle `set_typing` (~every 3 s while typing). DMs are encrypted/decrypted entirely on the client.
+
+### Notification-only client
+
+`notification_sync.rs` uses the same SDK module script through `stdb_bridge`, but a separate connection and per-FID `{identity, token}` record in IndexedDB `allthing-notification-sync`, store `identities` (no DM key). After its delayed/API-quiet/browser-idle status capability check, it obtains a fresh Worker attestation, calls `verify_notification_fid` and subscribes only to `SELECT * FROM my_notification_state`. It never calls `register` or `set_public_key` or subscribes to public chat/presence tables.
+
+The existing localStorage notification watermark is the offline/legacy cache. Rust `ReadState` merges it with the initial private snapshot before uploading local progress, retains failed writes, and takes maxima on acknowledgements/remote updates without echoing them. One pending maximum is written at a time, coalesced after 200 ms; 30-second operation deadlines, retry backoff capped at five minutes and online/focus/visibility wakeups handle disconnects. Sign-out/account-generation changes fence stale responses and detach the old socket. The page reconciles its initial remote baseline once; later remote reads update its badge/cache while preserving that visit's row tint. Tab selection remains in the URL.

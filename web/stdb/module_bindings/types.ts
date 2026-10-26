@@ -32,6 +32,18 @@ export const DmMessage = __t.object("DmMessage", {
 });
 export type DmMessage = __Infer<typeof DmMessage>;
 
+export const NotificationReader = __t.object("NotificationReader", {
+  identity: __t.identity(),
+  fid: __t.u64(),
+});
+export type NotificationReader = __Infer<typeof NotificationReader>;
+
+export const NotificationState = __t.object("NotificationState", {
+  fid: __t.u64(),
+  seenAt: __t.i64(),
+});
+export type NotificationState = __Infer<typeof NotificationState>;
+
 export const RateLimit = __t.object("RateLimit", {
   identity: __t.identity(),
   lastAt: __t.timestamp(),

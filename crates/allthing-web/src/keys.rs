@@ -33,6 +33,8 @@ struct Database {
 const APP_KEYS: Database = Database { name: "allthing-keys", store: "keys" };
 /// SpacetimeDB identities and message keys.
 const REALTIME: Database = Database { name: "allthing-stdb", store: "identities" };
+/// Notification sync tokens have no message keys and cannot overwrite them.
+const NOTIFICATION_SYNC: Database = Database { name: "allthing-notification-sync", store: "identities" };
 /// The account a key made to sign in with is kept for, until the account
 /// that approves it is known.
 pub const SIGNING_IN: u64 = 0;
@@ -173,6 +175,34 @@ pub struct Realtime {
     /// The X25519 key pair: its unexportable private half, and its public
     /// half's 32 bytes.
     pub key: Option<(CryptoKey, [u8; 32])>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct NotificationIdentity {
+    pub fid: u64,
+    pub identity: String,
+    pub token: String,
+}
+
+pub async fn notification_identity(fid: u64) -> Result<Option<NotificationIdentity>, KeyError> {
+    let found =
+        request(NOTIFICATION_SYNC, IdbTransactionMode::Readonly, |store| store.get(&JsValue::from_f64(fid as f64)))
+            .await?;
+    let Some(identity) = field(&found, "identity").as_string() else { return Ok(None) };
+    let Some(token) = field(&found, "token").as_string() else { return Ok(None) };
+    Ok(Some(NotificationIdentity { fid, identity, token }))
+}
+
+pub async fn keep_notification_identity(kept: &NotificationIdentity) -> Result<(), KeyError> {
+    let record = Object::new();
+    for (name, value) in [
+        ("fid", JsValue::from_f64(kept.fid as f64)),
+        ("identity", JsValue::from_str(&kept.identity)),
+        ("token", JsValue::from_str(&kept.token)),
+    ] {
+        Reflect::set(&record, &name.into(), &value).map_err(failed)?;
+    }
+    request(NOTIFICATION_SYNC, IdbTransactionMode::Readwrite, |store| store.put(&record)).await.map(|_| ())
 }
 
 /// What this browser keeps for `fid`'s Messages, if anything.

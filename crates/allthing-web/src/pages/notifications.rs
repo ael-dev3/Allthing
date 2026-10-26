@@ -215,7 +215,20 @@ pub mod with_worker {
         let Some(notifications) = use_notifications() else { return ().into_any() };
         // What the reader had seen before this visit: anything newer stays
         // marked new until they leave.
-        let before = notifications.seen_by(fid);
+        let before = RwSignal::new(notifications.seen_by(fid));
+        let generation = notifications.generation();
+        let waiting_for_sync = StoredValue::new(notifications.sync_baseline(fid).is_none());
+        // A cold session may learn the prior account watermark after the
+        // list paints. Reconcile once, before this visit's read is uploaded;
+        // later reads in other sessions must not remove this visit's tint.
+        Effect::new(move |_| {
+            if waiting_for_sync.get_value()
+                && let Some(remote) = notifications.sync_baseline(fid)
+            {
+                before.update(|seen| *seen = (*seen).max(remote));
+                waiting_for_sync.set_value(false);
+            }
+        });
         // The first page, read whole from the answer the bell read its
         // times from (a read within a minute is reused), and again as they
         // change, until more are loaded after it; then the pages stay as
@@ -229,13 +242,16 @@ pub mod with_worker {
         // after its cached answer expires or while the tab is hidden.
         let times = Memo::new(move |_| notifications.times());
         Effect::new(move |_| {
-            if times.get().is_none() || !notifications.are_for(fid) || !more.with_untracked(Vec::is_empty) {
+            if times.get().is_none()
+                || !notifications.same_session(fid, generation)
+                || !more.with_untracked(Vec::is_empty)
+            {
                 return;
             }
             spawn_local(async move {
                 let read = api::get::<NotificationsPayload>(NOTIFICATIONS_PATH).await;
                 // Signed out, or someone else, meanwhile.
-                if !notifications.are_for(fid) {
+                if !notifications.same_session(fid, generation) {
                     return;
                 }
                 match read {
@@ -288,7 +304,7 @@ pub mod with_worker {
             failed_more.set(None);
             spawn_local(async move {
                 let read = api::get::<NotificationsPayload>(&notifications_path(Some(&cursor))).await;
-                if !notifications.are_for(fid) {
+                if !notifications.same_session(fid, generation) {
                     return;
                 }
                 match read {
@@ -324,7 +340,7 @@ pub mod with_worker {
                 {move || shown.with(Vec::is_empty).then(|| view! { <p class="notif-empty">{chosen(tab).empty()}</p> })}
                 <ol class="notif-list">
                     <For each=move || shown.get() key=key let:group>
-                        <Row new={group.ts > before} cards group/>
+                        <Row before=before.read_only() cards group/>
                     </For>
                 </ol>
                 {move || next.get().map(|_| view! {
@@ -364,7 +380,7 @@ pub mod with_worker {
     /// that person's profile card), the cast it's about, and when. The row
     /// opens the cast, or for follows the newest follower's profile.
     #[component]
-    fn Row(group: Group, new: bool, cards: Memo<BTreeMap<u64, UserCard>>) -> impl IntoView {
+    fn Row(group: Group, before: ReadSignal<i64>, cards: Memo<BTreeMap<u64, UserCard>>) -> impl IntoView {
         let (icon, kind) = look(group.kind);
         let href = match group.opens() {
             Some(Opens::Cast(hash)) => cast_href(hash),
@@ -376,7 +392,8 @@ pub mod with_worker {
             Some(text) => format!("{}: {text}", group.sentence()),
             None => group.sentence(),
         };
-        let label = if new { format!("New: {what}") } else { what };
+        let new = move || group.ts > before.get();
+        let label = move || if new() { format!("New: {what}") } else { what.clone() };
         let first = group.first().cloned();
         let card = first.as_ref().and_then(|person| cards.with_untracked(|c| c.get(&person.fid).cloned()));
         let faces = group.actors.clone();

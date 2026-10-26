@@ -8,19 +8,23 @@ import { type Infer as __Infer } from "spacetimedb";
 // Import all reducer arg schemas
 import CreateRoomReducer from "../create_room_reducer";
 import DeleteDmReducer from "../delete_dm_reducer";
+import MarkNotificationsSeenReducer from "../mark_notifications_seen_reducer";
 import RegisterReducer from "../register_reducer";
 import SendDmReducer from "../send_dm_reducer";
 import SendMessageReducer from "../send_message_reducer";
 import SetPublicKeyReducer from "../set_public_key_reducer";
 import SetTypingReducer from "../set_typing_reducer";
 import VerifyFidReducer from "../verify_fid_reducer";
+import VerifyNotificationFidReducer from "../verify_notification_fid_reducer";
 
 export type CreateRoomParams = __Infer<typeof CreateRoomReducer>;
 export type DeleteDmParams = __Infer<typeof DeleteDmReducer>;
+export type MarkNotificationsSeenParams = __Infer<typeof MarkNotificationsSeenReducer>;
 export type RegisterParams = __Infer<typeof RegisterReducer>;
 export type SendDmParams = __Infer<typeof SendDmReducer>;
 export type SendMessageParams = __Infer<typeof SendMessageReducer>;
 export type SetPublicKeyParams = __Infer<typeof SetPublicKeyReducer>;
 export type SetTypingParams = __Infer<typeof SetTypingReducer>;
 export type VerifyFidParams = __Infer<typeof VerifyFidReducer>;
+export type VerifyNotificationFidParams = __Infer<typeof VerifyNotificationFidReducer>;
 

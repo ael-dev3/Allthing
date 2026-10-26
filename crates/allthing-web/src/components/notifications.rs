@@ -4,8 +4,8 @@
 //! app starts, every three minutes while the page is in view, and when it
 //! is back in view or its window regains focus (a read within a minute is
 //! reused: `api`), and the newest time the reader has seen, which this
-//! browser keeps by account (`allthing-notifications-seen` in localStorage;
-//! the server keeps none). The header's bell counts the groups newer than
+//! browser caches by account (`allthing-notifications-seen` in localStorage)
+//! and SpacetimeDB shares with the account's other verified sessions. The header's bell counts the groups newer than
 //! that, and the notifications page (`pages::notifications`), which reads
 //! the whole payload from the same answer, marks them seen. Not in the
 //! static copy, which has no sign-in.
@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use allthing_core::notification_state::valid_seen;
 use allthing_core::notifications::{NOTIFICATIONS_PATH, Times, badge, bell_label};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -47,6 +48,10 @@ struct State {
     loading: bool,
     /// The newest time `whose` has seen (Unix seconds), 0 for never.
     seen: i64,
+    /// Fences in-flight reads even if A signs out and signs back in as A.
+    generation: u64,
+    /// Prior remote state, captured before this visit's pending read is sent.
+    remote_baseline: Option<i64>,
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -60,7 +65,21 @@ fn kept() -> BTreeMap<String, i64> {
 }
 
 fn seen_of(fid: u64) -> i64 {
-    kept().get(&fid.to_string()).copied().unwrap_or(0)
+    valid_seen(kept().get(&fid.to_string()).copied().unwrap_or(0), now())
+}
+
+fn now() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
+}
+
+fn keep_seen(fid: u64, at: i64) -> i64 {
+    let at = valid_seen(at, now()).max(seen_of(fid));
+    let mut all = kept();
+    all.insert(fid.to_string(), at);
+    if let (Some(storage), Ok(text)) = (storage(), serde_json::to_string(&all)) {
+        let _ = storage.set_item(SEEN_KEY, &text);
+    }
+    at
 }
 
 impl Notifications {
@@ -76,8 +95,10 @@ impl Notifications {
             if notifications.whose() != fid {
                 api::forget(NOTIFICATIONS_PATH);
                 api::forget(allthing_core::following::FOLLOWING_PATH);
-                notifications.0.set(State { whose: fid, seen: fid.map_or(0, seen_of), ..State::default() });
+                let generation = notifications.generation().wrapping_add(1);
+                notifications.0.set(State { whose: fid, seen: fid.map_or(0, seen_of), generation, ..State::default() });
             }
+            crate::notification_sync::account(fid, notifications);
             if fid.is_some() {
                 notifications.refresh();
             }
@@ -94,16 +115,22 @@ impl Notifications {
         let woken = move |_| {
             if !document().hidden() {
                 notifications.refresh();
+                crate::notification_sync::wake();
             }
         };
         let _ = window_event_listener_untyped("visibilitychange", woken);
         let _ = window_event_listener_untyped("focus", woken);
+        let _ = window_event_listener_untyped("online", move |_| crate::notification_sync::wake());
         // Seen in another of this browser's tabs.
         let _ = window_event_listener(leptos::ev::storage, move |ev| {
             if ev.key().as_deref() == Some(SEEN_KEY)
                 && let Some(fid) = notifications.whose()
             {
-                notifications.0.update(|state| state.seen = seen_of(fid));
+                let seen = seen_of(fid).max(notifications.seen_by(fid));
+                if seen > notifications.seen_by(fid) {
+                    notifications.0.update(|state| state.seen = seen);
+                }
+                crate::notification_sync::seen(fid, seen);
             }
         });
         notifications
@@ -117,6 +144,34 @@ impl Notifications {
     /// (untracked).
     pub fn are_for(self, fid: u64) -> bool {
         self.whose() == Some(fid)
+    }
+
+    pub fn generation(self) -> u64 {
+        self.0.with_untracked(|state| state.generation)
+    }
+
+    pub fn same_session(self, fid: u64, generation: u64) -> bool {
+        self.are_for(fid) && self.generation() == generation
+    }
+
+    pub fn sync_baseline(self, fid: u64) -> Option<i64> {
+        self.0.with(|state| if state.whose == Some(fid) { state.remote_baseline } else { None })
+    }
+
+    /// A private subscription has advanced. Do not echo it as another write.
+    pub fn synced(self, fid: u64, seen: i64, baseline: Option<i64>) {
+        if !self.are_for(fid) {
+            return;
+        }
+        let seen = keep_seen(fid, seen).max(self.seen_by(fid));
+        if self.0.with_untracked(|s| seen > s.seen || (s.remote_baseline.is_none() && baseline.is_some())) {
+            self.0.update(|state| {
+                state.seen = seen;
+                if state.remote_baseline.is_none() {
+                    state.remote_baseline = baseline;
+                }
+            });
+        }
     }
 
     /// The first page's times once its latest refresh succeeded (tracked).
@@ -152,6 +207,7 @@ impl Notifications {
     /// within a minute can be reused or is on its way (`api::get`).
     pub fn refresh(self) {
         let Some(fid) = self.0.with_untracked(|state| state.whose.filter(|_| !state.loading)) else { return };
+        let generation = self.generation();
         // Coalesce before spawning: a second caller otherwise waits in
         // api::get for the first read. A throttled tab can resume that
         // waiter after the cache has expired and start a redundant read.
@@ -159,7 +215,7 @@ impl Notifications {
         spawn_local(async move {
             let read = api::get::<Times>(NOTIFICATIONS_PATH).await;
             // Signed out, or someone else, meanwhile.
-            if self.whose() != Some(fid) {
+            if !self.same_session(fid, generation) {
                 return;
             }
             self.0.update(|state| {
@@ -186,15 +242,13 @@ impl Notifications {
     /// `fid` has seen everything up to `newest` (Unix seconds): the bell
     /// clears, here and in the browser's other tabs.
     pub fn mark_seen(self, fid: u64, newest: i64) {
+        let newest = valid_seen(newest, now());
         if !self.are_for(fid) || newest <= self.seen_by(fid) {
             return;
         }
+        let newest = keep_seen(fid, newest);
         self.0.update(|state| state.seen = newest);
-        let mut all = kept();
-        all.insert(fid.to_string(), newest);
-        if let (Some(storage), Ok(text)) = (storage(), serde_json::to_string(&all)) {
-            let _ = storage.set_item(SEEN_KEY, &text);
-        }
+        crate::notification_sync::seen(fid, newest);
     }
 
     /// How many groups of the first page the reader hasn't seen (tracked).
