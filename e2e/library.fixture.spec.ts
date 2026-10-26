@@ -136,12 +136,26 @@ test.describe("Library public pages and actions", () => {
     const target = page.locator(`.library-panel .cast-card[data-hash="${hash(40)}"]`);
     await target.scrollIntoViewIfNeeded();
     await expect(target).toBeVisible();
+    await expect(cards(page)).toHaveCount(50);
     await target.evaluate(node => Promise.all(node.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
-    const before = await target.evaluate(node => node.getBoundingClientRect().top);
+    // The link's actionability check can scroll after the card was brought
+    // into view. Keep the place actually left at click time, as ScrollMemory
+    // does, rather than an earlier position the browser may have moved from.
+    const departure = await target.evaluateHandle(node => {
+      const position = { top: null as number | null };
+      node.addEventListener("click", () => { position.top = node.getBoundingClientRect().top; }, { capture: true, once: true });
+      return position;
+    });
     await target.locator("a.when").click();
     await expect(page).toHaveURL(new RegExp(`/p/${hash(40)}$`));
+    const before = await departure.evaluate(position => {
+      if (position.top === null) throw new Error("The departing Library card never received its click.");
+      return position.top;
+    });
+    await departure.dispose();
     await page.goBack({ waitUntil: "commit" });
     await expect(target).toBeVisible();
+    await expect(cards(page)).toHaveCount(50);
     await expect.poll(async () => Math.abs((await target.evaluate(node => node.getBoundingClientRect().top)) - before)).toBeLessThanOrEqual(2);
     expect(reads).toEqual(["", "cGFnZTI="]);
     await expect(page.getByRole("tab", { name: "Likes", exact: true })).toHaveAttribute("aria-selected", "true");

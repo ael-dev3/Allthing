@@ -18,9 +18,13 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Keep Cast available on Notifications and while Settings is open, including the phone button; one press dismisses Settings and opens the composer.
+- Leave enough room between phone post actions for the Save button across platform fonts, preserving their tap targets.
 - After Escape closes a hover card, layout changes cannot reopen it under a stationary pointer. Moving away and back still opens it normally.
 
 ### Development
+
+- Library Back checks compare with the card position at the actual click, after browser actionability scrolling, while retaining the two-pixel restoration limit and exact cached-page checks.
 
 - Move build orchestration, Brotli compression, repository validation, asset-credit checks, deployment waiting, isolated database-module checks, audit handling and browser fixture orchestration into native Rust `xtask` commands. Retain official Playwright tests and independent cryptography, SQL and SDK codec checks.
 

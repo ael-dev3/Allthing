@@ -7501,12 +7501,13 @@ p.jumbo .emoji img {
     padding-bottom: calc(32px + 60px + env(safe-area-inset-bottom));
   }
 
-  /* Out of the way while a dialog, the lightbox or a popover is open, or
+  /* Out of the way while a dialog, the lightbox or a content popover is open, or
      the keyboard is up for a text box (`away`, components/compose.rs).
+     Settings keeps Cast available; starting a cast dismisses that panel.
      Still focusable meanwhile, so a dialog it opened can give it focus back
      as it closes, and seen again when the keyboard's Tab reaches it. */
   :is(.compose-open, .who-open, .handoff-open, .key-open, .signin-open, .lightbox-open) .cast-fab:not(:focus-visible),
-  body:has(.popover-panel) .cast-fab:not(:focus-visible),
+  body:has(.popover-panel:not(.settings-panel)) .cast-fab:not(:focus-visible),
   .cast-fab.away {
     opacity: 0;
     transform: scale(0.85);
@@ -8398,7 +8399,9 @@ p.jumbo .emoji img {
   }
 
   .post .cast-foot {
-    column-gap: 8px;
+    /* Save is part of the counts. Leave space for all four action groups
+       even with wider platform fonts, keeping their tap boxes unchanged. */
+    column-gap: 6px;
   }
 
   /* Under a reply, its counts (shown as the Farcaster app shows them,
