@@ -517,16 +517,23 @@ for (const width of [1280, 390]) {
         await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
         const encryptedHistory = db.dms.map(row => ({ ...row }));
         expect(encryptedHistory).toHaveLength(2);
+        const unsent = "This unsent message keeps its text and focus";
+        await composer.fill(unsent);
         await db.setFilter(alice.fid, 303, 0, true, 0, "carol");
         await expect(thread.getByText(mentioned, { exact: true })).toHaveCount(0);
         await expect(thread.getByText(secret, { exact: true })).toBeVisible();
         await expect(composer).toBeVisible();
+        await expect(composer).toHaveValue(unsent);
+        await expect(composer).toBeFocused();
         expect(new URL(a.page.url()).searchParams.get("to")).toBe(String(bob.fid));
         expect(db.dms).toEqual(encryptedHistory);
         await db.setFilter(alice.fid, 303, 0, false, 1, "carol");
         await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
         await expect(thread.getByText(secret, { exact: true })).toBeVisible();
+        await expect(composer).toHaveValue(unsent);
+        await expect(composer).toBeFocused();
         expect(db.dms).toEqual(encryptedHistory);
+        await composer.fill("");
 
         // A newly arriving key/message from a blocked peer must never start
         // an X25519 derivation, even when it is not in the secret cache.

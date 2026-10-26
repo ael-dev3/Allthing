@@ -128,13 +128,24 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
         go(&dm_href(user.fid), Default::default());
     });
 
+    // Only a change in this pane's privacy may replace its conversation.
+    // An unrelated filter still updates message rows without losing a draft.
+    let pane_privacy = Memo::new(move |_| {
+        let waiting = crate::moderation::waiting();
+        let blocked = !waiting && matches!(open.get(), Open::With(fid) if crate::moderation::blocks_fid(fid));
+        (waiting, blocked)
+    });
     let pane = {
         let live = live.clone();
         move || {
-            if crate::moderation::waiting() {
+            // Consume navigation before its derived privacy memo, so a peer
+            // change with the same privacy value still changes the pane.
+            let current = open.get();
+            let (waiting, blocked) = pane_privacy.get();
+            if waiting {
                 return view! { <crate::moderation::FilterNotice/> }.into_any();
             }
-            if matches!(open.get(), Open::With(fid) if crate::moderation::blocks_fid(fid)) {
+            if blocked {
                 return view! {
                     <div class="dm-thread">
                         <header class="dm-thread-head"><BackLink/><h2 class="rt-peer">"Conversation hidden"</h2></header>
@@ -144,7 +155,7 @@ pub fn Inbox(live: Live, people: People) -> impl IntoView {
                     </div>
                 }.into_any();
             }
-            match open.get() {
+            match current {
             Open::Nothing => view! {
                 <p class="dm-empty muted">"Open #general, or a conversation, or start one with New message."</p>
             }
