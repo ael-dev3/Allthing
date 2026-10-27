@@ -130,6 +130,48 @@ pub fn request_fid_from_metadata(metadata: &[u8]) -> Option<u64> {
     (fid > 0).then_some(fid)
 }
 
+/// Read a positive requesting FID only from complete, canonically encoded
+/// signed-key-request metadata. This checks the ABI shape and base64 encoding;
+/// it does not independently validate the custody signature. Unknown, malformed
+/// and truncated metadata remain unknown instead of becoming a no-app claim.
+pub fn verified_request_fid_from_metadata(encoded: &str) -> Option<u64> {
+    fn tuple_fid(fields: &[u8]) -> Option<u64> {
+        let fid = word_as_u64(fields.get(..32)?)?;
+        if fid == 0 || fields.get(32..44)?.iter().any(|b| *b != 0) {
+            return None;
+        }
+        let signature_offset = usize::try_from(word_as_u64(fields.get(64..96)?)?).ok()?;
+        if signature_offset != 128 {
+            return None;
+        }
+        word_as_u64(fields.get(96..128)?)?;
+        let signature_len = usize::try_from(word_as_u64(fields.get(128..160)?)?).ok()?;
+        if signature_len == 0 {
+            return None;
+        }
+        let signature_end = 160usize.checked_add(signature_len)?;
+        let padded = signature_len.checked_add(31)? / 32 * 32;
+        let end = 160usize.checked_add(padded)?;
+        if fields.len() != end || fields.get(signature_end..end)?.iter().any(|b| *b != 0) {
+            return None;
+        }
+        Some(fid)
+    }
+
+    let bytes = base64_decode(encoded)?;
+    if base64_encode(&bytes) != encoded {
+        return None;
+    }
+    // A flat tuple whose request FID is 32 must remain distinguishable from
+    // abi.encode(struct)'s outer offset: accept only the complete valid layout.
+    if word_as_u64(bytes.get(..32)?)? == 32
+        && let Some(fid) = tuple_fid(bytes.get(32..)?)
+    {
+        return Some(fid);
+    }
+    tuple_fid(&bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +205,28 @@ mod tests {
         let mut huge = metadata(1, true);
         huge[32] = 1; // a uint256 that does not fit in u64
         assert_eq!(request_fid_from_metadata(&huge), None);
+    }
+
+    #[test]
+    fn verified_metadata_requires_complete_canonical_abi_in_both_layouts() {
+        let canonical = |fid, with_offset| {
+            let mut bytes = metadata(fid, with_offset);
+            let padding = if with_offset { 257 } else { 225 };
+            bytes[padding..].fill(0);
+            bytes
+        };
+        for (fid, with_offset) in [(9152, true), (309_857, false), (32, false)] {
+            assert_eq!(verified_request_fid_from_metadata(&base64_encode(&canonical(fid, with_offset))), Some(fid));
+        }
+        assert_eq!(verified_request_fid_from_metadata(&base64_encode(&canonical(0, true))), None);
+        let mut truncated = canonical(9152, true);
+        truncated.truncate(160);
+        assert_eq!(verified_request_fid_from_metadata(&base64_encode(&truncated)), None);
+        let mut padded = canonical(9152, true);
+        assert_eq!(verified_request_fid_from_metadata(&base64_encode(&padded)), Some(9152));
+        padded[287] = 1;
+        assert_eq!(verified_request_fid_from_metadata(&base64_encode(&padded)), None);
+        assert_eq!(verified_request_fid_from_metadata(&(base64_encode(&canonical(9152, true)) + "ignored")), None);
     }
 
     #[test]

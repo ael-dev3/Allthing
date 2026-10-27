@@ -32,6 +32,7 @@ pub fn SiteHeader() -> impl IntoView {
                     <nav class="main-nav" aria-label="Main">
                         <a href=href("/") aria-current=move || current("/").then_some("page")>"Home"</a>
                         <a class="library-nav" href=crate::util::library_href() aria-current=move || current("/library").then_some("page")>"Library"</a>
+                        <a class="dau-nav" href=crate::util::dau_href() aria-label="DAU, daily active accounts" aria-current=move || current("/dau").then_some("page")>"DAU"</a>
                     </nav>
                     {presence()}
                 </div>

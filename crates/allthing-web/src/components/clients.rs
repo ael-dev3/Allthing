@@ -137,6 +137,12 @@ pub fn ClientShareBar(
     window: Option<TrendingWindow>,
     #[prop(optional_no_strip)] counted: Option<AppsWindow>,
 ) -> impl IntoView {
+    // Cached Home payloads may predate verified counting. Keep the ordinary
+    // cast-share bar, but never decorate it with unverified or stale DAU.
+    let clock = now();
+    let counted = counted.filter(|window| {
+        window.is_verified() && window.counted <= clock && window.to <= clock && clock - window.to <= 7_200
+    });
     let Some(split) = client_shares(&casts, &notes, TOP_APPS) else { return ().into_any() };
     let known = split.known();
     let shares = split.shares;

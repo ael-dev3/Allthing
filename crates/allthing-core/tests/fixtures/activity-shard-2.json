@@ -1,0 +1,56 @@
+{
+  "spdx_license": "AGPL-3.0-or-later",
+  "source": "https://haatz.quilibrium.com/v1/events?shard_index=2&from_event_id=812433539072&stop_id=812433555456&pageSize=100",
+  "observed_date": "2026-10-27",
+  "events": [
+    {
+      "type": "HUB_EVENT_TYPE_BLOCK_CONFIRMED",
+      "id": 812433539072,
+      "blockConfirmedBody": {
+        "blockNumber": 49587008,
+        "shardIndex": 2,
+        "timestamp": 183638393,
+        "blockHash": "0x97c330abc6b6544b9f8bee117bd4c35e6f56a5cead6977e40ccc0c6adb82f859",
+        "totalEvents": 2
+      },
+      "blockNumber": 49587008,
+      "shardIndex": 2
+    },
+    {
+      "type": "HUB_EVENT_TYPE_MERGE_MESSAGE",
+      "id": 812433539073,
+      "mergeMessageBody": {
+        "message": {
+          "data": {
+            "type": "MESSAGE_TYPE_CAST_ADD",
+            "fid": 2617625,
+            "timestamp": 183638391,
+            "network": "FARCASTER_NETWORK_MAINNET",
+            "castAddBody": {
+              "embedsDeprecated": [],
+              "mentions": [],
+              "parentCastId": null,
+              "parentUrl": null,
+              "text": "\ud83c\udfb0 Just claimed my free daily spin on BASED SLOTS.\nCast about it and you get one too \u2014 no deposit, no catch. Real $BASED payouts on Base.\nSpin it \ud83d\udc47",
+              "embeds": [
+                {
+                  "url": "https://basedslots.com/"
+                }
+              ],
+              "mentionsPositions": [],
+              "type": "CAST"
+            }
+          },
+          "hash": "0x562eb763e81ff98e33fbed60cae0ad320afc24cf",
+          "hashScheme": "HASH_SCHEME_BLAKE3",
+          "signature": "hlOc2qZikNDzA0fzR+li60mutPbGCcBf16SS786CnRuaho/EAPIxwBGFMM+w4E1YF3OaYMdqYbzDZR/gvOt9Cg==",
+          "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+          "signer": "0x11e3715d7d2fcc3c837995703ff384f30bec96e83369e9e7e18ac932411a4718"
+        },
+        "deletedMessages": []
+      },
+      "blockNumber": 49587008,
+      "shardIndex": 2
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "spdx_license": "AGPL-3.0-or-later",
+  "source": "https://haatz.quilibrium.com/v1/events?shard_index=1&from_event_id=815132622848&stop_id=815132639232&pageSize=100",
+  "observed_date": "2026-10-27",
+  "events": [
+    {
+      "type": "HUB_EVENT_TYPE_BLOCK_CONFIRMED",
+      "id": 815132622848,
+      "blockConfirmedBody": {
+        "blockNumber": 49751747,
+        "shardIndex": 1,
+        "timestamp": 183638407,
+        "blockHash": "0xf4f9cd10f8544096706e13cf549c0abed801a2d2063e96a1c544c4f7aa6aa44e",
+        "totalEvents": 4
+      },
+      "blockNumber": 49751747,
+      "shardIndex": 1
+    },
+    {
+      "type": "HUB_EVENT_TYPE_MERGE_MESSAGE",
+      "id": 815132622849,
+      "mergeMessageBody": {
+        "message": {
+          "data": {
+            "type": "MESSAGE_TYPE_CAST_ADD",
+            "fid": 1992198,
+            "timestamp": 183638406,
+            "network": "FARCASTER_NETWORK_MAINNET",
+            "castAddBody": {
+              "embedsDeprecated": [],
+              "mentions": [],
+              "parentCastId": null,
+              "parentUrl": null,
+              "text": "\ud83c\udfb0 Just claimed my free daily spin on BASED SLOTS.\nCast about it and you get one too \u2014 no deposit, no catch. Real $BASED payouts on Base.\nSpin it \ud83d\udc47",
+              "embeds": [
+                {
+                  "url": "https://basedslots.com/"
+                }
+              ],
+              "mentionsPositions": [],
+              "type": "CAST"
+            }
+          },
+          "hash": "0x0bb0d7a8d040b2438599c4887be088746bf18845",
+          "hashScheme": "HASH_SCHEME_BLAKE3",
+          "signature": "Xa25MYkegIpzv7JdTy3oV57AIc/U3XwsUUdcj2WT/VwMaWA46gs5Qlc8oA9bochCCw52kPl2QmpVlZ9pHcNLAQ==",
+          "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+          "signer": "0x1df7960edac64770e536f913f87096726116db2451002cbcffa7b7fd37c688be"
+        },
+        "deletedMessages": []
+      },
+      "blockNumber": 49751747,
+      "shardIndex": 1
+    },
+    {
+      "type": "HUB_EVENT_TYPE_MERGE_MESSAGE",
+      "id": 815132622850,
+      "mergeMessageBody": {
+        "message": {
+          "data": {
+            "type": "MESSAGE_TYPE_REACTION_ADD",
+            "fid": 213222,
+            "timestamp": 183638407,
+            "network": "FARCASTER_NETWORK_MAINNET",
+            "reactionBody": {
+              "type": "REACTION_TYPE_LIKE",
+              "targetCastId": {
+                "fid": 1327602,
+                "hash": "0x55d780f37caf693e6b63a1f847e7ceb9109208d6"
+              }
+            }
+          },
+          "hash": "0x89b1a24c225cabb7b5476991ed0fa1ccc40b3bdf",
+          "hashScheme": "HASH_SCHEME_BLAKE3",
+          "signature": "udchjDUV5zguSavFGBuz6i/8zrh11Ujb5npicMQLY7j86vvYoW5n1mLUvvFoqHhx8B1C4Kc7j0ySfyErBr3pBg==",
+          "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+          "signer": "0xfdcc7e8e416d6d011f889b71279570a055d46b787b829c2a2df61a9fd1027507"
+        },
+        "deletedMessages": []
+      },
+      "blockNumber": 49751747,
+      "shardIndex": 1
+    },
+    {
+      "type": "HUB_EVENT_TYPE_PRUNE_MESSAGE",
+      "id": 815132622851,
+      "pruneMessageBody": {
+        "message": {
+          "data": {
+            "type": "MESSAGE_TYPE_REACTION_ADD",
+            "fid": 213222,
+            "timestamp": 181063611,
+            "network": "FARCASTER_NETWORK_MAINNET",
+            "reactionBody": {
+              "type": "REACTION_TYPE_RECAST",
+              "targetCastId": {
+                "fid": 14537,
+                "hash": "0x860f3504ee0d567e7d47c5e2e93fc3ca6cfee9ef"
+              }
+            }
+          },
+          "hash": "0xa662a27e3935d81dabb9bcae0ff061d86e4494c8",
+          "hashScheme": "HASH_SCHEME_BLAKE3",
+          "signature": "dvGe9aEMHF8rIMHPBGUSGE6HpXeTPZDYk5hpDKK9CkC/k1AH1MOb5vizmeqhTGdNO310f1ya1OP+Kb40ILhKBQ==",
+          "signatureScheme": "SIGNATURE_SCHEME_ED25519",
+          "signer": "0xfdcc7e8e416d6d011f889b71279570a055d46b787b829c2a2df61a9fd1027507"
+        }
+      },
+      "blockNumber": 49751747,
+      "shardIndex": 1
+    }
+  ]
+}

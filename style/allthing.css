@@ -291,7 +291,7 @@ code {
 }
 
 /* Who is reading Allthing now (components/presence.rs): a dot and a count
-   after Home, out of the flow, so nothing moves as it comes, and Home stays
+   after the main navigation, out of the flow, so nothing moves as it comes,
    as it is. Both headers reserve its space before the answer arrives,
    including the desktop side of the 920px compact breakpoint. */
 .header-nav,
@@ -358,6 +358,10 @@ code {
 /* Keep Home and the compact dot/count on phones too. The early header
    reserves the same width, so hydration and the first count move nothing. */
 @media (max-width: 920px) {
+  .header-inner {
+    gap: 12px;
+  }
+
   .header-nav,
   .boot-nav {
     padding-right: 58px;
@@ -8166,37 +8170,50 @@ p.jumbo .emoji img {
   }
 }
 
-@media (max-width: 640px) {
-  body {
-    font-size: 14.5px;
-  }
-
-  /* Home, the online count and the account's controls keep their room.
-     Search has its own row rather than shrinking below its placeholder.
-     The early header uses the same rows before the app is ready. */
+/* Navigation and search share the second row where a single row would
+   squeeze the search box. The early header uses the same grid. */
+@media (max-width: 800px) {
   .header-inner {
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 10px 14px 8px;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-rows: 36px auto;
+    gap: 8px 12px;
   }
 
   .header-nav,
   .boot-nav {
+    grid-column: 1;
+    grid-row: 2;
     min-height: 36px;
     align-items: center;
   }
 
   .header-actions,
-  .boot-actions {
+  .boot-actions,
+  .boot-readonly {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
     flex: none;
   }
 
   .search-box,
   .boot-search {
-    order: 1;
-    flex-basis: 100%;
+    grid-column: 2;
+    grid-row: 2;
     max-width: none;
     margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 14.5px;
+  }
+
+  .header-inner {
+    gap: 8px;
+    padding: 10px 14px 8px;
   }
 
   .wordmark {
@@ -8567,6 +8584,7 @@ p.jumbo .emoji img {
 }
 
 .dau-lede a,
+.dau-coverage a,
 .dau-method a,
 .dau-empty a {
   color: var(--accent);
@@ -8598,6 +8616,84 @@ p.jumbo .emoji img {
   color: var(--ink-3);
   font-size: 13.5px;
   line-height: 1.45;
+}
+
+/* Source-observed event coverage stays beside the figures it qualifies. */
+.dau-coverage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.dau-coverage-head h2 {
+  margin-bottom: 6px;
+}
+
+.dau-proof-status {
+  color: var(--accent);
+  font: 600 12px/1.4 var(--font-ui);
+}
+
+.dau-source,
+.dau-card .dau-coverage-note {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.dau-proof-times,
+.dau-shards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.dau-proof-times dt,
+.dau-shards h3 {
+  margin: 0 0 3px;
+  font: 600 12px/1.4 var(--font-ui);
+  color: var(--ink);
+}
+
+.dau-proof-times dd,
+.dau-shards p,
+.dau-shards details {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.dau-shards {
+  list-style: none;
+  border-block: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.dau-shards summary {
+  padding: 5px 0;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.dau-shards code {
+  font: 11px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .dau-shards summary {
+    min-height: 44px;
+    padding: 12px 0;
+  }
+}
+
+.dau-lower-bound {
+  font-size: 0.8em;
 }
 
 /* The meter: the past 24 hours, today so far beside them, readouts, and
@@ -9219,6 +9315,10 @@ p.jumbo .emoji img {
 }
 
 @media (max-width: 640px) {
+  .dau-shards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .dau-meter {
     padding: 18px 16px 16px;
   }

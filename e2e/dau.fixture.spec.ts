@@ -37,13 +37,28 @@ const yesterday = days[28];
 const hourly = Array.from({ length: 48 }, (_, i) => (i === 17 ? 1_300 : 500 + ((i * 37) % 700)));
 const busiest = `${short(Math.floor((to - 31 * 3_600) / DAY))}, ${hh(to - 31 * 3_600)}–${hh(to - 30 * 3_600)} UTC`;
 
-function payload(extra: object = {}) {
+const source = "https://haatz.quilibrium.com/v1/events";
+const stamp = (at: number) => `${short(Math.floor(at / DAY))} ${new Date(at * 1000).getUTCFullYear()}, ${new Date(at * 1000).toISOString().slice(11, 16)} UTC`;
+/** Explicit source-observed checkpoints; browser tests do not fetch live data. */
+function verified<T extends { since: number; reached: number }>(body: T) {
   return {
+    verification_version: 2, source, verified_since: body.since,
+    shards: [1, 2].map(shard => {
+      const block = 1_000_000 + shard;
+      return { shard, since: body.since, reached: body.reached, block, block_at: body.reached + 1, total_events: 100, read_events: 100, cursor: block * 16_384 + 99 };
+    }),
+    ...body,
+  };
+}
+
+function payload(extra: object = {}) {
+  return verified({
     reached, rolling_to: to, rolling_24h: 6_174, previous_24h: 5_982,
     active_30d: { day: today - 1, active: 41_234, complete: false },
     since: (today - 29) * DAY + 5_000,
     days, hourly,
     apps_24h: {
+      verification_version: 2,
       to, counted: to + 120, active: 6_174, none: 14,
       apps: [
         { app: 9152, active: 4_812 }, { app: 309857, active: 1_203 }, { app: 16823, active: 120 }, { app: 777, active: 3 },
@@ -54,9 +69,9 @@ function payload(extra: object = {}) {
       { fid: 309857, username: "baseapp.base.eth", display_name: "Base App" },
       { fid: 16823, username: "recaster", display_name: "Recaster" },
     ],
-    meta: { backend: "hypersnap", fetched_at: Date.now() },
+    meta: { backend: "hypersnap", fetched_at: now * 1000 },
     ...extra,
-  };
+  });
 }
 
 /** Serve `body` (or 503, before the first count); the requests are counted. */
@@ -77,14 +92,14 @@ async function serve(page: Page, body: object | null) {
 // reading has got to 08:24 yesterday, many hours behind the clock.
 const behind = (today - 1) * DAY + 8 * 3_600 + 24 * 60 + 7;
 const actions = (n: number) => ({ reaction: 316 * n, cast: 156 * n, link: 45 * n, user_data: 44 * n, verification: 7 * n, storage_lending: 6 * n });
-const catchingUp = {
+const catchingUp = verified({
   reached: behind, rolling_to: Math.floor(behind / 3_600) * 3_600, since: (today - 1) * DAY - 1_808,
   days: [
     { day: today - 2, active: 134, complete: false, actions: actions(1) },
     { day: today - 1, active: 3_047, complete: false, actions: actions(10) },
   ],
-  meta: { backend: "hypersnap", fetched_at: Date.now() },
-};
+  meta: { backend: "hypersnap", fetched_at: now * 1000 },
+});
 
 async function phone(browser: Browser, testInfo: TestInfo) {
   const context = await browser.newContext({
@@ -120,7 +135,20 @@ test.describe("with the Worker", () => {
     await page.goto("/dau");
     await expect(page).toHaveTitle(/Daily active accounts/);
     await expect(page.getByRole("heading", { level: 1, name: "Daily active accounts" })).toBeVisible();
+    await expect(page.locator(".dau-lede")).toContainText("accounts, not people or Allthing readers");
+    const coverage = page.locator(".dau-coverage");
+    await expect(coverage.getByRole("heading", { name: "Hypersnap event coverage" })).toBeVisible();
+    await expect(coverage.locator(".dau-proof-status")).toHaveText("Coverage checked");
+    await expect(coverage.getByRole("link", { name: "Hypersnap event API" })).toHaveAttribute("href", source);
+    await expect(coverage.locator(".dau-source")).toContainText(`Snapshot updated ${stamp(now)}`);
+    await expect(coverage.locator(".dau-proof-times dd")).toHaveText([stamp(payload().since), stamp(reached)]);
+    await expect(coverage.locator(".dau-shards h3")).toHaveText(["Shard 1", "Shard 2"]);
+    await expect(coverage.locator(".dau-shard-through")).toHaveText([`Complete through ${stamp(reached)}`, `Complete through ${stamp(reached)}`]);
+    await expect(coverage.locator(".dau-shards li").first()).toContainText("100 / 100 events read · block complete");
+    await coverage.getByText("Checkpoint", { exact: true }).first().click();
+    await expect(coverage.locator("code").first()).toHaveText(String(payload().shards[0].cursor));
     const meter = page.locator(".dau-meter");
+    expect((await coverage.boundingBox())!.y).toBeLessThan((await meter.boundingBox())!.y);
     await expect(meter.getByRole("heading", { name: "Past 24 hours" })).toBeVisible();
     await expect(meter.locator(".dau-window")).toHaveText(`Unique accounts active in the 24 hours to ${hour}`);
     await expect(meter.locator(".dau-big")).toHaveText("6,174");
@@ -135,7 +163,7 @@ test.describe("with the Worker", () => {
     await expect(meter.locator(".dau-status")).toHaveText("Up to date · 11:59 UTC");
     const tiles = meter.locator(".dau-tile");
     await expect(tiles.locator(".dau-tile-label")).toHaveText(["Today so far", "Yesterday", "Past 30 days", "7-day average"]);
-    await expect(tiles.locator(".dau-tile-count")).toHaveText(["2,100", "6,300", "41,234", "6,214"]);
+    await expect(tiles.locator(".dau-tile-count")).toHaveText(["2,100", "6,300", "≥ 41,234", "6,214"]);
     await expect(tiles.nth(0).locator(".dau-tile-note")).toHaveText("00:00 to 11:59 UTC");
     await expect(tiles.nth(1).locator(".dau-tile-note")).toHaveText(short(yesterday.day));
     await expect(tiles.nth(2).locator(".dau-tile-note")).toHaveText(`to the end of ${short(today - 1)}, since counting began`);
@@ -262,9 +290,9 @@ test.describe("with the Worker", () => {
   test("what accounts did, accounts by app, and how they were counted", async ({ page }) => {
     await serve(page, payload());
     await page.goto("/dau");
-    // The last whole day's messages, by kind, largest first, a bar each.
+    // The last whole day's message merge events, by kind, largest first.
     const mix = page.locator(".dau-mix");
-    await expect(mix).toContainText(`45,140 messages merged on ${short(yesterday.day)}, by kind.`);
+    await expect(mix).toContainText(`45,140 message merge events on ${short(yesterday.day)}, by kind.`);
     await expect(mix.locator("li .dau-mix-name")).toHaveText(["Reactions", "Casts", "Follows", "Profile changes", "Verifications", "Username proofs"]);
     await expect(mix.locator("li").first()).toContainText("19,628");
     await expect(mix.locator("li").first()).toContainText("43%");
@@ -289,9 +317,10 @@ test.describe("with the Worker", () => {
     const method = page.locator(".dau-method");
     await expect(method.locator("dt")).toHaveText(["Active", "Past 24 hours", "Today, a day", "Past 30 days", "7-day average", "By hour", "By app", "From", "Gaps", "Exact"]);
     await expect(method).toContainText("SnapMeter's closed list for Snapchain, message types 1–8 and 11–21");
+    await expect(method).toContainText("a message present on both shards contributes to both there; account totals still count its account once");
     await expect(method).toContainText("(t − 24 h, t]");
     await expect(method.locator("dd").nth(7)).toContainText("The event stream of Hypersnap's public node, read every 2 minutes by Allthing's Worker");
-    await expect(method.locator("dd").nth(8)).toHaveText("None: every block since counting began has been read.");
+    await expect(method.locator("dd").nth(8)).toHaveText("No recorded gaps within the completed coverage shown above.");
     await expect(method.getByRole("link", { name: "SnapMeter's definitions" })).toHaveAttribute("href", "https://github.com/ael-dev3/SnapMeter/blob/main/docs/metrics.md");
     await expect(method.getByRole("link", { name: "The data as JSON" })).toHaveAttribute("href", "/api/v1/activity");
   });
@@ -300,7 +329,8 @@ test.describe("with the Worker", () => {
     const body = payload({
       previous_24h: 6_500,
       gaps: [[(today - 3) * DAY + 3_600, (today - 3) * DAY + 7_200]],
-      apps_24h: { to, counted: to + 120, active: 6_174, unknown: 1_234, apps: [{ app: 9152, active: 3_900 }] },
+      days: days.map(d => d.day === today - 3 ? { ...d, complete: false } : d),
+      apps_24h: { verification_version: 2, to, counted: to + 120, active: 6_174, unknown: 1_234, apps: [{ app: 9152, active: 3_900 }] },
     });
     await serve(page, body);
     await page.goto("/dau");
@@ -308,7 +338,7 @@ test.describe("with the Worker", () => {
     await expect(page.locator(".dau-change")).toHaveClass(/down/);
     await expect(page.locator(".dau-apps .dau-note")).toHaveText("Apps are known for 80% of active accounts so far: the counts below are floors while the rest are looked up.");
     await expect(page.locator(".dau-apps-foot")).toHaveText("1,234 accounts with keys whose app isn't known yet.");
-    await expect(page.locator(".dau-method")).toContainText(`Not read: ${short(today - 3)}`);
+    await expect(page.locator(".dau-method")).toContainText(`Not fully covered: ${short(today - 3)}`);
   });
 
   test("before the first count, the page says so", async ({ page }) => {
@@ -318,7 +348,10 @@ test.describe("with the Worker", () => {
     await expect(empty.getByRole("heading", { name: "Not counted yet" })).toBeVisible();
     await expect(empty).toContainText("Allthing hasn't counted active accounts yet.");
     // Before a whole window: no 24-hour figure, and when it comes.
-    await serve(page, payload({ rolling_24h: undefined, previous_24h: undefined, since: to - 3_600 }));
+    await serve(page, payload({
+      rolling_24h: undefined, previous_24h: undefined, since: to - 3_600,
+      days: [days[29]], hourly: [], active_30d: undefined, apps_24h: undefined,
+    }));
     await page.reload();
     const first = to - 3_600 + DAY;
     const meter = page.locator(".dau-meter");
@@ -328,12 +361,63 @@ test.describe("with the Worker", () => {
     await expect(page.locator(".dau-behind")).toHaveCount(0);
   });
 
+  const invalidProofs = [
+    { name: "the response predates verified counting", body: () => ({ ...payload(), verification_version: undefined, verified_since: undefined, source: undefined, shards: undefined }) },
+    { name: "a configured shard is missing", body: () => ({ ...payload(), shards: payload().shards.slice(0, 1) }) },
+    { name: "the checkpoint cursor contradicts its block", body: () => ({ ...payload(), shards: payload().shards.map(s => s.shard === 2 ? { ...s, cursor: s.cursor + 1 } : s) }) },
+    { name: "a completion timestamp is in the future", body: () => ({ ...payload(), reached: now + 60, shards: payload().shards.map(s => ({ ...s, reached: now + 60, block_at: now + 61 })) }) },
+    { name: "a complete day crosses a coverage gap", body: () => ({ ...payload(), gaps: [[(today - 3) * DAY + 3_600, (today - 3) * DAY + 7_200]] }) },
+    { name: "the claimed source is not Hypersnap", body: () => ({ ...payload(), source: "https://example.invalid/events" }) },
+  ];
+  for (const invalid of invalidProofs) {
+    test(`unverified counts stay hidden when ${invalid.name}`, async ({ page }) => {
+      const calls = await serve(page, invalid.body());
+      await page.goto("/dau");
+      const waiting = page.locator(".dau-unverified");
+      await expect(waiting.getByRole("heading", { name: "Counts await verification" })).toBeVisible();
+      await expect(waiting).toContainText("both network shards");
+      await expect(waiting.getByRole("link", { name: "Hypersnap event API" })).toHaveAttribute("href", source);
+      await expect(waiting.getByRole("link", { name: "The data as JSON" })).toHaveAttribute("href", "/api/v1/activity");
+      await expect(page.locator(".dau-meter, .dau-chart, .dau-mix, .dau-apps, .dau-coverage")).toHaveCount(0);
+      await expect(page.locator(".dau")).not.toContainText("6,174");
+      expect(calls).toEqual(["/api/v1/activity"]);
+    });
+  }
+
+  test("a partial shard checkpoint stays explicit and today's count is a lower bound", async ({ page }) => {
+    const body = payload();
+    body.shards[1] = { ...body.shards[1], block_at: reached + 30, total_events: 100, read_events: 37, cursor: body.shards[1].block * 16_384 + 36 };
+    await serve(page, body);
+    await page.goto("/dau");
+    const shard = page.locator(".dau-shards li").nth(1);
+    await expect(shard).toContainText("37 / 100 events read · partial block");
+    await expect(shard.locator(".dau-shard-through")).toHaveText(`Complete through ${stamp(reached)}`);
+    await expect(page.locator(".dau-coverage-note")).toContainText("lower bounds");
+    await expect(page.locator(".dau-today .dau-tile-count")).toHaveText("≥ 2,100");
+    await expect(page.locator(".dau-meter .dau-big")).toHaveText("6,174");
+  });
+
+  test("both shards can explicitly wait for their first verified events", async ({ page }) => {
+    await serve(page, {
+      verification_version: 2, source, shards: [1, 2].map(shard => ({ shard })),
+      days: [], meta: { backend: "hypersnap", fetched_at: now * 1000 },
+    });
+    await page.goto("/dau");
+    await expect(page.locator(".dau-proof-status")).toHaveText("Coverage building");
+    await expect(page.locator(".dau-proof-times dd")).toHaveText(["Waiting for both shards", "No common completed coverage yet"]);
+    await expect(page.locator(".dau-shards li")).toHaveCount(2);
+    await expect(page.locator(".dau-shard-through")).toHaveText(["Waiting for a completed block", "Waiting for a completed block"]);
+    await expect(page.locator(".dau-meter .dau-big")).toHaveText("—");
+    await expect(page.locator(".dau-chart, .dau-mix, .dau-apps")).toHaveCount(0);
+    await expect(page.locator(".dau-unverified")).toHaveCount(0);
+  });
+
   test("while catching up, today and yesterday follow the clock, and the page says how far it has read", async ({ page }) => {
     await serve(page, catchingUp);
     await page.goto("/dau");
     const year = new Date((today - 1) * DAY * 1000).getUTCFullYear();
     await expect(page.locator(".dau-behind")).toHaveText(
-      `Catching up: Allthing has read the network's messages to ${short(today - 1)} ${year}, 08:24 UTC so far, and reads them faster than they come until it is current. The counts below go to then.`,
+      `Catching up: complete event coverage reaches ${short(today - 1)} ${year}, 08:24 UTC. Later time is still unread; partial totals below are lower bounds.`,
     );
     await expect(page.getByRole("status").filter({ hasText: "Catching up:" })).toBeVisible();
     const meter = page.locator(".dau-meter");
@@ -341,7 +425,7 @@ test.describe("with the Worker", () => {
     await expect(meter.locator(".dau-what")).toHaveText(`The first 24-hour count comes once the 24 hours to ${short(today)}, 00:00 UTC have been read.`);
     // Today hasn't been read; yesterday is being read; no whole day yet.
     const tiles = meter.locator(".dau-tile");
-    await expect(tiles.locator(".dau-tile-count")).toHaveText(["—", "3,047", "—", "—"]);
+    await expect(tiles.locator(".dau-tile-count")).toHaveText(["—", "≥ 3,047", "—", "—"]);
     await expect(tiles.locator(".dau-tile-note")).toHaveText([
       "not read yet", `${short(today - 1)}, read to 08:24 UTC so far`, "once a whole day has been read", "once 14 days have been read whole",
     ]);
@@ -371,7 +455,7 @@ test.describe("with the Worker", () => {
     await plot.getByText("The days as a table").click();
     await expect(plot.locator("tbody tr").first().locator("th")).toContainText("(read so far)");
     // What they did: the day being read, said so, not the 31 minutes before it.
-    await expect(page.locator(".dau-mix")).toContainText(`5,740 messages merged on ${short(today - 1)}, read to 08:24 UTC so far, by kind.`);
+    await expect(page.locator(".dau-mix")).toContainText(`5,740 message merge events on ${short(today - 1)}, read to 08:24 UTC so far, by kind.`);
   });
 
   test("a short history keeps a month's room, the newest day on the right", async ({ page }) => {
@@ -414,7 +498,7 @@ test.describe("with the Worker", () => {
     await serve(page, payload());
     await page.goto("/dau");
     await expect(page.locator(".dau-meter")).toContainText("6,174");
-    for (const section of [".dau-meter", ".dau-chart", ".dau-mix", ".dau-apps", ".dau-method"]) {
+    for (const section of [".dau-coverage", ".dau-meter", ".dau-chart", ".dau-mix", ".dau-apps", ".dau-method"]) {
       const box = (await page.locator(section).boundingBox())!;
       expect(box.x, section).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width, section).toBeLessThanOrEqual(390);

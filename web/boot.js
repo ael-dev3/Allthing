@@ -60,17 +60,19 @@ if (location.hostname === "www.allthing.social") {
   }
 }
 
-// The boot screen's header as the app's will be: Home marked on the front
-// page, and in the account's place what the app will show there, Sign in or
+// The boot screen's header as the app's will be: its current page marked,
+// and in the account's place what the app will show there, Sign in or
 // the signed-in reader's picture (the user cookie says which), or the static
 // copy's read-only note. index.html has the rest.
 function bootHeader() {
   const account = document.getElementById("boot-account");
   if (!account) return;
   const base = "{{BASE}}";
-  if (location.pathname === base + "/" || location.pathname === base) {
-    account.closest(".header-inner")?.querySelector(".boot-nav span")?.setAttribute("aria-current", "page");
-  }
+  const path = location.pathname.slice(base.length) || "/";
+  account.closest(".header-inner")?.querySelectorAll(".boot-nav [data-route]").forEach((item) => {
+    const route = item.getAttribute("data-route");
+    if (route === "/" ? path === "/" : path.startsWith(route)) item.setAttribute("aria-current", "page");
+  });
   if (base) {
     account.outerHTML = '<span class="boot-readonly">read-only</span>';
   } else if (/(?:^|;\s*)__Host-allthing-user=[^;]/.test(document.cookie)) {
