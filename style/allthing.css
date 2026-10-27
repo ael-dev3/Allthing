@@ -8189,8 +8189,9 @@ p.jumbo .emoji img {
   }
 }
 
-/* Navigation and search share the second row where a single row would
-   squeeze the search box. The early header uses the same grid. */
+/* On tablets, navigation and search share a second row rather than
+   squeezing a single row. Phones below use a full-width search row.
+   The early header uses the same grids. */
 @media (max-width: 800px) {
   .header-inner {
     display: grid;
@@ -8231,17 +8232,50 @@ p.jumbo .emoji img {
   }
 
   .header-inner {
-    gap: 8px;
-    padding: 10px 14px 8px;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: 8px 4px;
+    padding: 10px 8px 8px;
   }
 
   .wordmark {
-    font-size: 27px;
+    font-size: 24px;
+  }
+
+  /* Keep navigation and the account controls together above a full-width
+     search field. Compact labels leave the 44 px account tap bands intact
+     at 360 px; the inert header reserves the same columns and count. */
+  .header-nav,
+  .boot-nav {
+    grid-column: 2;
+    grid-row: 1;
+    padding-right: 58px;
+    min-width: 0;
+  }
+
+  .main-nav,
+  .boot-nav {
+    gap: 4px;
+    font-size: 12px;
   }
 
   .main-nav a,
   .boot-nav span {
-    padding: 5px 8px;
+    padding: 5px 3px;
+  }
+
+  .header-nav > .presence {
+    width: 52px;
+  }
+
+  .header-actions,
+  .boot-actions,
+  .boot-readonly {
+    grid-column: 3;
+  }
+
+  .search-box,
+  .boot-search {
+    grid-column: 1 / -1;
   }
 
   .readonly-pill,
@@ -8356,6 +8390,29 @@ p.jumbo .emoji img {
   .search input {
     min-width: 0;
     width: 100%;
+  }
+}
+
+/* Small phones keep the same two rows and account tap bands; only the
+   wordmark and passive reader count compact further. */
+@media (max-width: 360px) {
+  .wordmark {
+    font-size: 20px;
+  }
+
+  .header-nav,
+  .boot-nav {
+    padding-right: 40px;
+  }
+
+  .header-nav > .presence {
+    width: 40px;
+  }
+
+  .popover-trigger.presence-chip {
+    padding: 0 2px;
+    gap: 2px;
+    font-size: 11px;
   }
 }
 

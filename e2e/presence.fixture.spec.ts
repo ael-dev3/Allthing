@@ -209,9 +209,17 @@ test.describe("in front of the Worker", () => {
         await expect(chip).toHaveText("12", { useInnerText: true });
         const box = (await chip.boundingBox())!;
         const [hx, , hw] = before.home!;
-        const [sx] = before.search!;
         expect(box.x).toBeGreaterThanOrEqual(hx + hw + 4);
-        expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
+        if (width <= 640) {
+          const [sx, sy, sw] = before.search!;
+          expect(sy).toBeGreaterThanOrEqual(box.y + box.height + 8);
+          expect(sx).toBeGreaterThanOrEqual(0);
+          expect(sx + sw).toBeLessThanOrEqual(width);
+          expect(sw).toBeGreaterThanOrEqual(width - 16);
+        } else {
+          const [sx] = before.search!;
+          expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
+        }
         expect(box.height).toBeLessThanOrEqual(before.header![3]);
         // 920 is the exact compact breakpoint; the next pixel is full size.
         const leftPadding = await chip.evaluate((el) => getComputedStyle(el).paddingLeft);
@@ -476,6 +484,7 @@ test.describe("in front of the Worker", () => {
           chip.style.display = "";
           return {
             chip: r("#app .presence-chip"), home: r("#app .main-nav a"), dau: r("#app .dau-nav"), search: r("#app .search-box"),
+            controls: r("#app .header-actions"),
             searchWith, searchWithout, scroll: document.documentElement.scrollWidth,
           };
         });
@@ -484,8 +493,16 @@ test.describe("in front of the Worker", () => {
         expect(laid.chip.x, where).toBeGreaterThanOrEqual(laid.home.right + 4);
         expect(laid.dau.x, where).toBeGreaterThanOrEqual(laid.home.right + 4);
         expect(laid.dau.right, where).toBeLessThanOrEqual(laid.chip.x);
-        expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
-        expect(laid.search.width, where).toBeGreaterThanOrEqual(width === 320 ? 112 : 128);
+        if (width <= 640) {
+          // Phones reserve the whole second row for search. Navigation,
+          // count and account controls must remain separate above it.
+          expect(laid.chip.right + 4, where).toBeLessThanOrEqual(laid.controls.x);
+          expect(laid.search.y, where).toBeGreaterThanOrEqual(Math.max(laid.home.bottom, laid.dau.bottom, laid.chip.bottom, laid.controls.bottom) + 8);
+          expect(laid.search.width, where).toBeGreaterThanOrEqual(width - 16);
+        } else {
+          expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
+          expect(laid.search.width, where).toBeGreaterThanOrEqual(128);
+        }
       }
       await context.close();
     }
