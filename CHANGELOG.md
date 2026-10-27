@@ -20,6 +20,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Recover one confirmed missing entry-loader request without reloading or changing drafts and sessions; persistent failures show an accessible Reload button even if early Home data arrives later. Healthy startup adds no recovery traffic.
+
 - Serve HTML from the same deployment as its asset manifest with no-store caching; missing scripts and WebAssembly return real 404s instead of immutable HTML. A missing startup asset can recover once when a bounded check confirms a different same-origin build; other startup errors retain the manual Reload panel.
 - Keep Cast available on Notifications and while Settings is open, including the phone button; one press dismisses Settings and opens the composer.
 - Leave enough room between phone post actions for the Save button across platform fonts, preserving their tap targets.

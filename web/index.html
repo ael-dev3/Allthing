@@ -29,7 +29,28 @@
 <link rel="stylesheet" href="{{CSS}}">
 <!-- Draws the front page's first cards from the early fetch while the app downloads; the app takes over (not in the static copy). -->
 {{PAINT}}
-<script type="module" src="{{BOOT}}"></script>
+<!-- A pinned, pre-Wasm guard can recover the entry script itself once, only after a confirmed same-origin 404/410. Successful loads add no requests. -->
+<script id="entry-recovery">(function(){
+  var retried=false;
+  function stop(){document.removeEventListener("error",failed,true);document.removeEventListener("load",loaded,true)}
+  function loaded(event){if(event.target===document.getElementById("allthing-boot"))stop()}
+  function panel(){
+    var root=document.getElementById("app"),boot=document.getElementById("boot");
+    if(!root){document.addEventListener("DOMContentLoaded",panel,{once:true});return}
+    if(boot){boot.querySelector(".boot-glow")?.remove();boot.querySelector("main")?.remove();boot.removeAttribute("data-painted");boot.removeAttribute("aria-hidden")}
+    var main=document.createElement("main"),box=document.createElement("section"),title=document.createElement("h1"),message=document.createElement("p"),reload=document.createElement("button");
+    main.id="main";main.className="page";box.className="error-panel";box.setAttribute("role","alert");title.textContent="Allthing couldn’t load";message.textContent="Reload to try again.";reload.type="button";reload.className="button";reload.textContent="Reload";reload.addEventListener("click",function(){location.reload()});box.append(title,message,reload);main.append(box);root.replaceChildren(main);if(document.activeElement===document.body)reload.focus()
+  }
+  function failed(event){
+    var entry=document.getElementById("allthing-boot");if(!entry||event.target!==entry)return;
+    var url=new URL(entry.src,location.href),timing=performance.getEntriesByName(url.href,"resource"),status=timing.length?timing[timing.length-1].responseStatus:0;
+    if(!retried&&url.origin===location.origin&&(status===404||status===410)){
+      retried=true;url.searchParams.set("__allthing_entry_retry","1");var next=document.createElement("script");next.type="module";next.src=url.href;next.id="allthing-boot";entry.replaceWith(next)
+    }else{stop();panel()}
+  }
+  document.addEventListener("error",failed,true);document.addEventListener("load",loaded,true)
+})()</script>
+<script type="module" src="{{BOOT}}" id="allthing-boot"></script>
 </head>
 <body>
 <div id="boot" class="boot" aria-hidden="true">
