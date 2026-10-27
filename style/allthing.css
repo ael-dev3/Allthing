@@ -4607,7 +4607,7 @@ p.jumbo .emoji img {
 @media (max-width: 640px) {
   .search-suggest {
     position: fixed;
-    top: 62px;
+    top: 106px;
     left: 12px;
     right: 12px;
     width: auto;
@@ -4828,10 +4828,9 @@ p.jumbo .emoji img {
   margin: auto 8px;
 }
 
-/* Searching and sorting the list, under the site's header as it scrolls:
-   the header is 60.5 px tall, 56.5 at 640 px and narrower (measured on 21
-   October 2026), and the toolbar tucks half a pixel under it, so no row
-   shows between them whichever way a font rounds. */
+/* Keep the list toolbar under the header: 60.5 px on desktop, 104.5 px
+   in the tablet grid and 100.5 px on phones. Tuck half a pixel under its
+   border so rows cannot show through a fractional rounding gap. */
 .follows-page {
   --site-header-height: 60px;
 }
@@ -5056,9 +5055,15 @@ p.jumbo .emoji img {
   text-decoration: underline;
 }
 
+@media (max-width: 800px) {
+  html { scroll-padding-top: 128px; }
+  .follows-page { --site-header-height: 104px; }
+}
+
 @media (max-width: 640px) {
+  html { scroll-padding-top: 124px; }
   .follows-page {
-    --site-header-height: 56px;
+    --site-header-height: 100px;
   }
 
   .follows-head {
@@ -5699,6 +5704,14 @@ p.jumbo .emoji img {
   gap: 10px;
 }
 
+/* Inert boot slots reserve the mounted Settings and signed-in bell. */
+.boot-control-space {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  visibility: hidden;
+}
+
 .reply-button {
   display: inline-flex;
   align-items: center;
@@ -5730,25 +5743,29 @@ p.jumbo .emoji img {
 /* The header's Cast: as tall as the search box, so the header is as tall
    with it as without. On a page without Cast its place is kept, unseen and
    out of reach, so the search box doesn't move from page to page. */
-.header-cast {
+.header-cast,
+.boot-header-cast {
   display: flex;
   flex: none;
 }
 
-.header-cast:not(.here) {
+.header-cast:not(.here),
+.boot-header-cast {
   visibility: hidden;
 }
 
 /* Exactly the search box's height, whatever the display face's metrics:
    its line box rounds a pixel taller on some systems, which made the
    header a pixel taller with Cast than without. */
-.header-cast .cast-pill {
+.header-cast .cast-pill,
+.boot-cast-pill {
   height: 36px;
   padding-top: 0;
   padding-bottom: 0;
 }
 
-.cast-pill {
+.cast-pill,
+.boot-cast-pill {
   display: inline-flex;
   flex: none;
   gap: 8px;
@@ -5785,6 +5802,7 @@ p.jumbo .emoji img {
 }
 
 .cast-pill .icon,
+.boot-cast-pill .icon,
 .cast-fab .icon,
 .reply-button .icon,
 .compose-post .icon {
@@ -7497,7 +7515,8 @@ p.jumbo .emoji img {
 
   /* Cast floats at the bottom right, in reach of a thumb, and notices sit
      above it. */
-  .header-cast {
+  .header-cast,
+  .boot-header-cast {
     display: none;
   }
 
@@ -10156,7 +10175,8 @@ p.jumbo .emoji img {
     border-radius: 50%;
   }
 
-  .header-actions {
+  .header-actions,
+  .boot-actions {
     gap: 12px;
   }
 }

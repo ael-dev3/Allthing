@@ -126,6 +126,10 @@ async function paint(payload, { sort, range, reader }) {
   reading = reader !== null;
   const notes = payload.notes || {};
   const lean = leanings(reader);
+  // The Rust app applies stable Show less sampling. Wait for that guard
+  // rather than briefly drawing candidates it will omit; ordinary early
+  // cards keep the existing renderer and request path.
+  if (lean.less.size) return;
   // The same inclusive present and exclusive lower edge as TrendingWindow::holds.
   const now = Math.floor(Date.now() / 1000);
   const inWindow = (cast) => cast.ts <= now && cast.ts > now - SPANS[range];

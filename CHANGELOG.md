@@ -17,6 +17,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Show less now omits roughly 90% of that account's feed posts across Home, Following and channels, with stable selection and a stronger penalty for remaining Hot/Top posts. New keeps chronological order; direct profiles remain complete and the same button undoes the choice.
+
 - Following opens with New selected; For you still opens with Hot. Explicit sort choices remain selected when changing the time range.
 
 ### Fixed

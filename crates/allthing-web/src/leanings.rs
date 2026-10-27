@@ -3,8 +3,8 @@
 //! their favorites and those they see less of, kept in this browser's
 //! localStorage (`allthing.favorites`, `allthing.show-less`) and sent nowhere.
 //! A favorite's casts rise well up the reader's hot and top feeds, and carry
-//! a star there; the casts of an account they see less of drop well down hot
-//! and top, and lower in new, with no mark, and nothing is hidden
+//! a star there; Show less omits about 90% of that account's feed posts and
+//! lowers the rest in hot/top. New retains chronological order
 //! (`allthing_core::ranking::sorted_for`). An account is one or the other,
 //! or neither.
 //! The reader's other tabs follow a change (the `storage` event). The static

@@ -43,7 +43,7 @@ for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
       await signIn(page, me);
       await serve(page);
-      // Neither favorites nor Show less may disturb New's time order.
+      // Favorites cannot move New; Show less preserves the time order of its subset.
       await page.addInitScript(() => {
         localStorage.setItem("allthing.favorites", JSON.stringify([{ fid: 8, username: "author8" }]));
         localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "author1" }]));
@@ -57,7 +57,7 @@ for (const width of [1280, 390]) {
           const selector = page.getByRole("combobox", { name: "Time range" });
           await expect(selector).toBeVisible();
           await expect(selector).toHaveValue(range);
-          const expected = pool.filter((c) => c.ts <= now && now - c.ts < span).map((c) => c.text);
+          const expected = pool.filter((c) => c.author.fid !== 1 && c.ts <= now && now - c.ts < span).map((c) => c.text);
           await expect.poll(async () => {
             // Earlier ranges can genuinely be read while their page loads.
             // Use this generation's control before checking exact membership.

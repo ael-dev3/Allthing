@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Show less (`crate::leanings`): on a profile, the reader sees much less of
-//! the account, in this browser. Its casts drop well down the reader's hot
-//! and top feeds, and lower in new (`allthing_core::ranking::sorted_for`);
-//! they carry no mark, and nothing is hidden.
+//! the account, in this browser. Stable sampling omits about 90% of their
+//! feed posts; remaining hot/top candidates rank lower, while New retains
+//! time order (`allthing_core::ranking::sorted_for`). Profiles stay available.
 
 use leptos::prelude::*;
 
@@ -48,7 +48,7 @@ pub fn ShowLessButton(
             {on_press.is_none().then(|| {
                 hint.view(
                     "show-less-what",
-                    "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
+                    "Omits about 90% of their posts from Home, Following and channel feeds. The rest rank much lower in hot and top; new stays chronological. Profiles stay available. Toggle again to undo. Kept in this browser only.",
                 )
             })}
         </span>

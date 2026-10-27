@@ -24,6 +24,13 @@ async function searches(page: Page) {
   await box.fill("alpha");
   await expect(list).toBeVisible();
   await expect(list.getByRole("option").first()).toContainText("alpha person");
+  const inputBounds = (await box.boundingBox())!;
+  const resultsBounds = (await list.boundingBox())!;
+  expect(resultsBounds.y).toBeGreaterThanOrEqual(inputBounds.y + inputBounds.height + 4);
+  if (page.viewportSize()!.width <= 640) {
+    const header = (await page.locator(".site-header").boundingBox())!;
+    expect(resultsBounds.y).toBeGreaterThanOrEqual(header.y + header.height + 4);
+  }
   await box.fill("beta");
   await expect.poll(() => requests.includes("beta")).toBe(true);
   return { box, list, release };

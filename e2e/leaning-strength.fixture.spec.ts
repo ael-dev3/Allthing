@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test, type Page } from "@playwright/test";
 
-/*
- * How far Show less and Favorite move an account's casts, measured on the
- * front page: a day of 120 casts, 6 of them by a typical account whose
- * median place starts in the middle of hot, top and new. Seen less of, its
- * casts drop by at least 40% of the list in hot and top, into the last
- * quarter, while New stays chronological; as a favorite, they rise as far
- * in hot and top, into the first quarter, and new stays in time order.
- * Every cast is still listed. The casts are made as allthing_core::ranking's
- * `a_day_of_casts` makes them for `leanings_move_a_typical_account_far`.
- */
+/* Show less removes a stable nine tenths of an account's candidates across
+ * all feed sorts. Remaining Hot/Top posts sink; New is a chronological subset.
+ * Favorite retains its independent lift on the original 120-post fixture. */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 test.use({ viewport: { width: 1280, height: 900 } });
@@ -54,15 +47,15 @@ const day = aDayOfCasts();
 const n = day.length;
 const hashes = day.map((c) => c.hash).sort();
 
-async function serve(page: Page) {
+async function serve(page: Page, pool = day) {
   await page.route("**/api/v1/**", (route) => route.fulfill({ status: 404, json: { error: "Fixture endpoint" } }));
   await page.route("**/api/v1/home**", (route) => {
     const later = new URL(route.request().url()).searchParams.has("offset");
-    return route.fulfill({ json: { pool: later ? [] : day, notes: {}, meta } });
+    return route.fulfill({ json: { pool: later ? [] : pool, notes: {}, meta } });
   });
-  await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool: day, notes: {}, cursors: [], meta } }));
+  await page.route("**/api/v1/latest", (route) => route.fulfill({ json: { pool, notes: {}, cursors: [], meta } }));
   await page.route("**/api/v1/user?*", (route) =>
-    route.fulfill({ json: { user: typical, pool: day.filter((c) => c.author.fid === TYPICAL), notes: {}, meta } }),
+    route.fulfill({ json: { user: typical, pool: pool.filter((c) => c.author.fid === TYPICAL), notes: {}, meta } }),
   );
 }
 
@@ -72,7 +65,7 @@ const SORTS = Object.keys(FEEDS) as Sort[];
 
 /** The front page's list in `sort`, every card drawn (it grows by 25 as its
  * end comes near): each card's hash and account. */
-async function listed(page: Page, sort: Sort) {
+async function listed(page: Page, sort: Sort, expectedHashes = hashes) {
   await page.goto(FEEDS[sort]);
   await expect(page.locator("#app .cast-list .cast-card:not(.skeleton), #app .seen-notice").first()).toBeVisible();
   // Compare ranking with the complete pool through the reader's real control.
@@ -88,12 +81,12 @@ async function listed(page: Page, sort: Sort) {
       },
       { timeout: 30_000 },
     )
-    .toBe(n);
+    .toBe(expectedHashes.length);
   const list = await cards.evaluateAll((all) =>
     all.map((card) => ({ hash: (card as HTMLElement).dataset.hash ?? "", fid: Number((card as HTMLElement).dataset.fid) })),
   );
   // Every cast is listed, once.
-  expect(list.map((card) => card.hash).sort()).toEqual(hashes);
+  expect(list.map((card) => card.hash).sort()).toEqual(expectedHashes);
   return list;
 }
 
@@ -104,11 +97,11 @@ function medianPlace(list: { fid: number }[]) {
 }
 
 /** The typical account's median place in each sort, and the lists. */
-async function measure(page: Page) {
+async function measure(page: Page, expectedHashes = hashes) {
   const lists = {} as Record<Sort, { hash: string; fid: number }[]>;
   const places = {} as Record<Sort, number>;
   for (const sort of SORTS) {
-    lists[sort] = await listed(page, sort);
+    lists[sort] = await listed(page, sort, expectedHashes);
     places[sort] = medianPlace(lists[sort]);
   }
   return { lists, places };
@@ -121,21 +114,32 @@ async function lean(page: Page, button: "Show less" | "Favorite") {
   await expect(pressed).toHaveAttribute("aria-pressed", "true");
 }
 
-test("Show less drops a typical account's casts from the middle of hot and top into the last quarter, while New stays chronological", async ({ page }) => {
-  await serve(page);
-  const before = await measure(page);
+test("Show less omits nine in ten posts consistently across sorts and keeps New chronological", async ({ page }) => {
+  const ordinary = day.filter(c => c.author.fid !== TYPICAL);
+  const template = day.find(c => c.author.fid === TYPICAL)!;
+  const targets = Array.from({ length: 60 }, (_, i) => ({
+    ...template, hash: hex(200 + i), text: `Typical cast ${200 + i}`,
+    ts: now - (2 + 4 * (i % 6)) * 3600, likes: 20 + 10 * (i % 6),
+  }));
+  const pool = [...ordinary, ...targets];
+  // Golden selections are shared protocol fixtures, not a second ranking
+  // implementation: the native suite locks these exact six hash identities.
+  const retained = [200, 215, 222, 224, 239, 247].map(hex);
+  const expected = [...ordinary.map(c => c.hash), ...retained].sort();
+  await serve(page, pool);
+  const before = await measure(page, pool.map(c => c.hash).sort());
   await lean(page, "Show less");
-  const after = await measure(page);
-  console.log(`Show less: the typical account's median place of ${n}, before and after:`, JSON.stringify({ before: before.places, after: after.places }));
+  await expect(page.locator(`.cast-card[data-hash="${hex(201)}"]`)).toBeVisible();
+  const after = await measure(page, expected);
   for (const sort of SORTS) {
-    expect(before.places[sort], `${sort} starts in the middle`).toBeGreaterThanOrEqual(0.4 * n);
-    expect(before.places[sort], `${sort} starts in the middle`).toBeLessThanOrEqual(0.6 * n);
+    expect(before.lists[sort].filter(c => c.fid === TYPICAL)).toHaveLength(60);
+    expect(after.lists[sort].filter(c => c.fid === TYPICAL).map(c => c.hash).sort()).toEqual([...retained].sort());
+    expect(after.lists[sort].filter(c => c.fid !== TYPICAL)).toEqual(before.lists[sort].filter(c => c.fid !== TYPICAL));
   }
   for (const sort of ["hot", "top"] as const) {
-    expect(after.places[sort] - before.places[sort], `${sort}: down by 40% of the list`).toBeGreaterThanOrEqual(0.4 * n);
-    expect(after.places[sort], `${sort}: in the last quarter`).toBeGreaterThan(0.75 * n);
+    expect(after.places[sort], `${sort}: remaining posts rank in the last quarter`).toBeGreaterThan(0.75 * expected.length);
   }
-  expect(after.lists.new, "new: in time order, as before").toEqual(before.lists.new);
+  expect(after.lists.new).toEqual(before.lists.new.filter(c => expected.includes(c.hash)));
 });
 
 test("Favorite raises a typical account's casts from the middle of hot and top into the first quarter, and new stays in time order", async ({ page }) => {

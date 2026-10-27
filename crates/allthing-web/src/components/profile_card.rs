@@ -181,7 +181,9 @@ fn leanings(fid: u64, username: String) -> impl IntoView {
         let (favorite, less) = untrack(|| (leaning.is_favorite(fid), leaning.shows_less(fid)));
         said.set(match (favorite, less) {
             (true, _) => format!("@{handle}'s casts rise in your feeds."),
-            (_, true) => format!("@{handle}'s casts sink in your feeds."),
+            (_, true) => {
+                format!("About 90% fewer posts from @{handle} after the next feed load. Press Show less again to undo.")
+            }
             _ => format!("@{handle}'s casts are back in place in your feeds."),
         });
     });

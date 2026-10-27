@@ -103,14 +103,14 @@ test("a signed-in reader's Following tab ranks only whom they follow, at 390", a
   await context.close();
 });
 
-test("Show less demotes a followed account, and a favorite rises", async ({ page }) => {
+test("Show less reduces a followed account in every sort", async ({ page }) => {
   await signIn(page, me);
   await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }])));
   await serve(page);
-  await page.goto("/?sort=top&feed=following");
-  await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
-  await page.goto("/?sort=hot&feed=following");
-  await expect.poll(() => order(page)).toEqual(["Followed quiet", "Followed busy"]);
+  for (const sort of ["top", "hot", "new"]) {
+    await page.goto(`/?sort=${sort}&feed=following`);
+    await expect.poll(() => order(page)).toEqual(["Followed quiet"]);
+  }
 });
 
 test("a favorite among whom they follow rises in their feed", async ({ page }) => {
