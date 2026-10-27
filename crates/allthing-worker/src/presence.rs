@@ -129,7 +129,7 @@ pub async fn handle(mut req: Request, env: &Env, ctx: Context, now_ms: f64) -> R
         fids.iter().filter_map(|fid| users.iter().find(|user| user.fid == *fid).map(normalize::user_summary)).collect();
     let body = serde_json::to_vec(&Answer { online, readers, next: next_interval(online) })?;
     let policy = CachePolicy { fresh: 30, stale: 30, keep: 60, browser: 0 };
-    let entry = Entry { body: Rc::new(body), status: 200, fetched_at: now_ms, policy };
+    let entry = Entry::new(Rc::new(body), 200, now_ms, policy);
     cache::put(&inv, &key, &entry, policy.keep).await;
     answer_with(entry.body.to_vec())
 }

@@ -163,19 +163,22 @@ pub struct Built {
     /// When its data was read (Unix milliseconds), for a stored copy built
     /// earlier; `None` means now.
     pub fetched_at: Option<f64>,
+    /// A validated stale shared Day Home copy. The edge may answer it now
+    /// and start one normal refresh, retaining its original source age.
+    pub revalidate_home: bool,
 }
 
 impl Built {
     pub fn json<T: serde::Serialize>(value: &T, policy: CachePolicy) -> Result<Built, Failure> {
         serde_json::to_vec(value)
-            .map(|body| Built { body, status: 200, policy, fetched_at: None })
+            .map(|body| Built { body, status: 200, policy, fetched_at: None, revalidate_home: false })
             .map_err(|e| Failure::internal(&e.to_string()))
     }
 
     /// A cacheable "no such thing" answer, so bad links don't reach upstream.
     pub fn not_found(message: &str) -> Built {
         let body = serde_json::to_vec(&ApiError { error: message.to_owned(), retry_after: None }).unwrap_or_default();
-        Built { body, status: 404, policy: allthing_core::api::MISS_CACHE, fetched_at: None }
+        Built { body, status: 404, policy: allthing_core::api::MISS_CACHE, fetched_at: None, revalidate_home: false }
     }
 }
 

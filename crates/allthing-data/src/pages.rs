@@ -330,11 +330,11 @@ const HOME_SNAPSHOT_MAX_BYTES: usize = 1024 * 1024;
 #[cfg(test)]
 mod home_snapshot_tests;
 
-fn fresh_home_snapshot(stored: Snapshot, now_ms: f64) -> Option<Built> {
+fn shared_home_snapshot(stored: Snapshot, now_ms: f64) -> Option<Built> {
     let age = now_ms - stored.built;
     if !stored.built.is_finite()
         || stored.built <= 0.0
-        || !(0.0..f64::from(api::HOME_CACHE.fresh) * 1000.0).contains(&age)
+        || !(0.0..f64::from(api::HOME_CACHE.stale) * 1000.0).contains(&age)
         || stored.body.len() > HOME_SNAPSHOT_MAX_BYTES
     {
         return None;
@@ -358,7 +358,13 @@ fn fresh_home_snapshot(stored: Snapshot, now_ms: f64) -> Option<Built> {
         payload.notes.keep_users(BTreeMap::new(), named);
         serde_json::to_vec(&payload).ok()?
     };
-    Some(Built { body, status: 200, policy: api::HOME_CACHE, fetched_at: Some(stored.built) })
+    Some(Built {
+        body,
+        status: 200,
+        policy: api::HOME_CACHE,
+        fetched_at: Some(stored.built),
+        revalidate_home: age >= f64::from(api::HOME_CACHE.fresh) * 1000.0,
+    })
 }
 
 fn shared_home_may_replace(previous: Option<&[u8]>, now_ms: f64) -> bool {
@@ -400,7 +406,7 @@ pub async fn home(
         && inv.remaining_subrequests() > 2
         && shared_home_may_replace(previous.as_deref().map(Vec::as_slice), inv.now())
         && let Some(copy) = stored(&inv, HOME_SNAPSHOT).await
-        && let Some(built) = fresh_home_snapshot(copy, inv.now())
+        && let Some(built) = shared_home_snapshot(copy, inv.now())
     {
         return Ok(built);
     }
@@ -884,7 +890,13 @@ pub async fn latest(inv: Rc<Invocation>, previous: Option<Rc<Vec<u8>>>) -> Resul
             } else {
                 serde_json::to_vec(&payload).map_err(|e| Failure::internal(&e.to_string()))?
             };
-            return Ok(Built { body, status: 200, policy: api::LATEST_CACHE, fetched_at: Some(stored.built) });
+            return Ok(Built {
+                body,
+                status: 200,
+                policy: api::LATEST_CACHE,
+                fetched_at: Some(stored.built),
+                revalidate_home: false,
+            });
         }
         warm = serde_json::from_str(&stored.body).ok();
     }
@@ -922,7 +934,7 @@ pub async fn activity(inv: Rc<Invocation>) -> Result<Built, Failure> {
         });
     };
     let body = stored.body.into_bytes();
-    Ok(Built { body, status: 200, policy: api::ACTIVITY_CACHE, fetched_at: Some(stored.built) })
+    Ok(Built { body, status: 200, policy: api::ACTIVITY_CACHE, fetched_at: Some(stored.built), revalidate_home: false })
 }
 
 /// The copy of `name` the cron stores, if there is an index and it has one.

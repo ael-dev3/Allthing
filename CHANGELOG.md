@@ -23,6 +23,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Let a cold location serve a validated shared Home copy inside the existing stale period while one background refresh runs. Preserve source age, time bounds and request limits; joined readers cannot duplicate the refresh.
 - Explain that complete 24-hour activity totals require a gap-free window instead of promising a first count from its start time alone.
 - Count active accounts from checked, consecutive Hypersnap events with canonical block times carried across pages, declared event totals and both shards' coverage. The new verification epoch keeps old rows without certifying their totals. Full account and 32-byte signing-key identities prevent prefix collisions; incomplete attribution stays unknown, and a fenced atomic save rejects stale concurrent runs. Action totals are labelled as merge events because the same message can appear on both shards.
 - Recover one confirmed missing entry-loader request without reloading or changing drafts and sessions; persistent failures show an accessible Reload button even if early Home data arrives later. Healthy startup adds no recovery traffic.
