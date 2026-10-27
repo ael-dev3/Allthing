@@ -5270,6 +5270,7 @@ p.jumbo .emoji img {
   padding: 8px 0;
   border-top: 1px solid var(--line);
   background: var(--card);
+  box-shadow: 0 10px 0 var(--card);
 }
 
 .profile-card-head {
