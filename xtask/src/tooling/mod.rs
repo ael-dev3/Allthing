@@ -2,6 +2,7 @@
 //! Native repository tooling. Browser-only integrations stay at their platform boundary.
 
 pub mod attest;
+pub mod browser_mirror;
 pub mod build;
 pub mod commands;
 pub mod deploy;

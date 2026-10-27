@@ -35,6 +35,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Development
 
+- Select Canonical’s Ubuntu archive before browser dependency installation on GitHub Linux runners, preserving all packages, test phases, performance limits and job caps. The mirror configuration rewrite is native Rust and has local format and safety checks.
+
 - Make attachment handoff fixtures verify file-selection order under deliberately reversed upload completion, and wait for the current finite animations when a transition is canceled or replaced.
 
 - Pause the search fixture's clock before navigation so an old real-time timer cannot move it backward; preserve the exact timer-cancellation and 250 ms debounce checks.
