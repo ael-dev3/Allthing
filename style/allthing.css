@@ -5257,6 +5257,21 @@ p.jumbo .emoji img {
   opacity: 0;
 }
 
+/* Long bios and private controls scroll, while the primary navigation stays
+   inside the card's hit area. Its normal flow space keeps the last fact
+   reachable above it at the end of the scroll. */
+.profile-card .popover-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
 .profile-card-head {
   display: flex;
   align-items: center;
