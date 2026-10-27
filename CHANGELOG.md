@@ -23,6 +23,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Explain that complete 24-hour activity totals require a gap-free window instead of promising a first count from its start time alone.
 - Count active accounts from checked, consecutive Hypersnap events with canonical block times carried across pages, declared event totals and both shards' coverage. The new verification epoch keeps old rows without certifying their totals. Full account and 32-byte signing-key identities prevent prefix collisions; incomplete attribution stays unknown, and a fenced atomic save rejects stale concurrent runs. Action totals are labelled as merge events because the same message can appear on both shards.
 - Recover one confirmed missing entry-loader request without reloading or changing drafts and sessions; persistent failures show an accessible Reload button even if early Home data arrives later. Healthy startup adds no recovery traffic.
 
@@ -32,6 +33,8 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 - After Escape closes a hover card, layout changes cannot reopen it under a stationary pointer. Moving away and back still opens it normally.
 
 ### Development
+
+- Make attachment handoff fixtures verify file-selection order under deliberately reversed upload completion, and wait for the current finite animations when a transition is canceled or replaced.
 
 - Pause the search fixture's clock before navigation so an old real-time timer cannot move it backward; preserve the exact timer-cancellation and 250 ms debounce checks.
 - Keep the live front-page check's exact navigation contract in step with the Home and Library links; first-paint, layout and interaction limits remain unchanged.

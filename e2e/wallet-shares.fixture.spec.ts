@@ -112,9 +112,13 @@ const six = [
   evm("zora", "Zora", 200, 2),
 ];
 const shown = async (list: Locator) => (await list.locator("li:visible .pct").allTextContents()).reduce((sum, pct) => sum + parseInt(pct, 10), 0);
-/** Every animation that ends has ended: the screenshot shows the page at rest. */
+/** Wait for the current finite animations, including replacements, to finish.
+ * CSS transitions can be canceled as a popover settles; their old `finished`
+ * promises reject even though the replacement still needs to run. Polling
+ * the live set waits for the page at rest without hiding an evaluation error.
+ */
 const settled = (page: Page) =>
-  page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished)));
+  page.waitForFunction(() => document.getAnimations().every((a) => a.effect?.getComputedTiming().endTime === Infinity || a.playState === "finished"));
 
 for (const width of [1280, 390]) {
   test(`at ${width}, the shares shown add up to 100 on the profile and its card, and both say how they're counted`, async ({ browser }, testInfo) => {

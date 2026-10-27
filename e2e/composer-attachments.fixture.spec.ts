@@ -65,12 +65,18 @@ class Media {
   posts = 0;
   held = false;
   refuse: [number, string][] = [];
-  private waiting: (() => void)[] = [];
+  private waiting: { type: string; go: () => void }[] = [];
   constructor(public limits: object | null = LIMITS) {}
 
   release() {
     this.held = false;
-    this.waiting.splice(0).forEach((go) => go());
+    this.waiting.splice(0).forEach(({ go }) => go());
+  }
+
+  releaseType(type: string) {
+    const index = this.waiting.findIndex((upload) => upload.type === type);
+    if (index < 0) throw new Error(`No held ${type} upload`);
+    this.waiting.splice(index, 1)[0].go();
   }
 
   async serve(page: Page) {
@@ -85,7 +91,7 @@ class Media {
       this.posts += 1;
       const body = request.postDataBuffer() ?? Buffer.alloc(0);
       const type = request.headers()["content-type"];
-      if (this.held) await new Promise<void>((go) => this.waiting.push(go));
+      if (this.held) await new Promise<void>((go) => this.waiting.push({ type, go }));
       const refused = this.refuse.shift();
       // The page may have stopped it meanwhile.
       if (refused) return route.fulfill({ status: refused[0], json: { error: refused[1] } }).catch(() => {});
@@ -725,22 +731,33 @@ test("a photo's Exif, GPS position, XMP and IPTC are taken out before it's uploa
 
 test("where Allthing doesn't post, the draft goes to the Farcaster app with its files as embeds", async ({ page }) => {
   const media = new Media();
-  await ready(page, media, { key: false });
+  const calls = await ready(page, media, { key: false });
   await page.getByRole("button", { name: "Write a cast" }).click();
   const dialog = page.getByRole("dialog", { name: "New cast" });
   await dialog.getByRole("textbox").fill("From my phone's camera roll");
   media.held = true;
   await attach(page, dialog, [await drawn(page, "one.png", "image/png", 0), await drawn(page, "two.jpg", "image/jpeg", 120)]);
+  await expect.poll(() => media.posts).toBe(2);
+  await expect(dialog.getByRole("button", { name: "Uploading…" })).toBeDisabled();
+  // Finish the second selected file first: embeds follow selection order,
+  // while the fixture's uploads are recorded in completion order.
+  media.releaseType("image/jpeg");
+  await expect.poll(() => media.uploads.map((upload) => upload.type)).toEqual(["image/jpeg"]);
+  await expect(dialog.getByRole("progressbar")).toHaveCount(1);
   await expect(dialog.getByRole("button", { name: "Uploading…" })).toBeDisabled();
   media.release();
   const post = dialog.getByRole("button", { name: "Post in Farcaster" });
   await expect(post).toBeEnabled();
+  expect(media.uploads.map((upload) => upload.type)).toEqual(["image/jpeg", "image/png"]);
   await post.click();
   const handoff = page.getByRole("dialog", { name: "Post in Farcaster" });
   const href = (await handoff.getByRole("link", { name: /Open on farcaster\.xyz/ }).getAttribute("href"))!;
   const url = new URL(href);
   expect(url.searchParams.get("text")).toBe("From my phone's camera roll");
-  expect(url.searchParams.getAll("embeds[]")).toEqual(media.uploads.map((u) => u.url));
+  const of = (type: string) => media.uploads.find((upload) => upload.type === type)!;
+  expect(url.searchParams.getAll("embeds[]")).toEqual([of("image/png").url, of("image/jpeg").url]);
+  expect(calls.sent).toHaveLength(0);
+  expect(calls.scheduled).toHaveLength(0);
 });
 
 test("a scheduled cast keeps its files, on /scheduled and when it's changed", async ({ page }) => {
