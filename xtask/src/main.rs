@@ -33,11 +33,12 @@ fn main() -> ExitCode {
         Some("check-credits") if args.len() == 1 => tooling::metadata::check_emoji_sources(&root()),
         Some("find-wasm-opt") => tooling::find_wasm_opt::run(&args[1..]),
         Some("browser-fixtures") => tooling::commands::browser_fixtures(&root(), &args[1..]),
+        Some("browser-mirror") => tooling::browser_mirror::run(&args[1..]),
         Some("module-check") => tooling::commands::module_check(&root(), &args[1..]),
         Some("npm-audit") => tooling::commands::npm_audit(&root(), &args[1..]),
         Some("attest-key") => tooling::attest::run(&root(), &args[1..]),
         Some("wait-for-deploy") => tooling::deploy::run(&root(), &args[1..]),
-        _ => Err("usage: cargo xtask dist | pages [base] | build | check | check-repo | check-credits | find-wasm-opt [cache...] | browser-fixtures | module-check | npm-audit | attest-key | wait-for-deploy <site-url> <full-commit> | strip-worker [path]".into()),
+        _ => Err("usage: cargo xtask dist | pages [base] | build | check | check-repo | check-credits | find-wasm-opt [cache...] | browser-fixtures | browser-mirror | module-check | npm-audit | attest-key | wait-for-deploy <site-url> <full-commit> | strip-worker [path]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use std::cell::{Cell, RefCell};
 
+use futures::channel::oneshot;
 use futures::future::{FutureExt, LocalBoxFuture};
 use serde_json::json;
 
@@ -21,6 +22,7 @@ struct State {
     background: RefCell<Vec<LocalBoxFuture<'static, ()>>>,
     now: Cell<f64>,
     read_delay: Cell<f64>,
+    source_gate: RefCell<Option<oneshot::Receiver<()>>>,
 }
 
 impl Index for State {
@@ -85,6 +87,7 @@ impl Host for Source {
     }
     fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
         self.requests.borrow_mut().push(request.url.clone());
+        let gate = self.state.source_gate.borrow_mut().take();
         let body = if request.url.contains("/feed/trending?") {
             json!({"casts": [{"hash": "0xfresh", "author": {"fid": 0, "username": "fresh"},
                 "text": if self.large { "x".repeat(HOME_SNAPSHOT_MAX_BYTES) } else { "fresh source".into() },
@@ -100,7 +103,13 @@ impl Host for Source {
             retry_after: None,
             body: (!self.fail).then(|| serde_json::to_vec(&body).unwrap()),
         };
-        async move { Ok(response) }.boxed_local()
+        async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+            Ok(response)
+        }
+        .boxed_local()
     }
 }
 
@@ -163,6 +172,7 @@ fn cold_copy_uses_one_read_no_upstream_and_preserves_original_bytes_and_age() {
         let built = built.unwrap();
         assert_eq!(built.body, copy.body.as_bytes());
         assert_eq!((built.fetched_at, built.status, built.policy), (Some(copy.built), 200, api::HOME_CACHE));
+        assert!(!built.revalidate_home);
         assert_eq!(inv.remaining_subrequests(), 2, "the edge-cache put still fits");
     }
     assert_eq!(*host.state.reads.borrow(), [HOME_SNAPSHOT, HOME_SNAPSHOT]);
@@ -205,7 +215,7 @@ fn invalid_or_expired_shared_copies_fall_back_to_normal_builds() {
         copy
     };
     let cases = [
-        snapshot(60_000.0, &[]),
+        snapshot(600_000.0, &[]),
         snapshot(-1.0, &[]),
         Snapshot { built: f64::NAN, ..valid.clone() },
         Snapshot { built: f64::INFINITY, ..valid.clone() },
@@ -229,7 +239,7 @@ fn invalid_or_expired_shared_copies_fall_back_to_normal_builds() {
         assert_eq!(writes[0].body.as_bytes(), built.body);
         assert_eq!(writes[0].built, payload.meta.fetched_at as f64);
     }
-    assert!(fresh_home_snapshot(snapshot(59_999.0, &[]), NOW).is_some());
+    assert!(!shared_home_snapshot(snapshot(59_999.0, &[]), NOW).unwrap().revalidate_home);
 }
 
 #[test]
@@ -244,7 +254,7 @@ fn shared_read_failure_does_not_fail_a_valid_home_build() {
 
 #[test]
 fn failed_write_or_failed_full_build_keeps_the_previous_shared_copy() {
-    let old = snapshot(60_000.0, &[]);
+    let old = snapshot(600_000.0, &[]);
     let host = source(Some(old.clone()));
     host.state.write_fails.set(true);
     assert!(build(&host, 45, 0, TrendingWindow::Day, None).1.is_ok());
@@ -296,7 +306,7 @@ fn one_through_four_slots_preserve_normal_source_availability_without_an_optiona
 
 #[test]
 fn pending_background_persistence_cannot_delay_the_response_or_reset_its_age() {
-    let old = snapshot(60_000.0, &[]);
+    let old = snapshot(600_000.0, &[]);
     let host = source(Some(old.clone()));
     host.state.write_waits.set(true);
     let (inv, result) = build(&host, 8, 0, TrendingWindow::Day, None);
@@ -372,12 +382,18 @@ fn refreshed_edges_other_windows_offsets_and_following_never_read_the_shared_hom
         (0, TrendingWindow::All),
     ] {
         let host = source(None);
-        assert!(build(&host, 45, offset, window, None).1.is_ok());
+        assert!(!build(&host, 45, offset, window, None).1.unwrap().revalidate_home);
         assert!(!host.state.reads.borrow().contains(&HOME_SNAPSHOT));
         assert!(host.state.writes.borrow().is_empty());
     }
     let host = source(None);
-    following(Rc::new(Invocation::new(host.clone(), 45)), 123, None, None).now_or_never().unwrap().unwrap();
+    assert!(
+        !following(Rc::new(Invocation::new(host.clone(), 45)), 123, None, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap()
+            .revalidate_home
+    );
     assert!(!host.state.reads.borrow().contains(&HOME_SNAPSHOT));
     assert!(host.state.writes.borrow().is_empty());
 }
@@ -390,11 +406,91 @@ fn without_storage_or_with_an_oversized_build_the_response_still_serves() {
     assert!(result.is_ok());
     assert!(host.state.reads.borrow().is_empty() && host.state.writes.borrow().is_empty());
     assert_eq!(inv.remaining_subrequests(), 1);
-    let old = snapshot(60_000.0, &[]);
+    let old = snapshot(600_000.0, &[]);
     let mut host = source(Some(old.clone()));
     Rc::get_mut(&mut host).unwrap().large = true;
     let (_, result) = build(&host, 45, 0, TrendingWindow::Day, None);
     assert!(result.unwrap().body.len() > HOME_SNAPSHOT_MAX_BYTES);
     assert!(host.state.writes.borrow().is_empty());
     assert_eq!(*host.state.copy.borrow(), Some(old));
+}
+
+#[test]
+fn stale_shared_copies_request_one_refresh_only_within_the_existing_stale_interval() {
+    for age in [60_000.0, 120_000.0, 599_999.0] {
+        let copy = snapshot(age, &[(NOW / 1000.0) as i64 - 10]);
+        let host = source(Some(copy.clone()));
+        let (inv, result) = build(&host, 3, 0, TrendingWindow::Day, None);
+        let built = result.unwrap();
+        assert!(built.revalidate_home);
+        assert_eq!(built.body, copy.body.as_bytes());
+        assert_eq!(built.fetched_at, Some(copy.built));
+        assert_eq!(inv.remaining_subrequests(), 2);
+        assert!(host.requests.borrow().is_empty() && host.state.background.borrow().is_empty());
+    }
+    let host = source(Some(snapshot(599_999.0, &[])));
+    host.state.read_delay.set(2.0);
+    let (_, result) = build(&host, 45, 0, TrendingWindow::Day, None);
+    let built = result.unwrap();
+    assert!(!built.revalidate_home, "a copy expiring during the D1 read cannot seed an edge");
+    assert_eq!(host.requests.borrow().len(), 1);
+    assert_eq!(built.fetched_at, Some(NOW + 2.0));
+}
+
+#[test]
+fn stale_response_precedes_delayed_real_source_revalidation_without_resetting_its_age() {
+    let old = snapshot(120_000.0, &[(NOW / 1000.0) as i64 - 10]);
+    let host = source(Some(old.clone()));
+    let (release, gate) = oneshot::channel();
+    *host.state.source_gate.borrow_mut() = Some(gate);
+    let (inv, result) = build(&host, 45, 0, TrendingWindow::Day, None);
+    let seeded = result.unwrap();
+    assert!(seeded.revalidate_home);
+    assert_eq!(seeded.fetched_at, Some(old.built));
+    assert_eq!(seeded.body, old.body.as_bytes());
+    assert!(host.requests.borrow().is_empty(), "the cold response does not await the source");
+    assert_eq!(inv.remaining_subrequests(), 44);
+    assert!(inv.take_subrequests(1), "charge the initial edge seed put to the same invocation");
+
+    let previous = Rc::new(seeded.body.clone());
+    let mut refresh = Box::pin(home(inv.clone(), 0, TrendingWindow::Day, Some(previous)));
+    assert!(refresh.as_mut().now_or_never().is_none(), "the actual source request remains held");
+    assert_eq!(host.requests.borrow().len(), 1);
+    assert_eq!(host.state.reads.borrow().iter().filter(|&&name| name == HOME_SNAPSHOT).count(), 1);
+    assert!(host.state.writes.borrow().is_empty());
+    assert_eq!(*host.state.copy.borrow(), Some(old.clone()));
+
+    host.state.now.set(NOW + 20_000.0);
+    release.send(()).unwrap();
+    let built = refresh.now_or_never().unwrap().unwrap();
+    assert!(!built.revalidate_home);
+    let payload: HomePayload = serde_json::from_slice(&built.body).unwrap();
+    assert_eq!(payload.pool[0].hash, "0xfresh");
+    assert_eq!(built.fetched_at, Some(NOW + 20_000.0));
+    assert_eq!(payload.meta.fetched_at as f64, NOW + 20_000.0);
+    assert_eq!(seeded.fetched_at, Some(old.built), "refreshing cannot make the returned source younger");
+    assert_eq!(inv.remaining_subrequests(), 37);
+    assert!(inv.take_subrequests(1), "the refresh's edge put also fits the original budget");
+    finish_save(&host);
+    assert_eq!(host.state.writes.borrow().len(), 1);
+    assert_eq!(host.state.copy.borrow().as_ref().unwrap().body.as_bytes(), built.body);
+}
+
+#[test]
+fn failed_delayed_revalidation_cannot_replace_the_shared_source() {
+    let old = snapshot(120_000.0, &[(NOW / 1000.0) as i64 - 10]);
+    let mut host = source(Some(old.clone()));
+    Rc::get_mut(&mut host).unwrap().fail = true;
+    let (release, gate) = oneshot::channel();
+    *host.state.source_gate.borrow_mut() = Some(gate);
+    let (inv, result) = build(&host, 45, 0, TrendingWindow::Day, None);
+    let seeded = result.unwrap();
+    assert!(seeded.revalidate_home);
+    let mut refresh = Box::pin(home(inv, 0, TrendingWindow::Day, Some(Rc::new(seeded.body))));
+    assert!(refresh.as_mut().now_or_never().is_none());
+    release.send(()).unwrap();
+    assert!(refresh.now_or_never().unwrap().is_err());
+    assert_eq!(*host.state.copy.borrow(), Some(old));
+    assert!(host.state.writes.borrow().is_empty());
+    assert_eq!(host.state.reads.borrow().iter().filter(|&&name| name == HOME_SNAPSHOT).count(), 1);
 }
