@@ -102,7 +102,7 @@ const apps = {
   9152: { fid: 9152, username: "farcaster", display_name: "Farcaster" },
   2904: { fid: 2904, username: "wake", display_name: "wake" },
 };
-const apps24h = { to: now - 600, counted: now - 590, active: 120, apps: [{ app: 9152, active: 110 }, { app: 2904, active: 9 }], none: 1 };
+const apps24h = { verification_version: 2, to: Math.floor(now / HOUR) * HOUR, counted: now, active: 120, apps: [{ app: 9152, active: 110 }, { app: 2904, active: 9 }], none: 1 };
 const quotes = { [quoted.hash]: quoted, [hiddenQuote.hash]: hiddenQuote };
 const payload = { pool, notes: { origins, apps, quotes }, meta, apps_24h: apps24h };
 
@@ -296,7 +296,7 @@ test("with most of the casts' apps still being read, the early usage bar is the 
   const held = await hold(page);
   // The first five casts' apps are known; the other 21 are being read.
   const known = Object.fromEntries(pool.slice(0, 5).map((c) => [c.hash, origins[c.hash]]));
-  await serve(page, { ...payload, notes: { ...payload.notes, origins: known, pending: pool.length - 5 } });
+  await serve(page, { ...payload, apps_24h: { ...apps24h, apps: undefined, unknown: 120, none: 0 }, notes: { ...payload.notes, origins: known, pending: pool.length - 5 } });
   await page.goto("/");
   const boot = page.locator("#boot");
   await expect(boot.locator(".cast-card")).toHaveCount(painted.length);
@@ -595,4 +595,30 @@ test("if the app can't load, its panel shows instead of the early cards", async 
   await expect(page.getByRole("button", { name: "Reload", exact: true })).toBeVisible();
   await expect(page.locator("#boot .cast-card")).toHaveCount(0);
   await expect(page.locator("#boot")).not.toHaveAttribute("data-painted", "");
+});
+
+
+test("legacy or incoherent app counts never decorate early cards", async ({ page }) => {
+  for (const change of [
+    { verification_version: 0 },
+    { to: Math.floor(now / HOUR) * HOUR - 3 * HOUR },
+    { counted: now + HOUR },
+    { apps: [{ app: 9152, active: 121 }] },
+    { apps: [{ app: 9152, active: 110 }, { app: 9152, active: 9 }] },
+  ]) {
+    const held = await hold(page);
+    await serve(page, { ...payload, apps_24h: { ...apps24h, ...change } });
+    await page.goto("/");
+    const boot = page.locator("#boot");
+    await expect(boot.locator(".cast-card")).toHaveCount(painted.length);
+    await expect(boot.locator(".share-bar")).not.toHaveClass(/\bcounted\b/);
+    await expect(boot.locator(".share-bar .seg-slot a")).toHaveCount(0);
+    await moduleIn(page, held);
+    await settled(page, "#boot");
+    const early = await shown(page, "#boot");
+    held.js("continue");
+    await expect(boot).toHaveCount(0);
+    expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+    await expect(page.locator("#app .share-bar")).not.toHaveClass(/\bcounted\b/);
+  }
 });
