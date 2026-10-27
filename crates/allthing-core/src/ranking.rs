@@ -577,6 +577,7 @@ mod tests {
             recasts,
             replies,
             mini_app: false,
+            references: Default::default(),
             spam: false,
         }
     }

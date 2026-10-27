@@ -290,7 +290,9 @@ pub mod with_worker {
                 pages
                     .iter()
                     .flat_map(|page| page.groups.iter())
-                    .filter(|group| tab.shows(group) && keys.insert(key(group)))
+                    .filter(|group| {
+                        tab.shows(group) && !crate::moderation::hides_group(group) && keys.insert(key(group))
+                    })
                     .cloned()
                     .collect::<Vec<Group>>()
             })
@@ -315,6 +317,9 @@ pub mod with_worker {
             });
         };
         (move || {
+            if crate::moderation::waiting() {
+                return view! { <crate::moderation::FilterNotice/><Skeletons/> }.into_any();
+            }
             if !loaded.get() {
                 return match notifications.failed().or_else(|| read_failed.get()) {
                     Some(failure) => view! {

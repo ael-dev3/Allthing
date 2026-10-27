@@ -98,11 +98,31 @@ function signedIn() {
 /** Not once the app, or boot.js's panel saying it couldn't load, is there. */
 const appCame = () => !boot.isConnected || document.getElementById("app")?.hasChildNodes();
 
+// Sign-in can arrive from another tab while Wasm is still loading. Retire
+// already-painted anonymous cards as well as preventing later appends.
+function privateReaderArrived() {
+  if (signedIn() === null) return false;
+  if (boot?.isConnected) {
+    boot.querySelector("main")?.remove();
+    boot.removeAttribute("data-painted");
+  }
+  return true;
+}
+try {
+  const sessions = new BroadcastChannel("allthing-session");
+  sessions.addEventListener("message", privateReaderArrived);
+  new MutationObserver((_, observer) => {
+    if (!boot.isConnected) { sessions.close(); observer.disconnect(); }
+  }).observe(boot.parentNode, { childList: true });
+} catch {}
+addEventListener("focus", privateReaderArrived);
+document.addEventListener("visibilitychange", privateReaderArrived);
+
 /** Whether a reader is signed in, for the cards' buttons. */
 let reading = false;
 
 async function paint(payload, { sort, range, reader }) {
-  if (appCame() || !Array.isArray(payload.pool)) return;
+  if (appCame() || privateReaderArrived() || !Array.isArray(payload.pool)) return;
   reading = reader !== null;
   const notes = payload.notes || {};
   const lean = leanings(reader);
@@ -123,7 +143,9 @@ async function paint(payload, { sort, range, reader }) {
     } catch {
       return;
     }
-    if (appCame()) return;
+    // Another tab may sign in while the response or image sizing is pending.
+    // Only the app can apply that reader's private account filters.
+    if (appCame() || privateReaderArrived()) return;
     const card = castCard(cast, notes, i, lean.favorites.has(cast.author.fid));
     if (!card) return;
     if (!list) {

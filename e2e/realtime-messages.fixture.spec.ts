@@ -37,31 +37,46 @@ class Database {
   chat: Row[] = [];
   dms: Row[] = [];
   next = 1;
-  pages = new Map<string, Page>();
+  pages = new Map<string, { page: Page; slot: number }>();
   tokens = new Map<string, string>();
+  moderation = false;
+  readers = new Map<string, number>();
+  filters = new Map<string, Row>();
+  filterSubscribers = new Set<string>();
   calls: { identity: string; op: string; args: unknown[] }[] = [];
 
-  connect(page: Page, token: string) {
+  connect(page: Page, token: string, slot: number) {
     let identity = this.tokens.get(token);
     if (!identity) {
       identity = id(this.tokens.size + 1);
       token = `token-${identity}`;
       this.tokens.set(token, identity);
     }
-    this.pages.set(identity, page);
+    this.pages.set(identity, { page, slot });
     return { identity, token };
   }
 
   async push(identity: string, event: object) {
-    const page = this.pages.get(identity);
-    if (page && !page.isClosed()) await page.evaluate((e) => (window as unknown as { __stdbEmit: (j: string) => void }).__stdbEmit(e), JSON.stringify(event)).catch(() => {});
+    const target = this.pages.get(identity);
+    if (target && !target.page.isClosed()) await target.page.evaluate(({ slot, event }) => {
+      (window as any).__stdbEmits?.[slot]?.(event);
+    }, { slot: target.slot, event: JSON.stringify(event) }).catch(() => {});
   }
 
   async broadcast(table: string, row: Row, op = "insert") {
     for (const identity of this.pages.keys()) await this.push(identity, { t: op, table, row });
   }
 
-  async snapshot(identity: string) {
+  async snapshot(identity: string, queries: string[]) {
+    if (queries.every(query => /FROM my_(account_filters|notification_state)\b/i.test(query))) {
+      if (queries.some(query => /FROM my_account_filters\b/i.test(query))) {
+        this.filterSubscribers.add(identity);
+        for (const row of this.filters.values()) {
+          if (row.fid === this.readers.get(identity)) await this.push(identity, { t: "insert", table: "my_account_filters", row });
+        }
+      }
+      return;
+    }
     const rows: [string, Row][] = [
       ...[...this.users.values()].map((r) => ["user", r] as [string, Row]),
       ...[...this.keys.values()].map((r) => ["user_key", r] as [string, Row]),
@@ -80,6 +95,22 @@ class Database {
     return u;
   }
 
+  async setFilter(fid: number, target: number, kind: number, desired: boolean, expected: number, username: string) {
+    const key = `${fid}:${target}`;
+    const old = this.filters.get(key);
+    const row = { key, fid, target_fid: target, target_username: username, muted: false, blocked: false,
+      mute_revision: 0, block_revision: 0, updated_at: 0, ...old };
+    const field = kind === 0 ? "muted" : "blocked", revision = kind === 0 ? "mute_revision" : "block_revision";
+    if (row[field] === desired && Number(row[revision]) > 0) return;
+    if (Number(row[revision]) !== expected) throw new Error("account filter revision changed");
+    row[field] = desired; row[revision] = Number(row[revision]) + 1;
+    row.updated_at = Math.floor(Date.now() / 1000);
+    this.filters.set(key, row);
+    for (const identity of this.filterSubscribers) {
+      if (this.readers.get(identity) === fid) await this.push(identity, { t: old ? "update" : "insert", table: "my_account_filters", row });
+    }
+  }
+
   async call(identity: string, op: string, args: unknown[]): Promise<void> {
     this.calls.push({ identity, op, args });
     const now = Date.now() * 1000;
@@ -96,6 +127,21 @@ class Database {
         const row = { identity, fid, verified: true, online: true, last_seen: now };
         this.users.set(identity, row);
         return this.broadcast("user", row, "update");
+      }
+      case "verifyNotificationFid": {
+        const [fid, , signature] = args as [number, number, string];
+        if (signature !== `fixture-attestation-${identity}-${fid}`) throw new Error("attestation signature doesn't verify");
+        const old = this.readers.get(identity);
+        if (old !== undefined && old !== fid) throw new Error("notification fid locked (verified)");
+        this.readers.set(identity, fid);
+        return;
+      }
+      case "markNotificationsSeen": return;
+      case "setAccountFilter": {
+        const fid = this.readers.get(identity);
+        if (fid === undefined) throw new Error("verify your Farcaster account first");
+        const [target, username, kind, desired, expected] = args as [number, string, number, boolean, number];
+        return this.setFilter(fid, target, kind, desired, expected, username);
       }
       case "setPublicKey": {
         const u = this.user(identity);
@@ -117,10 +163,14 @@ class Database {
       case "setTyping":
         return;
       case "sendDm": {
-        this.user(identity);
+        const sender = this.user(identity);
         const [recipient, skv, rkv, nonce, ciphertext] = args as [string, number, number, string, string];
         if (recipient === identity) throw new Error("cannot DM self");
         if (!this.keys.has(recipient)) throw new Error("recipient has no key");
+        const recipientUser = this.user(recipient);
+        if (!sender.verified || !recipientUser.verified) throw new Error("conversation unavailable");
+        const recipientFid = recipientUser.fid;
+        if (this.filters.get(`${sender.fid}:${recipientFid}`)?.blocked || this.filters.get(`${recipientFid}:${sender.fid}`)?.blocked) throw new Error("conversation unavailable");
         if (nonce.length !== 48) throw new Error("nonce must be 24 bytes");
         if (ciphertext.length < 32 || ciphertext.length > 32768) throw new Error("ciphertext 16..16384 bytes");
         const row = { id: this.next++, sender: identity, recipient, sender_key_version: skv, recipient_key_version: rkv, nonce, ciphertext, sent_at: now };
@@ -136,19 +186,33 @@ class Database {
 
 /** The bridge the app loads, as the test serves it: the real one's interface, asking the test. */
 const FAKE_BRIDGE = `
-const call = (op, args) => window.__stdb(op, JSON.stringify(args));
-const settle = (op, args) => call(op, args).then(() => JSON.stringify({ ok: true }), (e) => JSON.stringify({ ok: false, error: String(e && e.message || e).replace(/^Error: /, "") }));
+let nextSlot = 0;
+window.__stdbEmits = {};
 window.allthingStdb = {
   version: 1,
   connect(uri, database, token, emit) {
-    window.__stdbEmit = emit;
+    const slot = ++nextSlot, cache = new Map();
+    const call = (op, args) => window.__stdb(slot, op, JSON.stringify(args));
+    const settle = (op, args) => call(op, args).then(() => JSON.stringify({ ok: true }), (e) => JSON.stringify({ ok: false, error: String(e && e.message || e).replace(/^Error: /, "") }));
+    window.__stdbEmits[slot] = json => {
+      const event = JSON.parse(json);
+      if (event.table === 'my_account_filters') {
+        if (event.t === 'delete') cache.delete(event.row.key);
+        else cache.set(event.row.key, event.row);
+      }
+      emit(json);
+    };
     window.__stdbTarget = { uri, database };
     const bridge = {
       connected: call("connect", [token]),
       subscribe: (queries) => call("subscribe", [JSON.parse(queries)]),
-      disconnect() {},
+      watch: (_tag, queries) => call("subscribe", [JSON.parse(queries)]),
+      unwatch() {},
+      rows: accessor => JSON.stringify(accessor === 'myAccountFilters' ? [...cache.values()] : []),
+      moderationState: () => JSON.stringify([...cache.values()]),
+      disconnect() { delete window.__stdbEmits[slot]; },
     };
-    for (const op of ["register", "verifyFid", "setPublicKey", "sendMessage", "setTyping", "sendDm", "deleteDm"]) {
+    for (const op of ["register", "verifyFid", "verifyNotificationFid", "markNotificationsSeen", "setAccountFilter", "setPublicKey", "sendMessage", "setTyping", "sendDm", "deleteDm"]) {
       bridge[op] = (...args) => settle(op, args);
     }
     return bridge;
@@ -162,18 +226,23 @@ async function reader(browser: Browser, db: Database, who: typeof alice, width: 
   const page = await context.newPage();
   const requests: string[] = [];
   page.on("request", (r) => requests.push(r.url()));
-  let identity = "";
-  await page.exposeBinding("__stdb", async (_source, op: string, json: string) => {
+  const identities = new Map<number, string>();
+  await page.exposeBinding("__stdb", async (_source, slot: number, op: string, json: string) => {
     const args = JSON.parse(json) as unknown[];
     if (op === "connect") {
-      const c = db.connect(page, args[0] as string);
-      identity = c.identity;
+      const c = db.connect(page, args[0] as string, slot);
+      identities.set(slot, c.identity);
       return JSON.stringify(c);
     }
-    if (op === "subscribe") return db.snapshot(identity);
+    const identity = identities.get(slot)!;
+    if (op === "subscribe") return db.snapshot(identity, args[0] as string[]);
     return db.call(identity, op, args);
   });
   await page.route("**/assets/stdb-*.js", (route) => route.fulfill({ contentType: "text/javascript", body: FAKE_BRIDGE }));
+  if (db.moderation) {
+    await page.route("**/api/v1/status", route => route.fulfill({ json: { spacetime: { attest: true, moderation: true, library: false } } }));
+    await page.route("**/api/v1/notifications*", route => route.fulfill({ json: { groups: [], unread: [], meta: { backend: "hypersnap", fetched_at: Date.now() } } }));
+  }
   await page.route(`${NODE}/v2/farcaster/user/bulk?*`, (route) => {
     const fids = new URL(route.request().url()).searchParams.get("fids")!.split(",").map(Number);
     return route.fulfill({ headers: cors, json: { users: people.filter((p) => fids.includes(p.fid)) } });
@@ -294,14 +363,16 @@ for (const width of [1280, 390]) {
 
     test("encrypted messages go both ways, and the database keeps only ciphertext", async ({ browser }) => {
       const db = new Database();
+      db.verifyAttestations = true;
       const a = await reader(browser, db, alice, width);
       const b = await reader(browser, db, bob, width);
       // Bob opens Messages once, so his browser has a key.
       await b.page.goto("/messages");
       await expect(b.page.getByRole("navigation", { name: "Conversations" })).toBeVisible();
       await expect.poll(() => db.keys.size).toBe(1);
-      // Without the Worker's attestation key, names are as people claim them, and the page says so.
-      await expect(b.page.getByText("Accounts can't be verified here yet")).toBeVisible();
+      // New encrypted messages require canonical verified FIDs, so a
+      // mutable development claim cannot evade another account's block.
+      await expect(b.page.getByText("Accounts can't be verified here yet")).toHaveCount(0);
 
       await a.page.goto(`/messages?to=${bob.fid}`);
       const box = a.page.getByLabel("Encrypted message to @bob");
@@ -373,6 +444,116 @@ for (const width of [1280, 390]) {
       expect(copied).toContain("Please walk me through this design and verify it");
       await page.screenshot({ path: test.info().outputPath(`explainer-${width}.png`) });
       await context.close();
+    });
+
+    test("remote account filters hide room mentions and blocked encrypted history without deleting messages", async ({ browser }) => {
+      const db = new Database(); db.moderation = true; db.verifyAttestations = true;
+      const a = await reader(browser, db, alice, width);
+      const b = await reader(browser, db, bob, width);
+      const errors: string[] = [];
+      a.page.on("pageerror", error => errors.push(error.message));
+      b.page.on("pageerror", error => errors.push(error.message));
+      await a.page.addInitScript(() => {
+        (window as any).__deriveCount = 0;
+        const prototype = Object.getPrototypeOf(crypto.subtle), derive = prototype.deriveBits;
+        prototype.deriveBits = function (...args: unknown[]) {
+          (window as any).__deriveCount++;
+          return Reflect.apply(derive, this, args);
+        };
+      });
+      try {
+        await b.page.goto("/messages");
+        await expect.poll(() => db.keys.size).toBe(1);
+        await a.page.goto(`/messages?to=${bob.fid}`);
+        const composer = a.page.getByLabel("Encrypted message to @bob");
+        await expect(composer).toBeVisible();
+        await expect.poll(() => [...db.readers.values()].sort()).toEqual([alice.fid, bob.fid].sort());
+        const secret = "Private history survives a temporary account block";
+        await composer.fill(secret); await composer.press("Enter");
+        await expect(a.page.getByRole("list", { name: "Encrypted messages with @bob" }).getByText(secret)).toBeVisible();
+        expect(db.dms).toHaveLength(1);
+
+        const aIdentity = [...db.users.values()].find(user => user.fid === alice.fid)!.identity as string;
+        const bIdentity = [...db.users.values()].find(user => user.fid === bob.fid)!.identity as string;
+        await db.call(bIdentity, "sendMessage", [1, "Room message by Bob"]);
+        await db.call(aIdentity, "sendMessage", [1, "Room message mentioning @bob"]);
+        await db.call(aIdentity, "sendMessage", [1, "An unrelated room message"]);
+        await db.setFilter(alice.fid, bob.fid, 0, true, 0, bob.username);
+        // Muting content does not prevent an encrypted conversation.
+        await expect(composer).toBeVisible();
+        await a.page.goto("/messages?room=general");
+        const room = a.page.getByRole("list", { name: "Messages in #general" });
+        await expect(room.getByText("An unrelated room message")).toBeVisible();
+        await expect(room.getByText("Room message by Bob")).toHaveCount(0);
+        await expect(room.getByText("Room message mentioning @bob")).toHaveCount(0);
+        await a.page.goto("/messages?new=1");
+        await a.page.getByRole("combobox", { name: "To", exact: true }).fill("bob");
+        await expect(a.page.getByRole("option", { name: /Alice/ })).toBeVisible();
+        await expect(a.page.getByRole("option", { name: /Bob/ })).toHaveCount(0);
+        await db.setFilter(alice.fid, bob.fid, 0, false, 1, bob.username);
+        await a.page.goto(`/messages?to=${bob.fid}`);
+        await expect(a.page.getByRole("list", { name: "Encrypted messages with @bob" }).getByText(secret)).toBeVisible();
+        await expect(a.page.getByLabel("Encrypted message to @bob")).toBeVisible();
+        await db.setFilter(alice.fid, bob.fid, 1, true, 0, bob.username);
+        await expect(a.page.getByText("Messages hidden by your account preferences.", { exact: true })).toBeVisible();
+        await expect(a.page.getByText(secret, { exact: true })).toHaveCount(0);
+        await expect(a.page.getByLabel("Encrypted message to @bob")).toHaveCount(0);
+        await expect(a.page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /Bob/ })).toHaveCount(0);
+        expect(db.dms).toHaveLength(1);
+
+        await a.page.reload();
+        await expect(a.page.getByText("Messages hidden by your account preferences.", { exact: true })).toBeVisible();
+        await expect(a.page.getByText(secret, { exact: true })).toHaveCount(0);
+        await db.setFilter(alice.fid, bob.fid, 1, false, 1, bob.username);
+        await expect(a.page.getByRole("list", { name: "Encrypted messages with @bob" }).getByText(secret)).toBeVisible();
+        expect(db.dms).toHaveLength(1);
+
+        // A third-party mention changes privacy, not this conversation's
+        // encrypted rows. Hide already decrypted text without navigation,
+        // while preserving unrelated history, the composer and ciphertext.
+        const mentioned = "An already decrypted message mentioning @carol";
+        await composer.fill(mentioned); await composer.press("Enter");
+        const thread = a.page.getByRole("list", { name: "Encrypted messages with @bob" });
+        await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
+        const encryptedHistory = db.dms.map(row => ({ ...row }));
+        expect(encryptedHistory).toHaveLength(2);
+        const unsent = "This unsent message keeps its text and focus";
+        await composer.fill(unsent);
+        await db.setFilter(alice.fid, 303, 0, true, 0, "carol");
+        await expect(thread.getByText(mentioned, { exact: true })).toHaveCount(0);
+        await expect(thread.getByText(secret, { exact: true })).toBeVisible();
+        await expect(composer).toBeVisible();
+        await expect(composer).toHaveValue(unsent);
+        await expect(composer).toBeFocused();
+        expect(new URL(a.page.url()).searchParams.get("to")).toBe(String(bob.fid));
+        expect(db.dms).toEqual(encryptedHistory);
+        await db.setFilter(alice.fid, 303, 0, false, 1, "carol");
+        await expect(thread.getByText(mentioned, { exact: true })).toBeVisible();
+        await expect(thread.getByText(secret, { exact: true })).toBeVisible();
+        await expect(composer).toHaveValue(unsent);
+        await expect(composer).toBeFocused();
+        expect(db.dms).toEqual(encryptedHistory);
+        await composer.fill("");
+
+        // A newly arriving key/message from a blocked peer must never start
+        // an X25519 derivation, even when it is not in the secret cache.
+        await db.setFilter(alice.fid, bob.fid, 1, true, 2, bob.username);
+        await expect(a.page.getByText("Messages hidden by your account preferences.", { exact: true })).toBeVisible();
+        const count = await a.page.evaluate(() => (window as any).__deriveCount);
+        const oldKey = db.keys.get(bIdentity)!;
+        const newKey = { ...oldKey, key_version: 2, x25519_pub: "09".padEnd(64, "0") };
+        db.keys.set(bIdentity, newKey); await db.broadcast("user_key", newKey, "update");
+        await db.push(aIdentity, { t: "insert", table: "my_dm_inbox", row: {
+          id: 999, sender: bIdentity, recipient: aIdentity, sender_key_version: 2, recipient_key_version: 1,
+          nonce: "00".repeat(24), ciphertext: "00".repeat(32), sent_at: Date.now() * 1000,
+        } });
+        await a.page.waitForTimeout(150);
+        expect(await a.page.evaluate(() => (window as any).__deriveCount)).toBe(count);
+        await expect(a.page.getByText("Decrypting…", { exact: true })).toHaveCount(0);
+        expect(errors).toEqual([]);
+      } finally {
+        await a.context.close(); await b.context.close();
+      }
     });
   });
 }

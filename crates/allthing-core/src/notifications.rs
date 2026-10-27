@@ -20,6 +20,7 @@ use crate::api::{API_PREFIX, Annotations, Meta};
 use crate::embeds::embed_label;
 use crate::format::full_number;
 use crate::model::{Cast, Embed, UserSummary};
+use crate::moderation::References;
 use crate::params::percent_encode;
 use crate::text::truncate_title;
 
@@ -273,6 +274,10 @@ pub struct Group {
     /// A quote that mentions the reader, which Mentions shows too.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mentions_you: bool,
+    /// All actors, including those beyond the five displayed, and the full
+    /// target cast's account references before its text becomes an excerpt.
+    #[serde(default, skip_serializing_if = "References::is_empty")]
+    pub references: References,
 }
 
 /// Where a group's row goes.
@@ -365,12 +370,17 @@ pub fn group(mut events: Vec<Event>, me: u64) -> Vec<Group> {
                     ts: event.ts,
                     cast: event.cast.as_ref().map(Target::of),
                     mentions_you: false,
+                    references: References::default(),
                 };
                 groups.push((group, HashSet::new()));
                 groups.len() - 1
             }
         };
         let (group, people) = &mut groups[at];
+        group.references.add_user(&event.actor);
+        if let Some(cast) = &event.cast {
+            group.references.extend(&References::of_cast(cast));
+        }
         if event.kind.rank() > group.kind.rank() {
             group.kind = event.kind;
         }
@@ -462,9 +472,20 @@ pub struct Times {
     pub newest: i64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct GroupTime {
     pub ts: i64,
+    /// The same compact references used by notification rows, so a hidden
+    /// notification cannot leak back through the unread badge.
+    #[serde(default)]
+    pub references: References,
+    /// Backward compatibility for cached payloads predating references.
+    #[serde(default)]
+    pub actors: Vec<UserSummary>,
+    #[serde(default)]
+    pub count: Option<u32>,
+    #[serde(default)]
+    pub cast: Option<Target>,
 }
 
 impl Times {
@@ -551,6 +572,7 @@ mod tests {
             recasts: 0,
             replies: 0,
             mini_app: false,
+            references: Default::default(),
             spam: false,
         }
     }

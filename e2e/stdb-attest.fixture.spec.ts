@@ -84,7 +84,7 @@ async function attest(body: unknown, { fid = 1234 as number | null, origin = tru
 
 test("status reports the attestation key's public half, never the key", async () => {
   const text = await (await fetch(`${ORIGIN}/api/v1/status`)).text();
-  expect(JSON.parse(text).spacetime).toEqual({ attest: true, library: true, public_key: PUBLIC });
+  expect(JSON.parse(text).spacetime).toEqual({ attest: true, library: true, moderation: true, public_key: PUBLIC });
   expect(text).not.toContain(SEED);
 });
 

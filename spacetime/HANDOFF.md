@@ -6,6 +6,8 @@ Target DB name: **`allthing`** (fall back to `allthing-chat` if the name is take
 URL once published: `https://maincloud.spacetimedb.com` / ws, database `allthing`. Dashboard: https://spacetimedb.com/allthing
 STATUS: the existing `allthing` database was confirmed on 21 October 2026, with `general` seeded as room 1. That historical check predates the notification-state additions below and does not confirm their deployment; publish the updated module and verify its schema/reducers before announcing sync live.
 
+The private Mute/Block additions below require a separate additive publication and schema check. Historical chat, notification or Library deployment evidence does not establish that `account_filter`, `my_account_filters`, `set_account_filter` or the new DM checks are live. Preserve the real attestation pin and publish with the matching 2.13 CLI and `--delete-data=never`; never clear the database to install these preferences.
+
 ## Publish
 ```
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
@@ -20,6 +22,7 @@ Public: `user(identity PK, fid idx, verified, online, last_seen)`; `user_key(ide
 `typing(identity PK, room_id, expires_at)`.
 Private: `dm_message(id, sender idx, recipient idx, sender_key_version, recipient_key_version, nonce[24], ciphertext, sent_at)`, `rate_limit`,
 `notification_reader(identity PK, fid)` and `notification_state(fid PK, seen_at)` (Unix seconds; no notification content).
+Private account preferences: `account_filter(key PK = "<owner fid>:<target fid>", fid idx, target_fid, target_username, muted, blocked, mute_revision, block_revision, updated_at)`. The parameterless `my_account_filters` view returns only rows whose owner FID is bound to the caller by `notification_reader`, including false/false clear tombstones. There is no public base table or blocked-by view.
 Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. That rule is enforced on the server. A test confirmed that `dm_message` cannot be queried by clients. `my_notification_state` returns zero or one row for the FID bound to the calling identity by `notification_reader`; unverified identities and public chat claims grant no access.
 
 ## Reducers
@@ -29,6 +32,10 @@ Per-user views: `my_dm_inbox` and `my_dm_outbox` show the caller's DMs only. Tha
 `delete_dm(id)` (sender or recipient). Chat writes are limited to 1 per 250 ms per identity. Presence is tracked through `user.online`, set on connect/disconnect.
 
 Notification reducers are separate: `verify_notification_fid(fid, expiry, signature)` requires the same pinned, identity-bound Worker attestation even when chat's development fallback is unverified; it locks a nonzero FID to this notification identity without creating/updating a public chat user, key or presence. `mark_notifications_seen(seen_at)` derives the FID from that private binding and takes the maximum with its existing watermark; stale/equal values do not rewrite it. Negative times and times over 60 seconds ahead of the server are rejected; accepted near-future values clamp to server time. These reducers do not use chat's send-rate limiter.
+
+`set_account_filter(target_fid,target_username,kind,desired,expected_revision)` also derives its owner from that immutable private binding. Kind 0 is Mute and kind 1 is Block; each field has its own compare-and-set revision, so concurrent mute/block edits cannot overwrite one another. Repeating a settled value is idempotent; clearing retains the field's revision. Zero/self targets and malformed username metadata are rejected. Usernames help client matching only and never establish account ownership.
+
+`send_dm` now always requires both sender and recipient to have nonzero verified FIDs, consistent with any immutable `notification_reader` binding, and the recipient's public key row must belong to that same FID. This applies even when chat uses its unverified development fallback. Before accepting ciphertext it checks owner→target and target→owner `account_filter.blocked`; either true rejects with the generic `conversation unavailable`. It reveals neither the direction nor a list of blockers. Mute alone is not a server DM prohibition; existing DM rows remain intact and caller-private. The client hides blocked conversations and filters identifiable mentions after local decryption, without exposing message plaintext to the server.
 
 ## E2E design (the server sees only ciphertext)
 - The client generates an X25519 keypair. The private key stays in IndexedDB (non-extractable where possible), and only the public key goes to `set_public_key`.
@@ -41,7 +48,7 @@ Notification reducers are separate: `verify_notification_fid(fid, expiry, signat
 1. ~~FID verification~~: done. `verify_fid(fid, expiry, signature)` checks the Worker's Ed25519 attestation of
    `allthing-spacetimedb-fid-v1|identity_hex|fid|expiry` against the key pinned in `src/attest_key.rs`. `cargo xtask attest-key` generates a replacement only when explicitly rotating it; pipe its private output directly to Wrangler as described in docs/DEPLOY.md#secrets. Only verified identities may speak once the key is pinned.
 2. Pruning of expired typing rows (add a scheduled reducer; clients can filter by `expires_at` for now). Message retention/pagination.
-3. Rooms are public, with no membership or moderation. Add `room_member` plus visibility views for private rooms.
+3. Rooms are public, with no membership or shared room moderation; private reader-side hiding is described above. Add `room_member` plus visibility views for private rooms.
 4. RLS: views are used instead of `client_visibility_filter`. Users can still query the public `user_key`/`user` tables, which is intended.
 5. Run wasm-opt for a smaller module.
 
@@ -56,7 +63,9 @@ The UI and encryption logic are Rust. `web/stdb/bridge.ts` is the narrow adapter
 
 ### Private notification and Library client
 
-`notification_sync.rs` uses the same SDK module script through `stdb_bridge`, but a separate connection and per-FID `{identity, token}` record in IndexedDB `allthing-notification-sync`, store `identities` (no DM key). After its delayed/API-quiet/browser-idle status capability check, it obtains a fresh Worker attestation, calls `verify_notification_fid` and subscribes to `SELECT * FROM my_notification_state`. When `spacetime.library` is advertised, the same private socket also follows caller Library metadata and bounded membership/page queries. Foreground Library/feed readiness skips the initial delay and unrelated API waits, while still yielding to browser idle time. It never calls `register` or `set_public_key` or subscribes to public chat/presence tables.
+`notification_sync.rs` uses the same SDK module script through `stdb_bridge`, but a separate connection and per-FID `{identity, token}` record in IndexedDB `allthing-notification-sync`, store `identities` (no DM key). Its initial private-filter bootstrap keeps a two-second delay and browser-idle/visible/online gates while bypassing unrelated in-flight page reads; background reconnects retain the API-quiet gate. After that status capability check, it obtains a fresh Worker attestation, calls `verify_notification_fid` and subscribes to `SELECT * FROM my_notification_state`. When `spacetime.library` is advertised, the same private socket also follows caller Library metadata and bounded membership/page queries. Foreground Library/feed readiness skips the initial delay and unrelated API waits, while still yielding to browser idle time. It never calls `register` or `set_public_key` or subscribes to public chat/presence tables.
+
+When `spacetime.moderation` is advertised, that same base subscription also includes `SELECT * FROM my_account_filters`. The SDK getter is `moderationState()` (a JSON string of snake_case rows); row events use table `my_account_filters`, and `setAccountFilter(targetFid,targetUsername,kind,desired,expectedRevision)` returns the usual `{ok,error?}` JSON result. The full retained snapshot is intentional, including clears; it scales with filter count. Rust owns the per-field state merge, no-flash rendering guard and committed IndexedDB outbox in the existing `allthing-library-v1` database's separate `moderation` key range. Newer authoritative revisions supersede stale pending intent, including lost acknowledgements followed by another session's undo. The static copy neither connects nor shows private controls.
 
 The existing localStorage notification watermark is the offline/legacy cache. Rust `ReadState` merges it with the initial private snapshot before uploading local progress, retains failed writes, and takes maxima on acknowledgements/remote updates without echoing them. One pending maximum is written at a time, coalesced after 200 ms; 30-second operation deadlines, retry backoff capped at five minutes and online/focus/visibility wakeups handle disconnects. Sign-out/account-generation changes fence stale responses and detach the old socket. The page reconciles its initial remote baseline once; later remote reads update its badge/cache while preserving that visit's row tint. Tab selection remains in the URL.
 

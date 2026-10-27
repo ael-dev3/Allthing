@@ -275,6 +275,7 @@ struct Other {
     fid: u64,
     username: String,
     excerpt: String,
+    references: allthing_core::moderation::References,
     /// What a reply's composer shows of it (`ReplyParent`), taken from the
     /// cast on the page. A scheduled reply keeps less of it: changed, it
     /// shows a line instead.
@@ -296,6 +297,7 @@ impl Other {
             fid: cast.author.fid,
             username: cast.author.username.clone(),
             excerpt: truncate_title(cast.text.trim(), 90),
+            references: allthing_core::moderation::References::of_cast(cast),
             preview: None,
         }
     }
@@ -311,15 +313,25 @@ impl Other {
             fid: self.fid,
             username: self.username.clone(),
             excerpt: self.excerpt.clone(),
+            references: self.references.clone(),
         }
     }
 
     fn from_saved(saved: &SavedCast) -> Other {
+        let mut references = saved.references.clone();
+        if references.is_empty() {
+            // Legacy saved previews cannot establish the identities beyond
+            // their old excerpt. Keep editing available, hide that context
+            // whenever account filters are active.
+            references.add_fid(saved.fid);
+            references.incomplete = true;
+        }
         Other {
             hash: saved.hash.clone(),
             fid: saved.fid,
             username: saved.username.clone(),
             excerpt: saved.excerpt.clone(),
+            references,
             preview: None,
         }
     }
@@ -874,9 +886,10 @@ impl Composer {
                 let replaces = self.editing.get_untracked();
                 // What shows where it will be listed, once it goes out, and
                 // the draft, back in the composer if it doesn't show up.
-                let (shown, settle) = (self.outgoing(), self.settle());
+                let (mut shown, settle) = (self.outgoing(), self.settle());
                 spawn_local(async move {
                     let fids = fids_of(&mention_names(&draft.text)).await;
+                    shown.resolve_mentions(&fids);
                     let cast = draft.new_cast(|name| fids.get(name).copied());
                     let outcome = match (cast.check(), at) {
                         (Err(why), _) => Err(why.to_owned()),
@@ -913,12 +926,13 @@ impl Composer {
             self.error.set(Some(why.into()));
             return;
         }
-        let (shown, reopen) = (self.outgoing(), self.reopen());
+        let (mut shown, reopen) = (self.outgoing(), self.reopen());
         self.clear();
         self.close();
         let id = writer.reply_going(shown.clone());
         spawn_local(async move {
             let fids = fids_of(&mention_names(&draft.text)).await;
+            shown.resolve_mentions(&fids);
             let cast = draft.new_cast(|name| fids.get(name).copied());
             let checked = cast.check().map(|()| cast).map_err(str::to_owned);
             writer.send_reply(id, checked, shown, reopen);
@@ -1015,6 +1029,10 @@ impl Composer {
     fn outgoing(self) -> Outgoing {
         let draft = self.draft();
         let text = draft.text.trim().to_owned();
+        let references = match self.target.get_untracked() {
+            Target::Reply(to) | Target::Quote(to) => to.references,
+            Target::Cast(_) => Default::default(),
+        };
         let (sent, quoting, replying_to) = match self.target.get_untracked() {
             Target::Reply(to) => {
                 (Sent::Reply { parent: to.hash.to_ascii_lowercase(), text: text.clone() }, None, Some(to.username))
@@ -1038,6 +1056,8 @@ impl Composer {
             pending: false,
             media: draft.embeds.clone(),
             at: now(),
+            references,
+            mentions: Vec::new(),
         }
     }
 
@@ -1665,21 +1685,11 @@ pub fn ComposerDialog() -> impl IntoView {
                 Target::Reply(_) if reply => ("Cast your reply", None),
                 Target::Reply(to) => (
                     "Cast your reply",
-                    Some(view! {
-                        <p class="compose-context">
-                            "Replying to "<strong>"@"{to.username}</strong>
-                            {(!to.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt"><ExcerptText text=to.excerpt/></span> })}
-                        </p>
-                    }.into_any()),
+                    Some(view! { <TargetContext to action="Replying to"/> }.into_any()),
                 ),
                 Target::Quote(of) => (
                     "Add your thoughts",
-                    Some(view! {
-                        <p class="compose-context">
-                            "Quoting "<strong>"@"{of.username}</strong>
-                            {(!of.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt"><ExcerptText text=of.excerpt/></span> })}
-                        </p>
-                    }.into_any()),
+                    Some(view! { <TargetContext to=of action="Quoting"/> }.into_any()),
                 ),
                 Target::Cast(channel) => (
                     "What's happening?",
@@ -1841,6 +1851,25 @@ const REPLYING_ID: &str = "compose-replying";
 /// The play sign on a video's picture.
 const PLAY: &str = "M8 5.5v13l11-6.5z";
 
+/// Remote preferences can change while this detached composer stays open.
+/// Only the referenced post is withheld; the reader's editable text is kept.
+#[component]
+fn TargetContext(to: Other, action: &'static str) -> impl IntoView {
+    move || {
+        if crate::moderation::hides_references(&to.references) {
+            return view! {
+                <p class="compose-context muted" role="status">"Referenced post hidden by your account preferences. Your draft is unchanged."</p>
+            }.into_any();
+        }
+        view! {
+            <p class="compose-context">
+                {action}" "<strong>"@"{to.username.clone()}</strong>
+                {(!to.excerpt.is_empty()).then(|| view! { <span class="compose-excerpt"><ExcerptText text=to.excerpt.clone()/></span> })}
+            </p>
+        }.into_any()
+    }
+}
+
 /// What a reply answers, above its text box, as the Farcaster app shows
 /// it: the author's picture, name, @username and how long ago; the start of
 /// the cast (a few lines of it, `style/allthing.css`); its first pictures,
@@ -1852,10 +1881,14 @@ const PLAY: &str = "M8 5.5v13l11-6.5z";
 #[component]
 fn ReplyParent(to: Other, preview: Arc<ParentPreview>) -> impl IntoView {
     let gone = crate::components::deleted(&to.hash);
+    let references = StoredValue::new(to.references.clone());
     let heard = replying_to(&to.username, &preview.text);
     let heard_gone = format!("Replying to @{}: a cast that has been deleted", to.username);
     let username = to.username;
     let draw = move || {
+        if references.with_value(crate::moderation::hides_references) {
+            return view! { <p class="reply-parent muted" aria-hidden="true">"Referenced post hidden by your account preferences. Your draft is unchanged."</p> }.into_any();
+        }
         if gone.get() {
             return view! { <p class="reply-parent reply-parent-gone" aria-hidden="true">"This cast has been deleted"</p> }
                 .into_any();
@@ -1882,7 +1915,9 @@ fn ReplyParent(to: Other, preview: Arc<ParentPreview>) -> impl IntoView {
         .into_any()
     };
     view! {
-        <p id=REPLYING_ID class="visually-hidden">{move || if gone.get() { heard_gone.clone() } else { heard.clone() }}</p>
+        <p id=REPLYING_ID class="visually-hidden">{move || if references.with_value(crate::moderation::hides_references) {
+            "Referenced post hidden by your account preferences. Your draft is unchanged.".to_owned()
+        } else if gone.get() { heard_gone.clone() } else { heard.clone() }}</p>
         {draw}
     }
 }
@@ -2057,7 +2092,14 @@ fn composer_drafts(composer: Composer) -> Result<AnyView, SplitLoaderError> {
                     each=move || list.get()
                     key=|kept| (kept.key.clone(), kept.updated_at)
                     children=move |kept| {
-                        let label = kept.label();
+                        let original_label = kept.label();
+                        let target = kept.draft.reply.as_ref().or(kept.draft.quote.as_ref()).map(Other::from_saved);
+                        let generic_label = if kept.draft.reply.is_some() { "Reply draft" } else { "Quote draft" };
+                        let label = Memo::new(move |_| {
+                            if target.as_ref().is_some_and(|target| crate::moderation::hides_references(&target.references)) {
+                                generic_label.to_owned()
+                            } else { original_label.clone() }
+                        });
                         let snippet = text_start(&kept.draft.text, 240);
                         let files = kept.draft.media.len() + usize::from(kept.draft.gif.is_some());
                         let key = kept.key.clone();
@@ -2073,7 +2115,7 @@ fn composer_drafts(composer: Composer) -> Result<AnyView, SplitLoaderError> {
                                         focus_soon(".compose-text");
                                     }
                                 >
-                                    <span class="draft-label">{label.clone()}" · "<TimeAgo ts=at/></span>
+                                    <span class="draft-label">{move || label.get()}" · "<TimeAgo ts=at/></span>
                                     {(!snippet.is_empty()).then(|| view! { <span class="draft-snippet"><ExcerptText text=snippet/></span> })}
                                     {(files > 0).then(|| view! {
                                         <span class="draft-files muted small">{if files == 1 { "1 attachment".to_owned() } else { format!("{files} attachments") }}</span>
@@ -2082,7 +2124,7 @@ fn composer_drafts(composer: Composer) -> Result<AnyView, SplitLoaderError> {
                                 <button
                                     type="button"
                                     class="draft-delete"
-                                    aria-label=format!("Delete the draft: {label}")
+                                    aria-label=move || format!("Delete the draft: {}",label.get())
                                     on:click=move |_| {
                                         composer.forget(&key);
                                         list.update(|list| list.retain(|kept| kept.key != key));

@@ -253,7 +253,15 @@ impl Notifications {
 
     /// How many groups of the first page the reader hasn't seen (tracked).
     pub fn unread(self) -> usize {
-        self.0.with(|state| state.times.as_ref().map_or(0, |times| times.unread(state.seen)))
+        self.0.with(|state| {
+            state.times.as_ref().map_or(0, |times| {
+                times
+                    .groups
+                    .iter()
+                    .filter(|group| group.ts > state.seen && !crate::moderation::hides_group_time(group))
+                    .count()
+            })
+        })
     }
 }
 

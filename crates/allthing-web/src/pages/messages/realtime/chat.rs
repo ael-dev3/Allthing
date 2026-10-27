@@ -31,7 +31,17 @@ pub fn Chat(live: Live, people: People) -> impl IntoView {
 
     let messages = {
         let mirror = mirror.clone();
-        Memo::new(move |_| mirror.with(|m| m.room_messages(GENERAL_ROOM).into_iter().cloned().collect::<Vec<_>>()))
+        Memo::new(move |_| {
+            mirror.with(|m| {
+                m.room_messages(GENERAL_ROOM)
+                    .into_iter()
+                    .filter(|message| {
+                        !people.hidden(message.sender_fid) && !crate::moderation::hides_text(&message.text)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        })
     };
     Effect::new(move |_| people.want(messages.with(|ms| ms.iter().map(|m| m.sender_fid).collect::<Vec<_>>())));
     // Scrolled to the end as messages come, unless the reader scrolled up.
@@ -54,7 +64,9 @@ pub fn Chat(live: Live, people: People) -> impl IntoView {
         move || {
             let now = clock.now_us();
             let me = identity.get().unwrap_or_default();
-            let fids = mirror.with(|m| m.typing_in(GENERAL_ROOM, &me, now));
+            let fids = mirror.with(|m| {
+                m.typing_in(GENERAL_ROOM, &me, now).into_iter().filter(|fid| !people.hidden(*fid)).collect::<Vec<_>>()
+            });
             match fids.as_slice() {
                 [] => None,
                 [one] => Some(format!("{} is typing…", people.handle(*one))),

@@ -74,6 +74,7 @@ pub fn ReactionChips(cast: Cast, reacted: Vec<Reacted>) -> impl IntoView {
                 // reacts with it.
                 let by: Vec<UserSummary> =
                     r.by.iter()
+                        .filter(|u| !crate::moderation::hides_user(u))
                         .filter(|u| r.replies.iter().any(|(fid, reply)| *fid == u.fid && !gone(reply)))
                         .cloned()
                         .collect();

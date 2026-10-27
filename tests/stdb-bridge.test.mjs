@@ -112,3 +112,66 @@ test("disconnect retires all named subscriptions and stops later callbacks reach
   await Promise.resolve();
   assert.deepEqual(f.events, []);
 });
+
+test("moderation snapshot and updates preserve caller rows, independent revisions and clear tombstones", () => {
+  let insert, update;
+  const events = [];
+  const rows = [
+    { key: "7:8", fid: 7n, targetFid: 8n, targetUsername: "alice.eth", muted: true, blocked: false,
+      muteRevision: 2n, blockRevision: 3n, updatedAt: 100n },
+    { key: "7:9", fid: 7n, targetFid: 9n, targetUsername: "bob", muted: false, blocked: false,
+      muteRevision: 4n, blockRevision: 5n, updatedAt: 101n },
+  ];
+  const bridge = new Bridge({ db: { myAccountFilters: {
+    iter: () => rows.values(), onInsert(callback) { insert = callback; }, onDelete() {},
+    onUpdate(callback) { update = callback; },
+  } } }, (event) => events.push(JSON.parse(event)));
+  const expected = [
+    { key: "7:8", fid: 7, target_fid: 8, target_username: "alice.eth", muted: true, blocked: false,
+      mute_revision: 2, block_revision: 3, updated_at: 100 },
+    { key: "7:9", fid: 7, target_fid: 9, target_username: "bob", muted: false, blocked: false,
+      mute_revision: 4, block_revision: 5, updated_at: 101 },
+  ];
+  assert.deepEqual(JSON.parse(bridge.moderationState()), expected);
+  insert({}, rows[0]); update({}, rows[0], rows[1]);
+  assert.deepEqual(events, [
+    { t: "insert", table: "my_account_filters", row: expected[0] },
+    { t: "update", table: "my_account_filters", old: expected[0], row: expected[1] },
+  ]);
+});
+
+test("one moderation reducer call changes only its selected field and reports conflicts", async () => {
+  const calls = [];
+  const conn = { db: {}, reducers: {
+    async setAccountFilter(args) {
+      calls.push(args);
+      if (args.expectedRevision === 9n) throw new Error("account filter revision changed");
+    },
+  } };
+  const bridge = new Bridge(conn, () => {});
+  assert.deepEqual(JSON.parse(await bridge.setAccountFilter(8, "alice.eth", 0, true, 2)), { ok: true });
+  assert.deepEqual(calls[0], { targetFid: 8n, targetUsername: "alice.eth", kind: 0, desired: true, expectedRevision: 2n });
+  assert.equal("blocked" in calls[0], false);
+  assert.equal("muted" in calls[0], false);
+  assert.deepEqual(JSON.parse(await bridge.setAccountFilter(8, "alice.eth", 1, false, 9)), {
+    ok: false, error: "account filter revision changed",
+  });
+  const invalid = JSON.parse(await bridge.setAccountFilter(Number.NaN, "", 1, true, 0));
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /NaN.*BigInt/);
+  assert.equal(calls.length, 2);
+});
+
+test("snake-case moderation SDK accessors use the same caller-only boundary", async () => {
+  const calls = [];
+  const bridge = new Bridge({ db: { my_account_filters: {
+    iter: () => [], onInsert() {}, onDelete() {},
+  } }, reducers: {
+    async set_account_filter(args) { calls.push(args); throw new Error("verify your Farcaster account first"); },
+  } }, () => {});
+  assert.deepEqual(JSON.parse(bridge.moderationState()), []);
+  assert.deepEqual(JSON.parse(await bridge.setAccountFilter(8, "", 1, true, 0)), {
+    ok: false, error: "verify your Farcaster account first",
+  });
+  assert.equal(calls.length, 1);
+});

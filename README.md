@@ -43,7 +43,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Provenance.** Each cast names the app that registered its signing key ([docs/PROVENANCE.md](docs/PROVENANCE.md)).
 - **Daily active accounts.** [/dau](https://allthing.social/dau) counts Farcaster's active accounts from the network's event stream, exactly as [SnapMeter](https://github.com/ael-dev3/SnapMeter) does.
 - **Allthing's poll.** One question on the front page: would you like an Allthing mobile client?
-- **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in Settings; then each links to open in Farcaster. Nothing is hidden because of who posted it.
+- **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in Settings; then each links to open in Farcaster. There are no automatic account-based exclusions; signed-in readers can choose their own private Mute and Block preferences.
 
 ### Signed in
 
@@ -52,13 +52,14 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **A composer like the Farcaster app's.** Images and videos (PNG, JPEG, GIF, WebP; MP4, MOV, WebM) by the attach button, paste or drop, with photo location data stripped in the browser; @mention autocomplete; a Pepe emoji picker, animated Pepe stickers and GIFs (from [KLIPY](https://klipy.com)); drafts that last; a sheet on the keyboard on a phone.
 - **Library.** Bookmarks, Likes, Recasts and Seen, with paginated history, activity times, a filter for loaded posts and Back restoration. Save posts privately without a Farcaster signing key; mark posts unread or clear reading history across devices while keeping bookmarks.
 - **Notifications.** A bell with what's new, and /notifications with likes, recasts, replies, mentions, quotes and follows, grouped as the Farcaster app groups them.
+- **Private Mute and Block.** Use the buttons on another account's profile or hover card to hide posts and notifications involving it, including identifiable mentions, quotes, replies, recasts and account links. Block also stops new Allthing DMs in both directions. Choices sync across signed-in sessions through SpacetimeDB; Settings → Muted and blocked accounts lets you find and undo them separately. The help button explains pending sync, recognition limits and the scope: public posts remain public, other Farcaster clients are unaffected, and arbitrary names or text in images cannot always be recognized.
 - **Messages.** One inbox on SpacetimeDB at /messages: Allthing's public `#general` room and end-to-end encrypted conversations ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#messages-on-spacetimedb)).
 - **Signed out**, a write opens the cast, the profile or a ready draft in the Farcaster app instead.
 
 ### Fast and frugal
 
 - **One API call per page**, cached at the edge, so the whole site runs on the Cloudflare Workers Free plan.
-- **Early paint.** For anonymous readers, a small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. Signed-in Home waits for private history membership to avoid flashing previously read posts. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
+- **Early paint.** For anonymous readers, a small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. Signed-in Home waits for private history membership and account filters to avoid flashing previously read or muted/blocked posts. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
 - **Split WebAssembly.** Pages, the composer, writing, sign-in and the DAU dashboard are code of their own, fetched when used, so every visit downloads less.
 - **Instant navigation.** Posts open from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. CI holds smoothness to budgets ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - **Accessible.** Keyboard throughout, alt text, focus kept in dialogs, reduced motion respected, and it fits a phone.

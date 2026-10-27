@@ -280,6 +280,9 @@ pub struct SavedCast {
     pub username: String,
     #[serde(default)]
     pub excerpt: String,
+    /// Full account provenance survives excerpt truncation and draft reloads.
+    #[serde(default, skip_serializing_if = "crate::moderation::References::is_empty")]
+    pub references: crate::moderation::References,
 }
 
 impl SavedDraft {
@@ -302,6 +305,35 @@ impl SavedDraft {
         } else {
             self.channel.as_ref().map(|id| format!("In /{id}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn saved_target_provenance_survives_excerpt_truncation_and_legacy_drafts_parse() {
+        let legacy =
+            SavedDraft::parse(r#"{"text":"","reply":{"hash":"0x01","fid":42,"username":"alice","excerpt":"short"}}"#);
+        assert!(legacy.reply.unwrap().references.is_empty());
+        let mut references = crate::moderation::References::default();
+        references.add_fid(42);
+        references.add_fid(99);
+        let draft = SavedDraft {
+            text: "My editable draft".into(),
+            reply: Some(SavedCast {
+                hash: "0x01".into(),
+                fid: 42,
+                username: "alice".into(),
+                excerpt: "short".into(),
+                references,
+            }),
+            ..SavedDraft::default()
+        };
+        let restored = SavedDraft::parse(&draft.to_json());
+        assert_eq!(restored, draft);
+        assert_eq!(restored.reply.unwrap().references.fids, [42, 99]);
     }
 }
 
@@ -432,7 +464,13 @@ mod tests {
                 width: 200,
                 height: 150,
             }),
-            reply: Some(SavedCast { hash: "0x01".into(), fid: 42, username: "alice".into(), excerpt: "Pick".into() }),
+            reply: Some(SavedCast {
+                hash: "0x01".into(),
+                fid: 42,
+                username: "alice".into(),
+                excerpt: "Pick".into(),
+                ..SavedCast::default()
+            }),
             ..SavedDraft::default()
         };
         assert_eq!(SavedDraft::parse(&draft.to_json()), draft);

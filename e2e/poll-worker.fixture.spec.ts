@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 
 /*
@@ -27,6 +28,7 @@ const ORIGIN = `http://127.0.0.1:${PORT}`;
 const SECRET = "poll-end-to-end-session-secret-for-tests-only";
 const ROOT = path.join(__dirname, "..");
 const POLL = "mobile-client-v1";
+const execute = promisify(execFile);
 
 let worker: ChildProcess | undefined;
 let state = "";
@@ -34,14 +36,13 @@ let state = "";
 /** The key a network's vote is kept under: the HMAC-SHA256 of "allthing poll v1", a newline and "<poll>|<network>", keyed with the session secret. */
 const voter = (network: string) => createHmac("sha256", SECRET).update(`allthing poll v1\n${POLL}|${network}`).digest("hex");
 
-/** A query on the spec's local D1, as the Worker sees it. */
-function d1(sql: string): Record<string, string | number>[] {
-  const out = execFileSync("npx", ["wrangler", "d1", "execute", "allthing-index", "--local", "--persist-to", state, "--json", "--command", sql], {
+/** Query local D1 without blocking fetch's idle-connection lifecycle. */
+async function d1(sql: string): Promise<Record<string, string | number>[]> {
+  const { stdout } = await execute("npx", ["wrangler", "d1", "execute", "allthing-index", "--local", "--persist-to", state, "--json", "--command", sql], {
     cwd: ROOT,
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
   });
-  return JSON.parse(out)[0].results;
+  return JSON.parse(stdout)[0].results;
 }
 
 type Answer = { status: number; json: { counted?: boolean; already?: boolean; counts?: object; error?: string }; headers: Headers };
@@ -103,7 +104,7 @@ test("one vote counts per network, which is told it voted already, never how; D1
 
   // D1: each network's vote under its HMAC (64 hex digits), the counts its
   // votes keep, and no address anywhere.
-  const votes = d1("SELECT poll, voter, choice FROM poll_votes");
+  const votes = await d1("SELECT poll, voter, choice FROM poll_votes");
   expect(votes).toHaveLength(4);
   for (const row of votes) {
     expect(row.poll).toBe(POLL);
@@ -116,16 +117,16 @@ test("one vote counts per network, which is told it voted already, never how; D1
     [voter("2001:db8:1:2::/64")]: "yes",
     [voter("2001:db8:1:3::/64")]: "no",
   });
-  expect(d1(`SELECT choice, n FROM poll_counts WHERE poll = '${POLL}' ORDER BY choice`)).toEqual([
+  expect(await d1(`SELECT choice, n FROM poll_counts WHERE poll = '${POLL}' ORDER BY choice`)).toEqual([
     { choice: "no", n: 2 },
     { choice: "yes", n: 2 },
   ]);
-  const everything = JSON.stringify([d1("SELECT * FROM poll_votes"), d1("SELECT * FROM poll_counts")]);
+  const everything = JSON.stringify([await d1("SELECT * FROM poll_votes"), await d1("SELECT * FROM poll_counts")]);
   for (const address of ["203.0.113", "198.51.100", "2001:db8", "127.0.0.1"]) expect(everything).not.toContain(address);
 });
 
 test("only Allthing's own pages vote, and only a well-formed vote from a known address counts", async () => {
-  const before = d1("SELECT COUNT(*) AS n FROM poll_votes")[0].n;
+  const before = (await d1("SELECT COUNT(*) AS n FROM poll_votes"))[0].n;
   // From another site, or with no Origin at all: refused.
   for (const origin of ["https://evil.example", null]) {
     const refused = await vote(yes, "192.0.2.1", origin);
@@ -151,7 +152,7 @@ test("only Allthing's own pages vote, and only a well-formed vote from a known a
   }
   // From an address that can't be read: not counted for anyone.
   expect((await vote(yes, "not-an-address")).status).toBe(400);
-  expect(d1("SELECT COUNT(*) AS n FROM poll_votes")[0].n).toBe(before);
+  expect((await d1("SELECT COUNT(*) AS n FROM poll_votes"))[0].n).toBe(before);
 });
 
 test("a server without SESSION_SECRET says polls aren't set up", async ({ request, baseURL }) => {

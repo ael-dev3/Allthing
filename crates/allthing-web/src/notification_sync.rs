@@ -19,7 +19,6 @@ use crate::keys::{self, NotificationIdentity};
 use crate::stdb_bridge::{await_promise, clear_timeout, js_error, load_bridge, method, parse, set_timeout, uri};
 
 const BRIDGE: Option<&str> = option_env!("ALLTHING_STDB_BRIDGE");
-const QUERY: &str = "[\"SELECT * FROM my_notification_state\"]";
 type Emit = Closure<dyn FnMut(String)>;
 
 thread_local! {
@@ -62,6 +61,7 @@ fn visible_online() -> bool {
 /// instance fences every asynchronous completion, even after A → B → A.
 pub fn account(fid: Option<u64>, notifications: Notifications) {
     crate::library::account(fid);
+    crate::moderation::account(fid);
     if CURRENT.with(|s| s.borrow().as_ref().map(|s| s.fid)) == fid {
         return;
     }
@@ -90,6 +90,10 @@ pub fn account(fid: Option<u64>, notifications: Notifications) {
         })),
     };
     CURRENT.with(|s| *s.borrow_mut() = Some(sync.clone()));
+    // Private filters gate foreground content before cards can register a
+    // Library watch. Keep the two-second startup delay, but do not let an
+    // unrelated API request prevent this account's privacy bootstrap.
+    sync.inner.urgent.set(true);
     sync.schedule(2000);
 }
 
@@ -122,6 +126,26 @@ pub(crate) fn wake_urgent() {
         sync.inner.urgent.set(true);
         sync.inner.not_before.set(0.0);
         wake();
+    }
+}
+
+/// A deliberate retry reloads capabilities and reopens the verified private
+/// subscription. It reuses the reader identity, never a new write-key approval.
+pub(crate) fn retry_preferences() {
+    if let Some(sync) = CURRENT.with(|s| s.borrow().clone()) {
+        if !sync.active() || sync.inner.connecting.get() {
+            return;
+        }
+        api::forget("/api/v1/status");
+        sync.inner.ready.set(false);
+        // Retire private reducer handles before closing the socket. A retry
+        // must wait for the replacement snapshot rather than flush on the
+        // detached bridge still held by an account preference outbox.
+        crate::moderation::connection_failed(sync.fid, "Reconnecting private account preferences…".into());
+        sync.detach();
+        sync.inner.urgent.set(true);
+        sync.inner.not_before.set(0.0);
+        sync.schedule(0);
     }
 }
 
@@ -185,6 +209,13 @@ impl Sync {
         if !self.active() || self.inner.connecting.get() || self.inner.writing.get() {
             return;
         }
+        // An automatic watermark/subscription retry also retires consumers'
+        // reducer handles: disconnect intentionally suppresses its callback.
+        crate::moderation::connection_failed(
+            self.fid,
+            "Account preferences reconnecting; saved filters and pending changes are kept.".into(),
+        );
+        crate::library::connection_failed(self.fid, "Library reconnecting; your offline changes are kept".into());
         self.detach();
         let failures = self.inner.failures.get().saturating_add(1);
         self.inner.failures.set(failures);
@@ -207,6 +238,7 @@ impl Sync {
                 return;
             }
             if let Err(error) = result {
+                crate::moderation::connection_failed(sync.fid, error.clone());
                 crate::library::connection_failed(sync.fid, error);
                 sync.retry();
                 return;
@@ -240,11 +272,14 @@ impl Sync {
             attest: bool,
             #[serde(default)]
             library: bool,
+            #[serde(default)]
+            moderation: bool,
         }
         let status = match api::get::<Status>("/api/v1/status").await {
             Ok(status) => status,
             Err(api::Failure::NotFound(error)) => {
                 crate::library::capability(self.fid, Some(false));
+                crate::moderation::capability(self.fid, false);
                 self.inner.urgent.set(false);
                 return Err(error);
             }
@@ -252,6 +287,8 @@ impl Sync {
         };
         self.check()?;
         let library = status.data.spacetime.library;
+        let moderation = status.data.spacetime.moderation;
+        crate::moderation::capability(self.fid, moderation);
         crate::library::capability(self.fid, Some(library));
         if !library {
             self.inner.urgent.set(false);
@@ -320,15 +357,28 @@ impl Sync {
                 self.inner.bridge.borrow().clone().ok_or("Not connected")?,
             );
         }
-        let query = if library {
-            "[\"SELECT * FROM my_notification_state\",\"SELECT * FROM my_library_state\"]"
-        } else {
-            QUERY
-        };
+        if moderation {
+            crate::moderation::bind(
+                self.fid,
+                self.inner.attempt.get(),
+                self.inner.bridge.borrow().clone().ok_or("Not connected")?,
+            );
+        }
+        let mut query = vec!["SELECT * FROM my_notification_state"];
+        if library {
+            query.push("SELECT * FROM my_library_state");
+        }
+        if moderation {
+            query.push("SELECT * FROM my_account_filters");
+        }
+        let query = serde_json::to_string(&query).map_err(|e| e.to_string())?;
         bounded(self.raw("subscribe", &[query.into()])?).await?;
         self.check()?;
         if library {
             crate::library::base_applied(self.fid)?;
+        }
+        if moderation {
+            crate::moderation::base_applied(self.fid)?;
         }
         self.inner.state.borrow_mut().hydrated();
         let state = self.inner.state.borrow();
@@ -348,6 +398,7 @@ impl Sync {
 
     fn event(&self, json: &str) {
         crate::library::event(self.fid, json);
+        crate::moderation::event(self.fid, json);
         #[derive(serde::Deserialize)]
         struct Event {
             t: String,
@@ -363,6 +414,10 @@ impl Sync {
         let Ok(event) = serde_json::from_str::<Event>(json) else { return };
         if event.t == "disconnected" {
             self.inner.disconnected.set(true);
+            crate::moderation::connection_failed(
+                self.fid,
+                "Account preferences disconnected; saved filters remain hidden and pending changes are kept.".into(),
+            );
             crate::library::connection_failed(
                 self.fid,
                 "Library connection interrupted; your offline changes are kept".into(),

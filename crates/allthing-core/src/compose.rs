@@ -734,6 +734,7 @@ mod tests {
             recasts: 0,
             replies: 0,
             mini_app: false,
+            references: Default::default(),
             spam: false,
         }
     }

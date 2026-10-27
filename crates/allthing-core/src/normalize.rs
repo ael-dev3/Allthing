@@ -71,12 +71,17 @@ pub struct RawCastId {
 #[derive(Debug, Default, Deserialize)]
 pub struct RawEmbeddedCastAuthor {
     pub fid: Option<u64>,
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct RawEmbeddedCast {
     pub hash: Option<String>,
     pub author: Option<RawEmbeddedCastAuthor>,
+    pub text: Option<String>,
+    pub mentioned_profiles: Option<Vec<RawUser>>,
+    pub parent_author: Option<RawParentAuthor>,
+    pub embeds: Option<Vec<RawEmbed>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -160,6 +165,11 @@ pub struct RawCast {
     pub mentioned_profiles: Option<Vec<RawUser>>,
     pub mentioned_profiles_ranges: Option<Vec<RawRange>>,
     pub direct_replies: Option<Vec<RawCast>>,
+    /// Some feed shapes carry the recaster separately from the cast author.
+    /// Accept either one account or an array without imposing a provider
+    /// shape on otherwise usable casts. Unrecognized fields are ignored.
+    #[serde(alias = "recast_by")]
+    pub recasted_by: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -764,6 +774,78 @@ fn text_has_mini_app(text: &str) -> bool {
         .any(|t| matches!(t, crate::text::Token::Url(url) if crate::embeds::is_mini_app_url(url)))
 }
 
+/// Preserve identities that normalization would otherwise discard. Inline
+/// nested quote bodies are bounded independently of displayed quote hydration;
+/// a deeper body is marked incomplete rather than silently losing protection.
+fn raw_account_references(raw: &RawCast) -> crate::moderation::References {
+    use crate::moderation::References;
+
+    let mut references = References::default();
+    if let Some(fid) = raw.parent_author.as_ref().and_then(|parent| parent.fid) {
+        references.add_fid(fid);
+    }
+    let add_recast = |references: &mut References, actor: &Value| {
+        if let Some(fid) = actor.get("fid").and_then(Value::as_u64).filter(|fid| *fid != 0) {
+            references.add_fid(fid);
+        } else if let Some(username) = actor.get("username").and_then(Value::as_str) {
+            references.add_username(username);
+        }
+    };
+    if let Some(actor) = &raw.recasted_by {
+        match actor {
+            Value::Array(actors) => {
+                for actor in actors {
+                    add_recast(&mut references, actor);
+                }
+            }
+            _ => add_recast(&mut references, actor),
+        }
+    }
+    let mut pending: Vec<(&RawEmbed, usize)> = raw.embeds.iter().flatten().map(|embed| (embed, 0)).collect();
+    let mut visited = 0;
+    while let Some((embed, depth)) = pending.pop() {
+        visited += 1;
+        if visited > 128 || depth > 8 {
+            references.incomplete = true;
+            break;
+        }
+        if let Some(fid) = embed.cast_id.as_ref().and_then(|id| id.fid) {
+            references.add_fid(fid);
+        }
+        if let Some(url) = &embed.url {
+            references.add_profile_url(url);
+        }
+        if let Some(quote) = &embed.cast {
+            if let Some(author) = &quote.author {
+                if let Some(fid) = author.fid.filter(|fid| *fid != 0) {
+                    references.add_fid(fid);
+                } else if let Some(username) = &author.username {
+                    references.add_username(username);
+                }
+            }
+            if let Some(fid) = quote.parent_author.as_ref().and_then(|parent| parent.fid) {
+                references.add_fid(fid);
+            }
+            let mentions: Vec<Mention> = quote
+                .mentioned_profiles
+                .iter()
+                .flatten()
+                .map(|user| Mention { fid: user.fid, username: username_for(user) })
+                .collect();
+            references.extend(&References::text_with_resolved(quote.text.as_deref().unwrap_or(""), &mentions));
+            for mention in mentions {
+                if mention.fid != 0 {
+                    references.add_fid(mention.fid)
+                } else {
+                    references.add_username(&mention.username)
+                }
+            }
+            pending.extend(quote.embeds.iter().flatten().map(|embed| (embed, depth + 1)));
+        }
+    }
+    references
+}
+
 pub fn cast(raw: &RawCast) -> Cast {
     let mentions: Vec<Mention> = raw
         .mentioned_profiles
@@ -788,6 +870,7 @@ pub fn cast(raw: &RawCast) -> Cast {
         ),
         text,
         mentions,
+        references: raw_account_references(raw),
         ts: raw.timestamp.as_deref().and_then(parse_rfc3339).unwrap_or(0),
         parent_hash: non_empty(raw.parent_hash.as_deref()).map(|h| normalize_hash(&h)),
         parent_url: non_empty(raw.parent_url.as_deref()),

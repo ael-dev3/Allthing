@@ -205,6 +205,11 @@ pub struct Cast {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<Mention>,
+    /// Account provenance that an excerpt cannot retain: known reply parents,
+    /// recasters and inline quoted-cast identities. Reader filtering also
+    /// checks this cast's own author, mentions, text and hydrated quotes.
+    #[serde(default, skip_serializing_if = "crate::moderation::References::is_empty")]
+    pub references: crate::moderation::References,
     /// Unix seconds.
     pub ts: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

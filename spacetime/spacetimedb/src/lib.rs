@@ -4,6 +4,7 @@ use spacetimedb::{Identity, ReducerContext, Table, TimeDuration, Timestamp, View
 
 mod attest_key;
 mod library;
+mod moderation;
 pub use attest_key::ATTEST_PUBLIC_KEY;
 
 const MAX_MSG: usize = 4000;
@@ -214,13 +215,23 @@ pub fn register(ctx: &ReducerContext, fid: u64) -> Result<(), String> {
 /// `allthing-spacetimedb-fid-v1|<identity hex>|<fid>|<expiry>`, which
 /// Allthing's Worker signs for a reader signed in with Farcaster as `fid`
 /// (`POST /api/v1/auth/attest`). The identity is the caller's own, so an
-/// attestation can't be used by anyone else. Sets `verified`, and moves the
-/// identity (and its key row) to `fid` if it had claimed another.
+/// attestation can't be used by anyone else. Sets `verified`, and moves an
+/// unverified claim (and its key row) to `fid`; verified bindings are immutable.
 #[spacetimedb::reducer]
 pub fn verify_fid(ctx: &ReducerContext, fid: u64, expiry: u64, signature: Vec<u8>) -> Result<(), String> {
     let now = (ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000).max(0) as u64;
     let identity = ctx.sender().to_hex().to_string();
     check_attestation(&ATTEST_PUBLIC_KEY, &identity, fid, expiry, now, &signature)?;
+    // An encrypted message identity must never change accounts: block
+    // enforcement is account-wide, and old ciphertext names this identity.
+    if let Some(old) = ctx.db.user().identity().find(ctx.sender())
+        && old.verified
+    {
+        notification_fid(Some(old.fid), fid)?;
+    }
+    if let Some(reader) = ctx.db.notification_reader().identity().find(ctx.sender()) {
+        notification_fid(Some(reader.fid), fid)?;
+    }
     let u = User { identity: ctx.sender(), fid, verified: true, online: true, last_seen: ctx.timestamp };
     if ctx.db.user().identity().find(ctx.sender()).is_some() {
         ctx.db.user().identity().update(u);
@@ -243,6 +254,11 @@ pub fn verify_notification_fid(ctx: &ReducerContext, fid: u64, expiry: u64, sign
     let now = (ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000).max(0) as u64;
     let identity = ctx.sender().to_hex().to_string();
     check_attestation(&ATTEST_PUBLIC_KEY, &identity, fid, expiry, now, &signature)?;
+    if let Some(user) = ctx.db.user().identity().find(ctx.sender())
+        && user.verified
+    {
+        notification_fid(Some(user.fid), fid)?;
+    }
     let readers = ctx.db.notification_reader();
     let previous = readers.identity().find(ctx.sender());
     notification_fid(previous.as_ref().map(|reader| reader.fid), fid)?;
@@ -353,13 +369,28 @@ pub fn send_dm(
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
 ) -> Result<(), String> {
-    speaker(ctx)?;
+    let sender = speaker(ctx)?;
     if recipient == ctx.sender() {
         return Err("cannot DM self".into());
     }
-    if ctx.db.user_key().identity().find(recipient).is_none() {
-        return Err("recipient has no key".into());
+    let recipient_user = ctx.db.user().identity().find(recipient).ok_or("conversation unavailable")?;
+    let recipient_key = ctx.db.user_key().identity().find(recipient).ok_or("conversation unavailable")?;
+    // A mutable development-only FID claim cannot be used to bypass an
+    // account-wide block. Public room development behavior is unchanged.
+    let sender_fid = dm_account(
+        sender.fid,
+        sender.verified,
+        ctx.db.notification_reader().identity().find(ctx.sender()).map(|reader| reader.fid),
+    )?;
+    let recipient_fid = dm_account(
+        recipient_user.fid,
+        recipient_user.verified,
+        ctx.db.notification_reader().identity().find(recipient).map(|reader| reader.fid),
+    )?;
+    if recipient_key.fid != recipient_fid {
+        return Err("conversation unavailable".into());
     }
+    moderation::dm_allowed(ctx, sender_fid, recipient_fid)?;
     dm_shape(&nonce, &ciphertext)?;
     rate(ctx)?;
     ctx.db.dm_message().insert(DmMessage {
@@ -399,6 +430,16 @@ fn notification_fid(previous: Option<u64>, fid: u64) -> Result<(), String> {
         return Err("notification fid locked (verified)".into());
     }
     Ok(())
+}
+
+/// DM policy always uses verified account ownership. Refuse inconsistent
+/// historical rows too, rather than choosing the mutable claim over an
+/// immutable private binding and accidentally evading a block.
+fn dm_account(fid: u64, verified: bool, reader_fid: Option<u64>) -> Result<u64, String> {
+    if fid == 0 || !verified || reader_fid.is_some_and(|reader| reader != fid) {
+        return Err("conversation unavailable".into());
+    }
+    Ok(fid)
 }
 
 /// Validate a proposed watermark before taking the monotonic maximum.
@@ -553,6 +594,15 @@ mod tests {
         assert!(notification_fid(None, 0).is_err());
         assert!(notification_fid(Some(3), 0).is_err());
         assert!(notification_fid(Some(3), 4).is_err());
+    }
+
+    #[test]
+    fn direct_messages_require_a_canonical_verified_account() {
+        assert_eq!(dm_account(3, true, None), Ok(3));
+        assert_eq!(dm_account(3, true, Some(3)), Ok(3));
+        for (fid, verified, reader) in [(0, true, None), (3, false, None), (3, false, Some(3)), (3, true, Some(4))] {
+            assert_eq!(dm_account(fid, verified, reader), Err("conversation unavailable".into()));
+        }
     }
 
     #[test]

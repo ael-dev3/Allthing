@@ -58,6 +58,18 @@ impl People {
         self.get(fid).map_or_else(|| format!("fid {fid}"), |u| format!("@{}", u.username))
     }
 
+    /// FID matching works before Hypersnap supplies an account's name.
+    /// Resolving a name adds explicit @mention matching as well.
+    pub fn hidden(self, fid: u64) -> bool {
+        let user = self.get(fid).unwrap_or_else(|| UserSummary {
+            fid,
+            username: String::new(),
+            display_name: String::new(),
+            pfp_url: None,
+        });
+        crate::moderation::hides_user(&user)
+    }
+
     pub fn add(self, users: Vec<UserSummary>) {
         if users.is_empty() {
             return;
@@ -146,6 +158,9 @@ async fn bulk(fids: &[u64]) -> Option<Vec<UserSummary>> {
 pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoView {
     let typed = RwSignal::new(String::new());
     let found = RwSignal::new(Vec::<UserSummary>::new());
+    let visible = Memo::new(move |_| {
+        found.get().into_iter().filter(|user| !crate::moderation::hides_user(user)).collect::<Vec<_>>()
+    });
     let active = RwSignal::new(None::<usize>);
     let open = RwSignal::new(false);
     let looking = RwSignal::new(false);
@@ -208,12 +223,15 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
         }
     });
     let pick = move |user: UserSummary| {
+        if crate::moderation::hides_user(&user) {
+            return;
+        }
         open.set(false);
         active.set(None);
         picked.run(user);
     };
     let keydown = move |ev: ev::KeyboardEvent| {
-        let count = found.with_untracked(Vec::len);
+        let count = visible.with_untracked(Vec::len);
         match ev.key().as_str() {
             "ArrowDown" if count > 0 => {
                 ev.prevent_default();
@@ -226,7 +244,7 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
             }
             "Enter" => {
                 ev.prevent_default();
-                let chosen = found.with_untracked(|f| {
+                let chosen = visible.with_untracked(|f| {
                     let typed = typed.get_untracked();
                     let wanted = typed.trim().trim_start_matches('@').to_lowercase();
                     match active.get_untracked() {
@@ -252,7 +270,7 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
             _ => {}
         }
     };
-    let shown = move || open.get() && !found.with(Vec::is_empty);
+    let shown = move || open.get() && !visible.with(Vec::is_empty);
     view! {
         <div class="dm-picker">
             <label class="dm-picker-label" for="dm-picker-input">"To"</label>
@@ -267,7 +285,7 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
                 aria-autocomplete="list"
                 aria-controls="dm-picker-list"
                 aria-expanded=move || shown().to_string()
-                aria-activedescendant=move || active.get().filter(|_| shown()).map(|i| format!("dm-person-{i}"))
+                aria-activedescendant=move || active.get().filter(|i| shown() && *i < visible.with(Vec::len)).map(|i| format!("dm-person-{i}"))
                 prop:value=move || typed.get()
                 on:input=move |ev| {
                     let value = event_target_value(&ev);
@@ -290,7 +308,7 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
             />
             <ul id="dm-picker-list" class="dm-picker-list" role="listbox" aria-label="People" hidden=move || !shown()>
                 {move || {
-                    found
+                    visible
                         .get()
                         .into_iter()
                         .enumerate()
@@ -320,7 +338,7 @@ pub fn PersonPicker(people: People, picked: Callback<UserSummary>) -> impl IntoV
                 {move || {
                     if looking.get() {
                         "Looking…".to_owned()
-                    } else if open.get() && found.with(Vec::is_empty) && !typed.with(|t| t.trim().is_empty()) {
+                    } else if open.get() && visible.with(Vec::is_empty) && !typed.with(|t| t.trim().is_empty()) {
                         "No one by that name.".to_owned()
                     } else {
                         String::new()

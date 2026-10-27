@@ -82,7 +82,7 @@ fn SearchPage() -> impl IntoView {
                             <section class="results-group" aria-label="People">
                                 <h2>"People" <span class="count">{people_total}</span></h2>
                                 <ul class="people">
-                                    {move || users.iter().take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| {
+                                    {move || users.iter().filter(|u|!crate::moderation::hides_user(&u.summary())).take(if all_people.get() { usize::MAX } else { PEOPLE_SHOWN }).map(|u| {
                                         // A person found is a whole profile: its card needs nothing more.
                                         let card = UserCard::of(u);
                                         let href = user_href(&u.username);

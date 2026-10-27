@@ -554,6 +554,96 @@ pub async fn keep_account(fid: u64, value: &str) -> Result<(), String> {
     tx.await.map(|_| ())
 }
 
+fn moderation_key(fid: u64, target: u64) -> Result<String, String> {
+    if target == 0 || target == fid {
+        return Err("Invalid account filter target".into());
+    }
+    Ok(format!("{}{target:020}", prefix("moderation", fid)?))
+}
+
+fn decode_moderation(fid: u64, raw: JsValue) -> Result<crate::moderation::Stored, String> {
+    let json = raw.as_string().ok_or("Unreadable account preference")?;
+    if json.len() > MAX_RECORD {
+        return Err("Account preference record is too large".into());
+    }
+    let item: crate::moderation::Stored = serde_json::from_str(&json).map_err(|_| "Unreadable account preference")?;
+    moderation_key(fid, item.server.target_fid)?;
+    if item.server.fid != fid {
+        return Err("Account preference belongs to another account".into());
+    }
+    Ok(item)
+}
+
+/// Private account filters occupy their own typed key range in the existing
+/// database. No schema upgrade, history scan, eviction or expiry is involved.
+pub(crate) async fn moderation_items(fid: u64) -> Result<Vec<crate::moderation::Stored>, String> {
+    let lower = prefix("moderation", fid)?;
+    let range = IdbKeyRange::bound(&JsValue::from_str(&lower), &JsValue::from_str(&format!("{lower}\u{ffff}")))
+        .map_err(error)?;
+    let tx = transaction(IdbTransactionMode::Readonly).await?;
+    tx.read(tx.store()?.get_all_with_key(range.as_ref()).map_err(error)?);
+    let rows = tx.await?;
+    Array::from(rows.first().ok_or("Account preferences did not answer")?)
+        .iter()
+        .map(|row| decode_moderation(fid, row))
+        .collect()
+}
+
+/// Allocate a new user intent under IDB's read/write lock. Concurrent tabs
+/// cannot overwrite independent fields or reuse a per-record sequence. Cache
+/// updates and acknowledgements merge under the same lock and commit boundary.
+pub(crate) async fn keep_moderation(
+    fid: u64,
+    incoming: &crate::moderation::Stored,
+    action: Option<(u8, bool, u64)>,
+) -> Result<crate::moderation::Stored, String> {
+    if incoming.server.fid != fid || action.is_some_and(|(kind, _, _)| kind > 1) {
+        return Err("Invalid account preference".into());
+    }
+    let key = moderation_key(fid, incoming.server.target_fid)?;
+    let incoming = incoming.clone();
+    let mut tx = transaction(IdbTransactionMode::Readwrite).await?;
+    let store = tx.store()?;
+    let request = store.get(&JsValue::from_str(&key)).map_err(error)?;
+    let read = request.clone();
+    let state = Rc::downgrade(&tx.state);
+    let abort = tx.tx.clone();
+    let output = Rc::new(RefCell::new(None));
+    let result = output.clone();
+    let callback = Closure::<dyn FnMut()>::new(move || {
+        let merged = (|| -> Result<(), String> {
+            let previous = read.result().map_err(error)?;
+            let mut item = if previous.is_undefined() {
+                incoming.clone()
+            } else {
+                let mut item = decode_moderation(fid, previous)?;
+                item.merge_disk(&incoming);
+                item
+            };
+            if let Some((kind, desired, expected_revision)) = action {
+                item.set_intent_at(kind, desired, expected_revision)?;
+            }
+            let json = serde_json::to_string(&item).map_err(|e| e.to_string())?;
+            if json.len() > MAX_RECORD {
+                return Err("Account preference record is too large".into());
+            }
+            store.put_with_key(&JsValue::from_str(&json), &JsValue::from_str(&key)).map_err(error)?;
+            *result.borrow_mut() = Some(item);
+            Ok(())
+        })();
+        if let Err(error) = merged {
+            if let Some(state) = state.upgrade() {
+                Completion::finish(&state, Err(error));
+            }
+            let _ = abort.abort();
+        }
+    });
+    tx.on_success(request, callback)?;
+    tx.await?;
+    let saved = output.borrow_mut().take();
+    saved.ok_or_else(|| "Account preference was not committed".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
