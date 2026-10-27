@@ -301,11 +301,15 @@ fn Meter(counted: ActivityPayload, today: i64) -> impl IntoView {
         Some(to) => format!("Unique accounts active in the 24 hours to {}", moment(to)),
         None => "Unique accounts active in a rolling 24 hours".to_owned(),
     };
-    // The count and how it compares, or when it comes: the first window
-    // ends 24 hours after counting began, on the hour.
+    // The count and how it compares, or what coverage it still needs.
+    // A start-time estimate cannot promise a complete window across gaps.
     let active = counted.rolling_to.and(counted.rolling_24h);
     let pending = match (counted.rolling_to, active) {
         (_, Some(_)) => None,
+        (_, None) if !counted.gaps.is_empty() => Some(
+            "A 24-hour count requires a whole window without recorded gaps. Partial totals remain lower bounds."
+                .to_owned(),
+        ),
         (Some(_), None) => Some(match counted.since.map(|since| (since + 86_400 + 3_599).div_euclid(3_600) * 3_600) {
             Some(at) => format!(
                 "The first 24-hour count comes once the 24 hours to {}, {} have been read.",

@@ -359,6 +359,17 @@ test.describe("with the Worker", () => {
     await expect(meter.locator(".dau-what")).toHaveText(`The first 24-hour count comes once the 24 hours to ${short(Math.floor(first / DAY))}, ${hh(first)} UTC have been read.`);
     await expect(meter.locator(".dau-change")).toHaveCount(0);
     await expect(page.locator(".dau-behind")).toHaveCount(0);
+    // Reaching the first possible end time is not sufficient if source
+    // coverage has a gap: do not promise a complete count at that time.
+    await serve(page, payload({
+      rolling_24h: undefined, previous_24h: undefined, since: to - 3_600,
+      gaps: [[to - 1_800, to - 1_798]],
+      days: [days[29]], hourly: [], active_30d: undefined, apps_24h: undefined,
+    }));
+    await page.reload();
+    await expect(meter.locator(".dau-big")).toHaveText("—");
+    await expect(meter.locator(".dau-what")).toHaveText("A 24-hour count requires a whole window without recorded gaps. Partial totals remain lower bounds.");
+    await expect(meter.locator(".dau-change")).toHaveCount(0);
   });
 
   const invalidProofs = [
