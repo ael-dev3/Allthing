@@ -240,6 +240,20 @@ for (const phone of [false, true]) {
     await settled(page);
     expect((await page.locator(".follows-toolbar").boundingBox())!.y).toBe(toolbar!.y);
     expect(await shift(page)).toBeLessThan(0.01);
+    // The sticky toolbar must remain below the actual header, including
+    // the phone/tablet grid, rather than disappearing behind its second row.
+    for (const layoutWidth of phone ? [390, 700, 801] : [1280]) {
+      await page.setViewportSize({ width: layoutWidth, height: phone ? 844 : 900 });
+      await page.evaluate(() => window.scrollTo(0, 600));
+      await expect.poll(() => page.evaluate(() => {
+        const header = document.querySelector(".site-header")!.getBoundingClientRect();
+        const toolbar = document.querySelector(".follows-toolbar")!.getBoundingClientRect();
+        return Math.abs(toolbar.top - header.bottom);
+      })).toBeLessThanOrEqual(1);
+    }
+    await page.setViewportSize({ width, height: phone ? 844 : 900 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await settled(page);
     await page.screenshot({ path: testInfo.outputPath(`follows-${width}.png`) });
     await page.evaluate(axe.source);
     const violations = await page.evaluate(async () => {

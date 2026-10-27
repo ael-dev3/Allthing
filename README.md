@@ -24,7 +24,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 
 <p align="center">
   <img src="docs/screenshots/profile.webp" alt="A profile: bio, website, followers and following, join date, NS vote and wallet activity by chain" width="49%">
-  <img src="docs/screenshots/dau.webp" alt="The daily active accounts page, counted as SnapMeter counts them" width="49%">
+  <img src="docs/screenshots/dau.webp" alt="The daily active accounts page" width="49%">
 </p>
 
 ## Features
@@ -37,11 +37,11 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 - **Posts and threads.** A post with its parent, quoted casts (inline up to three levels) and threaded replies that collapse and expand.
 - **Honest engagement.** Likes, recasts and replies, the only counts Farcaster has. Hovering or tapping a count lists who liked, recasted or replied.
 - **Hover cards.** A name or picture opens a profile card (bio, followers and following, join date, NS vote, wallet activity by chain), and names inside those lists open nested cards of their own.
-- **Profiles.** Bio, website, followers and following pages (`/u/<name>/followers`, `/following`), the [NS vote](docs/VOTE.md) and wallet activity by chain for verified addresses. Favorite and Show less, kept in your browser, raise or lower an account's casts in your feeds without hiding anything.
+- **Profiles.** Bio, website, followers and following pages (`/u/<name>/followers`, `/following`), the [NS vote](docs/VOTE.md) and wallet activity by chain for verified addresses. Favorite and Show less are private preferences kept in your browser. Favorite raises an account's casts in Hot and Top; Show less omits about 90% of their posts from Home, Following and channel feeds and ranks the rest much lower in Hot and Top. New stays chronological, direct profiles remain available, and pressing Show less again undoes it.
 - **Media in place.** Images open in an accessible viewer; Farcaster's HLS videos play inline (through a small HLS player written in Rust where the browser has none), muted until you turn sound on. Media loads straight from its hosts.
 - **Pepe emoji and reactions.** `:pepe_name:` shows one of 219 Pepe emoji, mostly animated. Pepe reactions (one-emoji replies) gather under casts as chips.
 - **Provenance.** Each cast names the app that registered its signing key ([docs/PROVENANCE.md](docs/PROVENANCE.md)).
-- **Daily active accounts.** [/dau](https://allthing.social/dau) counts Farcaster's active accounts from the network's event stream, exactly as [SnapMeter](https://github.com/ael-dev3/SnapMeter) does.
+- **Daily active accounts.** [/dau](https://allthing.social/dau) counts unique Farcaster accounts from checked Hypersnap events, using [SnapMeter](https://github.com/ael-dev3/SnapMeter)'s activity-type definitions. It shows each shard's checkpoints and gaps; partial totals are lower bounds and complete windows count each account once. It checks this provider's events, not the whole network independently.
 - **Allthing's poll.** One question on the front page: would you like an Allthing mobile client?
 - **Less noise, judged by content.** Spam caught by a few fixed content rules is left out by the Worker. Casts that embed or link to mini apps or frames, which Allthing doesn't run, are hidden too unless you turn on Show mini app casts in Settings; then each links to open in Farcaster. There are no automatic account-based exclusions; signed-in readers can choose their own private Mute and Block preferences.
 
@@ -59,7 +59,7 @@ Allthing is an independent Farcaster client, written in Rust, that shows trendin
 ### Fast and frugal
 
 - **One API call per page**, cached at the edge, so the whole site runs on the Cloudflare Workers Free plan.
-- **Early paint.** For anonymous readers, a small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. Signed-in Home waits for private history membership and account filters to avoid flashing previously read or muted/blocked posts. It stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
+- **Early paint.** For anonymous readers without Show less choices, a small JavaScript renderer draws the front page's first cards from its existing response while the Rust app downloads. Feeds with Show less choices wait for the Rust filter, so omitted posts do not flash first. Signed-in Home waits for private history membership and account filters to avoid flashing previously read or muted/blocked posts. The early renderer stays in JavaScript because it beat the Rust prototype in the [paired cold-load comparison](docs/PERFORMANCE.md#measured-exception-the-javascript-first-card-renderer).
 - **Split WebAssembly.** Pages, the composer, writing, sign-in and the DAU dashboard are code of their own, fetched when used, so every visit downloads less.
 - **Instant navigation.** Posts open from the feed's own data, cards are prefetched within a capped budget, and Back returns to the same place. CI holds smoothness to budgets ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - **Accessible.** Keyboard throughout, alt text, focus kept in dialogs, reduced motion respected, and it fits a phone.

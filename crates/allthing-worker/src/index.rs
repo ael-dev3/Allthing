@@ -27,7 +27,7 @@ use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Env};
 
 /// The schema, from the migrations that also create it.
-const SCHEMA: [&str; 10] = [
+const SCHEMA: [&str; 11] = [
     include_str!("../../../migrations/0001_index.sql"),
     include_str!("../../../migrations/0002_snapshots.sql"),
     include_str!("../../../migrations/0003_activity.sql"),
@@ -38,6 +38,7 @@ const SCHEMA: [&str; 10] = [
     include_str!("../../../migrations/0008_poll.sql"),
     include_str!("../../../migrations/0009_presence.sql"),
     include_str!("../../../migrations/0010_media_uploads.sql"),
+    include_str!("../../../migrations/0011_verified_activity.sql"),
 ];
 
 /// Store casts given as one JSON array of `[hash, ts, points]`, updating the
@@ -62,52 +63,90 @@ const STATE: &str = "SELECT value FROM state WHERE key = 'indexer'";
 const METAS: &str = "SELECT name, built, total, floor FROM rankings";
 const SAVE_STATE: &str = "REPLACE INTO state (key, value) VALUES ('indexer', ?1)";
 const SNAPSHOT: &str = "SELECT built, body FROM snapshots WHERE name = ?1";
-const ACTIVITY_STATE: &str = "SELECT value FROM state WHERE key = 'activity'";
+const ACTIVITY_STATE: &str = "SELECT value FROM state WHERE key = 'activity_v2'";
+/// Compare the exact state read by this run, then fence every mutation in
+/// the same D1 transaction with a unique runtime-generated token. Identical
+/// candidate states from overlapping cron runs cannot impersonate a winner.
+const CLAIM_ACTIVITY: &str = "INSERT INTO state (key, value) \
+    SELECT 'activity_v2_fence', ?2 WHERE (SELECT value FROM state WHERE key = 'activity_v2') IS ?1 \
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value RETURNING value";
 const ACTIVITY_SETS: &str = "SELECT name, body FROM activity WHERE name IN (SELECT value FROM json_each(?1))";
 /// Store sets given as one JSON array of `[name, body]`.
 const STORE_SETS: &str = "INSERT INTO activity (name, body) \
-    SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true \
+    SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) \
+    WHERE (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2 \
     ON CONFLICT (name) DO UPDATE SET body = excluded.body";
-/// Drop hourly sets (of fids, `h`, and of keys, `k`) before hour ?1 and
-/// daily ones (a day's, `d`, and a week's to a day, `w`) before day ?2.
+/// Retain legacy rows; expire only this verified epoch's sets under its fence.
 const DROP_SETS: &str = "DELETE FROM activity WHERE \
-    (substr(name, 1, 1) IN ('h', 'k') AND CAST(substr(name, 2) AS INTEGER) < ?1) OR \
-    (substr(name, 1, 1) IN ('d', 'w') AND CAST(substr(name, 2) AS INTEGER) < ?2)";
-/// Keys' apps, given as one JSON array of `[pair, app]`. A key's app never
-/// changes, so a key already there is left as it is.
-const STORE_KEYS: &str = "INSERT OR IGNORE INTO signer_apps (pair, app) \
-    SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1)";
-/// The apps of the keys given as one JSON array. Pairs reach 2^63, past a
-/// JavaScript number: they come back as text.
-const KEY_APPS: &str = "SELECT CAST(pair AS TEXT) AS pair, app FROM signer_apps \
-    WHERE pair IN (SELECT value FROM json_each(?1))";
-/// Accounts active by app among the keys given as one JSON array, the app
-/// NULL for keys not looked up yet, which come back too.
-const COUNT_APPS: &str = "SELECT k.app AS app, COUNT(DISTINCT j.value >> 32) AS active, \
-      json_group_array(CAST(j.value AS TEXT)) FILTER (WHERE k.pair IS NULL) AS unknown \
-    FROM json_each(?1) AS j LEFT JOIN signer_apps AS k ON k.pair = j.value GROUP BY k.app";
-/// The apps whose keys the accounts given as one JSON array of fids have
-/// signed with: each account's keys are the pairs from `fid << 32` to
-/// `fid << 32 | 0xffffffff` (the next fid's start would pass D1's integers
-/// for the last fid kept). Fids and apps only: pairs are past a JavaScript
-/// number.
+    ((substr(name, 1, 3) IN ('v2h', 'v2k') AND CAST(substr(name, 4) AS INTEGER) < ?1) OR \
+     (substr(name, 1, 3) IN ('v2d', 'v2w') AND CAST(substr(name, 4) AS INTEGER) < ?2)) \
+    AND (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?3";
+/// Full FID/public-key identities, not truncated key prefixes. Positive,
+/// immutable registration facts may be shared by concurrent readers.
+const STORE_KEYS: &str = "INSERT OR IGNORE INTO verified_signer_apps (identity, fid, app) \
+    SELECT json_extract(value, '$[0]'), CAST(substr(json_extract(value, '$[0]'), 1, 10) AS INTEGER), \
+      json_extract(value, '$[1]') FROM json_each(?1)";
+const STORE_ACTIVITY_KEYS: &str = "INSERT OR IGNORE INTO verified_signer_apps (identity, fid, app) \
+    SELECT json_extract(value, '$[0]'), CAST(substr(json_extract(value, '$[0]'), 1, 10) AS INTEGER), \
+      json_extract(value, '$[1]') FROM json_each(?1) \
+    WHERE (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2";
+const KEY_APPS: &str = "SELECT identity, app FROM verified_signer_apps \
+    WHERE identity IN (SELECT value FROM json_each(?1))";
+/// Count directly over the 24 stored hourly arrays, replacing rows that
+/// this run just changed. Full keys stay in D1; the Worker receives only
+/// counts and a bounded lookup backlog. Validate canonical sorted arrays
+/// and their global account cardinality before any result may be used.
+const COUNT_APPS: &str = "WITH replacements AS (\
+      SELECT json_extract(value, '$[0]') AS name, json_extract(value, '$[1]') AS body FROM json_each(?2)), \
+    sources AS (SELECT a.name, a.body FROM activity a \
+      WHERE a.name IN (SELECT value FROM json_each(?1)) \
+      AND NOT EXISTS (SELECT 1 FROM replacements r WHERE r.name = a.name) \
+      UNION ALL SELECT name, body FROM replacements WHERE name IN (SELECT value FROM json_each(?1))), \
+    entries AS (SELECT s.name, j.value AS identity, j.type AS kind, \
+      LAG(j.value) OVER (PARTITION BY s.name ORDER BY CAST(j.key AS INTEGER)) AS prior \
+      FROM sources s JOIN json_each(CASE WHEN json_valid(s.body) AND json_type(s.body) = 'array' \
+        THEN s.body ELSE json('invalid activity key array') END) j), \
+    checked AS (SELECT COALESCE(SUM(CASE WHEN kind = 'text' AND length(identity) = 77 AND length(CAST(identity AS BLOB)) = 77 \
+      AND substr(identity, 11, 3) = ':0x' AND substr(identity, 14) NOT GLOB '*[^0-9a-f]*' \
+      AND CAST(substr(identity, 1, 10) AS INTEGER) BETWEEN 1 AND 4294967295 \
+      AND substr(identity, 1, 10) = printf('%010d', CAST(substr(identity, 1, 10) AS INTEGER)) \
+      AND (prior IS NULL OR prior < identity) THEN 0 ELSE 1 END), 0) \
+      + (SELECT COUNT(*) - COUNT(DISTINCT name) FROM sources) AS invalid, \
+      COUNT(DISTINCT substr(identity, 1, 10)) AS accounts FROM entries), \
+    identities AS (SELECT DISTINCT identity FROM entries), \
+    known AS (SELECT e.identity, k.app FROM identities e \
+      LEFT JOIN verified_signer_apps k ON k.identity = e.identity), \
+    counts AS (SELECT app, COUNT(DISTINCT substr(identity, 1, 10)) AS active FROM known GROUP BY app) \
+    SELECT c.app, c.active, CASE WHEN c.app IS NULL THEN \
+      (SELECT json_group_array(identity) FROM (SELECT identity FROM known WHERE app IS NULL ORDER BY identity LIMIT 400)) \
+      ELSE '[]' END AS unknown, checked.invalid, checked.accounts FROM counts c CROSS JOIN checked \
+    UNION ALL SELECT NULL, 0, '[]', invalid, accounts FROM checked";
+/// Exact identities also support FIDs above the old signed-integer cutoff.
 const APPS_OF: &str = "SELECT j.value AS fid, s.app AS app FROM json_each(?1) AS j \
-    JOIN signer_apps AS s ON s.pair BETWEEN (j.value << 32) AND ((j.value << 32) | 4294967295) \
+    JOIN verified_signer_apps AS s ON s.fid = j.value \
     GROUP BY j.value, s.app";
 /// The later of the week's sets to the ends of days ?1 and ?2 (`w<day>`),
 /// if kept: one row.
 const LATEST_WEEK: &str = "SELECT name, body FROM activity WHERE name IN (?1, ?2) ORDER BY name DESC LIMIT 1";
-const SAVE_ACTIVITY_STATE: &str = "REPLACE INTO state (key, value) VALUES ('activity', ?1)";
+const SAVE_ACTIVITY_STATE: &str = "INSERT INTO state (key, value) \
+    SELECT 'activity_v2', ?1 WHERE (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2 \
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+const SAVE_ACTIVITY_SNAPSHOT: &str = "INSERT INTO snapshots (name, built, body) \
+    SELECT ?1, ?2, ?3 WHERE (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?4 \
+    ON CONFLICT(name) DO UPDATE SET built = excluded.built, body = excluded.body";
 /// Emoji reactions, given as one JSON array of `[parent, hash, emoji, fid,
 /// ts]`; one already kept stays as it is.
 const STORE_REACTIONS: &str = "INSERT OR IGNORE INTO reactions (hash, parent, emoji, fid, ts) \
     SELECT json_extract(value, '$[1]'), json_extract(value, '$[0]'), json_extract(value, '$[2]'), \
-      json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?1)";
+      json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?1) \
+    WHERE (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2";
 /// Drop the reactions among the casts given as one JSON array: removed,
 /// revoked or pruned.
-const DROP_REACTIONS: &str = "DELETE FROM reactions WHERE hash IN (SELECT value FROM json_each(?1))";
+const DROP_REACTIONS: &str = "DELETE FROM reactions WHERE hash IN (SELECT value FROM json_each(?1)) \
+    AND (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2";
 /// Drop reactions from before ?1, Unix seconds.
-const OLD_REACTIONS: &str = "DELETE FROM reactions WHERE ts < ?1";
+const OLD_REACTIONS: &str = "DELETE FROM reactions WHERE ts < ?1 \
+    AND (SELECT value FROM state WHERE key = 'activity_v2_fence') = ?2";
 /// The reactions to the casts given as one JSON array, oldest first.
 const REACTIONS: &str = "SELECT parent, hash, emoji, fid, ts FROM reactions \
     WHERE parent IN (SELECT value FROM json_each(?1)) ORDER BY ts, hash LIMIT 2000";
@@ -247,7 +286,7 @@ struct ReactionRow {
 
 #[derive(Deserialize)]
 struct KeyRow {
-    pair: String,
+    identity: String,
     app: f64,
 }
 
@@ -256,6 +295,8 @@ struct AppRow {
     app: Option<f64>,
     active: f64,
     unknown: String,
+    invalid: f64,
+    accounts: f64,
 }
 
 #[derive(Deserialize)]
@@ -491,11 +532,10 @@ impl Index for D1Index {
         .boxed_local()
     }
 
-    /// Fids of 2^31 or more have no keys kept (`activity::key_pair`), and
-    /// would take the pairs' range past D1's integers: they are left out.
+    /// Exact signer identities include every supported unsigned 32-bit FID.
     fn apps_of(&self, fids: &[u64]) -> LocalBoxFuture<'static, Result<Vec<(u64, u64)>, IndexError>> {
         let db = self.db.clone();
-        let fids: Vec<u64> = fids.iter().copied().filter(|&fid| fid < 1 << 31).collect();
+        let fids: Vec<u64> = fids.iter().copied().filter(|&fid| (1..=u64::from(u32::MAX)).contains(&fid)).collect();
         async move {
             if fids.is_empty() {
                 return Ok(Vec::new());
@@ -517,7 +557,7 @@ impl Index for D1Index {
             let names: [JsValue; 2] = [week_set(today - 1).into(), week_set(today - 2).into()];
             let statement = db.prepare(LATEST_WEEK).bind(&names).map_err(failed)?;
             let Some(row) = statement.first::<SetRow>(None).await.map_err(failed)? else { return Ok(None) };
-            let day = row.name.strip_prefix('w').and_then(|day| day.parse().ok());
+            let day = row.name.strip_prefix("v2w").and_then(|day| day.parse().ok());
             let week = Fids::decode(&row.body);
             match (day, week) {
                 (Some(day), Some(week)) => Ok(Some(ActiveWeek::among(day, &week, &fids))),
@@ -613,21 +653,23 @@ impl ActivityStore for D1Index {
         .boxed_local()
     }
 
-    fn key_apps(&self, pairs: Vec<u64>) -> LocalBoxFuture<'static, Result<HashMap<u64, u64>, IndexError>> {
+    fn key_apps(&self, pairs: Vec<String>) -> LocalBoxFuture<'static, Result<HashMap<String, u64>, IndexError>> {
         let db = self.db.clone();
         async move {
             let pairs = serde_json::to_string(&pairs).map_err(|e| IndexError(e.to_string()))?;
             let statement = db.prepare(KEY_APPS).bind(&[pairs.into()]).map_err(failed)?;
             let rows = statement.all().await.map_err(failed)?.results::<KeyRow>().map_err(failed)?;
-            Ok(rows.into_iter().filter_map(|r| Some((r.pair.parse().ok()?, r.app as u64))).collect())
+            Ok(rows.into_iter().map(|r| (r.identity, r.app as u64)).collect())
         }
         .boxed_local()
     }
 
     fn count_apps(
         &self,
-        keys: Vec<(u64, u64)>,
-        chunks: Vec<Vec<u64>>,
+        keys: Vec<(String, u64)>,
+        names: Vec<String>,
+        overrides: Vec<(String, String)>,
+        expected_active: u64,
     ) -> LocalBoxFuture<'static, Result<Vec<AppCount>, IndexError>> {
         let db = self.db.clone();
         async move {
@@ -636,19 +678,26 @@ impl ActivityStore for D1Index {
                 statements.push(db.prepare(STORE_KEYS).bind(&[to_json(&keys)?.into()]).map_err(failed)?);
             }
             let stored = statements.len();
-            for chunk in &chunks {
-                statements.push(db.prepare(COUNT_APPS).bind(&[to_json(chunk)?.into()]).map_err(failed)?);
-            }
+            statements.push(
+                db.prepare(COUNT_APPS).bind(&[to_json(&names)?.into(), to_json(&overrides)?.into()]).map_err(failed)?,
+            );
             let mut out = Vec::new();
-            if statements.is_empty() {
-                return Ok(out);
-            }
+            let mut verified = false;
             for result in db.batch(statements).await.map_err(failed)?.into_iter().skip(stored) {
                 for row in result.results::<AppRow>().map_err(failed)? {
-                    let unknown: Vec<String> = serde_json::from_str(&row.unknown).unwrap_or_default();
-                    let unknown = unknown.iter().filter_map(|p| p.parse().ok()).collect();
+                    if row.invalid != 0.0 || row.accounts != expected_active as f64 {
+                        return Err(IndexError(
+                            "Activity key window failed integrity or account cardinality checks".into(),
+                        ));
+                    }
+                    verified = true;
+                    let unknown: Vec<String> = serde_json::from_str(&row.unknown)
+                        .map_err(|e| IndexError(format!("Invalid unknown signer identities: {e}")))?;
                     out.push((row.app.map(|app| app as u64), row.active as u64, unknown));
                 }
+            }
+            if !verified {
+                return Err(IndexError("Missing activity key-window validation result".into()));
             }
             Ok(out)
         }
@@ -658,33 +707,65 @@ impl ActivityStore for D1Index {
     fn save_activity(&self, saving: Saving) -> LocalBoxFuture<'static, Result<(), IndexError>> {
         let db = self.db.clone();
         async move {
-            let Saving { sets, keep_from, keys, reactions, removed, reactions_from, state, summary } = saving;
-            let mut statements = Vec::new();
+            let Saving { sets, keep_from, keys, reactions, removed, reactions_from, expected_state, state, summary } =
+                saving;
+            let token = crate::auth::random_hex(16)
+                .ok_or_else(|| IndexError("Could not create an activity transaction fence".into()))?;
+            let expected = expected_state.map_or(JsValue::NULL, Into::into);
+            let mut statements =
+                vec![db.prepare(CLAIM_ACTIVITY).bind(&[expected, token.as_str().into()]).map_err(failed)?];
             if !sets.is_empty() {
-                let rows = serde_json::to_string(&sets).map_err(|e| IndexError(e.to_string()))?;
-                statements.push(db.prepare(STORE_SETS).bind(&[rows.into()]).map_err(failed)?);
+                statements.push(
+                    db.prepare(STORE_SETS).bind(&[to_json(&sets)?.into(), token.as_str().into()]).map_err(failed)?,
+                );
             }
             if !keys.is_empty() {
-                let rows = serde_json::to_string(&keys).map_err(|e| IndexError(e.to_string()))?;
-                statements.push(db.prepare(STORE_KEYS).bind(&[rows.into()]).map_err(failed)?);
+                statements.push(
+                    db.prepare(STORE_ACTIVITY_KEYS)
+                        .bind(&[to_json(&keys)?.into(), token.as_str().into()])
+                        .map_err(failed)?,
+                );
             }
-            let keep = [number(keep_from.0 as f64), number(keep_from.1 as f64)];
+            let keep = [number(keep_from.0 as f64), number(keep_from.1 as f64), token.as_str().into()];
             statements.push(db.prepare(DROP_SETS).bind(&keep).map_err(failed)?);
             if !reactions.is_empty() {
                 let rows: Vec<_> =
                     reactions.into_iter().map(|(cast, r)| (cast, r.hash, r.emoji, r.fid, r.ts)).collect();
-                let rows = serde_json::to_string(&rows).map_err(|e| IndexError(e.to_string()))?;
-                statements.push(db.prepare(STORE_REACTIONS).bind(&[rows.into()]).map_err(failed)?);
+                statements.push(
+                    db.prepare(STORE_REACTIONS)
+                        .bind(&[to_json(&rows)?.into(), token.as_str().into()])
+                        .map_err(failed)?,
+                );
             }
             if !removed.is_empty() {
-                let hashes = serde_json::to_string(&removed).map_err(|e| IndexError(e.to_string()))?;
-                statements.push(db.prepare(DROP_REACTIONS).bind(&[hashes.into()]).map_err(failed)?);
+                statements.push(
+                    db.prepare(DROP_REACTIONS)
+                        .bind(&[to_json(&removed)?.into(), token.as_str().into()])
+                        .map_err(failed)?,
+                );
             }
-            statements.push(db.prepare(OLD_REACTIONS).bind(&[number(reactions_from as f64)]).map_err(failed)?);
-            statements.push(db.prepare(SAVE_ACTIVITY_STATE).bind(&[state.into()]).map_err(failed)?);
-            let args = [SUMMARY.into(), number(summary.built.floor()), summary.body.into()];
-            statements.push(db.prepare(SAVE_SNAPSHOT).bind(&args).map_err(failed)?);
-            db.batch(statements).await.map_err(failed)?;
+            statements.push(
+                db.prepare(OLD_REACTIONS)
+                    .bind(&[number(reactions_from as f64), token.as_str().into()])
+                    .map_err(failed)?,
+            );
+            statements
+                .push(db.prepare(SAVE_ACTIVITY_STATE).bind(&[state.into(), token.as_str().into()]).map_err(failed)?);
+            let args = [SUMMARY.into(), number(summary.built.floor()), summary.body.into(), token.as_str().into()];
+            statements.push(db.prepare(SAVE_ACTIVITY_SNAPSHOT).bind(&args).map_err(failed)?);
+            // D1 batches are atomic. Even a losing claim executes the batch,
+            // but its distinct fence makes every following mutation a no-op.
+            let first = db
+                .batch(statements)
+                .await
+                .map_err(failed)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| IndexError("Missing activity transaction result".into()))?;
+            let claimed = first.results::<StateRow>().map_err(failed)?;
+            if claimed.len() != 1 || claimed[0].value != token {
+                return Err(IndexError("Activity changed during this run; retained the winning checkpoint".into()));
+            }
             Ok(())
         }
         .boxed_local()

@@ -7,6 +7,7 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- A persistent DAU navigation link on desktop and phones, with a coverage panel showing the Hypersnap source, snapshot update time, verified start and each shard's block progress. Incomplete totals are marked as lower bounds; responses without coherent verification evidence show a waiting explanation instead of figures.
 - Private, account-wide Mute and Block controls on profiles and hover cards, with searchable undo controls in Settings and keyboard/touch-accessible help. Preferences sync through SpacetimeDB and suppress posts, quoted/replied-to/recasting accounts, identifiable mentions and account links, notifications and their unread counts. Block also hides existing Allthing conversations locally and rejects new DMs in either direction using verified account ownership; public posts and other Farcaster clients are unaffected.
 - Durable offline mute/block intent, independent per-choice revisions and retained clear tombstones. Fresh signed-in sessions wait for private filters before drawing content; realtime changes remove already shown content, and newer remote choices supersede stale offline intent.
 - A private Library for bookmarks and seen history synced across signed-in devices through SpacetimeDB, plus paginated Farcaster likes and recasts. Seen history no longer expires after 30 days or 2,000 posts; fresh Home candidates wait for synced history, while already drawn cards keep their place. Library includes loaded-post filtering, activity times, retry, Back restoration, Mark unread and Clear history controls.
@@ -16,10 +17,13 @@ All notable changes to Allthing are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Show less now omits roughly 90% of that account's feed posts across Home, Following and channels, with stable selection and a stronger penalty for remaining Hot/Top posts. New keeps chronological order; direct profiles remain complete and the same button undoes the choice.
+
 - Following opens with New selected; For you still opens with Hot. Explicit sort choices remain selected when changing the time range.
 
 ### Fixed
 
+- Count active accounts from checked, consecutive Hypersnap events with canonical block times carried across pages, declared event totals and both shards' coverage. The new verification epoch keeps old rows without certifying their totals. Full account and 32-byte signing-key identities prevent prefix collisions; incomplete attribution stays unknown, and a fenced atomic save rejects stale concurrent runs. Action totals are labelled as merge events because the same message can appear on both shards.
 - Recover one confirmed missing entry-loader request without reloading or changing drafts and sessions; persistent failures show an accessible Reload button even if early Home data arrives later. Healthy startup adds no recovery traffic.
 
 - Serve HTML from the same deployment as its asset manifest with no-store caching; missing scripts and WebAssembly return real 404s instead of immutable HTML. A missing startup asset can recover once when a bounded check confirms a different same-origin build; other startup errors retain the manual Reload panel.

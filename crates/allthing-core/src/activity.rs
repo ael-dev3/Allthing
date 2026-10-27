@@ -13,8 +13,8 @@
 //!   failed merges, onchain events and blocks don't; nor do message types
 //!   the list doesn't name.
 //! - **When:** the time of the block that confirmed it (the block's own
-//!   `BLOCK_CONFIRMED` event, which comes first), or the message's signed
-//!   time when the block's event is on an earlier page.
+//!   `BLOCK_CONFIRMED` event, which comes first), carried across pages.
+//!   Coverage advances only after all declared block events were read.
 //! - **Who:** the message's fid, from 1 to 2³² − 1, and the key that signed
 //!   it, which says which app it was sent from (`provenance`).
 //!
@@ -34,9 +34,11 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::emoji::{Emoji, ReactionReply, reaction_text};
-use crate::latest::{Cursor, FARCASTER_EPOCH, base64_to_hex};
+use crate::latest::{Cursor, FARCASTER_EPOCH, SHARDS, base64_to_hex};
 use crate::model::UserSummary;
-use crate::provenance::{base64_decode, normalize_key, request_fid_from_metadata};
+#[cfg(test)]
+use crate::provenance::{base64_decode, request_fid_from_metadata};
+use crate::provenance::{normalize_key, verified_request_fid_from_metadata};
 
 /// What kind of action a counted message is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,7 +106,10 @@ pub struct ActivityPage {
     pub count: usize,
     /// Signing keys added onchain on the page (`key_pair`), each with the
     /// app that requested it, 0 for none.
+    #[cfg(test)]
     pub keys: Vec<(u64, u64)>,
+    /// Canonically observed registrations, matched by every signer byte.
+    pub exact_keys: Vec<(String, u64)>,
     /// Emoji reactions merged on the page: replies that are one emoji and
     /// nothing else (`emoji::reaction`), each with the hash of the cast it
     /// replies to.
@@ -126,6 +131,8 @@ struct Event {
     kind: Option<String>,
     #[serde(rename = "blockNumber")]
     block: Option<u64>,
+    #[serde(rename = "shardIndex")]
+    shard: Option<u32>,
     #[serde(rename = "blockConfirmedBody")]
     confirmed: Option<Confirmed>,
     #[serde(rename = "mergeMessageBody")]
@@ -148,6 +155,8 @@ struct OnChain {
 
 #[derive(Deserialize)]
 struct ChainEvent {
+    #[serde(rename = "type")]
+    kind: Option<String>,
     fid: Option<u64>,
     #[serde(rename = "signerEventBody")]
     signer: Option<SignerEvent>,
@@ -155,6 +164,8 @@ struct ChainEvent {
 
 #[derive(Deserialize)]
 struct SignerEvent {
+    #[serde(rename = "keyType")]
+    key_type: Option<u32>,
     key: Option<String>,
     #[serde(rename = "eventType")]
     kind: Option<String>,
@@ -167,7 +178,11 @@ struct SignerEvent {
 struct Confirmed {
     #[serde(rename = "blockNumber")]
     block: Option<u64>,
+    #[serde(rename = "shardIndex")]
+    shard: Option<u32>,
     timestamp: Option<i64>,
+    #[serde(rename = "totalEvents")]
+    total: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -190,6 +205,7 @@ struct Data {
     #[serde(rename = "type")]
     kind: Option<String>,
     fid: Option<u64>,
+    #[cfg(test)]
     timestamp: Option<i64>,
     #[serde(rename = "castAddBody")]
     add: Option<CastAdd>,
@@ -274,7 +290,8 @@ fn unix(farcaster: i64) -> Option<i64> {
 
 /// Read a `/v1/events` page: its counted actions, where it ends, and how far
 /// in time it reaches. `None` if it isn't an events page.
-pub fn activity(json: &[u8]) -> Option<ActivityPage> {
+#[cfg(test)]
+fn activity(json: &[u8]) -> Option<ActivityPage> {
     let page: Page = serde_json::from_slice(json).ok()?;
     let mut out = ActivityPage { count: page.events.len(), ..Default::default() };
     // Each block's confirmation comes before its messages.
@@ -322,7 +339,8 @@ pub fn activity(json: &[u8]) -> Option<ActivityPage> {
             // A key added for an account: which app requested it is in its
             // signed key request (`provenance`), so it needn't be looked up.
             Some("HUB_EVENT_TYPE_MERGE_ON_CHAIN_EVENT") => {
-                let Some(ChainEvent { fid: Some(fid), signer: Some(body) }) = event.chain.and_then(|c| c.event) else {
+                let Some(ChainEvent { fid: Some(fid), signer: Some(body), .. }) = event.chain.and_then(|c| c.event)
+                else {
                     continue;
                 };
                 if body.kind.as_deref() != Some("SIGNER_EVENT_TYPE_ADD") {
@@ -343,6 +361,293 @@ pub fn activity(json: &[u8]) -> Option<ActivityPage> {
         }
     }
     Some(out)
+}
+
+/// The isolated format of canonical activity counts. Older sets are preserved.
+pub const VERIFICATION_VERSION: u8 = 2;
+/// Canonical event source, with shard parameters recorded separately.
+pub const ACTIVITY_SOURCE: &str = "https://haatz.quilibrium.com/v1/events";
+
+/// One canonical block, carried across event pages. `seen` includes its
+/// confirmation; only a whole block advances verified coverage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockProgress {
+    pub shard: u32,
+    pub block: u64,
+    pub at: i64,
+    pub total: u32,
+    pub seen: u32,
+}
+
+impl BlockProgress {
+    pub fn complete(&self) -> bool {
+        self.seen == self.total
+    }
+
+    pub fn last_id(&self) -> u64 {
+        (self.block << 14) | u64::from(self.seen - 1)
+    }
+}
+
+/// A checked page and its durable per-shard progress.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedPage {
+    pub page: ActivityPage,
+    pub block: Option<BlockProgress>,
+    pub gaps: Vec<(i64, i64)>,
+}
+
+/// A one-event reverse probe establishes only the starting height; it
+/// cannot establish temporal coverage or contribute a count.
+pub fn activity_head(json: &[u8], shard: u32) -> Option<u64> {
+    let page: Page = serde_json::from_slice(json).ok()?;
+    if page.events.len() != 1 {
+        return None;
+    }
+    let event = page.events.first()?;
+    (event.shard == Some(shard) && event.block == Some(event.id >> 14)).then_some(event.id)
+}
+
+/// Read ascending Hypersnap events after `after`. Reject a malformed page
+/// as a whole, so its cursor remains retryable. Timestamps come exclusively
+/// from canonical block confirmations, including a carried partial block.
+pub fn verified_activity(
+    json: &[u8],
+    shard: u32,
+    after: u64,
+    carried: Option<&BlockProgress>,
+    now: i64,
+) -> Option<VerifiedPage> {
+    let mut input: Page = serde_json::from_slice(json).ok()?;
+    let mut previous = after;
+    let mut block = carried.cloned();
+    if block.as_ref().is_some_and(|b| {
+        b.shard != shard || b.seen == 0 || b.seen > b.total || b.total > 16_384 || b.last_id() != after
+    }) {
+        return None;
+    }
+    let mut canonical = HashMap::new();
+    if let Some(b) = &block {
+        canonical.insert(b.block, b.at);
+    }
+    let mut gaps = Vec::new();
+    let mut reached = None;
+    let mut started = None;
+    for event in &mut input.events {
+        if !matches!(
+            event.kind.as_deref(),
+            Some(
+                "HUB_EVENT_TYPE_BLOCK_CONFIRMED"
+                    | "HUB_EVENT_TYPE_MERGE_MESSAGE"
+                    | "HUB_EVENT_TYPE_REVOKE_MESSAGE"
+                    | "HUB_EVENT_TYPE_PRUNE_MESSAGE"
+                    | "HUB_EVENT_TYPE_MERGE_ON_CHAIN_EVENT"
+                    | "HUB_EVENT_TYPE_MERGE_USERNAME_PROOF"
+                    | "HUB_EVENT_TYPE_MERGE_FAILURE"
+                    | "HUB_EVENT_TYPE_CHANNEL_OWNER_CHANGE_HINT"
+            )
+        ) {
+            return None;
+        }
+        let height = event.id >> 14;
+        let sequence = (event.id & 16_383) as u32;
+        if event.id <= previous || event.block != Some(height) || event.shard != Some(shard) {
+            return None;
+        }
+        let new_block = block.as_ref().is_none_or(|b| b.block != height);
+        if new_block {
+            if sequence != 0 || event.kind.as_deref() != Some("HUB_EVENT_TYPE_BLOCK_CONFIRMED") {
+                return None;
+            }
+            let confirmed = event.confirmed.as_ref()?;
+            let at = unix(confirmed.timestamp?)?;
+            let total = confirmed.total.filter(|n| (1..=16_384).contains(n))?;
+            if confirmed.block != Some(height) || confirmed.shard != Some(shard) || at > now {
+                return None;
+            }
+            if let Some(prior) = &block {
+                if height <= prior.block || at < prior.at {
+                    return None;
+                }
+                if height != prior.block + 1 || !prior.complete() {
+                    gaps.push((prior.at, at.saturating_add(1)));
+                }
+            }
+            canonical.insert(height, at);
+            started = Some(started.map_or(at, |s: i64| s.min(at)));
+            block = Some(BlockProgress { shard, block: height, at, total, seen: 1 });
+        } else {
+            let current = block.as_mut()?;
+            if sequence != current.seen
+                || current.complete()
+                || event.kind.as_deref() == Some("HUB_EVENT_TYPE_BLOCK_CONFIRMED")
+            {
+                return None;
+            }
+            current.seen += 1;
+        }
+        let current = block.as_ref()?;
+        if current.complete() {
+            reached = Some(current.at - 1);
+        }
+        previous = event.id;
+    }
+    // Extraction uses the canonical time table, including the carried block;
+    // a user's signed timestamp never supplies a counting timestamp.
+    let mut out = ActivityPage { count: input.events.len(), ..ActivityPage::default() };
+    for event in input.events {
+        out.last_id = Some(event.id);
+        out.first_block = out.first_block.or(event.block);
+        if event.kind.as_deref() == Some("HUB_EVENT_TYPE_MERGE_MESSAGE") {
+            let Some(Message { hash, data: Some(data), signer }) = event.merge.and_then(|m| m.message) else {
+                return None;
+            };
+            let at = *canonical.get(&event.block?)?;
+            out.reactions.extend(reaction(hash.as_deref(), &data, Some(at)));
+            out.removed.extend(data.remove.as_ref().and_then(|r| r.target.as_deref()).and_then(hex_hash));
+            let kind = data.kind.as_deref()?;
+            if kind != "MESSAGE_TYPE_NONE"
+                && kind != "MESSAGE_TYPE_SIGNER_ADD"
+                && kind != "MESSAGE_TYPE_SIGNER_REMOVE"
+                && Family::of(kind).is_none()
+            {
+                return None;
+            }
+            if let Some(family) = Family::of(kind) {
+                let fid = data.fid.filter(|fid| (1..=u64::from(u32::MAX)).contains(fid))?;
+                let signer = exact_signer(signer.as_deref()?)?;
+                out.actions.push(Action { fid, signer, at, family });
+            }
+        } else if matches!(
+            event.kind.as_deref(),
+            Some("HUB_EVENT_TYPE_REVOKE_MESSAGE" | "HUB_EVENT_TYPE_PRUNE_MESSAGE")
+        ) {
+            if let Some(Message { hash: Some(hash), data: Some(data), .. }) =
+                event.revoke.or(event.prune).and_then(|m| m.message)
+                && reaction(Some(&hash), &data, Some(0)).is_some()
+            {
+                out.removed.extend(hex_hash(&hash));
+            }
+        } else if event.kind.as_deref() == Some("HUB_EVENT_TYPE_MERGE_ON_CHAIN_EVENT")
+            && let Some(ChainEvent { kind: Some(kind), fid: Some(fid), signer: Some(body) }) =
+                event.chain.and_then(|c| c.event)
+            && kind == "EVENT_TYPE_SIGNER"
+            && body.key_type == Some(1)
+            && body.kind.as_deref() == Some("SIGNER_EVENT_TYPE_ADD")
+            && let Some(identity) = body.key.as_deref().and_then(|key| signer_identity(fid, key))
+        {
+            let app = match (body.metadata_type, body.metadata.as_deref()) {
+                (Some(0), Some("")) => Some(0),
+                (Some(1), Some(metadata)) => verified_request_fid_from_metadata(metadata),
+                _ => None,
+            };
+            if let Some(app) = app {
+                out.exact_keys.push((identity, app));
+            }
+        }
+        // Missing or malformed registration metadata remains unknown.
+    }
+    out.reached = reached;
+    out.started = started;
+    Some(VerifiedPage { page: out, block, gaps })
+}
+
+/// An Ed25519 key, with every byte retained.
+pub fn exact_signer(key: &str) -> Option<String> {
+    if key.len() == 66
+        && key.starts_with("0x")
+        && key.as_bytes()[2..].iter().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+    {
+        Some(key.to_owned())
+    } else {
+        normalize_key(key).filter(|key| key.len() == 66)
+    }
+}
+
+/// A full signer identity. Its fixed-width decimal prefix orders accounts
+/// together without truncating either FIDs or keys.
+pub fn signer_identity(fid: u64, key: &str) -> Option<String> {
+    if !(1..=u64::from(u32::MAX)).contains(&fid) {
+        return None;
+    }
+    Some(format!("{fid:010}:{}", exact_signer(key)?))
+}
+
+pub fn identity_fid(identity: &str) -> Option<u64> {
+    let bytes = identity.as_bytes();
+    if bytes.len() != 77
+        || &bytes[10..13] != b":0x"
+        || !bytes[13..].iter().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+    {
+        return None;
+    }
+    let mut fid = 0_u32;
+    for &digit in &bytes[..10] {
+        if !digit.is_ascii_digit() {
+            return None;
+        }
+        fid = fid.checked_mul(10)?.checked_add(u32::from(digit - b'0'))?;
+    }
+    (fid > 0).then_some(u64::from(fid))
+}
+
+/// Sorted, complete signer identities, serialized without integer or key
+/// prefix loss. Old compact key sets are never read in this namespace.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExactKeys(Vec<String>);
+
+impl ExactKeys {
+    pub fn of(keys: impl IntoIterator<Item = String>) -> Self {
+        let mut keys: Vec<_> = keys.into_iter().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        Self(keys)
+    }
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+    pub fn extend(&mut self, keys: &Self) {
+        let mut merged = Vec::with_capacity(self.0.len() + keys.0.len());
+        let mut own = std::mem::take(&mut self.0).into_iter().peekable();
+        let mut other = keys.0.iter().peekable();
+        while let (Some(a), Some(b)) = (own.peek(), other.peek()) {
+            match a.cmp(b) {
+                std::cmp::Ordering::Less => merged.push(own.next().expect("peeked")),
+                std::cmp::Ordering::Greater => merged.push(other.next().expect("peeked").clone()),
+                std::cmp::Ordering::Equal => {
+                    merged.push(own.next().expect("peeked"));
+                    other.next();
+                }
+            }
+        }
+        merged.extend(own);
+        merged.extend(other.cloned());
+        self.0 = merged;
+    }
+    pub fn encode(&self) -> String {
+        serde_json::to_string(&self.0).expect("string array")
+    }
+    pub fn decode(text: &str) -> Option<Self> {
+        let keys: Vec<String> = serde_json::from_str(text).ok()?;
+        if !keys.iter().all(|k| identity_fid(k).is_some()) || !keys.windows(2).all(|k| k[0] < k[1]) {
+            return None;
+        }
+        Some(Self(keys))
+    }
+    pub fn chunks(&self, size: usize) -> Vec<&[String]> {
+        let mut chunks = Vec::new();
+        let mut rest = self.0.as_slice();
+        while !rest.is_empty() {
+            let mut end = size.max(1).min(rest.len());
+            while end < rest.len() && identity_fid(&rest[end]) == identity_fid(&rest[end - 1]) {
+                end += 1;
+            }
+            let (chunk, after) = rest.split_at(end);
+            chunks.push(chunk);
+            rest = after;
+        }
+        chunks
+    }
 }
 
 /// The UTC day of Unix time `at`, as days since 1970-01-01.
@@ -506,19 +811,21 @@ impl Fids {
 
     /// From storage; `None` if `text` isn't a stored set of fids.
     pub fn decode(text: &str) -> Option<Fids> {
-        decode_gaps(text)?.into_iter().map(|v| u32::try_from(v).ok()).collect::<Option<_>>().map(Fids)
+        let values: Vec<u32> = decode_gaps(text)?.into_iter().map(|v| u32::try_from(v).ok()).collect::<Option<_>>()?;
+        let set = Fids(values);
+        (set.0.first().is_none_or(|fid| *fid > 0) && set.encode() == text).then_some(set)
     }
 
     /// How many distinct fids `sets` hold between them.
     pub fn union_len<'a>(sets: impl IntoIterator<Item = &'a Fids>) -> usize {
         let sets: Vec<&Fids> = sets.into_iter().collect();
-        let Some(max) = sets.iter().filter_map(|s| s.0.last()).max() else { return 0 };
-        // A bitmap: about 425 KB for today's 3.4 million fids, and linear.
-        let mut seen = vec![0u64; *max as usize / 64 + 1];
-        for fid in sets.iter().flat_map(|s| s.0.iter()) {
-            seen[*fid as usize / 64] |= 1 << (fid % 64);
+        let mut values = Vec::with_capacity(sets.iter().map(|set| set.len()).sum());
+        for set in sets {
+            values.extend_from_slice(&set.0);
         }
-        seen.iter().map(|w| w.count_ones() as usize).sum()
+        values.sort_unstable();
+        values.dedup();
+        values.len()
     }
 }
 
@@ -620,13 +927,13 @@ pub const KEEP_DAYS: i64 = 30;
 /// Days of counts it keeps.
 pub const HISTORY_DAYS: usize = 60;
 
-/// The name a set is stored under: `h<hour>` or `d<day>`.
+/// A canonical set name, isolated from preserved legacy sets.
 pub fn hour_set(hour: i64) -> String {
-    format!("h{hour}")
+    format!("v2h{hour}")
 }
 
 pub fn day_set(day: i64) -> String {
-    format!("d{day}")
+    format!("v2d{day}")
 }
 
 /// Days of the union the cron keeps once a day for a list to ask who of
@@ -637,7 +944,7 @@ pub const WEEK_DAYS: i64 = 7;
 /// stored under: `w<day>`. The cron writes it only once those days were
 /// read in full (`Follow::covered`).
 pub fn week_set(day: i64) -> String {
-    format!("w{day}")
+    format!("v2w{day}")
 }
 
 /// Which of some accounts were active in the `WEEK_DAYS` days to the end of
@@ -658,7 +965,7 @@ impl ActiveWeek {
 
 /// The name an hour's set of active keys is stored under: `k<hour>`.
 pub fn key_set(hour: i64) -> String {
-    format!("k{hour}")
+    format!("v2k{hour}")
 }
 
 /// One UTC day's counts.
@@ -686,7 +993,17 @@ pub struct Reached {
 
 /// The follower's saved state.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Follow {
+    /// Canonical verification format, isolated from legacy counts.
+    #[serde(default)]
+    pub verification_version: u8,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub starts: Vec<Reached>,
+    #[serde(default)]
+    pub blocks: Vec<BlockProgress>,
     /// Where each shard's events have been read to.
     #[serde(default)]
     pub cursors: Vec<Cursor>,
@@ -715,7 +1032,7 @@ pub struct Follow {
     /// Active keys (`key_pair`) whose app the last count didn't know, to
     /// look up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub backlog: Vec<u64>,
+    pub backlog: Vec<String>,
     /// The accounts of the apps with the most active accounts, read once a
     /// day, on `named`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -740,6 +1057,9 @@ pub struct AppActive {
 /// counts for each.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppsWindow {
+    /// Only the canonical full-key counter sets this format marker.
+    #[serde(default)]
+    pub verification_version: u8,
     /// The window's end, Unix seconds, on the hour.
     pub to: i64,
     /// When it was counted, Unix seconds.
@@ -780,6 +1100,20 @@ impl AppsWindow {
         window
     }
 
+    /// A canonical full-key window with coherent bounds and counts. Old
+    /// cached Home payloads default to version zero and must not be shown.
+    pub fn is_verified(&self) -> bool {
+        self.verification_version == VERIFICATION_VERSION
+            && self.to >= FARCASTER_EPOCH
+            && self.to.rem_euclid(3_600) == 0
+            && self.counted >= self.to
+            && self.active <= u64::from(u32::MAX)
+            && self.unknown <= self.active
+            && self.none <= self.active
+            && self.apps.iter().all(|app| app.app > 0 && app.active <= self.active)
+            && self.apps.iter().enumerate().all(|(i, app)| !self.apps[..i].iter().any(|prior| prior.app == app.app))
+    }
+
     /// Accounts active through `app`.
     pub fn through(&self, app: u64) -> u64 {
         self.apps.iter().find(|a| a.app == app).map_or(0, |a| a.active)
@@ -806,17 +1140,96 @@ pub struct Window {
 }
 
 impl Follow {
+    /// Structural checks for this isolated state format. A corrupt state
+    /// must be repaired explicitly, never silently reset or certified.
+    pub fn valid(&self, now: i64) -> bool {
+        let unique = |shards: Vec<u32>| {
+            shards.iter().all(|s| SHARDS.contains(s))
+                && shards.iter().enumerate().all(|(i, s)| !shards[..i].contains(s))
+        };
+        self.verification_version == VERIFICATION_VERSION
+            && unique(self.cursors.iter().map(|s| s.shard).collect())
+            && unique(self.reached.iter().map(|s| s.shard).collect())
+            && unique(self.starts.iter().map(|s| s.shard).collect())
+            && unique(self.blocks.iter().map(|s| s.shard).collect())
+            && self.cursors.iter().all(|c| {
+                self.blocks.iter().any(|b| {
+                    b.shard == c.shard
+                        && b.seen > 0
+                        && b.seen <= b.total
+                        && b.total <= 16_384
+                        && b.block == c.event_id >> 14
+                        && b.last_id() == c.event_id
+                })
+            })
+            && self.blocks.iter().all(|b| {
+                b.at >= FARCASTER_EPOCH
+                    && b.at <= now
+                    && self.cursors.iter().any(|c| c.shard == b.shard)
+                    && self.starts.iter().any(|s| s.shard == b.shard && s.at <= b.at + 1)
+                    && (!b.complete() || self.reached.iter().any(|r| r.shard == b.shard && r.at == b.at - 1))
+            })
+            && self.reached.iter().all(|r| {
+                r.at >= FARCASTER_EPOCH && self.blocks.iter().any(|b| b.shard == r.shard && r.at < b.at) && r.at <= now
+            })
+            && self
+                .starts
+                .iter()
+                .all(|s| s.at >= FARCASTER_EPOCH && s.at <= now + 1 && self.blocks.iter().any(|b| b.shard == s.shard))
+            && self.since
+                == SHARDS
+                    .into_iter()
+                    .map(|shard| self.starts.iter().find(|s| s.shard == shard).map(|s| s.at))
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|starts| starts.into_iter().max())
+            && self.keys_since == self.since
+            && self.gaps.iter().all(|&(from, to)| from >= FARCASTER_EPOCH && from < to && to <= now + 1)
+            && self.days.windows(2).all(|d| d[0].day < d[1].day)
+            && self.days.iter().all(|d| {
+                (day(FARCASTER_EPOCH)..=day(now)).contains(&d.day)
+                    && d.active <= u64::from(u32::MAX)
+                    && (!d.complete || self.covered(d.day * 86_400, (d.day + 1) * 86_400))
+            })
+            && self.active_30d.is_none_or(|w| {
+                (day(FARCASTER_EPOCH)..day(now)).contains(&w.day)
+                    && w.active <= u64::from(u32::MAX)
+                    && self.since.is_some_and(|since| since <= w.day * 86_400)
+                    && self.reached().is_some_and(|reached| reached >= (w.day + 1) * 86_400)
+                    && (!w.complete || self.covered((w.day - 29) * 86_400, (w.day + 1) * 86_400))
+            })
+            && self.backlog.iter().all(|k| identity_fid(k).is_some())
+            && self
+                .apps_24h
+                .as_ref()
+                .is_none_or(|w| w.is_verified() && w.counted <= now && self.covered_through(w.to - 86_400, w.to))
+    }
+
     /// How far every shard has been read, Unix seconds: the least of them.
     pub fn reached(&self) -> Option<i64> {
-        self.reached.iter().map(|r| r.at).min()
+        SHARDS
+            .into_iter()
+            .map(|shard| self.reached.iter().find(|r| r.shard == shard).map(|r| r.at))
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .min()
     }
 
     /// Whether `[from, to)` was read throughout: after counting began, with
     /// no gap in it, and every shard past its end.
     pub fn covered(&self, from: i64, to: i64) -> bool {
-        self.since.is_some_and(|since| since <= from)
+        self.verification_version == VERIFICATION_VERSION
+            && SHARDS
+                .into_iter()
+                .all(|shard| self.starts.iter().find(|s| s.shard == shard).is_some_and(|s| s.at <= from))
+            && self.since.is_some_and(|since| since <= from)
             && self.reached().is_some_and(|reached| reached >= to)
             && !self.gaps.iter().any(|&(a, b)| a < to && b > from)
+    }
+
+    /// Hourly and rolling windows include their right edge, unlike UTC
+    /// calendar days. A missing event at `to` invalidates their count.
+    pub fn covered_through(&self, from: i64, to: i64) -> bool {
+        self.covered(from, to) && !self.gaps.iter().any(|&(a, b)| a <= to && b > from)
     }
 
     /// Whether accounts by app are due to be counted for the window to `to`
@@ -824,7 +1237,7 @@ impl Follow {
     /// yet, or, while more than 1% of accounts' apps aren't known, the last
     /// count is 10 minutes old (keys are looked up a few at a time).
     pub fn apps_due(&self, to: i64, now: i64) -> bool {
-        let kept = self.keys_since.is_some_and(|since| since <= to - 86_400) && self.covered(to - 86_400, to);
+        let kept = self.keys_since.is_some_and(|since| since <= to - 86_400) && self.covered_through(to - 86_400, to);
         kept && self.apps_24h.as_ref().is_none_or(|w| w.to < to || (w.known_percent() < 99 && now - w.counted >= 600))
     }
 
@@ -859,7 +1272,9 @@ pub struct Batch {
     pub days: HashMap<i64, Fids>,
     pub actions: HashMap<i64, HashMap<Family, u64>>,
     /// The keys that signed, by hour.
+    #[cfg(test)]
     pub keys: HashMap<i64, Keys>,
+    pub exact_keys: HashMap<i64, ExactKeys>,
 }
 
 impl Batch {
@@ -867,8 +1282,12 @@ impl Batch {
         let mut hours: HashMap<i64, Vec<u64>> = HashMap::new();
         let mut days: HashMap<i64, Vec<u64>> = HashMap::new();
         let mut counts: HashMap<i64, HashMap<Family, u64>> = HashMap::new();
+        #[cfg(test)]
         let mut keys: HashMap<i64, Vec<u64>> = HashMap::new();
+        let mut exact_keys: HashMap<i64, Vec<String>> = HashMap::new();
         for a in actions {
+            exact_keys.entry(bucket(a.at)).or_default().extend(signer_identity(a.fid, &a.signer));
+            #[cfg(test)]
             keys.entry(bucket(a.at)).or_default().extend(key_pair(a.fid, &a.signer));
             hours.entry(bucket(a.at)).or_default().push(a.fid);
             days.entry(day(a.at)).or_default().push(a.fid);
@@ -878,15 +1297,39 @@ impl Batch {
             hours: hours.into_iter().map(|(h, f)| (h, Fids::of(f))).collect(),
             days: days.into_iter().map(|(d, f)| (d, Fids::of(f))).collect(),
             actions: counts,
+            #[cfg(test)]
             keys: keys.into_iter().map(|(h, k)| (h, Keys::of(k))).collect(),
+            exact_keys: exact_keys.into_iter().map(|(h, k)| (h, ExactKeys::of(k))).collect(),
         }
     }
+}
+
+/// The evidence behind one shard's canonical coverage. A partial block is
+/// exposed separately from the time through which counting is complete.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShardVerification {
+    pub shard: u32,
+    pub since: Option<i64>,
+    pub reached: Option<i64>,
+    pub cursor: Option<u64>,
+    pub block: Option<u64>,
+    pub block_at: Option<i64>,
+    pub total_events: Option<u32>,
+    pub read_events: Option<u32>,
 }
 
 /// What `/api/v1/activity` answers: Farcaster's active accounts, as the
 /// cron last counted them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivityPayload {
+    #[serde(default)]
+    pub verification_version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_since: Option<i64>,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub shards: Vec<ShardVerification>,
     /// How far the events had been read, Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reached: Option<i64>,
@@ -925,12 +1368,126 @@ pub struct ActivityPayload {
     pub meta: crate::api::Meta,
 }
 
+impl ActivityPayload {
+    /// Validate source-observed canonical evidence, including partial first
+    /// runs. This does not attest independent consensus or reorg detection.
+    /// A valid epoch is distinct from any particular window being complete.
+    pub fn is_verified(&self, now: i64) -> bool {
+        if self.verification_version != VERIFICATION_VERSION
+            || self.source != ACTIVITY_SOURCE
+            || self.meta.backend != crate::provenance::Backend::Hypersnap
+            || self.meta.fetched_at.div_euclid(1_000) > now
+            || self.meta.fetched_at < FARCASTER_EPOCH * 1_000
+            || self.shards.len() != SHARDS.len()
+            || !SHARDS.into_iter().all(|shard| self.shards.iter().filter(|s| s.shard == shard).count() == 1)
+        {
+            return false;
+        }
+        for shard in &self.shards {
+            match (shard.since, shard.block, shard.block_at, shard.total_events, shard.read_events, shard.cursor) {
+                (None, None, None, None, None, None) if shard.reached.is_none() => {}
+                (Some(since), Some(block), Some(at), Some(total), Some(read), Some(cursor)) => {
+                    if !(1..=16_384).contains(&total)
+                        || read == 0
+                        || read > total
+                        || block != cursor >> 14
+                        || u64::from(read - 1) != cursor & 16_383
+                        || at < FARCASTER_EPOCH
+                        || at > self.meta.fetched_at.div_euclid(1_000)
+                        || since < FARCASTER_EPOCH
+                        || since > at + 1
+                        || shard.reached.is_some_and(|reached| reached < FARCASTER_EPOCH || reached >= at)
+                        || (read == total && shard.reached != Some(at - 1))
+                    {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        let since = self.shards.iter().map(|s| s.since).collect::<Option<Vec<_>>>().and_then(|s| s.into_iter().max());
+        let reached =
+            self.shards.iter().map(|s| s.reached).collect::<Option<Vec<_>>>().and_then(|s| s.into_iter().min());
+        if self.verified_since != since
+            || self.since != since
+            || self.reached != reached
+            || self.rolling_to != reached.map(rolling_to)
+            || self.gaps.iter().any(|&(from, to)| from < FARCASTER_EPOCH || from >= to || to > now + 1)
+            || !self.days.windows(2).all(|d| d[0].day < d[1].day)
+            || self.days.iter().any(|d| {
+                d.day < day(FARCASTER_EPOCH) - 1
+                    || d.day > day(now)
+                    || d.active > u64::from(u32::MAX)
+                    || (d.complete && !self.covers(d.day * 86_400, (d.day + 1) * 86_400))
+            })
+        {
+            return false;
+        }
+        if self.rolling_24h.is_some() && !self.rolling_to.is_some_and(|to| self.covers_through(to - 86_400, to))
+            || self.previous_24h.is_some()
+                && !self.rolling_to.is_some_and(|to| self.covers_through(to - 2 * 86_400, to - 86_400))
+            || self.rolling_24h.is_some_and(|n| n > u64::from(u32::MAX))
+            || self.previous_24h.is_some_and(|n| n > u64::from(u32::MAX))
+        {
+            return false;
+        }
+        if !self.hourly.is_empty() {
+            let Some(to) = self.rolling_to else {
+                return false;
+            };
+            if self.hourly.len() != HOURLY as usize
+                || self.hourly.iter().enumerate().any(|(i, n)| {
+                    let end = to - (HOURLY - 1 - i as i64) * 3_600;
+                    n.is_some_and(|count| count > u64::from(u32::MAX) || !self.covers_through(end - 3_600, end))
+                })
+            {
+                return false;
+            }
+        }
+        if let Some(window) = self.active_30d
+            && (window.day < day(FARCASTER_EPOCH)
+                || window.day >= day(now)
+                || window.active > u64::from(u32::MAX)
+                || self.verified_since.is_none()
+                || !self.reached.is_some_and(|reached| reached >= (window.day + 1) * 86_400)
+                || (window.complete && !self.covers((window.day - 29) * 86_400, (window.day + 1) * 86_400)))
+        {
+            return false;
+        }
+        if let Some(window) = &self.apps_24h
+            && (!window.is_verified()
+                || window.counted > self.meta.fetched_at.div_euclid(1_000)
+                || !self.covers_through(window.to - 86_400, window.to)
+                || (self.rolling_to == Some(window.to) && self.rolling_24h != Some(window.active)))
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Right-closed coverage for `(from,to]` activity windows.
+    pub fn covers_through(&self, from: i64, to: i64) -> bool {
+        self.covers(from, to) && !self.gaps.iter().any(|&(a, b)| a <= to && b > from)
+    }
+
+    /// Whether the proof includes this complete interval. Call
+    /// `is_verified` first when consuming untrusted JSON.
+    pub fn covers(&self, from: i64, to: i64) -> bool {
+        from <= to
+            && self.verified_since.is_some_and(|since| since <= from)
+            && self.reached.is_some_and(|reached| reached >= to)
+            && !self.gaps.iter().any(|&(a, b)| a < to && b > from)
+    }
+}
+
 /// Accounts active in the 24 hours to `to` (on the hour), `(to − 24 h, to]`,
 /// if all of them were read. `hours` holds their sets (see `bucket`); an
 /// hour with no set had no activity.
 pub fn rolling(follow: &Follow, hours: &HashMap<i64, Fids>, to: i64) -> Option<u64> {
     let last = hour(to) - 1;
-    follow.covered(to - 86_400, to).then(|| Fids::union_len(((last - 23)..=last).filter_map(|h| hours.get(&h))) as u64)
+    follow
+        .covered_through(to - 86_400, to)
+        .then(|| Fids::union_len(((last - 23)..=last).filter_map(|h| hours.get(&h))) as u64)
 }
 
 /// The end of the 24-hour windows when events have been read to `reached`:
@@ -949,7 +1506,9 @@ pub const HOURLY: i64 = 48;
 pub fn hourly(follow: &Follow, hours: &HashMap<i64, Fids>, to: i64) -> Vec<Option<u64>> {
     let last = hour(to) - 1;
     let counts: Vec<Option<u64>> = ((last - HOURLY + 1)..=last)
-        .map(|h| follow.covered(h * 3_600, (h + 1) * 3_600).then(|| hours.get(&h).map_or(0, |set| set.len() as u64)))
+        .map(|h| {
+            follow.covered_through(h * 3_600, (h + 1) * 3_600).then(|| hours.get(&h).map_or(0, |set| set.len() as u64))
+        })
         .collect();
     if counts.iter().any(Option::is_some) { counts } else { Vec::new() }
 }
@@ -995,6 +1554,25 @@ pub fn summary(follow: &Follow, hours: &HashMap<i64, Fids>, meta: crate::api::Me
     let reached = follow.reached();
     let to = reached.map(rolling_to);
     ActivityPayload {
+        verification_version: follow.verification_version,
+        verified_since: follow.since,
+        source: ACTIVITY_SOURCE.into(),
+        shards: SHARDS
+            .into_iter()
+            .map(|shard| {
+                let block = follow.blocks.iter().find(|b| b.shard == shard);
+                ShardVerification {
+                    shard,
+                    since: follow.starts.iter().find(|s| s.shard == shard).map(|s| s.at),
+                    reached: follow.reached.iter().find(|s| s.shard == shard).map(|s| s.at),
+                    cursor: follow.cursors.iter().find(|s| s.shard == shard).map(|s| s.event_id),
+                    block: block.map(|b| b.block),
+                    block_at: block.map(|b| b.at),
+                    total_events: block.map(|b| b.total),
+                    read_events: block.map(|b| b.seen),
+                }
+            })
+            .collect(),
         reached,
         rolling_to: to,
         rolling_24h: to.and_then(|t| rolling(follow, hours, t)),
@@ -1171,7 +1749,7 @@ mod tests {
 
     #[test]
     fn a_week_says_who_of_those_asked_was_active_in_the_order_asked() {
-        assert_eq!(week_set(20_385), "w20385");
+        assert_eq!(week_set(20_385), "v2w20385");
         let week = Fids::of([3, 9, 12]);
         assert_eq!(
             ActiveWeek::among(20_385, &week, &[12, 4, 3, 3]),
@@ -1210,6 +1788,8 @@ mod tests {
 
     fn follow(since: i64, reached: i64) -> Follow {
         Follow {
+            verification_version: VERIFICATION_VERSION,
+            starts: vec![Reached { shard: 1, at: since }, Reached { shard: 2, at: since }],
             reached: vec![Reached { shard: 1, at: reached }, Reached { shard: 2, at: reached + 30 }],
             since: Some(since),
             ..Follow::default()
@@ -1460,5 +2040,304 @@ mod tests {
         assert_eq!(day_name(day(1_792_454_400)), "2026-10-20");
         assert_eq!(day_name(day(1_792_454_399)), "2026-10-19");
         assert_eq!(day_name(day(951_782_400)), "2000-02-29");
+    }
+    fn confirmation(shard: u32, height: u64, at: i64, total: u32) -> serde_json::Value {
+        serde_json::json!({"type":"HUB_EVENT_TYPE_BLOCK_CONFIRMED","id":height << 14,"blockNumber":height,"shardIndex":shard,
+            "blockConfirmedBody":{"blockNumber":height,"shardIndex":shard,"timestamp":at-FARCASTER_EPOCH,"totalEvents":total}})
+    }
+
+    fn canonical_merge(shard: u32, height: u64, seq: u64, signed_at: i64) -> serde_json::Value {
+        serde_json::json!({"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":(height << 14)|seq,"blockNumber":height,"shardIndex":shard,
+            "mergeMessageBody":{"message":{"signer":format!("0x{:064x}", 1),"data":{"type":"MESSAGE_TYPE_CAST_ADD","fid":7,"timestamp":signed_at-FARCASTER_EPOCH}}}})
+    }
+
+    fn canonical_page(events: Vec<serde_json::Value>) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({"events":events})).unwrap()
+    }
+
+    #[test]
+    fn canonical_block_time_survives_page_splits_and_equal_timestamp_blocks() {
+        let at = 1_800_000_000;
+        let first = verified_activity(
+            &canonical_page(vec![confirmation(1, 10, at, 3), canonical_merge(1, 10, 1, at - 90_000)]),
+            1,
+            (10 << 14) - 1,
+            None,
+            at + 10,
+        )
+        .unwrap();
+        assert_eq!(first.page.reached, None, "a partial block is not complete coverage");
+        assert_eq!(first.page.actions[0].at, at);
+        let second = verified_activity(
+            &canonical_page(vec![canonical_merge(1, 10, 2, at + 90_000)]),
+            1,
+            (10 << 14) | 1,
+            first.block.as_ref(),
+            at + 10,
+        )
+        .unwrap();
+        assert_eq!(second.page.actions[0].at, at, "the user's signed time cannot move activity");
+        assert_eq!(second.page.reached, Some(at - 1));
+        let equal = verified_activity(
+            &canonical_page(vec![confirmation(1, 11, at, 1)]),
+            1,
+            (10 << 14) | 2,
+            second.block.as_ref(),
+            at + 10,
+        )
+        .unwrap();
+        assert_eq!(equal.page.reached, Some(at - 1), "later blocks can share a second");
+        let later = verified_activity(
+            &canonical_page(vec![confirmation(1, 12, at + 1, 1)]),
+            1,
+            11 << 14,
+            equal.block.as_ref(),
+            at + 10,
+        )
+        .unwrap();
+        assert_eq!(later.page.reached, Some(at));
+    }
+
+    #[test]
+    fn canonical_pages_reject_wrong_shards_duplicates_missing_sequences_and_future_blocks() {
+        let at = 1_800_000_000;
+        for events in [
+            vec![confirmation(2, 10, at, 1)],
+            vec![confirmation(1, 10, at + 1, 1)],
+            vec![confirmation(1, 10, at, 3), canonical_merge(1, 10, 2, at)],
+            vec![confirmation(1, 10, at, 3), canonical_merge(1, 10, 1, at), canonical_merge(1, 10, 1, at)],
+        ] {
+            assert!(verified_activity(&canonical_page(events), 1, (10 << 14) - 1, None, at).is_none());
+        }
+        let mut wrong_block = confirmation(1, 10, at, 1);
+        wrong_block["blockConfirmedBody"]["blockNumber"] = 11.into();
+        assert!(verified_activity(&canonical_page(vec![wrong_block]), 1, (10 << 14) - 1, None, at).is_none());
+        assert!(
+            verified_activity(&canonical_page(vec![canonical_merge(1, 10, 1, at)]), 1, 10 << 14, None, at).is_none(),
+            "no canonical block time means no verified count"
+        );
+    }
+
+    #[test]
+    fn retention_jumps_leave_a_gap_including_equal_timestamp_edges() {
+        let at = 1_800_000_000;
+        let carried = BlockProgress { shard: 1, block: 10, at, total: 2, seen: 1 };
+        let next = verified_activity(
+            &canonical_page(vec![confirmation(1, 12, at + 60, 1)]),
+            1,
+            10 << 14,
+            Some(&carried),
+            at + 60,
+        )
+        .unwrap();
+        assert_eq!(next.gaps, vec![(at, at + 61)]);
+    }
+
+    #[test]
+    fn coverage_requires_both_shards_and_the_later_shards_start() {
+        let mut state = follow(1_000, 10_000);
+        state.starts[1].at = 2_000;
+        state.since = Some(2_000);
+        assert!(!state.covered(1_000, 3_000));
+        assert!(state.covered(2_000, 3_000));
+        state.reached.pop();
+        assert_eq!(state.reached(), None);
+        assert!(!state.covered(2_000, 3_000));
+    }
+
+    #[test]
+    fn exact_signers_preserve_colliding_prefixes_and_all_u32_fids() {
+        let a = signer_identity(u64::from(u32::MAX), &format!("0x12345678{:056x}", 1)).unwrap();
+        let b = signer_identity(u64::from(u32::MAX), &format!("0x12345678{:056x}", 2)).unwrap();
+        let keys = ExactKeys::of([a.clone(), b.clone(), a]);
+        assert_eq!(keys.as_slice().len(), 2);
+        assert_eq!(ExactKeys::decode(&keys.encode()), Some(keys.clone()));
+        assert_eq!(identity_fid(&b), Some(u64::from(u32::MAX)));
+        assert_eq!(keys.chunks(1).len(), 1, "an account is never split between count statements");
+        assert!(signer_identity(42, "0x01").is_none());
+        assert!(ExactKeys::decode(r#"["0000000042:0x01"]"#).is_none());
+    }
+    #[test]
+    fn cached_app_windows_need_the_full_key_verification_marker() {
+        let to = hour(1_800_000_000) * 3_600;
+        let mut window = AppsWindow::of(to, to + 60, 2, [(Some(9152), 1), (None, 1)]);
+        assert!(!window.is_verified());
+        window.verification_version = VERIFICATION_VERSION;
+        assert!(window.is_verified());
+        window.apps.push(AppActive { app: 9152, active: 1 });
+        assert!(!window.is_verified(), "duplicate app rows cannot inflate a count");
+    }
+    #[test]
+    fn payload_proof_distinguishes_a_partial_epoch_from_invented_complete_counts() {
+        let at = 1_800_000_000;
+        let state = Follow { verification_version: VERIFICATION_VERSION, ..Follow::default() };
+        let mut payload = summary(
+            &state,
+            &HashMap::new(),
+            crate::api::Meta { fetched_at: at * 1_000, ..crate::api::Meta::default() },
+        );
+        assert!(payload.is_verified(at), "two explicit waiting shards form a valid incomplete epoch");
+        payload.rolling_24h = Some(0);
+        assert!(!payload.is_verified(at), "missing coverage cannot become a certified zero");
+        payload.rolling_24h = None;
+        payload.shards.pop();
+        assert!(!payload.is_verified(at));
+    }
+
+    #[test]
+    fn payload_proof_rejects_unsupported_sources_future_progress_and_false_complete_days() {
+        let at = 1_800_000_000;
+        let since = at - 3 * 86_400;
+        let mut state = follow(since, at - 1);
+        state.keys_since = state.since;
+        state.blocks =
+            SHARDS.into_iter().map(|shard| BlockProgress { shard, block: 10, at, total: 1, seen: 1 }).collect();
+        state.cursors = SHARDS.into_iter().map(|shard| Cursor { shard, event_id: 10 << 14 }).collect();
+        // The core follow helper's second shard is thirty seconds ahead;
+        // this proof has both shards at the same canonical checkpoint.
+        state.reached.iter_mut().for_each(|r| r.at = at - 1);
+        let payload = summary(
+            &state,
+            &HashMap::new(),
+            crate::api::Meta { fetched_at: at * 1_000, ..crate::api::Meta::default() },
+        );
+        assert!(payload.is_verified(at));
+        for corrupt in 0..5 {
+            let mut bad = payload.clone();
+            match corrupt {
+                0 => bad.source = "https://other.example/v1/events".into(),
+                1 => bad.shards[1].shard = 1,
+                2 => bad.shards[0].block_at = Some(at + 1),
+                3 => bad.days.push(DayCount { day: day(since) - 1, active: 1, complete: true, ..DayCount::default() }),
+                _ => bad.meta.fetched_at = (at + 1) * 1_000,
+            }
+            assert!(!bad.is_verified(at));
+        }
+    }
+    #[test]
+    fn recorded_hypersnap_blocks_verify_whole_and_split_at_every_page_boundary() {
+        for (shard, body, height, at, actions) in [
+            (1, include_bytes!("../tests/fixtures/activity-shard-1.json").as_slice(), 49_751_747, 1_793_097_607, 2),
+            (2, include_bytes!("../tests/fixtures/activity-shard-2.json").as_slice(), 49_587_008, 1_793_097_593, 1),
+        ] {
+            let whole = verified_activity(body, shard, (height << 14) - 1, None, at + 60).unwrap();
+            assert_eq!(whole.page.actions.len(), actions);
+            assert_eq!(whole.page.reached, Some(at - 1));
+            assert!(whole.block.as_ref().unwrap().complete());
+            let input: serde_json::Value = serde_json::from_slice(body).unwrap();
+            let events = input["events"].as_array().unwrap();
+            for cut in 1..events.len() {
+                let first = verified_activity(
+                    &canonical_page(events[..cut].to_vec()),
+                    shard,
+                    (height << 14) - 1,
+                    None,
+                    at + 60,
+                )
+                .unwrap();
+                assert_eq!(first.page.reached, None);
+                let second = verified_activity(
+                    &canonical_page(events[cut..].to_vec()),
+                    shard,
+                    first.page.last_id.unwrap(),
+                    first.block.as_ref(),
+                    at + 60,
+                )
+                .unwrap();
+                let mut split = first.page.actions;
+                split.extend(second.page.actions);
+                assert_eq!(split, whole.page.actions, "shard{shard} split after event{cut}");
+                assert_eq!(second.page.reached, whole.page.reached);
+            }
+        }
+    }
+    #[test]
+    fn a_gap_on_the_right_edge_invalidates_hours_and_rolling_but_not_the_prior_day() {
+        let to = 20_000 * 86_400;
+        let mut state = follow(to - 3 * 86_400, to + 60);
+        state.gaps.push((to, to + 1));
+        assert!(state.covered(to - 86_400, to), "the timestamp belongs to the next calendar day");
+        assert!(!state.covered_through(to - 86_400, to));
+        assert_eq!(rolling(&state, &HashMap::new(), to), None);
+        assert_eq!(hourly(&state, &HashMap::new(), to).last(), Some(&None));
+        state.keys_since = state.since;
+        assert!(!state.apps_due(to, to + 60));
+    }
+
+    #[test]
+    fn missing_or_unknown_event_types_and_missing_merge_types_are_not_verified_as_zero() {
+        let at = 1_800_000_000;
+        for bad_kind in [None, Some("HUB_EVENT_TYPE_UNKNOWN")] {
+            let mut message = canonical_merge(1, 10, 1, at);
+            match bad_kind {
+                None => {
+                    message.as_object_mut().unwrap().remove("type");
+                }
+                Some(kind) => message["type"] = kind.into(),
+            }
+            assert!(
+                verified_activity(
+                    &canonical_page(vec![confirmation(1, 10, at, 2), message]),
+                    1,
+                    (10 << 14) - 1,
+                    None,
+                    at
+                )
+                .is_none()
+            );
+        }
+        let mut message = canonical_merge(1, 10, 1, at);
+        message["mergeMessageBody"]["message"]["data"].as_object_mut().unwrap().remove("type");
+        assert!(
+            verified_activity(&canonical_page(vec![confirmation(1, 10, at, 2), message]), 1, (10 << 14) - 1, None, at)
+                .is_none()
+        );
+    }
+    #[test]
+    fn allocation_free_identity_validation_matches_the_canonical_formatter() {
+        for fid in [1, 7, 42, 1 << 31, u64::from(u32::MAX)] {
+            for key in [format!("0x{:064x}", 0), format!("0x12345678{:056x}", 1), format!("0x12345678{:056x}", 2)] {
+                let identity = signer_identity(fid, &key).unwrap();
+                assert_eq!(identity_fid(&identity), Some(fid));
+            }
+        }
+        let valid = signer_identity(42, &format!("0x{:064x}", 1)).unwrap();
+        for invalid in [
+            valid.replacen("0000000042", "0000000000", 1),
+            valid.replacen("0000000042", "4294967296", 1),
+            valid.replacen("0000000042", "+000000042", 1),
+            valid.replacen("0000000042", "000000004", 1),
+            valid.replacen(":0x", ":0X", 1),
+            format!("{}A", &valid[..76]),
+            format!("{}é", &valid[..76]),
+            format!("{} ", &valid[..76]),
+        ] {
+            assert_eq!(identity_fid(&invalid), None, "{invalid}");
+        }
+        assert_eq!(exact_signer(&format!("0X{:064X}", 0xABC)), Some(format!("0x{:064x}", 0xabc)));
+    }
+
+    #[test]
+    fn exact_key_linear_merges_match_an_independent_set_union() {
+        use std::collections::BTreeSet;
+        let a = signer_identity(7, &format!("0x12345678{:056x}", 1)).unwrap();
+        let b = signer_identity(7, &format!("0x12345678{:056x}", 2)).unwrap();
+        let c = signer_identity(u64::from(u32::MAX), &format!("0x{:064x}", 3)).unwrap();
+        for (left, right) in [
+            (vec![], vec![a.clone(), b.clone()]),
+            (vec![a.clone(), b.clone()], vec![]),
+            (vec![a.clone()], vec![b.clone(), c.clone()]),
+            (vec![a.clone(), c.clone()], vec![a.clone(), b.clone()]),
+            (vec![a.clone(), b.clone(), c.clone()], vec![a.clone(), b.clone(), c.clone()]),
+        ] {
+            let expected: BTreeSet<_> = left.iter().chain(right.iter()).cloned().collect();
+            let mut got = ExactKeys::of(left);
+            got.extend(&ExactKeys::of(right));
+            assert_eq!(got.as_slice(), expected.into_iter().collect::<Vec<_>>());
+            let chunks = got.chunks(1);
+            assert!(
+                chunks.windows(2).all(|w| identity_fid(w[0].last().unwrap()) != identity_fid(w[1].first().unwrap()))
+            );
+        }
     }
 }

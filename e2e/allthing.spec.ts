@@ -146,10 +146,10 @@ test.describe("front page", () => {
     await expect(page.locator(".cast-card .origin").first()).toContainText("via ");
     await expect(page.locator(".score")).toHaveCount(0);
 
-    // No backend badges, intro, ranking or keyboard boxes; Home and Library links,
+    // No backend badges, intro, ranking or keyboard boxes; Home, Library and DAU links,
     // and a one-line footer with the version.
     await expect(page.locator(".backend")).toHaveCount(0);
-    await expect(page.locator(".main-nav a")).toHaveText(["Home", "Library"]);
+    await expect(page.locator(".main-nav a")).toHaveText(["Home", "Library", "DAU"]);
     // No sidebar: the feed is one centered column.
     await expect(page.locator(".side")).toHaveCount(0);
     const feed = await page.locator(".columns .content").boundingBox();

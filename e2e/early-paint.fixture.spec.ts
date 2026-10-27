@@ -102,7 +102,7 @@ const apps = {
   9152: { fid: 9152, username: "farcaster", display_name: "Farcaster" },
   2904: { fid: 2904, username: "wake", display_name: "wake" },
 };
-const apps24h = { to: now - 600, counted: now - 590, active: 120, apps: [{ app: 9152, active: 110 }, { app: 2904, active: 9 }], none: 1 };
+const apps24h = { verification_version: 2, to: Math.floor(now / HOUR) * HOUR, counted: now, active: 120, apps: [{ app: 9152, active: 110 }, { app: 2904, active: 9 }], none: 1 };
 const quotes = { [quoted.hash]: quoted, [hiddenQuote.hash]: hiddenQuote };
 const payload = { pool, notes: { origins, apps, quotes }, meta, apps_24h: apps24h };
 
@@ -296,7 +296,7 @@ test("with most of the casts' apps still being read, the early usage bar is the 
   const held = await hold(page);
   // The first five casts' apps are known; the other 21 are being read.
   const known = Object.fromEntries(pool.slice(0, 5).map((c) => [c.hash, origins[c.hash]]));
-  await serve(page, { ...payload, notes: { ...payload.notes, origins: known, pending: pool.length - 5 } });
+  await serve(page, { ...payload, apps_24h: { ...apps24h, apps: undefined, unknown: 120, none: 0 }, notes: { ...payload.notes, origins: known, pending: pool.length - 5 } });
   await page.goto("/");
   const boot = page.locator("#boot");
   await expect(boot.locator(".cast-card")).toHaveCount(painted.length);
@@ -481,24 +481,27 @@ test("a signed-in reader's Following tab isn't drawn early: the app draws it", a
   expect(await observedSignedInBoot(page)).toEqual([]);
 });
 
-test("an account seen less of is lower in the first cards too, as in the app", async ({ page }) => {
+test("Show less waits for the Rust feed filter without flashing suppressed early cards", async ({ page }) => {
   const held = await hold(page);
   await serve(page);
-  await page.addInitScript(() => localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }])));
+  await page.addInitScript(() => {
+    localStorage.setItem("allthing.show-less", JSON.stringify([{ fid: 1, username: "ann" }]));
+    (window as any).__lessEarlyCards = false;
+    new MutationObserver(() => {
+      if (document.querySelector("#boot .cast-card")) (window as any).__lessEarlyCards = true;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  const response = page.waitForResponse(r => r.url().includes("/api/v1/home"));
   await page.goto("/");
+  await (await response).finished();
+  await page.waitForTimeout(100);
   const boot = page.locator("#boot");
-  // Hot, seeing less of ann: her cast, second without it, is as if hours
-  // older and goes below dee's quiet ones, 5th, as in the app.
-  await expect(boot.locator(".cast-card")).toHaveCount(6);
-  expect(await boot.locator(".cast-card").evaluateAll((cards) => cards.map((c) => (c as HTMLElement).dataset.hash))).toEqual(
-    [busy, favorite, pair, later, rich, rest[0]].map((c) => c.hash),
-  );
+  await expect(boot.locator(".cast-card")).toHaveCount(0);
   await moduleIn(page, held);
-  await settled(page, "#boot");
-  const early = await shown(page, "#boot");
   held.js("continue");
   await expect(boot).toHaveCount(0);
-  expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+  await expect(page.locator("#app .cast-card").first()).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__lessEarlyCards)).toBe(false);
 });
 
 test("a card with Pepe reactions keeps its box: the early card has the row their chips come into", async ({ page }) => {
@@ -592,4 +595,30 @@ test("if the app can't load, its panel shows instead of the early cards", async 
   await expect(page.getByRole("button", { name: "Reload", exact: true })).toBeVisible();
   await expect(page.locator("#boot .cast-card")).toHaveCount(0);
   await expect(page.locator("#boot")).not.toHaveAttribute("data-painted", "");
+});
+
+
+test("legacy or incoherent app counts never decorate early cards", async ({ page }) => {
+  for (const change of [
+    { verification_version: 0 },
+    { to: Math.floor(now / HOUR) * HOUR - 3 * HOUR },
+    { counted: now + HOUR },
+    { apps: [{ app: 9152, active: 121 }] },
+    { apps: [{ app: 9152, active: 110 }, { app: 9152, active: 9 }] },
+  ]) {
+    const held = await hold(page);
+    await serve(page, { ...payload, apps_24h: { ...apps24h, ...change } });
+    await page.goto("/");
+    const boot = page.locator("#boot");
+    await expect(boot.locator(".cast-card")).toHaveCount(painted.length);
+    await expect(boot.locator(".share-bar")).not.toHaveClass(/\bcounted\b/);
+    await expect(boot.locator(".share-bar .seg-slot a")).toHaveCount(0);
+    await moduleIn(page, held);
+    await settled(page, "#boot");
+    const early = await shown(page, "#boot");
+    held.js("continue");
+    await expect(boot).toHaveCount(0);
+    expect((await shown(page, "#app")).slice(0, early.length)).toEqual(early);
+    await expect(page.locator("#app .share-bar")).not.toHaveClass(/\bcounted\b/);
+  }
 });

@@ -8,10 +8,10 @@ import { expect, test } from "@playwright/test";
 /*
  * What a Followers or Following page will read of the active-accounts
  * cron's D1 for its people (no page asks yet): the apps each signed with,
- * from the keys the cron learned (`signer_apps`), and whether each was
- * active in the past week, from the union of its days the cron keeps once
- * a day (`w<day>` in `activity`), kept as the days are. This runs the
- * Worker's own statements, read from crates/allthing-worker/src/index.rs,
+ * from the full keys the verified cron learned (`verified_signer_apps`),
+ * and whether each was active in the past week, from the union of its days
+ * (`v2w<day>` in `activity`). Legacy rows remain outside this verified epoch.
+ * This runs the Worker's own statements, read from index.rs,
  * on a local D1 made from the migrations, as wrangler runs D1.
  */
 
@@ -29,9 +29,15 @@ function statement(name: string): string {
   return found[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
 }
 
-/** `sql` with its parameters (?1, ?2) as literals, as D1 binds them. */
-const bind = (sql: string, ...values: (string | bigint)[]) =>
-  values.reduce<string>((bound, value, i) => bound.replaceAll(`?${i + 1}`, typeof value === "bigint" ? String(value) : `'${value.replace(/'/g, "''")}'`), sql);
+/** `sql` with all numbered parameters as literals, including a SQL NULL. */
+function bind(sql: string, ...values: (string | bigint | null)[]): string {
+  return sql.replace(/\?(\d+)/g, (_, parameter: string) => {
+    const index = Number(parameter) - 1;
+    if (index < 0 || index >= values.length) throw new Error(`unbound SQL parameter ?${parameter}`);
+    const value = values[index];
+    return value === null ? "NULL" : typeof value === "bigint" ? String(value) : `'${value.replace(/'/g, "''")}'`;
+  });
+}
 
 let state = "";
 
@@ -46,13 +52,14 @@ function d1(sql: string): Record<string, unknown>[] {
   return results[results.length - 1].results;
 }
 
-/** A key as the cron keeps it: its account's fid in the high 32 bits, the key's first 4 bytes in the low. */
-const pair = (fid: number, head: number) => (BigInt(fid) << 32n) | BigInt(head);
+/** Every FID and public-key byte, in the verified counter's canonical format. */
+const identity = (fid: number, head: number, tail = 0) =>
+  `${String(fid).padStart(10, "0")}:0x${head.toString(16).padStart(8, "0")}${tail.toString(16).padStart(56, "0")}`;
 
 test.beforeAll(() => {
   test.setTimeout(120_000);
   state = mkdtempSync(path.join(tmpdir(), "allthing-follows-facts-"));
-  for (const migration of ["0003_activity.sql", "0004_signer_apps.sql"]) {
+  for (const migration of ["0001_index.sql", "0003_activity.sql", "0004_signer_apps.sql", "0011_verified_activity.sql"]) {
     execFileSync("npx", ["wrangler", "d1", "execute", "allthing-index", "--local", "--persist-to", state, "--file", path.join(ROOT, "migrations", migration)], {
       cwd: ROOT,
       stdio: "ignore",
@@ -64,46 +71,77 @@ test.afterAll(() => {
   if (state) rmSync(state, { recursive: true, force: true });
 });
 
-test("each account's apps come from its keys' range, by fid, never as a key", () => {
-  const last = 2 ** 31 - 1;
-  const keys: [bigint, number][] = [
-    // Two keys from the Farcaster app and one from Allthing.
-    [pair(1, 0x0a0b0c0d), 9152],
-    [pair(1, 0x00000001), 9152],
-    [pair(1, 0xffffffff), 3356318],
-    // A key no app requested, its account's first.
-    [pair(2, 0), 0],
-    // The next account's first key isn't the one before's.
-    [pair(3, 0), 309857],
-    // The highest fid a key is kept for.
-    [pair(last, 5), 9152],
+test("each account's apps come from its full signer keys, by fid, never as a key", () => {
+  const aboveOldLimit = 2 ** 31;
+  const last = 2 ** 32 - 1;
+  const keys: [string, number][] = [
+    // Full keys sharing the same first four bytes remain distinct; two
+    // belong to Farcaster and the third to Allthing for this account.
+    [identity(1, 0x0a0b0c0d, 1), 9152],
+    [identity(1, 0x0a0b0c0d, 2), 9152],
+    [identity(1, 0x0a0b0c0d, 3), 3356318],
+    // Explicitly verified as no requesting app.
+    [identity(2, 0, 1), 0],
+    // The same public key under another FID is a separate identity.
+    [identity(3, 0, 1), 309857],
+    [identity(aboveOldLimit, 5), 309857],
+    [identity(last, 5), 9152],
   ];
-  d1(`INSERT INTO signer_apps (pair, app) VALUES ${keys.map(([p, app]) => `(${p}, ${app})`).join(", ")}`);
-  const rows = d1(bind(statement("APPS_OF"), JSON.stringify([1, 2, 4, last])));
-  // Fids and apps only, each pair of them once.
+  d1(bind(statement("STORE_KEYS"), JSON.stringify(keys)));
+  expect(d1("SELECT COUNT(*) AS total FROM verified_signer_apps")).toEqual([{ total: keys.length }]);
+  // Legacy prefix attribution is preserved but cannot enter verified facts.
+  const legacyPair = (1n << 32n) | 0x0a0b0c0dn;
+  d1(`INSERT INTO signer_apps (pair, app) VALUES (${legacyPair}, 9999)`);
+  const rows = d1(bind(statement("APPS_OF"), JSON.stringify([1, 2, 4, aboveOldLimit, last])));
+  // Fids and apps only, each pair of them once; never expose signing keys.
   for (const row of rows) expect(Object.keys(row).sort()).toEqual(["app", "fid"]);
   const found = rows.map((row) => [Number(row.fid), Number(row.app)]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   expect(found).toEqual([
     [1, 9152],
     [1, 3356318],
     [2, 0],
+    [aboveOldLimit, 309857],
     [last, 9152],
   ]);
   expect(d1(bind(statement("APPS_OF"), "[]"))).toEqual([]);
+  expect(d1(`SELECT pair, app FROM signer_apps WHERE pair = ${legacyPair}`)).toEqual([{ pair: Number(legacyPair), app: 9999 }]);
 });
 
-test("a page reads the latest week kept, yesterday's or the day before's, in one row; old weeks go as old days do", () => {
+test("a page reads the latest verified week; fenced expiry removes old verified sets and preserves legacy history", () => {
   const today = 20_386;
-  d1(`INSERT INTO activity (name, body) VALUES ('w${today - 3}', 'AQEB'), ('w${today - 2}', 'AQID'), ('d${today - 1}', 'AQ')`);
-  const latest = () => d1(bind(statement("LATEST_WEEK"), `w${today - 1}`, `w${today - 2}`));
-  // Before the cron's daily pass: the day before's.
-  expect(latest()).toEqual([{ name: `w${today - 2}`, body: "AQID" }]);
-  // After it: yesterday's.
-  d1(`INSERT INTO activity (name, body) VALUES ('w${today - 1}', 'AgIC')`);
-  expect(latest()).toEqual([{ name: `w${today - 1}`, body: "AgIC" }]);
-  // Weeks are dropped with the days, before the 30 kept.
-  d1(`INSERT INTO activity (name, body) VALUES ('w${today - 40}', 'AQ'), ('d${today - 40}', 'AQ'), ('h489000', 'AQ')`);
-  d1(bind(statement("DROP_SETS"), BigInt(today * 24 - 48), BigInt(today - 30)));
+  const hourCutoff = today * 24 - 49;
+  const dayCutoff = today - 30;
+  d1(`INSERT INTO activity (name, body) VALUES ('v2w${today - 3}', 'AQEB'), ('v2w${today - 2}', 'AQID'), ('v2d${today - 1}', 'AQ'), ('w${today - 1}', 'AQ')`);
+  const latest = () => d1(bind(statement("LATEST_WEEK"), `v2w${today - 1}`, `v2w${today - 2}`));
+  // Before the daily pass, the verified day-before row wins even though a
+  // newer legacy week exists. Afterwards the verified yesterday row wins.
+  expect(latest()).toEqual([{ name: `v2w${today - 2}`, body: "AQID" }]);
+  d1(`INSERT INTO activity (name, body) VALUES ('v2w${today - 1}', 'AgIC')`);
+  expect(latest()).toEqual([{ name: `v2w${today - 1}`, body: "AgIC" }]);
+  d1(`INSERT INTO activity (name, body) VALUES
+    ('v2w${today - 40}', 'AQ'), ('v2d${today - 40}', 'AQ'),
+    ('v2h${hourCutoff - 1}', 'AQ'), ('v2k${hourCutoff - 1}', '[]'),
+    ('v2w${dayCutoff}', 'AQ'), ('v2d${dayCutoff}', 'AQ'),
+    ('v2h${hourCutoff}', 'AQ'), ('v2k${hourCutoff}', '[]'),
+    ('w${today - 40}', 'AQ'), ('d${today - 40}', 'AQ'), ('h489000', 'AQ'), ('k489000', 'AQ')`);
+  const winning = "follows-facts-winning-fence";
+  const losing = "follows-facts-losing-fence";
+  expect(d1(bind(statement("CLAIM_ACTIVITY"), null, winning))).toEqual([{ value: winning }]);
+  const checkpoint = JSON.stringify({ verification_version: 2, revision: 1, cursors: [], reached: [], starts: [], blocks: [], days: [] });
+  d1(bind(statement("SAVE_ACTIVITY_STATE"), checkpoint, winning));
+  const before = d1("SELECT name, body FROM activity ORDER BY name");
+  // A stale run cannot acquire the fence or expire any rows.
+  expect(d1(bind(statement("CLAIM_ACTIVITY"), null, losing))).toEqual([]);
+  d1(bind(statement("DROP_SETS"), BigInt(hourCutoff), BigInt(dayCutoff), losing));
+  expect(d1("SELECT name, body FROM activity ORDER BY name")).toEqual(before);
+  expect(d1("SELECT value FROM state WHERE key = 'activity_v2_fence'")).toEqual([{ value: winning }]);
+  // The winning run expires only older verified sets, keeping both exact
+  // cutoff rows and every legacy row.
+  d1(bind(statement("DROP_SETS"), BigInt(hourCutoff), BigInt(dayCutoff), winning));
   const names = d1("SELECT name FROM activity ORDER BY name").map((row) => row.name);
-  expect(names).toEqual([`d${today - 1}`, `w${today - 3}`, `w${today - 2}`, `w${today - 1}`]);
+  expect(names).toEqual([
+    `v2d${today - 1}`, `v2d${dayCutoff}`, `v2w${today - 3}`, `v2w${today - 2}`, `v2w${today - 1}`, `v2w${dayCutoff}`,
+    `v2h${hourCutoff}`, `v2k${hourCutoff}`, `w${today - 1}`, `w${today - 40}`, `d${today - 40}`, "h489000", "k489000",
+  ].sort());
+  expect(latest()).toEqual([{ name: `v2w${today - 1}`, body: "AgIC" }]);
 });

@@ -47,7 +47,7 @@ const apps = {
 };
 const to = Math.floor(Date.now() / 3_600_000) * 3_600;
 const apps24h = {
-  to, counted: to + 120, active: 6174, unknown: 0, none: 14,
+  verification_version: 2, to, counted: Math.floor(Date.now() / 1000), active: 6174, unknown: 0, none: 14,
   apps: [{ app: 9152, active: 4812 }, { app: 309857, active: 1203 }, { app: 5555, active: 120 }, { app: 6666, active: 37 }, { app: 1234, active: 1 }],
 };
 const address = "0x76d0e7a13248945ee9f808b4a472262b28778942";

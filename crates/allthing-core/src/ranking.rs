@@ -263,11 +263,10 @@ pub fn sorted(casts: &[Cast], sort: Sort) -> Vec<Cast> {
     out
 }
 
-/// A reader's own leanings about accounts, kept in their browser and never
-/// shared: their favorites' casts rise far up their hot and top, and the
-/// casts of those they see less of drop far down, and lower in new too. It
-/// isn't a label on an account, and it hides nothing: every cast stays in
-/// the list, only in another place.
+/// A reader's private preferences. Favorites rise in hot and top;
+/// Show less keeps roughly one in ten authored casts in feeds and strongly
+/// reduces the remaining casts' rank. Direct profiles and search use the
+/// ordinary ranking helpers and remain available.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Leanings {
     pub favorites: BTreeSet<u64>,
@@ -292,25 +291,29 @@ pub struct Leanings {
 /// 60th to about 4th in hot and in top (`leanings_move_a_typical_account_far`).
 pub const FAVORITE_WEIGHT: f64 = 25.0;
 
-/// The cast of an account the reader sees less of weighs a 25th of its
-/// points in hot and top: [`FAVORITE_WEIGHT`] the other way, as strong. In
-/// top, 270 points, the most on the front page on 21 October 2026, then
-/// weigh less than its quietest cast's 22; in hot, a cast is placed as if
-/// posted 17½ hours earlier for each day the list spans, past the oldest of
-/// its casts unless it is far busier than they are. In 120 casts over a day
-/// or a week, a typical account's median place goes from about 60th to
-/// about 117th in hot and in top. Its casts are all still there, at the
-/// end.
-pub const SHOW_LESS_WEIGHT: f64 = 1.0 / FAVORITE_WEIGHT;
+/// Retained Show less casts carry one hundredth of their usual engagement
+/// weight in hot and top. This also overrides favorite and followed lifts.
+pub const SHOW_LESS_WEIGHT: f64 = 0.01;
 
-/// In new, the casts of an account the reader sees less of are placed as if
-/// posted 6 hours before they were for each day the list spans (the time
-/// they show stays true): about a quarter of the list further down, whether
-/// it spans a day, as a busy channel's does, or a week, as a quiet one's
-/// (a typical account's median place goes from about 60th to about 87th of
-/// 120). In the front page's new, the past hour or so of casts, it is the
-/// end of the list. A favorite's casts stay in time order.
-pub const SHOW_LESS_NEW_SECS: i64 = 6 * 3600;
+/// Stable approximate retention rate for explicit Show less preferences.
+/// It is a reduction, not a mute: a large set retains roughly one in ten.
+pub const SHOW_LESS_KEEP_DENOMINATOR: u64 = 10;
+
+/// Whether a feed keeps this authored cast for the reader. Sampling depends
+/// only on author FID and cast hash, so pagination, sorting, refreshed counts
+/// and timestamps cannot make a suppressed post reappear. FNV-1a is fixed
+/// here rather than using a process-seeded standard-library hasher.
+pub fn keep_for_feed(cast: &Cast, leanings: &Leanings) -> bool {
+    if !leanings.less.contains(&cast.author.fid) {
+        return true;
+    }
+    let mut bucket = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in cast.author.fid.to_le_bytes().into_iter().chain(cast.hash.bytes().map(|byte| byte.to_ascii_lowercase()))
+    {
+        bucket = (bucket ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    bucket.is_multiple_of(SHOW_LESS_KEEP_DENOMINATOR)
+}
 
 /// In For you's hot, a cast by an account the reader follows weighs as if
 /// it had 20 times its points.
@@ -335,7 +338,7 @@ pub const FOLLOWED_HOT_WEIGHT: f64 = 20.0;
 pub const FOLLOWED_TOP_WEIGHT: f64 = 6.0;
 
 /// How many days `casts` span, from the oldest to the newest, and one at
-/// least: in hot and new a leaning moves a cast by its move for a day as
+/// least: in hot a leaning moves a cast by its move for a day as
 /// many times, so as far down, or up, a list of a week as of a day.
 pub fn span_days(casts: &[Cast]) -> f64 {
     let oldest = casts.iter().map(|c| c.ts).min().unwrap_or_default();
@@ -361,51 +364,48 @@ impl Leanings {
             Sort::New => 1.0,
         };
         match sort {
-            Sort::New => base.min(1.0),
+            Sort::New => 1.0,
             Sort::Hot | Sort::Top => base * lift,
         }
     }
 
     /// How much more, or less, `cast` weighs for this reader in hot and top.
-    /// A favorite wins over seeing less, though the app never keeps an
-    /// account as both.
+    /// Show less wins over a stale overlapping favorite preference.
     pub fn weight(&self, cast: &Cast) -> f64 {
         let fid = cast.author.fid;
-        if self.favorites.contains(&fid) {
-            FAVORITE_WEIGHT
-        } else if self.less.contains(&fid) {
+        if self.less.contains(&fid) {
             SHOW_LESS_WEIGHT
+        } else if self.favorites.contains(&fid) {
+            FAVORITE_WEIGHT
         } else {
             1.0
         }
     }
 }
 
-/// [`sorted`], with the reader's leanings ([`Leanings::weight`]). In top a
-/// cast weighs its points plus one, times its weight: the one is so that a
-/// cast nobody has reacted to yet moves too, and the others keep their
-/// order either way. In hot the log of its points moves by the weight's
-/// once for each day the list spans ([`span_days`]), as if it were 17½
-/// hours newer or older for each. In new only seeing less moves a cast, as
-/// if it were [`SHOW_LESS_NEW_SECS`] older for each day. On a tie, a
-/// favorite's cast goes first and one seen less of last. Every cast is
-/// kept.
+/// Feed ranking with the reader's leanings and stable Show less reduction.
+/// Hot and top retain the existing favorite/followed boosts, while remaining
+/// Show less posts receive the smaller weight. New keeps actual timestamps
+/// and strict chronological order after thinning.
 pub fn sorted_for(casts: &[Cast], sort: Sort, leanings: &Leanings) -> Vec<Cast> {
     if leanings.is_empty() {
         return sorted(casts, sort);
     }
-    // In new, a favorite's and a followed account's casts are in time order
-    // like anyone's.
+    if sort == Sort::New {
+        let mut kept: Vec<Cast> = casts.iter().filter(|cast| keep_for_feed(cast, leanings)).cloned().collect();
+        sort_casts(&mut kept, sort);
+        return kept;
+    }
     let weight = |cast: &Cast| leanings.weight_in(cast, sort);
     let days = span_days(casts);
     let key = |cast: &Cast, weight: f64| match sort {
         Sort::Top => (points(cast) + 1) as f64 * weight,
         Sort::Hot => hot_score(points(cast), cast.ts) + weight.log10() * days,
-        Sort::New if weight < 1.0 => cast.ts as f64 - SHOW_LESS_NEW_SECS as f64 * days,
         Sort::New => cast.ts as f64,
     };
     let mut keyed: Vec<(f64, f64, &Cast)> = casts
         .iter()
+        .filter(|cast| keep_for_feed(cast, leanings))
         .map(|cast| {
             let weight = weight(cast);
             (key(cast, weight), weight, cast)
@@ -633,38 +633,91 @@ mod tests {
     }
 
     #[test]
-    fn showing_less_drops_far_in_hot_and_top_and_lower_in_new() {
-        // The busiest cast is by an account the reader sees less of; the
-        // quietest is a stranger's, 5 hours older.
+    fn showing_less_removes_most_posts_and_strongly_lowers_the_remaining_hot_and_top() {
+        let retained = format!("0x{:040x}", 0);
+        let suppressed = format!("0x{:040x}", 1);
         let casts = vec![
-            by(1, cast("less", 100, 0, 0, "2026-10-17T12:00:00Z")),
-            by(2, cast("twenty", 20, 0, 0, "2026-10-17T12:00:00Z")),
-            by(3, cast("five", 5, 0, 0, "2026-10-17T12:00:00Z")),
+            by(1, cast(&retained, 20, 0, 0, "2026-10-17T12:00:00Z")),
+            by(1, cast(&suppressed, 1_000_000, 0, 0, "2026-10-17T14:00:00Z")),
+            by(2, cast("twenty", 20, 0, 0, "2026-10-17T11:00:00Z")),
+            by(3, cast("five", 5, 0, 0, "2026-10-17T13:00:00Z")),
             by(4, cast("quiet", 0, 0, 0, "2026-10-17T07:00:00Z")),
         ];
-        assert_eq!(order(sorted(&casts, Sort::Top)), ["less", "twenty", "five", "quiet"]);
-        assert_eq!(order(sorted(&casts, Sort::Hot)), ["less", "twenty", "five", "quiet"]);
-        assert_eq!(order(sorted(&casts, Sort::New)), ["five", "less", "twenty", "quiet"]);
-        let leanings = Leanings { less: BTreeSet::from([1]), ..Leanings::default() };
-        assert!(!leanings.is_empty());
-        // 100 points weigh as (100 + 1) / 25, about 4: under 5, over none. In
-        // hot, as if 17½ hours older, as the casts span less than a day.
-        // Nothing is left out.
-        assert_eq!(order(sorted_for(&casts, Sort::Top, &leanings)), ["twenty", "five", "less", "quiet"]);
-        assert_eq!(order(sorted_for(&casts, Sort::Hot, &leanings)), ["twenty", "five", "less", "quiet"]);
-        // In new, as if 6 hours older, for the same reason: below the cast 5
-        // hours older.
-        assert_eq!(order(sorted_for(&casts, Sort::New, &leanings)), ["five", "twenty", "quiet", "less"]);
-        // One nobody has liked yet goes below a stranger's with no likes
-        // either, however much newer: (0 + 1) / 25 is less than 0 + 1.
-        let unliked = vec![by(1, cast("less", 0, 0, 0, "2026-10-17T12:00:00Z")), casts[3].clone()];
-        assert_eq!(order(sorted_for(&unliked, Sort::Top, &leanings)), ["quiet", "less"]);
-        assert_eq!(leanings.weight(&casts[0]), SHOW_LESS_WEIGHT);
-        assert_eq!(leanings.weight(&casts[1]), 1.0);
-        // An account kept as both counts as a favorite, in new too.
-        let both = Leanings { favorites: BTreeSet::from([1]), less: BTreeSet::from([1]), ..Leanings::default() };
-        assert_eq!(both.weight(&casts[0]), FAVORITE_WEIGHT);
-        assert_eq!(sorted_for(&casts, Sort::New, &both), sorted(&casts, Sort::New));
+        let less = Leanings { less: BTreeSet::from([1]), ..Leanings::default() };
+        assert!(keep_for_feed(&casts[0], &less));
+        assert!(!keep_for_feed(&casts[1], &less));
+        for sort in [Sort::Hot, Sort::Top] {
+            assert_eq!(
+                order(sorted_for(&casts, sort, &less)),
+                vec!["twenty".to_owned(), "five".to_owned(), "quiet".to_owned(), retained.clone()]
+            );
+        }
+        assert_eq!(
+            order(sorted_for(&casts, Sort::New, &less)),
+            vec!["five".to_owned(), retained.clone(), "twenty".to_owned(), "quiet".to_owned()]
+        );
+        let both = Leanings { favorites: BTreeSet::from([1]), followed: BTreeSet::from([1]), ..less.clone() };
+        for sort in Sort::ALL {
+            assert_eq!(sorted_for(&casts, sort, &both), sorted_for(&casts, sort, &less));
+        }
+        assert_eq!(both.weight(&casts[0]), SHOW_LESS_WEIGHT);
+        assert_eq!(both.weight_in(&casts[0], Sort::Hot), SHOW_LESS_WEIGHT);
+        assert_eq!(both.weight_in(&casts[0], Sort::New), 1.0);
+        assert_eq!(sorted(&casts, Sort::New).len(), casts.len(), "ordinary/direct ranking does not thin posts");
+    }
+
+    #[test]
+    fn show_less_selection_is_stable_across_pages_permutations_and_count_refreshes() {
+        let leaning = Leanings { less: BTreeSet::from([42]), ..Leanings::default() };
+        let casts: Vec<_> =
+            (0..1_000).map(|i| by(42, cast(&format!("0x{i:040x}"), i, 0, 0, "2026-10-17T12:00:00Z"))).collect();
+        let selected = |casts: &[Cast]| {
+            casts
+                .iter()
+                .filter(|cast| keep_for_feed(cast, &leaning))
+                .map(|cast| cast.hash.clone())
+                .collect::<BTreeSet<_>>()
+        };
+        let kept = selected(&casts);
+        assert!((80..=120).contains(&kept.len()), "About 90% should disappear: kept {} of 1,000", kept.len());
+        let paged: BTreeSet<_> = casts.chunks(37).flat_map(selected).collect();
+        assert_eq!(paged, kept);
+        let mut reversed = casts.clone();
+        reversed.reverse();
+        assert_eq!(selected(&reversed), kept);
+        let mut refreshed = casts.clone();
+        for cast in &mut refreshed {
+            cast.ts += 86_400;
+            cast.likes += 999;
+            cast.recasts = 500;
+            cast.replies = 100;
+            cast.hash = cast.hash.to_ascii_uppercase();
+        }
+        assert_eq!(
+            selected(&refreshed).into_iter().map(|hash| hash.to_ascii_lowercase()).collect::<BTreeSet<_>>(),
+            kept
+        );
+        for cast in &mut refreshed {
+            cast.author.fid = 7;
+        }
+        assert!(refreshed.iter().all(|cast| keep_for_feed(cast, &leaning)), "unselected authors keep every post");
+        // Fixed vectors lock selection across browser sessions and builds.
+        let typical = Leanings { less: BTreeSet::from([100]), ..Leanings::default() };
+        let selected: Vec<_> = (200..260)
+            .filter(|id| {
+                keep_for_feed(&by(100, cast(&format!("0x{id:040x}"), 1, 0, 0, "2026-10-17T12:00:00Z")), &typical)
+            })
+            .collect();
+        assert_eq!(selected, [200, 215, 222, 224, 239, 247], "The 60-post browser fixture keeps 6 posts");
+        assert_eq!(
+            casts
+                .iter()
+                .take(40)
+                .filter(|cast| keep_for_feed(cast, &leaning))
+                .map(|cast| cast.hash.clone())
+                .collect::<Vec<_>>(),
+            vec![format!("0x{:040x}", 1), format!("0x{:040x}", 10)]
+        );
     }
 
     /// The account the measured test leans on.
@@ -724,11 +777,14 @@ mod tests {
             for sort in Sort::ALL {
                 let anyone = sorted(&list, sort);
                 let (lowered, raised) = (sorted_for(&list, sort, &less), sorted_for(&list, sort, &favorite));
-                // Every cast is there, once.
-                for leaned in [&lowered, &raised] {
-                    assert_eq!(leaned.len(), list.len());
-                    assert_eq!(hashes(leaned), hashes(&list));
-                }
+                assert_eq!(raised.len(), list.len());
+                assert_eq!(hashes(&raised), hashes(&list));
+                assert_eq!(lowered.iter().filter(|c| c.author.fid == TYPICAL).count(), 1);
+                assert_eq!(lowered.len(), 115);
+                assert_eq!(
+                    hashes(&lowered.iter().filter(|c| c.author.fid != TYPICAL).cloned().collect::<Vec<_>>()),
+                    hashes(&list.iter().filter(|c| c.author.fid != TYPICAL).cloned().collect::<Vec<_>>())
+                );
                 let before = median_place(&anyone, TYPICAL);
                 let (down, up) = (median_place(&lowered, TYPICAL), median_place(&raised, TYPICAL));
                 println!(
@@ -738,11 +794,10 @@ mod tests {
                 // A typical account: in the middle of the list to start with.
                 assert!((0.4 * n..=0.6 * n).contains(&before), "{days}d {sort:?} starts at {before}");
                 if sort == Sort::New {
-                    // 6 hours for each day the list spans is about a quarter
-                    // of it, so a cast moves about a quarter of the list down,
-                    // and those near the end only as far as the end: a fifth
-                    // at least.
-                    assert!(down - before >= 0.2 * n, "{days}d new: {before} to {down}");
+                    assert!(
+                        lowered.windows(2).all(|pair| pair[0].ts >= pair[1].ts),
+                        "new remains chronological after thinning"
+                    );
                     // A favorite's casts stay in time order.
                     assert_eq!(raised, anyone);
                 } else {
@@ -811,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_and_new_moves_grow_with_the_days_a_list_spans() {
+    fn hot_moves_grow_with_span_while_new_stays_chronological_after_thinning() {
         // Two days of casts, from the oldest to the newest.
         let newest = by(1, cast("newest", 10, 0, 0, "2026-10-17T00:00:00Z"));
         let oldest = by(3, cast("oldest", 1, 0, 0, "2026-10-15T00:00:00Z"));
@@ -826,16 +881,19 @@ mod tests {
         let hot = |list: Vec<Cast>| order(sorted_for(&list, Sort::Hot, &favorites));
         assert_eq!(hot(with_favorite("2026-10-15T14:00:00Z")), ["favorite", "newest", "oldest"]);
         assert_eq!(hot(with_favorite("2026-10-15T13:00:00Z")), ["newest", "favorite", "oldest"]);
-        // In new, a cast seen less of is as if twice 6 hours older: between
-        // casts 11 and 13 hours older.
         let less = Leanings { less: BTreeSet::from([1]), ..Leanings::default() };
+        let mut retained = newest.clone();
+        retained.hash = format!("0x{:040x}", 0);
         let casts = vec![
-            newest.clone(),
+            retained.clone(),
             by(2, cast("eleven", 1, 0, 0, "2026-10-16T13:00:00Z")),
             by(4, cast("thirteen", 1, 0, 0, "2026-10-16T11:00:00Z")),
             oldest.clone(),
         ];
-        assert_eq!(order(sorted_for(&casts, Sort::New, &less)), ["eleven", "newest", "thirteen", "oldest"]);
+        assert_eq!(
+            order(sorted_for(&casts, Sort::New, &less)),
+            vec![retained.hash, "eleven".into(), "thirteen".into(), "oldest".into()]
+        );
     }
 
     #[test]

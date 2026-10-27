@@ -7,7 +7,7 @@ import { expect, test, type Browser, type BrowserContext, type Page, type TestIn
  * (components/presence.rs). The browser beats (POST /api/v1/presence) once
  * the page's own call is in, never as part of it; only a visible tab in
  * use beats, and one tab beats for the whole browser. The chip, a dot and
- * a count ("● 12", named "12 readers online"), fades in after Home without
+ * a count ("● 12", named "12 readers online"), fades in after navigation without
  * moving anything; Home stays as it is, including on a phone. Its popover names the
  * readers who show themselves and only counts the others. The Worker's
  * side is presence-worker.fixture.spec.ts.
@@ -209,10 +209,17 @@ test.describe("in front of the Worker", () => {
         await expect(chip).toHaveText("12", { useInnerText: true });
         const box = (await chip.boundingBox())!;
         const [hx, , hw] = before.home!;
-        const [sx, sy] = before.search!;
         expect(box.x).toBeGreaterThanOrEqual(hx + hw + 4);
-        if (width <= 640) expect(box.y + box.height + 8).toBeLessThanOrEqual(sy);
-        else expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
+        if (width <= 640) {
+          const [sx, sy, sw] = before.search!;
+          expect(sy).toBeGreaterThanOrEqual(box.y + box.height + 8);
+          expect(sx).toBeGreaterThanOrEqual(0);
+          expect(sx + sw).toBeLessThanOrEqual(width);
+          expect(sw).toBeGreaterThanOrEqual(width - 16);
+        } else {
+          const [sx] = before.search!;
+          expect(box.x + box.width + 8).toBeLessThanOrEqual(sx);
+        }
         expect(box.height).toBeLessThanOrEqual(before.header![3]);
         // 920 is the exact compact breakpoint; the next pixel is full size.
         const leftPadding = await chip.evaluate((el) => getComputedStyle(el).paddingLeft);
@@ -275,6 +282,8 @@ test.describe("in front of the Worker", () => {
     await page.getByRole("link", { name: "Home", exact: true }).focus();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "Library", exact: true })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "DAU, daily active accounts", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(chip).toBeFocused();
     // Focus alone doesn't open it: Enter does, as a press would.
@@ -454,7 +463,7 @@ test.describe("in front of the Worker", () => {
       // A beat a moment ago, from another tab: the chip shows from the first frame.
       await kept(context, { online: 1234, readers: [], next: 240 });
       const tab = await context.newPage();
-      for (const width of [1280, 1024, 1000, 960, 921, 920, 901, 900, 841, 700, 641, 640, 390, 360]) {
+      for (const width of [1280, 1024, 1000, 960, 921, 920, 901, 900, 841, 801, 800, 700, 641, 640, 390, 360, 320]) {
         await tab.setViewportSize({ width, height: 800 });
         if (width === 1280) await tab.goto("/");
         const chip = chipOf(tab);
@@ -462,6 +471,7 @@ test.describe("in front of the Worker", () => {
         await settle(tab);
         const where = `${signedIn ? "signed in" : "signed out"} at ${width}`;
         await expect(tab.getByRole("link", { name: "Home", exact: true }), where).toBeVisible();
+        await expect(tab.getByRole("link", { name: "DAU, daily active accounts", exact: true }), where).toBeVisible();
         await expect(chip, where).toBeVisible();
         await expect(chip).toHaveText("1.2k", { useInnerText: true });
         const laid = await tab.evaluate(() => {
@@ -473,15 +483,26 @@ test.describe("in front of the Worker", () => {
           const searchWithout = r("#app .search-box").width;
           chip.style.display = "";
           return {
-            chip: r("#app .presence-chip"), home: r("#app .main-nav a"), search: r("#app .search-box"),
+            chip: r("#app .presence-chip"), home: r("#app .main-nav a"), dau: r("#app .dau-nav"), search: r("#app .search-box"),
+            controls: r("#app .header-actions"),
             searchWith, searchWithout, scroll: document.documentElement.scrollWidth,
           };
         });
         expect(laid.searchWith, where).toBe(laid.searchWithout);
         expect(laid.scroll, where).toBeLessThanOrEqual(width);
         expect(laid.chip.x, where).toBeGreaterThanOrEqual(laid.home.right + 4);
-        if (width <= 640) expect(laid.chip.bottom + 8, where).toBeLessThanOrEqual(laid.search.y);
-        else expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
+        expect(laid.dau.x, where).toBeGreaterThanOrEqual(laid.home.right + 4);
+        expect(laid.dau.right, where).toBeLessThanOrEqual(laid.chip.x);
+        if (width <= 640) {
+          // Phones reserve the whole second row for search. Navigation,
+          // count and account controls must remain separate above it.
+          expect(laid.chip.right + 4, where).toBeLessThanOrEqual(laid.controls.x);
+          expect(laid.search.y, where).toBeGreaterThanOrEqual(Math.max(laid.home.bottom, laid.dau.bottom, laid.chip.bottom, laid.controls.bottom) + 8);
+          expect(laid.search.width, where).toBeGreaterThanOrEqual(width - 16);
+        } else {
+          expect(laid.chip.right + 8, where).toBeLessThanOrEqual(laid.search.x);
+          expect(laid.search.width, where).toBeGreaterThanOrEqual(128);
+        }
       }
       await context.close();
     }
@@ -497,18 +518,52 @@ test.describe("in front of the Worker", () => {
     });
     await serve(page, () => ok(9));
     await kept(page, { online: 9, readers: [], next: 240 });
-    for (const width of [1280, 390]) {
+    for (const { width, path } of [{ width: 1280, path: "/" }, { width: 390, path: "/" }, { width: 390, path: "/dau" }]) {
       held = new Promise<void>((done) => (release = done));
       await page.setViewportSize({ width, height: 844 });
-      await page.goto("/");
-      const boot = await page.locator("#boot .site-header").boundingBox();
-      expect(boot).not.toBeNull();
+      await page.goto(path);
+      const boot = page.locator("#boot");
+      const header = await boot.locator(".site-header").boundingBox();
+      expect(header).not.toBeNull();
+      await expect(boot.locator(".dau-nav")).toHaveText("DAU");
+      await expect(boot.locator(".boot-nav [aria-current='page']")).toHaveText(path === "/" ? "Home" : "DAU");
+      await expect(boot.locator(".boot-nav a, .boot-nav button, .boot-nav [tabindex]")).toHaveCount(0);
+      const dau = await boot.locator(".dau-nav").boundingBox();
+      const search = await boot.locator(".boot-search").boundingBox();
       release();
       await expect(page.locator("#boot")).toHaveCount(0);
       await expect(chipOf(page)).toBeVisible();
-      expect(await page.locator("#app .site-header").boundingBox()).toEqual(boot);
+      expect(await page.locator("#app .site-header").boundingBox()).toEqual(header);
+      expect(await page.locator("#app .dau-nav").boundingBox()).toEqual(dau);
+      expect(await page.locator("#app .search-box").boundingBox()).toEqual(search);
     }
   });
+
+  for (const width of [1280, 390]) {
+    test(`DAU stays in the main navigation and marks the current page at width ${width}`, async ({ browser, page: desktop }, info) => {
+      const { page, close } = await opened(browser, desktop, info, width);
+      await serve(page, () => ok(1));
+      await page.goto("/");
+      const nav = page.getByRole("navigation", { name: "Main", exact: true });
+      const dau = nav.getByRole("link", { name: "DAU, daily active accounts", exact: true });
+      await expect(dau).toBeVisible();
+      await expect(dau).toHaveText("DAU");
+      await expect(dau).toHaveAttribute("href", "/dau");
+      expect(await dau.getAttribute("title")).toBeNull();
+      await expect(nav.locator("[aria-current='page']")).toHaveText("Home");
+      await dau.click();
+      await expect(page).toHaveURL(/\/dau$/);
+      await expect(nav.locator("[aria-current='page']")).toHaveText("DAU");
+      await expect(dau).toHaveAttribute("aria-current", "page");
+      if (width === 390) {
+        expect(await dau.evaluate(el => getComputedStyle(el, "::after").height)).toBe("44px");
+      }
+      await nav.getByRole("link", { name: "Home", exact: true }).click();
+      await expect(page).toHaveURL(/\/$/);
+      await expect(nav.locator("[aria-current='page']")).toHaveText("Home");
+      await close();
+    });
+  }
 
   test("axe finds nothing in the header with the popover open", async ({ page }) => {
     await signIn(page, me);

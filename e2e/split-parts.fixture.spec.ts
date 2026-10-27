@@ -19,6 +19,17 @@ const now = Math.floor(Date.now() / 1000);
 const today = Math.floor(now / DAY);
 const meta = { backend: "hypersnap", fetched_at: Date.now() };
 const activity = {
+  verification_version: 2,
+  source: "https://haatz.quilibrium.com/v1/events",
+  verified_since: (today - 29) * DAY,
+  shards: [1, 2].map(shard => {
+    const block = 1_000_000 + shard;
+    return {
+      shard, since: (today - 29) * DAY, reached: now - 60,
+      block, block_at: now - 59, total_events: 100, read_events: 100,
+      cursor: block * 16_384 + 99,
+    };
+  }),
   reached: now - 60, rolling_to: Math.floor((now - 60) / 3_600) * 3_600, rolling_24h: 6_174, previous_24h: 5_982,
   since: (today - 29) * DAY,
   days: Array.from({ length: 30 }, (_, i) => ({ day: today - 29 + i, active: 6_000 + i, complete: i < 29, actions: { cast: 100 } })),

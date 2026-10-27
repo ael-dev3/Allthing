@@ -4,15 +4,9 @@ import { signIn } from "./helpers/farcaster";
 import { showSeenPosts } from "./helpers/app";
 import { NOW } from "./fixture-time";
 
-/*
- * Show less: on a profile, the reader sees much less of the account, in this
- * browser. Its casts drop well down the reader's hot and top feeds, on the
- * front page and in channels (a 25th of their points), and lower in new (as
- * if 6 hours older for each day the list spans; these casts span less than
- * a day), with no mark; nothing is hidden. An account is a
- * favorite or one the reader sees less of, not both. Nothing is sent
- * anywhere. How far, measured: leaning-strength.fixture.spec.ts.
- */
+/* Show less keeps a stable ~10% of the account's feed posts across every
+ * sort, while direct profiles remain available and the choice is reversible.
+ * The reduction and retained-post demotion are measured in leaning-strength. */
 
 test.skip(Boolean(process.env.E2E_PAGES), "uses the Worker API contract");
 
@@ -64,7 +58,7 @@ const kept = (page: Page) =>
     less: JSON.parse(localStorage.getItem("allthing.show-less") ?? "[]"),
   }));
 
-test("show less drops an account's casts to the end of hot and top, with no mark or hidden casts; home New remains chronological", async ({ page }) => {
+test("show less suppresses stable candidates across all feeds and can be undone", async ({ page }) => {
   await serve(page);
   await feed(page, "/?sort=top", ["Busy", "Middling", "Newest"]);
   await feed(page, "/?sort=new", ["Newest", "Busy", "Middling"]);
@@ -73,23 +67,21 @@ test("show less drops an account's casts to the end of hot and top, with no mark
   const less = page.getByRole("button", { name: "Show less" });
   await expect(less).toHaveAttribute("aria-pressed", "false");
   await expect(less).toHaveAccessibleDescription(
-    "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.",
+    "Omits about 90% of their posts from Home, Following and channel feeds. The rest rank much lower in hot and top; new stays chronological. Profiles stay available. Toggle again to undo. Kept in this browser only.",
   );
   await less.click();
   await expect(less).toHaveAttribute("aria-pressed", "true");
   expect(await kept(page)).toEqual({ favorites: [], less: [{ fid: 1, username: "ann" }] });
 
-  // Ann's 30 points weigh as (30 + 1) / 25, about 1.2: under bob's 20 and
-  // even cat's 1 (2, with the one). In hot, as if 17½ hours older: under
-  // cat's cast too. Still listed.
-  await feed(page, "/?sort=top", ["Middling", "Newest", "Busy"]);
-  await expect(page.locator(".cast-card", { hasText: "Busy" })).toBeVisible();
-  await expect(page.locator(".cast-card", { hasText: "Busy" }).locator(".favorite-mark")).toHaveCount(0);
-  await feed(page, "/?sort=hot", ["Middling", "Newest", "Busy"]);
-  await feed(page, "/c/books?sort=top", ["Middling", "Newest", "Busy"]);
-  // In new, as if 6 hours older: under bob's cast from the same moment.
-  await feed(page, "/c/books?sort=new", ["Newest", "Middling", "Busy"]);
-  await feed(page, "/?sort=new", ["Newest", "Busy", "Middling"]);
+  // This fixture's hash is outside Ann's retained tenth. Her direct
+  // profile stays complete; Home and channel feeds omit that candidate.
+  await expect(page.locator('.cast-card[data-hash="' + busy.hash + '"]')).toBeVisible();
+  await feed(page, "/?sort=top", ["Middling", "Newest"]);
+  await expect(page.locator('.cast-card[data-hash="' + busy.hash + '"]')).toHaveCount(0);
+  await feed(page, "/?sort=hot", ["Middling", "Newest"]);
+  await feed(page, "/c/books?sort=top", ["Middling", "Newest"]);
+  await feed(page, "/c/books?sort=new", ["Newest", "Middling"]);
+  await feed(page, "/?sort=new", ["Newest", "Middling"]);
 
   // Undone, everything is as it was.
   await page.goto("/u/ann");
@@ -112,8 +104,8 @@ test("an account is a favorite or one you see less of, not both, and another tab
   await expect(less).toHaveAttribute("aria-pressed", "true");
   await expect(favorite).toHaveAttribute("aria-pressed", "false");
   expect(await kept(other)).toEqual({ favorites: [], less: [{ fid: 1, username: "ann" }] });
-  // The first tab's feed re-sorts in place.
-  await expect.poll(() => order(page)).toEqual(["Middling", "Newest", "Busy"]);
+  // Another tab applies the same suppression immediately.
+  await expect.poll(() => order(page)).toEqual(["Middling", "Newest"]);
   await favorite.click();
   await expect(less).toHaveAttribute("aria-pressed", "false");
   expect(await kept(other)).toEqual({ favorites: [{ fid: 1, username: "ann" }], less: [] });

@@ -35,7 +35,7 @@ const METHOD = "Any message (a cast, reaction, follow…) signed with a key this
 
 function counted(unknown = 0) {
   return {
-    to, counted: to + 120, active: 6174, unknown, none: 14,
+    verification_version: 2, to, counted: Math.floor(Date.now() / 1000), active: 6174, unknown, none: 14,
     apps: [{ app: 9152, active: 4812 }, { app: 309857, active: 1203 }, { app: 5555, active: 120 }, { app: 6666, active: 37 }, { app: 1234, active: 1 }],
   };
 }
@@ -225,3 +225,20 @@ test("at 390, how it's counted opens the page of every app's active accounts", a
   await expect(card).toBeHidden();
   await context.close();
 });
+
+for (const [label, change] of [
+  ["legacy", { verification_version: 0 }],
+  ["future", { counted: Math.floor(Date.now() / 1000) + 3600 }],
+  ["stale", { to: to - 86400 }],
+] as const) {
+  test(`${label} activity never decorates the ordinary cast-share bar with a verified count`, async ({ page }) => {
+    await serve(page, { ...counted(), ...change });
+    await page.goto("/");
+    const legend = page.locator(".client-legend");
+    await expect(legend.locator("li")).toHaveCount(5);
+    await legend.getByRole("link", { name: /Farcaster/ }).hover();
+    await page.waitForTimeout(400);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator(".share-bar a")).toHaveCount(0);
+  });
+}

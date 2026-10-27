@@ -11,8 +11,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use allthing_core::activity::{
-    self, ActivityPayload, AppsWindow, Batch, Fids, Follow, KEEP_DAYS, KEEP_HOURS, Keys, NAMED_APPS, Reached,
-    WEEK_DAYS, Window, day, day_set, hour, hour_set, key_pair, key_set, week_set,
+    self, ActivityPayload, AppsWindow, Batch, ExactKeys, Fids, Follow, KEEP_DAYS, KEEP_HOURS, NAMED_APPS, Reached,
+    VERIFICATION_VERSION, WEEK_DAYS, Window, day, day_set, hour, hour_set, key_set, week_set,
 };
 use allthing_core::api::Meta;
 use allthing_core::emoji::ReactionReply;
@@ -21,7 +21,6 @@ use allthing_core::normalize;
 use futures::future::{LocalBoxFuture, join_all};
 
 use crate::Invocation;
-use crate::annotate;
 use crate::hypersnap;
 use crate::indexer::{IndexError, Snapshot};
 
@@ -31,7 +30,7 @@ use crate::indexer::{IndexError, Snapshot};
 pub const PAGE: u32 = 1000;
 
 /// The name the payload is stored and served under.
-pub const SUMMARY: &str = "activity";
+pub const SUMMARY: &str = "activity_v2";
 
 /// Reading this close to now (seconds) is keeping up.
 const CAUGHT_UP: i64 = 600;
@@ -48,20 +47,20 @@ const AFTER: u32 = 2;
 /// Subrequests kept for keys removed since, each a read of the account's
 /// onchain history.
 const HISTORY: u32 = 6;
-/// Keys counted by app in one statement, about 30 KB of JSON.
-const COUNT_CHUNK: usize = 2_000;
 /// How long emoji reactions are kept for listings' cards, days.
 pub const REACTIONS_KEPT_DAYS: i64 = 400;
 
 /// What the follower writes at the end of a run, in one transaction.
 pub struct Saving {
+    /// Exact state this run read. The atomic store must reject a stale writer.
+    pub expected_state: Option<String>,
     /// Sets by name.
     pub sets: Vec<(String, String)>,
     /// Drop the hourly sets (of fids and of keys) before hour `.0`, and the
     /// daily ones before day `.1`.
     pub keep_from: (i64, i64),
-    /// Keys' apps learned, as `(key_pair, app)`; a key's app never changes.
-    pub keys: Vec<(u64, u64)>,
+    /// Keys' apps learned, as `(signer_identity, app)`; a key's app never changes.
+    pub keys: Vec<(String, u64)>,
     /// Emoji reactions read, each with the cast it replies to; then the
     /// casts removed, and reactions revoked or pruned, whose reactions go.
     pub reactions: Vec<(String, ReactionReply)>,
@@ -76,7 +75,7 @@ pub struct Saving {
 /// One app's count among a run of keys: the app (`None` for keys not looked
 /// up yet, 0 for keys no app requested), its accounts, and with `None`, the
 /// keys.
-pub type AppCount = (Option<u64>, u64, Vec<u64>);
+pub type AppCount = (Option<u64>, u64, Vec<String>);
 
 /// The follower's storage (D1 in the Worker). Each call is one round trip.
 pub trait ActivityStore {
@@ -85,15 +84,19 @@ pub trait ActivityStore {
     /// The stored sets of those `names` there are.
     fn activity_sets(&self, names: Vec<String>)
     -> LocalBoxFuture<'static, Result<HashMap<String, String>, IndexError>>;
-    /// The apps of those keys (`key_pair`) that have been looked up.
-    fn key_apps(&self, pairs: Vec<u64>) -> LocalBoxFuture<'static, Result<HashMap<u64, u64>, IndexError>>;
-    /// Record `keys`' apps (as `save_activity` does, so the count knows
-    /// them), then count accounts active by app among each run of keys
-    /// (`Keys::chunks`).
+    /// The apps of those exact signer identities that have been looked up.
+    fn key_apps(&self, pairs: Vec<String>) -> LocalBoxFuture<'static, Result<HashMap<String, u64>, IndexError>>;
+    /// Record exact immutable attribution facts, then count the named
+    /// hourly key sets inside the store. Current-run overrides replace
+    /// persisted sets. Reject malformed identities or a distinct-account
+    /// total that differs from the independently counted FID window. Return
+    /// full app counts but at most 400 unresolved identities.
     fn count_apps(
         &self,
-        keys: Vec<(u64, u64)>,
-        chunks: Vec<Vec<u64>>,
+        keys: Vec<(String, u64)>,
+        names: Vec<String>,
+        overrides: Vec<(String, String)>,
+        expected_active: u64,
     ) -> LocalBoxFuture<'static, Result<Vec<AppCount>, IndexError>>;
     /// Write it all, and store the payload served.
     fn save_activity(&self, saving: Saving) -> LocalBoxFuture<'static, Result<(), IndexError>>;
@@ -121,38 +124,36 @@ pub struct Report {
 
 /// Where a first run starts in `shard`: at the start of yesterday (UTC),
 /// estimated from its newest block at about one block a second, so
-/// yesterday is counted whole. Reading starts after the returned event.
+/// the actual canonical start is then reported. Reading starts after this event.
 async fn start(inv: &Invocation, shard: u32, now: i64) -> Result<u64, IndexError> {
     let body = hypersnap::events(inv, shard, None, 1).await.map_err(|e| IndexError(e.to_string()))?;
-    let newest = activity::activity(&body).and_then(|p| p.last_id).ok_or_else(|| IndexError("no events".into()))?;
+    let newest = activity::activity_head(&body, shard).ok_or_else(|| IndexError("invalid activity head".into()))?;
     let back = (now - (day(now) - 1) * 86_400).max(0) as u64;
     Ok(((newest >> 14).saturating_sub(back) << 14).saturating_sub(1))
 }
 
-/// The app of `pair` among an account's keys, 0 for one no app requested.
-fn app_among(keys: &HashMap<String, Option<u64>>, fid: u64, pair: u64) -> Option<u64> {
-    keys.iter().find(|(key, _)| key_pair(fid, key) == Some(pair)).map(|(_, app)| app.unwrap_or(0))
-}
-
-/// The apps of an account's keys `pairs`, from its active keys (cached in
-/// the isolate for an hour, as casts' origins use them), or for a key
-/// removed since, its onchain history. Keys whose app couldn't be read are
-/// left out, to be looked up again later.
-async fn look_up(inv: &Invocation, fid: u64, pairs: Vec<u64>, after: u32) -> Option<Vec<(u64, u64)>> {
-    let active = annotate::signer_apps(inv, fid).await?;
+/// Match full keys only. A missing, ambiguous, malformed or truncated
+/// lookup remains unknown and can be retried; absence never proves no app.
+async fn look_up(inv: &Invocation, fid: u64, identities: Vec<String>, after: u32) -> Option<Vec<(String, u64)>> {
+    let active = hypersnap::verified_signer_apps(inv, fid).await.ok()?;
     let (mut found, mut removed) = (Vec::new(), Vec::new());
-    for pair in pairs {
-        match app_among(&active, fid, pair) {
-            Some(app) => found.push((pair, app)),
-            None => removed.push(pair),
+    for identity in identities {
+        let key = identity.split_once(':')?.1;
+        match active.get(key) {
+            Some(app) => found.push((identity, *app)),
+            None => removed.push(identity),
         }
     }
-    // Not read (no subrequest to spare, say): those keys are looked up again.
     if !removed.is_empty()
         && inv.remaining_subrequests() > after
-        && let Ok(history) = hypersnap::all_onchain_signers(inv, fid).await
+        && let Ok(history) = hypersnap::verified_onchain_signers(inv, fid).await
     {
-        found.extend(removed.into_iter().map(|pair| (pair, app_among(&history, fid, pair).unwrap_or(0))));
+        for identity in removed {
+            let key = identity.split_once(':')?.1;
+            if let Some(app) = history.get(key) {
+                found.push((identity, *app));
+            }
+        }
     }
     Some(found)
 }
@@ -168,9 +169,16 @@ fn d1(inv: &Invocation) -> Result<(), IndexError> {
 /// once an hour), and store the payload.
 pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, IndexError> {
     d1(inv)?;
-    let mut follow: Follow =
-        store.activity_state().await?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let expected_state = store.activity_state().await?;
+    let mut follow: Follow = match expected_state.as_deref() {
+        Some(state) => serde_json::from_str(state).map_err(|_| IndexError("invalid verified activity state".into()))?,
+        None => Follow { verification_version: VERIFICATION_VERSION, ..Follow::default() },
+    };
     let now = (inv.now() / 1000.0) as i64;
+    if !follow.valid(now) {
+        return Err(IndexError("invalid verified activity progress".into()));
+    }
+    follow.revision = follow.revision.checked_add(1).ok_or_else(|| IndexError("activity revision exhausted".into()))?;
     let mut afters = Vec::new();
     for shard in SHARDS {
         let after = match follow.cursors.iter().find(|c| c.shard == shard) {
@@ -182,58 +190,86 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let pages = join_all(afters.iter().map(|&(shard, after)| hypersnap::events(inv, shard, Some(after), PAGE))).await;
     let mut report = Report::default();
     let mut actions = Vec::new();
-    let mut learned: HashMap<u64, u64> = HashMap::new();
+    let mut learned: HashMap<String, u64> = HashMap::new();
+
     let (mut reactions, mut removed) = (Vec::new(), Vec::new());
     for ((shard, after), page) in afters.into_iter().zip(pages) {
-        let Some(page) = page.ok().and_then(|body| activity::activity(&body)) else {
-            // Read again from the same place next run.
+        let carried = follow.blocks.iter().find(|b| b.shard == shard);
+        let Some(verified) = page.ok().and_then(|body| activity::verified_activity(&body, shard, after, carried, now))
+        else {
             report.failed.push(shard);
             continue;
         };
+        let page = verified.page;
         report.events.push((shard, page.count));
-        let previous = follow.reached.iter().find(|r| r.shard == shard).map(|r| r.at);
-        if let (Some(previous), Some(first), Some(started)) = (previous, page.first_block, page.started)
-            && first > (after >> 14) + 1
+        follow.gaps.extend(verified.gaps);
+        if let Some(started) = page.started
+            && !follow.starts.iter().any(|s| s.shard == shard)
         {
-            // The node no longer had the blocks between: they are a gap.
-            follow.gaps.push((previous, started));
+            follow.starts.push(Reached { shard, at: started + 1 });
         }
-        if let Some(started) = page.started {
-            follow.since = Some(follow.since.map_or(started, |s| s.min(started)));
-            follow.keys_since = Some(follow.keys_since.map_or(started, |s| s.min(started)));
-        }
+        follow.since = SHARDS
+            .into_iter()
+            .map(|shard| follow.starts.iter().find(|s| s.shard == shard).map(|s| s.at))
+            .collect::<Option<Vec<_>>>()
+            .and_then(|starts| starts.into_iter().max());
+        follow.keys_since = follow.since;
         if let Some(last_id) = page.last_id {
             follow.cursors.retain(|c| c.shard != shard);
             follow.cursors.push(Cursor { shard, event_id: last_id });
+        }
+        if let Some(block) = verified.block {
+            follow.blocks.retain(|b| b.shard != shard);
+            follow.blocks.push(block);
         }
         if let Some(at) = page.reached {
             follow.reached.retain(|r| r.shard != shard);
             follow.reached.push(Reached { shard, at });
         }
+        learned.extend(page.exact_keys);
         actions.extend(page.actions);
-        learned.extend(page.keys);
         reactions.extend(page.reactions);
         removed.extend(page.removed);
     }
     report.actions = actions.len();
     report.learned = learned.len();
+
     let batch = Batch::of(&actions);
-    let reached = follow.reached().unwrap_or(now);
-    report.behind = Some(now - reached);
+    // Until both shards establish coverage, retain the first shard's
+    // history from its original start rather than pruning against the wall
+    // clock (or that shard's advancing cursor). Bound an exceptionally long
+    // wait and explicitly mark any expired prefix as a gap.
+    let reached = follow.reached().unwrap_or_else(|| {
+        let start = follow.starts.iter().map(|s| s.at).min().unwrap_or(now);
+        let anchor = start.max(now - KEEP_DAYS * 86_400);
+        let expired_through = (hour(anchor) - KEEP_HOURS) * 3_600;
+        if expired_through >= start {
+            let to = expired_through + 1;
+            if let Some((_, end)) = follow.gaps.iter_mut().find(|(from, _)| *from == start) {
+                *end = (*end).max(to);
+            } else {
+                follow.gaps.push((start, to));
+            }
+        }
+        anchor
+    });
+    report.behind = follow.reached().map(|at| now - at);
     // The windows end as the hour in progress began.
     let (now_hour, today) = (hour(reached), day(reached));
     let to = activity::rolling_to(reached);
-    let keeping_up = report.behind.is_some_and(|b| b < CAUGHT_UP);
+    let keeping_up = follow.reached().is_some() && report.behind.is_some_and(|b| (0..CAUGHT_UP).contains(&b));
 
     // The apps of the keys that signed, where known.
-    let signed: Vec<u64> = Keys::of(batch.keys.values().flat_map(|k| k.as_slice().iter().copied())).as_slice().to_vec();
+    let signed: Vec<String> =
+        ExactKeys::of(batch.exact_keys.values().flat_map(|k| k.as_slice().iter().cloned())).as_slice().to_vec();
     let mut known = if signed.is_empty() {
         HashMap::new()
     } else {
         d1(inv)?;
         store.key_apps(signed.clone()).await?
     };
-    known.extend(learned.iter().map(|(&pair, &app)| (pair, app)));
+
+    known.extend(learned.iter().map(|(key, &app)| (key.clone(), app)));
 
     // The 30 days to the end of yesterday, once a day, when keeping up (the
     // day sets of a backlog are still filling) and yesterday was read whole.
@@ -243,18 +279,32 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let due_apps = follow.apps_due(to, now);
     let mut names: BTreeSet<String> = batch.hours.keys().map(|&h| hour_set(h)).collect();
     names.extend(batch.days.keys().map(|&d| day_set(d)));
-    names.extend(batch.keys.keys().map(|&h| key_set(h)));
+    names.extend(batch.exact_keys.keys().map(|&h| key_set(h)));
     names.extend((now_hour - 48..now_hour).map(hour_set));
     if due_30d {
         names.extend((today - 30..today).map(day_set));
     }
-    if due_apps {
-        names.extend((now_hour - 24..now_hour).map(key_set));
-    }
     d1(inv)?;
     let stored = store.activity_sets(names.into_iter().collect()).await?;
-    let decoded = |name: &str| stored.get(name).and_then(|text| Fids::decode(text)).unwrap_or_default();
-    let decoded_keys = |name: &str| stored.get(name).and_then(|text| Keys::decode(text)).unwrap_or_default();
+    // A missing row is an empty set; a present but unreadable row is an
+    // integrity failure. Never overwrite it with an apparently exact zero.
+    let mut stored_fids = HashMap::new();
+    let mut stored_keys = HashMap::new();
+    for (name, text) in &stored {
+        if name.starts_with("v2k") {
+            stored_keys.insert(
+                name.clone(),
+                ExactKeys::decode(text).ok_or_else(|| IndexError(format!("invalid activity key set {name}")))?,
+            );
+        } else {
+            stored_fids.insert(
+                name.clone(),
+                Fids::decode(text).ok_or_else(|| IndexError(format!("invalid activity account set {name}")))?,
+            );
+        }
+    }
+    let decoded = |name: &str| stored_fids.get(name).cloned().unwrap_or_default();
+    let decoded_keys = |name: &str| stored_keys.get(name).cloned().unwrap_or_default();
 
     // Look up the apps of keys not known yet: this run's first, then those
     // the last count left, an account a request, keeping subrequests for
@@ -262,22 +312,24 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let after = AFTER + u32::from(due_apps);
     let limit = if keeping_up { LOOKUPS } else { LOOKUPS_BEHIND };
     let limit = limit.min(inv.remaining_subrequests().saturating_sub(after + HISTORY) as usize);
-    let mut accounts: Vec<(u64, Vec<u64>)> = Vec::new();
-    for &pair in signed.iter().filter(|p| !known.contains_key(p)).chain(follow.backlog.iter()) {
-        let fid = activity::pair_fid(pair);
+    let mut accounts: Vec<(u64, Vec<String>)> = Vec::new();
+    for pair in signed.iter().filter(|p| !known.contains_key(*p)).chain(follow.backlog.iter()) {
+        let Some(fid) = activity::identity_fid(pair) else {
+            return Err(IndexError("invalid signer identity in activity backlog".into()));
+        };
         if let Some((_, pairs)) = accounts.iter_mut().find(|(f, _)| *f == fid) {
-            if !pairs.contains(&pair) {
-                pairs.push(pair);
+            if !pairs.contains(pair) {
+                pairs.push(pair.clone());
             }
         } else if accounts.len() < limit {
-            accounts.push((fid, vec![pair]));
+            accounts.push((fid, vec![pair.clone()]));
         }
     }
     report.looked_up = accounts.len();
     let found = join_all(accounts.into_iter().map(|(fid, pairs)| look_up(inv, fid, pairs, after))).await;
-    let mut keys: Vec<(u64, u64)> = learned.into_iter().collect();
+    let mut keys: Vec<(String, u64)> = learned.into_iter().collect();
     for (pair, app) in found.into_iter().flatten().flatten() {
-        known.insert(pair, app);
+        known.insert(pair.clone(), app);
         keys.push((pair, app));
     }
     follow.backlog.retain(|pair| !known.contains_key(pair));
@@ -290,17 +342,22 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         writes.push((hour_set(*h), set.encode()));
         hours.insert(*h, set);
     }
-    let mut key_sets: HashMap<i64, Keys> = HashMap::new();
-    for (h, pairs) in &batch.keys {
+    let mut key_overrides = Vec::new();
+    for (h, pairs) in &batch.exact_keys {
         let mut set = decoded_keys(&key_set(*h));
         set.extend(pairs);
-        writes.push((key_set(*h), set.encode()));
-        key_sets.insert(*h, set);
+        let row = (key_set(*h), set.encode());
+        if (now_hour - 24..now_hour).contains(h) {
+            key_overrides.push(row.clone());
+        }
+        writes.push(row);
     }
+    let mut merged_days = HashMap::new();
     for (d, fids) in &batch.days {
         let mut set = decoded(&day_set(*d));
         set.extend(fids);
         writes.push((day_set(*d), set.encode()));
+        merged_days.insert(*d, set.clone());
         let count = follow.day_mut(*d);
         count.active = set.len() as u64;
         for (family, n) in batch.actions.get(d).into_iter().flatten() {
@@ -308,7 +365,8 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         }
     }
     if due_30d {
-        let days: Vec<Fids> = (today - 30..today).map(|d| decoded(&day_set(d))).collect();
+        let days: Vec<Fids> =
+            (today - 30..today).map(|d| merged_days.get(&d).cloned().unwrap_or_else(|| decoded(&day_set(d)))).collect();
         let complete = follow.covered((today - 30) * 86_400, today * 86_400);
         follow.active_30d = Some(Window { day: today - 1, active: Fids::union_len(&days) as u64, complete });
         report.counted_30d = true;
@@ -324,16 +382,13 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
         }
     }
     if due_apps && let Some(active) = activity::rolling(&follow, &hours, to) {
-        let mut window = Keys::default();
-        for h in now_hour - 24..now_hour {
-            window.extend(&key_sets.remove(&h).unwrap_or_else(|| decoded_keys(&key_set(h))));
-        }
-        let chunks = window.chunks(COUNT_CHUNK).into_iter().map(<[u64]>::to_vec).collect();
+        let names = (now_hour - 24..now_hour).map(key_set).collect();
         d1(inv)?;
-        let counts = store.count_apps(keys.clone(), chunks).await?;
-        follow.backlog = counts.iter().flat_map(|(_, _, pairs)| pairs.iter().copied()).take(BACKLOG).collect();
+        let counts = store.count_apps(keys.clone(), names, key_overrides, active).await?;
+        follow.backlog = counts.iter().flat_map(|(_, _, pairs)| pairs.iter().cloned()).take(BACKLOG).collect();
         let counts = counts.into_iter().map(|(app, n, _)| (app, n));
-        let window = AppsWindow::of(to, now, active, counts);
+        let mut window = AppsWindow::of(to, now, active, counts);
+        window.verification_version = VERIFICATION_VERSION;
         // The accounts of the apps the page names: those not read yet, and
         // all of them again each day. Unread, the names read before stay.
         let named: Vec<u64> = window.apps.iter().take(NAMED_APPS).map(|a| a.app).collect();
@@ -356,6 +411,9 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     follow.settle();
     let meta = Meta { fetched_at: (inv.now()) as i64, ..Meta::default() };
     let payload: ActivityPayload = activity::summary(&follow, &hours, meta);
+    if !payload.is_verified(payload.meta.fetched_at.div_euclid(1_000)) {
+        return Err(IndexError("Refusing to publish an incoherent activity verification record".into()));
+    }
     let body = serde_json::to_string(&payload).map_err(|e| IndexError(e.to_string()))?;
     let state = serde_json::to_string(&follow).map_err(|e| IndexError(e.to_string()))?;
     let keep_from = (now_hour - KEEP_HOURS, today - KEEP_DAYS);
@@ -363,7 +421,17 @@ pub async fn run(inv: &Invocation, store: &dyn ActivityStore) -> Result<Report, 
     let summary = Snapshot { built: inv.now(), body };
     let reactions_from = now - REACTIONS_KEPT_DAYS * 86_400;
     store
-        .save_activity(Saving { sets: writes, keep_from, keys, reactions, removed, reactions_from, state, summary })
+        .save_activity(Saving {
+            expected_state,
+            sets: writes,
+            keep_from,
+            keys,
+            reactions,
+            removed,
+            reactions_from,
+            state,
+            summary,
+        })
         .await?;
     Ok(report)
 }
@@ -427,7 +495,82 @@ mod tests {
                 self.events.get(&(shard, from))
             };
             let response = match body {
-                Some(body) => HttpResponse { status: 200, retry_after: None, body: Some(body.clone().into_bytes()) },
+                Some(body) => {
+                    let mut value: serde_json::Value = serde_json::from_str(body).unwrap();
+                    if url.contains("/events?")
+                        && let Some(events) = value["events"].as_array_mut()
+                    {
+                        let shard: u32 = param(&url, "shard_index").unwrap().parse().unwrap();
+                        for event in events {
+                            event["shardIndex"] = shard.into();
+                            if let Some(confirmed) = event.get_mut("blockConfirmedBody") {
+                                confirmed["shardIndex"] = shard.into();
+                            }
+                        }
+                    }
+                    // Short readable fixture keys stand for complete Ed25519 keys.
+                    fn full_keys(value: &mut serde_json::Value) {
+                        match value {
+                            serde_json::Value::Object(fields) => {
+                                for (name, value) in fields {
+                                    if matches!(name.as_str(), "key" | "signer")
+                                        && let Some(key) = value.as_str()
+                                    {
+                                        *value = format!("0x{:0>64}", key.trim_start_matches("0x")).into();
+                                    } else {
+                                        full_keys(value);
+                                    }
+                                }
+                            }
+                            serde_json::Value::Array(values) => {
+                                for value in values {
+                                    full_keys(value);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    full_keys(&mut value);
+                    if url.contains("/events?")
+                        && let Some(events) = value["events"].as_array_mut()
+                    {
+                        for event in events {
+                            if let Some(body) = event
+                                .get_mut("mergeOnChainEventBody")
+                                .and_then(|b| b.get_mut("onChainEvent"))
+                                .and_then(|e| e.get_mut("signerEventBody"))
+                            {
+                                body["keyType"] = 1.into();
+                            }
+                        }
+                    }
+                    if url.contains("/signersByFid")
+                        && let Some(signers) = value["signers"].as_array_mut()
+                    {
+                        for signer in signers {
+                            signer["fid"] = fid.parse::<u64>().unwrap().into();
+                            signer["keyType"] = 1.into();
+                            if signer.get("requestFid").is_some() {
+                                signer["source"] = "SIGNER_SOURCE_OFFCHAIN".into();
+                            } else {
+                                signer["source"] = "SIGNER_SOURCE_ONCHAIN".into();
+                                signer["onchainEvent"] = serde_json::json!({"type":"EVENT_TYPE_SIGNER","fid":fid.parse::<u64>().unwrap(),"signerEventBody":{"key":signer["key"],"keyType":1,"eventType":"SIGNER_EVENT_TYPE_ADD","metadataType":0,"metadata":""}});
+                            }
+                        }
+                    }
+                    if url.contains("/onChainEventsByFid")
+                        && let Some(events) = value["events"].as_array_mut()
+                    {
+                        for event in events {
+                            event["type"] = "EVENT_TYPE_SIGNER".into();
+                            event["fid"] = fid.parse::<u64>().unwrap().into();
+                            event["signerEventBody"]["keyType"] = 1.into();
+                            event["signerEventBody"]["metadataType"] = 0.into();
+                            event["signerEventBody"]["metadata"] = "".into();
+                        }
+                    }
+                    HttpResponse { status: 200, retry_after: None, body: Some(value.to_string().into_bytes()) }
+                }
                 None => HttpResponse { status: 404, retry_after: None, body: None },
             };
             async move { Ok(response) }.boxed_local()
@@ -445,7 +588,9 @@ mod tests {
     struct Memory {
         state: RefCell<Option<String>>,
         sets: RefCell<HashMap<String, String>>,
-        keys: RefCell<HashMap<u64, u64>>,
+        read_sets: RefCell<Vec<String>>,
+        count_overrides: RefCell<Vec<(String, String)>>,
+        keys: RefCell<HashMap<String, u64>>,
         summary: RefCell<Option<Snapshot>>,
         /// Kept emoji reactions by reply: the cast replied to, the reply.
         reactions: RefCell<std::collections::BTreeMap<String, (String, ReactionReply)>>,
@@ -462,49 +607,67 @@ mod tests {
             names: Vec<String>,
         ) -> LocalBoxFuture<'static, Result<HashMap<String, String>, IndexError>> {
             let sets = self.sets.borrow();
+            self.read_sets.borrow_mut().extend(names.iter().cloned());
             let found = names.into_iter().filter_map(|n| Some((n.clone(), sets.get(&n)?.clone()))).collect();
             async move { Ok(found) }.boxed_local()
         }
 
-        fn key_apps(&self, pairs: Vec<u64>) -> LocalBoxFuture<'static, Result<HashMap<u64, u64>, IndexError>> {
+        fn key_apps(&self, pairs: Vec<String>) -> LocalBoxFuture<'static, Result<HashMap<String, u64>, IndexError>> {
             let keys = self.keys.borrow();
-            let found = pairs.into_iter().filter_map(|p| Some((p, *keys.get(&p)?))).collect();
+            let found = pairs.into_iter().filter_map(|p| Some((p.clone(), *keys.get(&p)?))).collect();
             async move { Ok(found) }.boxed_local()
         }
 
-        /// As the SQL does: each run's accounts by app, and its keys not
-        /// looked up.
+        /// Independent in-memory oracle for the SQL's complete window.
         fn count_apps(
             &self,
-            keys: Vec<(u64, u64)>,
-            chunks: Vec<Vec<u64>>,
+            keys: Vec<(String, u64)>,
+            names: Vec<String>,
+            overrides: Vec<(String, String)>,
+            expected_active: u64,
         ) -> LocalBoxFuture<'static, Result<Vec<AppCount>, IndexError>> {
-            for (pair, app) in keys {
-                self.keys.borrow_mut().entry(pair).or_insert(app);
-            }
-            let keys = self.keys.borrow();
-            let mut out = Vec::new();
-            for chunk in chunks {
-                let mut by_app: std::collections::BTreeMap<Option<u64>, (BTreeSet<u64>, Vec<u64>)> =
-                    std::collections::BTreeMap::new();
-                for pair in chunk {
-                    let app = keys.get(&pair).copied();
-                    let (fids, unknown) = by_app.entry(app).or_default();
-                    fids.insert(activity::pair_fid(pair));
-                    if app.is_none() {
-                        unknown.push(pair);
-                    }
+            self.count_overrides.borrow_mut().extend(overrides.iter().cloned());
+            let overrides: HashMap<_, _> = overrides.into_iter().collect();
+            let stored = self.sets.borrow();
+            let mut identities = BTreeSet::new();
+            for name in names {
+                if let Some(body) = overrides.get(&name).or_else(|| stored.get(&name)) {
+                    let Some(set) = ExactKeys::decode(body) else {
+                        return async { Err(IndexError("invalid stored key window".into())) }.boxed_local();
+                    };
+                    identities.extend(set.as_slice().iter().cloned());
                 }
-                out.extend(by_app.into_iter().map(|(app, (fids, unknown))| (app, fids.len() as u64, unknown)));
             }
+            let accounts: BTreeSet<_> = identities.iter().map(|key| activity::identity_fid(key).unwrap()).collect();
+            if accounts.len() as u64 != expected_active {
+                return async { Err(IndexError("key window account count mismatch".into())) }.boxed_local();
+            }
+            for (key, app) in keys {
+                self.keys.borrow_mut().entry(key).or_insert(app);
+            }
+            let known = self.keys.borrow();
+            let mut by_app: std::collections::BTreeMap<Option<u64>, (BTreeSet<u64>, Vec<String>)> =
+                std::collections::BTreeMap::new();
+            for key in identities {
+                let app = known.get(&key).copied();
+                let (fids, unknown) = by_app.entry(app).or_default();
+                fids.insert(activity::identity_fid(&key).unwrap());
+                if app.is_none() && unknown.len() < BACKLOG {
+                    unknown.push(key);
+                }
+            }
+            let out = by_app.into_iter().map(|(app, (fids, unknown))| (app, fids.len() as u64, unknown)).collect();
             async move { Ok(out) }.boxed_local()
         }
 
         fn save_activity(&self, saving: Saving) -> LocalBoxFuture<'static, Result<(), IndexError>> {
+            if *self.state.borrow() != saving.expected_state {
+                return async { Err(IndexError("activity state changed".into())) }.boxed_local();
+            }
             let mut stored = self.sets.borrow_mut();
             stored.extend(saving.sets);
             stored.retain(|name, _| {
-                let (kind, n) = name.split_at(1);
+                let (kind, n) = name.strip_prefix("v2").unwrap().split_at(1);
                 let n: i64 = n.parse().unwrap();
                 if kind == "d" || kind == "w" { n >= saving.keep_from.1 } else { n >= saving.keep_from.0 }
             });
@@ -539,7 +702,7 @@ mod tests {
 
     fn merge(block: u64, seq: u64, fid: u64, kind: &str) -> String {
         format!(
-            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{block},"mergeMessageBody":{{"message":{{"data":{{"type":"MESSAGE_TYPE_{kind}","fid":{fid},"timestamp":1}},"signer":"0x0{seq}"}}}}}}"#,
+            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{block},"mergeMessageBody":{{"message":{{"data":{{"type":"MESSAGE_TYPE_{kind}","fid":{fid},"timestamp":1}},"signer":"0x{seq:064x}"}}}}}}"#,
             (block << 14) | seq
         )
     }
@@ -547,13 +710,48 @@ mod tests {
     /// A reply by `fid` with `text` to the cast `parent`.
     fn reply(block: u64, seq: u64, fid: u64, hash: &str, text: &str, parent: &str) -> String {
         format!(
-            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{block},"mergeMessageBody":{{"message":{{"hash":"{hash}","data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":{fid},"timestamp":1,"castAddBody":{{"text":"{text}","parentCastId":{{"fid":3,"hash":"{parent}"}}}}}},"signer":"0x0{seq}"}}}}}}"#,
+            r#"{{"type":"HUB_EVENT_TYPE_MERGE_MESSAGE","id":{},"blockNumber":{block},"mergeMessageBody":{{"message":{{"hash":"{hash}","data":{{"type":"MESSAGE_TYPE_CAST_ADD","fid":{fid},"timestamp":1,"castAddBody":{{"text":"{text}","parentCastId":{{"fid":3,"hash":"{parent}"}}}}}},"signer":"0x{seq:064x}"}}}}}}"#,
             (block << 14) | seq
         )
     }
 
     fn page(events: &[String]) -> String {
-        format!(r#"{{"events":[{}]}}"#, events.join(","))
+        let mut events: Vec<serde_json::Value> = events.iter().map(|e| serde_json::from_str(e).unwrap()).collect();
+        let totals: HashMap<u64, u64> = events
+            .iter()
+            .map(|e| {
+                let id = e["id"].as_u64().unwrap();
+                (id >> 14, (id & 16_383) + 1)
+            })
+            .fold(HashMap::new(), |mut out, (block, n)| {
+                out.entry(block).and_modify(|prior| *prior = (*prior).max(n)).or_insert(n);
+                out
+            });
+        for event in &mut events {
+            let block = event["id"].as_u64().unwrap() >> 14;
+            if let Some(body) = event.get_mut("blockConfirmedBody") {
+                body["totalEvents"] = totals[&block].into();
+            }
+        }
+        serde_json::json!({ "events": events }).to_string()
+    }
+
+    fn verified_state(mut follow: Follow) -> String {
+        follow.verification_version = VERIFICATION_VERSION;
+        follow.keys_since = follow.since;
+        follow.starts = SHARDS.into_iter().map(|shard| Reached { shard, at: follow.since.unwrap() }).collect();
+        follow.blocks = follow
+            .cursors
+            .iter()
+            .map(|c| activity::BlockProgress {
+                shard: c.shard,
+                block: c.event_id >> 14,
+                at: follow.reached.iter().find(|r| r.shard == c.shard).unwrap().at + 1,
+                total: ((c.event_id & 16_383) + 1) as u32,
+                seen: ((c.event_id & 16_383) + 1) as u32,
+            })
+            .collect();
+        serde_json::to_string(&follow).unwrap()
     }
 
     fn run_once(hub: &Rc<Hub>, store: &Memory) -> Result<Report, IndexError> {
@@ -653,17 +851,17 @@ mod tests {
         let store = Memory::default();
         let report = run_once(&hub, &store).unwrap();
         assert_eq!(report.events, [(1, 4), (2, 4)]);
-        assert_eq!((report.actions, report.behind, report.failed.len(), report.counted_30d), (5, Some(90), 0, false));
+        assert_eq!((report.actions, report.behind, report.failed.len(), report.counted_30d), (5, Some(91), 0, false));
         let follow = state(&store);
-        assert_eq!(follow.since, Some(at));
-        assert_eq!(follow.reached(), Some(at));
+        assert_eq!(follow.since, Some(at + 31));
+        assert_eq!(follow.reached(), Some(at - 1));
         let today = follow.days.last().unwrap();
         assert_eq!((today.day, today.active), (day(at), 3));
         assert_eq!(today.actions[&allthing_core::activity::Family::Cast], 2);
         assert_eq!(Fids::decode(&store.sets.borrow()[&hour_set(activity::bucket(at))]), Some(Fids::of([7, 9, 42])));
         let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
         // Counting began 90 seconds ago: no whole window yet.
-        assert_eq!((payload.rolling_24h, payload.days.len(), payload.since), (None, 1, Some(at)));
+        assert_eq!((payload.rolling_24h, payload.days.len(), payload.since), (None, 1, Some(at + 31)));
 
         // The next run reads on from each shard's cursor. Shard 2 can't be
         // read: it keeps its place, and an account seen again isn't
@@ -695,7 +893,7 @@ mod tests {
         };
         follow.day_mut(day(at)).active = 0;
         let store = Memory::default();
-        *store.state.borrow_mut() = Some(serde_json::to_string(&follow).unwrap());
+        *store.state.borrow_mut() = Some(verified_state(follow.clone()));
         let mut hub = Hub::default();
         let from = ((START << 14) + 1).to_string();
         // Shard 1 goes on from the next block; shard 2 jumps 100 blocks.
@@ -704,12 +902,12 @@ mod tests {
             .insert(("2".into(), from), page(&[block(START + 100, at + 100), merge(START + 100, 1, 3, "CAST_ADD")]));
         run_once(&Rc::new(hub), &store).unwrap();
         let follow = state(&store);
-        assert_eq!(follow.gaps, [(at, at + 100)]);
+        assert_eq!(follow.gaps, [(at + 1, at + 101)]);
         assert!(!follow.covered(at - 10, at + 200));
     }
 
-    fn pair(fid: u64, key: &str) -> u64 {
-        key_pair(fid, key).unwrap()
+    fn pair(fid: u64, key: &str) -> String {
+        activity::signer_identity(fid, &format!("0x{:0>64}", key.trim_start_matches("0x"))).unwrap()
     }
 
     /// Read to a minute ago from 3 days back, keys kept all along, with
@@ -723,7 +921,7 @@ mod tests {
             keys_since: Some(at - 3 * 86_400),
             ..Follow::default()
         };
-        *store.state.borrow_mut() = Some(serde_json::to_string(&follow).unwrap());
+        *store.state.borrow_mut() = Some(verified_state(follow.clone()));
         let from = ((START << 14) + 1).to_string();
         hub.events.insert(("1".into(), from.clone()), page(&[]));
         hub.events.insert(("2".into(), from), page(&[]));
@@ -742,9 +940,9 @@ mod tests {
             let mut sets = store.sets.borrow_mut();
             sets.insert(hour_set(now_hour - 1), Fids::of([7, 42]).encode());
             sets.insert(hour_set(now_hour - 20), Fids::of([9, 42]).encode());
-            sets.insert(key_set(now_hour - 1), Keys::of([pair(42, "0x01"), pair(7, "0x01")]).encode());
-            sets.insert(key_set(now_hour - 20), Keys::of([pair(42, "0x02"), pair(9, "0x03")]).encode());
-            sets.insert(key_set(now_hour), Keys::of([pair(5, "0x05")]).encode());
+            sets.insert(key_set(now_hour - 1), ExactKeys::of([pair(42, "0x01"), pair(7, "0x01")]).encode());
+            sets.insert(key_set(now_hour - 20), ExactKeys::of([pair(42, "0x02"), pair(9, "0x03")]).encode());
+            sets.insert(key_set(now_hour), ExactKeys::of([pair(5, "0x05")]).encode());
             let mut keys = store.keys.borrow_mut();
             keys.insert(pair(42, "0x01"), 9152);
             keys.insert(pair(7, "0x01"), 0);
@@ -818,7 +1016,10 @@ mod tests {
         let store = Memory::default();
         let mut hub = Hub::default();
         let now_hour = counting(&store, &mut hub);
-        store.sets.borrow_mut().insert(key_set(now_hour - 1), Keys::of((1..=40).map(|fid| pair(fid, "0x01"))).encode());
+        store
+            .sets
+            .borrow_mut()
+            .insert(key_set(now_hour - 1), ExactKeys::of((1..=40).map(|fid| pair(fid, "0x01"))).encode());
         store.sets.borrow_mut().insert(hour_set(now_hour - 1), Fids::of(1..=40).encode());
         // Every account has a key removed since, which takes a second read.
         for fid in 1..=40 {
@@ -874,11 +1075,11 @@ mod tests {
             page(&[
                 block(START + 1, at),
                 added,
-                merge(START + 1, 1, 100, "CAST_ADD"),
-                merge(START + 1, 2, 8, "REACTION_ADD"),
+                merge(START + 1, 2, 100, "CAST_ADD").replace(&format!("0x{:064x}", 2), &format!("0x{:064x}", 1)),
+                merge(START + 1, 3, 8, "REACTION_ADD"),
             ]),
         );
-        hub.signers.insert("8".into(), r#"{"signers":[{"key":"0x02","requestFid":309857}]}"#.into());
+        hub.signers.insert("8".into(), r#"{"signers":[{"key":"0x03","requestFid":309857}]}"#.into());
         let hub = Rc::new(hub);
         let report = run_once(&hub, &store).unwrap();
         assert_eq!((report.learned, report.looked_up), (1, 1));
@@ -886,10 +1087,10 @@ mod tests {
         assert!(requests.iter().any(|url| url.contains("/signersByFid?fid=8&")));
         assert!(!requests.iter().any(|url| url.contains("fid=100")), "{requests:?}");
         let keys = store.keys.borrow();
-        assert_eq!((keys[&pair(100, "0x01")], keys[&pair(8, "0x02")]), (9152, 309_857));
+        assert_eq!((keys[&pair(100, "0x01")], keys[&pair(8, "0x03")]), (9152, 309_857));
         // This run's keys are kept in their hour.
-        let set = Keys::decode(&store.sets.borrow()[&key_set(activity::bucket(at))]).unwrap();
-        assert_eq!(set, Keys::of([pair(8, "0x02"), pair(100, "0x01")]));
+        let set = ExactKeys::decode(&store.sets.borrow()[&key_set(activity::bucket(at))]).unwrap();
+        assert_eq!(set, ExactKeys::of([pair(8, "0x03"), pair(100, "0x01")]));
         assert_eq!(activity::bucket(at), now_hour);
     }
 
@@ -908,7 +1109,7 @@ mod tests {
             since: Some((today - 2) * 86_400),
             ..Follow::default()
         };
-        *store.state.borrow_mut() = Some(serde_json::to_string(&follow).unwrap());
+        *store.state.borrow_mut() = Some(verified_state(follow.clone()));
         let mut hub = Hub::default();
         let from = ((START << 14) + 1).to_string();
         hub.events.insert(("1".into(), from.clone()), page(&[]));
@@ -922,7 +1123,7 @@ mod tests {
         // Sets older than the window are dropped.
         assert!(!store.sets.borrow().contains_key(&day_set(today - 40)));
         // The week isn't kept until it was read in full.
-        assert!(!store.sets.borrow().keys().any(|name| name.starts_with('w')));
+        assert!(!store.sets.borrow().keys().any(|name| name.starts_with("v2w")));
     }
 
     #[test]
@@ -941,7 +1142,7 @@ mod tests {
             since: Some((today - 7) * 86_400),
             ..Follow::default()
         };
-        *store.state.borrow_mut() = Some(serde_json::to_string(&follow).unwrap());
+        *store.state.borrow_mut() = Some(verified_state(follow.clone()));
         let mut hub = Hub::default();
         let from = ((START << 14) + 1).to_string();
         hub.events.insert(("1".into(), from.clone()), page(&[]));
@@ -959,8 +1160,296 @@ mod tests {
         // A gap in the week: not read in full, so not kept.
         let store = Memory::default();
         let gapped = Follow { gaps: vec![((today - 3) * 86_400, (today - 3) * 86_400 + 60)], ..follow };
-        *store.state.borrow_mut() = Some(serde_json::to_string(&gapped).unwrap());
+        *store.state.borrow_mut() = Some(verified_state(gapped));
         assert!(run_once(&hub, &store).unwrap().counted_30d);
-        assert!(!store.sets.borrow().keys().any(|name| name.starts_with('w')));
+        assert!(!store.sets.borrow().keys().any(|name| name.starts_with("v2w")));
+    }
+    #[test]
+    fn unreadable_or_legacy_state_is_never_restarted_or_certified() {
+        for raw in ["broken JSON", r#"{"since":1700000000}"#] {
+            let store = Memory::default();
+            *store.state.borrow_mut() = Some(raw.into());
+            let hub = Rc::new(Hub::default());
+            assert!(run_once(&hub, &store).is_err());
+            assert_eq!(store.state.borrow().as_deref(), Some(raw));
+            assert!(store.summary.borrow().is_none());
+            assert!(hub.requests.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_present_corrupt_set_stops_the_run_without_overwriting_it() {
+        let store = Memory::default();
+        let mut hub = Hub::default();
+        let now_hour = counting(&store, &mut hub);
+        store.sets.borrow_mut().insert(hour_set(now_hour - 1), "not a set".into());
+        let before = store.state.borrow().clone();
+        assert!(run_once(&Rc::new(hub), &store).is_err());
+        assert_eq!(*store.state.borrow(), before);
+        assert_eq!(store.sets.borrow()[&hour_set(now_hour - 1)], "not a set");
+        assert!(store.summary.borrow().is_none());
+    }
+
+    #[test]
+    fn a_missing_first_shard_cannot_produce_a_complete_window() {
+        let at = NOW - 60;
+        let store = Memory::default();
+        let mut hub = Hub::default();
+        for shard in ["1", "2"] {
+            hub.events.insert((shard.into(), "newest".into()), page(&[block(HEAD, NOW)]));
+        }
+        hub.events.insert(
+            ("1".into(), (START << 14).to_string()),
+            page(&[block(START, at), merge(START, 1, 42, "CAST_ADD")]),
+        );
+        let report = run_once(&Rc::new(hub), &store).unwrap();
+        assert_eq!(report.failed, [2]);
+        let state = state(&store);
+        assert_eq!(state.reached(), None);
+        assert_eq!(state.since, None);
+        assert!(!state.covered(at - 86_400, at));
+        let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
+        assert_eq!(payload.rolling_24h, None);
+        assert_eq!(payload.verification_version, VERIFICATION_VERSION);
+        assert!(payload.days.iter().all(|day| !day.complete));
+    }
+
+    #[test]
+    fn the_first_daily_and_weekly_counts_include_the_page_finishing_yesterday() {
+        let midnight = day(NOW) * 86_400;
+        let store = Memory::default();
+        let follow = Follow {
+            cursors: SHARDS.into_iter().map(|shard| Cursor { shard, event_id: START << 14 }).collect(),
+            reached: SHARDS.into_iter().map(|shard| Reached { shard, at: midnight - 3 }).collect(),
+            since: Some(midnight - 30 * 86_400),
+            ..Follow::default()
+        };
+        *store.state.borrow_mut() = Some(verified_state(follow));
+        store.sets.borrow_mut().insert(day_set(day(midnight) - 1), Fids::of([7]).encode());
+        let mut hub = Hub { later: midnight + 60 - NOW, ..Hub::default() };
+        let from = ((START << 14) + 1).to_string();
+        hub.events.insert(
+            ("1".into(), from.clone()),
+            page(&[
+                block(START + 1, midnight - 1),
+                merge(START + 1, 1, 42, "CAST_ADD"),
+                block(START + 2, midnight + 1),
+            ]),
+        );
+        hub.events.insert(("2".into(), from), page(&[block(START + 1, midnight + 1)]));
+        let report = run_once(&Rc::new(hub), &store).unwrap();
+        assert!(report.counted_30d);
+        let state = state(&store);
+        assert_eq!(state.active_30d.unwrap().active, 2);
+        assert!(state.active_30d.unwrap().complete);
+        let week = Fids::decode(&store.sets.borrow()[&week_set(day(midnight) - 1)]).unwrap();
+        assert_eq!(week, Fids::of([7, 42]), "the final page must be in both unions before publication");
+    }
+
+    #[test]
+    fn repeated_or_future_pages_leave_each_shards_cursor_and_counts_unchanged() {
+        let store = Memory::default();
+        let mut hub = Hub::default();
+        counting(&store, &mut hub);
+        let before = state(&store);
+        let from = ((START << 14) + 1).to_string();
+        hub.events.insert(("1".into(), from.clone()), page(&[block(START, NOW - 59)]));
+        hub.events.insert(("2".into(), from), page(&[block(START + 1, NOW + 1)]));
+        let report = run_once(&Rc::new(hub), &store).unwrap();
+        assert_eq!(report.failed, [1, 2]);
+        let after = state(&store);
+        assert_eq!(after.cursors, before.cursors);
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(after.days, before.days);
+    }
+    #[test]
+    fn counting_apps_keeps_old_hourly_key_sets_inside_the_store() {
+        let store = Memory::default();
+        let mut hub = Hub::default();
+        let now_hour = counting(&store, &mut hub);
+        store.sets.borrow_mut().insert(hour_set(now_hour - 1), Fids::of([42]).encode());
+        store.sets.borrow_mut().insert(key_set(now_hour - 1), ExactKeys::of([pair(42, "0x01")]).encode());
+        assert!(run_once(&Rc::new(hub), &store).unwrap().counted_apps);
+        assert!(
+            store.read_sets.borrow().iter().all(|name| !name.starts_with("v2k")),
+            "the Worker must not read the 24-hour key window"
+        );
+        assert_eq!(state(&store).apps_24h.unwrap().unknown, 1);
+    }
+
+    #[test]
+    fn the_store_counts_current_batch_overrides_before_they_are_saved() {
+        let midnight = day(NOW) * 86_400;
+        let store = Memory::default();
+        let follow = Follow {
+            cursors: SHARDS.into_iter().map(|shard| Cursor { shard, event_id: START << 14 }).collect(),
+            reached: SHARDS.into_iter().map(|shard| Reached { shard, at: midnight - 3 }).collect(),
+            since: Some(midnight - 3 * 86_400),
+            ..Follow::default()
+        };
+        *store.state.borrow_mut() = Some(verified_state(follow));
+        let prior_hour = hour(midnight) - 1;
+        store.sets.borrow_mut().insert(hour_set(prior_hour), Fids::of([7]).encode());
+        store.sets.borrow_mut().insert(key_set(prior_hour), ExactKeys::of([pair(7, "0x01")]).encode());
+        let mut hub = Hub { later: midnight + 60 - NOW, ..Hub::default() };
+        let from = ((START << 14) + 1).to_string();
+        hub.events.insert(
+            ("1".into(), from.clone()),
+            page(&[
+                block(START + 1, midnight - 1),
+                merge(START + 1, 1, 42, "CAST_ADD"),
+                block(START + 2, midnight + 1),
+            ]),
+        );
+        hub.events.insert(("2".into(), from), page(&[block(START + 1, midnight + 1)]));
+        assert!(run_once(&Rc::new(hub), &store).unwrap().counted_apps);
+        let window = state(&store).apps_24h.unwrap();
+        assert_eq!((window.active, window.unknown), (2, 2));
+        assert_eq!(store.count_overrides.borrow().len(), 1);
+        assert_eq!(
+            ExactKeys::decode(&store.count_overrides.borrow()[0].1).unwrap(),
+            ExactKeys::of([pair(7, "0x01"), pair(42, "0x01")])
+        );
+    }
+
+    #[test]
+    fn absent_or_malformed_key_windows_cannot_claim_all_accounts_are_known() {
+        for corrupt in [None, Some("broken JSON"), Some(r#"["0000000042:0x01"]"#)] {
+            let store = Memory::default();
+            let mut hub = Hub::default();
+            let now_hour = counting(&store, &mut hub);
+            store.sets.borrow_mut().insert(hour_set(now_hour - 1), Fids::of([42]).encode());
+            if let Some(body) = corrupt {
+                store.sets.borrow_mut().insert(key_set(now_hour - 1), body.into());
+            }
+            let before = store.state.borrow().clone();
+            assert!(run_once(&Rc::new(hub), &store).is_err());
+            assert_eq!(*store.state.borrow(), before);
+            assert!(store.summary.borrow().is_none());
+            assert!(store.read_sets.borrow().iter().all(|name| !name.starts_with("v2k")));
+        }
+    }
+    #[test]
+    fn malformed_derived_state_is_rejected_before_any_upstream_read_or_cursor_advance() {
+        let seed = Memory::default();
+        let mut hub = Hub::default();
+        counting(&seed, &mut hub);
+        let base = state(&seed);
+        let mut cases = Vec::new();
+        let mut bad = base.clone();
+        bad.days.push(activity::DayCount { day: i64::MIN, ..activity::DayCount::default() });
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.days.push(activity::DayCount { day: day(NOW) + 1, ..activity::DayCount::default() });
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.reached[0].at = 0;
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.reached.remove(0);
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.reached[0].at -= 1;
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.active_30d = Some(Window { day: i64::MAX, active: 1, complete: false });
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.active_30d = Some(Window { day: day(NOW) - 1, active: 1, complete: true });
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.days.push(activity::DayCount {
+            day: day(NOW) - 4,
+            active: 1,
+            complete: true,
+            ..activity::DayCount::default()
+        });
+        cases.push(bad);
+        let mut bad = base.clone();
+        let mut window = AppsWindow::of(activity::rolling_to(NOW) - 4 * 86_400, NOW, 1, [(Some(9152), 1)]);
+        window.verification_version = VERIFICATION_VERSION;
+        bad.apps_24h = Some(window);
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.active_30d = Some(Window { day: day(NOW) - 1, active: u64::from(u32::MAX) + 1, complete: false });
+        cases.push(bad);
+        let mut bad = base.clone();
+        bad.gaps.push((i64::MIN, 0));
+        cases.push(bad);
+        for (index, bad) in cases.into_iter().enumerate() {
+            let store = Memory::default();
+            let raw = serde_json::to_string(&bad).unwrap();
+            *store.state.borrow_mut() = Some(raw.clone());
+            let hub = Rc::new(Hub::default());
+            assert!(run_once(&hub, &store).is_err(), "corrupt-state case{index}");
+            assert!(hub.requests.borrow().is_empty(), "case{index} reached the upstream");
+            assert_eq!(store.state.borrow().as_deref(), Some(raw.as_str()));
+            assert!(store.summary.borrow().is_none());
+            assert!(store.sets.borrow().is_empty());
+        }
+    }
+    fn one_shard_state(first: i64, reached: i64) -> Follow {
+        Follow {
+            verification_version: VERIFICATION_VERSION,
+            starts: vec![Reached { shard: 1, at: first + 1 }],
+            cursors: vec![Cursor { shard: 1, event_id: START << 14 }],
+            blocks: vec![activity::BlockProgress { shard: 1, block: START, at: reached + 1, total: 1, seen: 1 }],
+            reached: vec![Reached { shard: 1, at: reached }],
+            ..Follow::default()
+        }
+    }
+
+    #[test]
+    fn missing_first_shard_preserves_old_hours_until_common_coverage_can_count_them() {
+        let first = NOW - 73 * 3_600;
+        let reached = NOW - 24 * 3_600;
+        let active_at = NOW - 60 * 3_600;
+        let store = Memory::default();
+        *store.state.borrow_mut() = Some(serde_json::to_string(&one_shard_state(first, reached)).unwrap());
+        let old_hour = hour_set(activity::bucket(active_at));
+        store.sets.borrow_mut().insert(old_hour.clone(), Fids::of([42]).encode());
+        let mut waiting = Hub::default();
+        waiting.events.insert(("1".into(), ((START << 14) + 1).to_string()), page(&[]));
+        waiting.events.insert(("2".into(), "newest".into()), page(&[block(HEAD, NOW)]));
+        let report = run_once(&Rc::new(waiting), &store).unwrap();
+        assert_eq!(report.failed, [2]);
+        assert!(store.sets.borrow().contains_key(&old_hour), "a 60-hour-old set must survive missing common coverage");
+        assert_eq!(state(&store).reached(), None);
+
+        let mut joined = Hub::default();
+        joined.events.insert(("1".into(), ((START << 14) + 1).to_string()), page(&[]));
+        joined.events.insert(("2".into(), "newest".into()), page(&[block(HEAD, NOW)]));
+        joined.events.insert(
+            ("2".into(), (START << 14).to_string()),
+            page(&[block(START, first), block(START + 1, reached + 1)]),
+        );
+        run_once(&Rc::new(joined), &store).unwrap();
+        let payload: ActivityPayload = serde_json::from_str(&store.summary.borrow().as_ref().unwrap().body).unwrap();
+        assert!(payload.is_verified(NOW));
+        assert_eq!(payload.rolling_24h, Some(0));
+        assert_eq!(
+            payload.previous_24h,
+            Some(1),
+            "joining the shards must recover the retained account, not a certified zero"
+        );
+    }
+
+    #[test]
+    fn an_extended_missing_shard_wait_bounds_history_with_an_explicit_expired_gap() {
+        let first = NOW - 100 * 86_400;
+        let active_at = NOW - 90 * 86_400;
+        let store = Memory::default();
+        *store.state.borrow_mut() = Some(serde_json::to_string(&one_shard_state(first, NOW - 60)).unwrap());
+        let old_hour = hour_set(activity::bucket(active_at));
+        store.sets.borrow_mut().insert(old_hour.clone(), Fids::of([42]).encode());
+        let mut hub = Hub::default();
+        hub.events.insert(("1".into(), ((START << 14) + 1).to_string()), page(&[]));
+        hub.events.insert(("2".into(), "newest".into()), page(&[block(HEAD, NOW)]));
+        run_once(&Rc::new(hub), &store).unwrap();
+        assert!(!store.sets.borrow().contains_key(&old_hour));
+        let retained = state(&store);
+        assert!(retained.gaps.iter().any(|&(from, to)| from <= active_at && to > active_at));
+        assert_eq!(retained.reached(), None);
+        assert!(retained.valid(NOW));
     }
 }

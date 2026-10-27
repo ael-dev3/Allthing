@@ -42,6 +42,29 @@ async function at(page: Page, path: RegExp) {
 }
 
 for (const width of [1280, 390]) {
+  test(`at ${width}, DAU is visible and opens under /Allthing`, async ({ browser }, testInfo) => {
+    const phone = width === 390;
+    const context = await browser.newContext({
+      baseURL: testInfo.project.use.baseURL,
+      viewport: { width, height: 844 },
+      ...(phone ? { isMobile: true, hasTouch: true } : {}),
+    });
+    const page = await context.newPage();
+    await serve(page);
+    const nav = page.getByRole("navigation", { name: "Main", exact: true });
+    const dau = nav.getByRole("link", { name: "DAU, daily active accounts", exact: true });
+    await expect(dau).toBeVisible();
+    await expect(dau).toHaveAttribute("href", "/Allthing/dau");
+    if (phone) await dau.tap();
+    else await dau.click();
+    await at(page, /\/Allthing\/dau$/);
+    await expect(dau).toHaveAttribute("aria-current", "page");
+    await expect(nav.locator("[aria-current='page']")).toHaveText("DAU");
+    await expect(page.locator('main a[href="https://allthing.social/dau"]')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await context.close();
+  });
+
   test(`at ${width}, a click on a cast's card opens its post under /Allthing`, async ({ browser }, testInfo) => {
     const phone = width === 390;
     const context = await browser.newContext({

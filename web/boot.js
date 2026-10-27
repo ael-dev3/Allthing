@@ -60,24 +60,31 @@ if (location.hostname === "www.allthing.social") {
   }
 }
 
-// The boot screen's header as the app's will be: Home marked on the front
-// page, and in the account's place what the app will show there, Sign in or
+// The boot screen's header as the app's will be: its current page marked,
+// and in the account's place what the app will show there, Sign in or
 // the signed-in reader's picture (the user cookie says which), or the static
 // copy's read-only note. index.html has the rest.
 function bootHeader() {
   const account = document.getElementById("boot-account");
   if (!account) return;
   const base = "{{BASE}}";
-  if (location.pathname === base + "/" || location.pathname === base) {
-    account.closest(".header-inner")?.querySelector(".boot-nav span")?.setAttribute("aria-current", "page");
-  }
+  const path = location.pathname.slice(base.length) || "/";
+  account.closest(".header-inner")?.querySelectorAll(".boot-nav [data-route]").forEach((item) => {
+    const route = item.getAttribute("data-route");
+    if (route === "/" ? path === "/" : path.startsWith(route)) item.setAttribute("aria-current", "page");
+  });
+  // The mounted header reserves Settings and Cast even before a reader can
+  // use them. Match their actual boxes, including the display-font width,
+  // rather than letting the boot search share their space until handover.
+  const settings = '<span class="boot-control-space"></span>';
+  const cast = '<span class="boot-header-cast"><span class="boot-cast-pill"><svg class="icon" viewBox="0 0 16 16"></svg>Cast</span></span>';
   if (base) {
-    account.outerHTML = '<span class="boot-readonly">read-only</span>';
+    account.outerHTML = '<span class="boot-actions">' + settings + '<span class="boot-readonly">read-only</span></span>';
   } else if (/(?:^|;\s*)__Host-allthing-user=[^;]/.test(document.cookie)) {
-    account.outerHTML = '<span class="boot-actions"><span class="boot-account"><span class="boot-avatar" style="width: 32px; height: 32px;"></span></span></span>';
+    account.outerHTML = '<span class="boot-actions">' + settings + cast + '<span class="boot-control-space"></span><span class="boot-account"><span class="boot-avatar" style="width: 32px; height: 32px;"></span></span></span>';
   } else {
     account.outerHTML =
-      '<span class="boot-actions"><span class="boot-sign-in"><svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/></svg><span class="boot-sign-in-label">Sign in</span></span></span>';
+      '<span class="boot-actions">' + settings + cast + '<span class="boot-sign-in"><svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/></svg><span class="boot-sign-in-label">Sign in</span></span></span>';
   }
 }
 

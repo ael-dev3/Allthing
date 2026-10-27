@@ -177,7 +177,7 @@ for (const phone of [false, true]) {
 
     await press(panel.getByRole("button", { name: "Show less" }), phone);
     await pressed(panel, false, true);
-    await expect(live).toHaveText("@alice's casts sink in your feeds.");
+    await expect(live).toHaveText("About 90% fewer posts from @alice after the next feed load. Press Show less again to undo.");
     expect(await kept(page)).toEqual({ favorites: [], less: [42] });
     await page.screenshot({ path: testInfo.outputPath(`hover-card-leanings-${width}.png`) });
 

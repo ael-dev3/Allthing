@@ -8,7 +8,7 @@ use allthing_core::following::{FEED_PARAM, Feed, FollowingPayload, following_pat
 use allthing_core::format::full_number;
 use allthing_core::listing::top_level;
 use allthing_core::model::Cast;
-use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted, sorted_for};
+use allthing_core::ranking::{Sort, TimeRange, TrendingWindow, sorted_for};
 use allthing_core::time::format_date;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_location, use_query_map};
@@ -157,9 +157,10 @@ fn after_a_paint(sort: Memo<Sort>) -> ReadSignal<Sort> {
 
 /// The newest casts on Farcaster, read from Snapchain's event stream and
 /// rebuilt at the edge every 30 seconds: strictly newest first within the
-/// selected range, irrespective of favorites or Show less.
+/// selected range. Show less reduces candidates without changing their time order.
 #[component]
 fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
+    let leaning = crate::leanings::use_leaning();
     let data = LocalResource::new(|| async { api::get::<LatestPayload>(&latest_path()).await });
     // Only another client filter redraws the list: a tap on a sort tab
     // changes the query too, and mustn't rebuild the cards it's leaving.
@@ -182,10 +183,12 @@ fn Latest(sort: Memo<Sort>, range: Memo<TimeRange>) -> impl IntoView {
                 Some(fid) => from_client(pool, &notes, fid),
                 None => pool,
             };
+            let sorted_by = StoredValue::new(None);
             let casts = Memo::new(move |_| {
                 let window = range.get().window();
                 let within: Vec<Cast> = pool.iter().filter(|c| window.holds(c.ts, now_secs())).cloned().collect();
-                sorted(&within, Sort::New)
+                let leanings = leaning.for_list(sorted_by, (window, client));
+                sorted_for(&within, Sort::New, &leanings)
             });
             view! {
                 <Columns class="front-columns">
@@ -547,7 +550,7 @@ fn Following(sort: Memo<Sort>, listed: ReadSignal<Sort>, range: Memo<TimeRange>)
                     // Hot scales a leaning by the days its input spans:
                     // casts outside this range must not inflate that lift.
                     let within: Vec<Cast> = casts.iter().filter(|c| window.holds(c.ts, now)).cloned().collect();
-                    if order == Sort::New { sorted(&within, order) } else { sorted_for(&within, order, &leanings) }
+                    sorted_for(&within, order, &leanings)
                 };
                 let mut all = rank(&pool);
                 more.with(|pages| {

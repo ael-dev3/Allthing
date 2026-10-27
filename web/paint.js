@@ -126,6 +126,10 @@ async function paint(payload, { sort, range, reader }) {
   reading = reader !== null;
   const notes = payload.notes || {};
   const lean = leanings(reader);
+  // The Rust app applies stable Show less sampling. Wait for that guard
+  // rather than briefly drawing candidates it will omit; ordinary early
+  // cards keep the existing renderer and request path.
+  if (lean.less.size) return;
   // The same inclusive present and exclusive lower edge as TrendingWindow::holds.
   const now = Math.floor(Date.now() / 1000);
   const inWindow = (cast) => cast.ts <= now && cast.ts > now - SPANS[range];
@@ -222,6 +226,24 @@ function leanings(reader) {
     // None, then.
   }
   return { favorites: fids("allthing.favorites"), less: fids("allthing.show-less"), followed };
+}
+
+// The inert bar follows AppsWindow::is_verified and ClientShareBar's time
+// guard too: a cached legacy or inconsistent total must not decorate it.
+function verifiedAppCount(window) {
+  if (!window || window.verification_version !== 2) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const whole = value => Number.isSafeInteger(value) && value >= 0;
+  const unknown = window.unknown === undefined ? 0 : window.unknown;
+  const none = window.none === undefined ? 0 : window.none;
+  const apps = window.apps === undefined ? [] : window.apps;
+  return whole(window.to) && window.to >= 1609459200 && window.to % HOUR === 0 &&
+    whole(window.counted) && window.counted >= window.to && window.counted <= now &&
+    window.to <= now && now - window.to <= 2 * HOUR && whole(window.active) && window.active <= 4294967295 &&
+    whole(unknown) && unknown <= window.active && whole(none) && none <= window.active &&
+    Array.isArray(apps) && apps.every((app, i, all) =>
+      app && typeof app === "object" && whole(app.app) && app.app > 0 && whole(app.active) && app.active <= window.active &&
+      !all.slice(0, i).some(prior => prior.app === app.app));
 }
 
 // Markup.
@@ -340,7 +362,7 @@ function shareBar(payload, notes, range) {
   const unknownPercent = split.pop();
   split.forEach((p, i) => (shares[i].percent = p));
   const unknownLabel = unknown > 0 ? `${unknown} not known${pending > 0 ? " yet" : ""}` : null;
-  const counted = Boolean(payload.apps_24h);
+  const counted = verifiedAppCount(payload.apps_24h);
   const period = PERIODS[range];
   const pct = (p) => (p === 0 ? "<1%" : p + "%");
   // The feed with the reader's sort and range kept, and the app filter set (clients.rs, `client_href`).

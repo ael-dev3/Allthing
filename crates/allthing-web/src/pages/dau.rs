@@ -7,7 +7,9 @@
 //! 48 hours, 7 or 30 days, what the accounts did, which apps they used, and
 //! its definitions: how and since when they were counted.
 
-use allthing_core::activity::{ActivityPayload, AppsWindow, DayCount, Family, day, day_name, median_day, weeks};
+use allthing_core::activity::{
+    ACTIVITY_SOURCE, ActivityPayload, AppsWindow, DayCount, Family, day, day_name, median_day, weeks,
+};
 use allthing_core::api::ACTIVITY_PATH;
 use allthing_core::clients::{client_name, client_profile};
 use allthing_core::format::{axis, full_number, plural, tick};
@@ -44,6 +46,11 @@ fn clock(at: i64) -> String {
 /// "14:05 UTC", with the date when it isn't today.
 fn moment(at: i64) -> String {
     if day(at) == day(now()) { clock(at) } else { format!("{}, {}", date(day(at), true), clock(at)) }
+}
+
+/// An evidence timestamp always includes its UTC date.
+fn checkpoint_time(at: i64) -> String {
+    format!("{}, {}", date(day(at), true), clock(at))
 }
 
 /// How far behind the clock reading may be before the page says it is
@@ -134,17 +141,33 @@ pub fn DauPage() -> impl IntoView {
             <header class="dau-head">
                 <h1 class="page-title">"Daily active accounts"</h1>
                 <p class="dau-lede">
-                    "Farcaster accounts with a message merged into the network, each counted once, as "
+                    "Unique Farcaster accounts with a message merged into the network, each counted once, as "
                     <a href="https://github.com/ael-dev3/SnapMeter" target="_blank" rel="noopener noreferrer">"SnapMeter"</a>
-                    " counts them."
+                    " counts them. These are accounts, not people or Allthing readers."
                 </p>
             </header>
             {move || match data.get() {
                 None => loading().into_any(),
                 Some(Err(Failure::Busy { .. })) => view! { <NotCounted/> }.into_any(),
                 Some(Err(failure)) => view! { <ErrorPanel failure/> }.into_any(),
+                Some(Ok(fetched)) if !fetched.data.is_verified(now()) => view! { <AwaitingVerification/> }.into_any(),
                 Some(Ok(fetched)) => crate::split::lazy_page(loading, dashboard(fetched.data.as_ref().clone())).into_any(),
             }}
+        </section>
+    }
+}
+
+/// Legacy or inconsistent responses cannot supply dashboard figures.
+#[component]
+fn AwaitingVerification() -> impl IntoView {
+    view! {
+        <section class="dau-card dau-empty dau-unverified" role="status">
+            <h2>"Counts await verification"</h2>
+            <p>"This response has no coherent verification record for both network shards. Counts and charts appear once Allthing has checked their Hypersnap events. Try again after the next count."</p>
+            <p class="dau-links">
+                <a href=ACTIVITY_SOURCE target="_blank" rel="noopener noreferrer">"Hypersnap event API"</a>
+                " · "<a href=href(ACTIVITY_PATH)>"The data as JSON"</a>
+            </p>
         </section>
     }
 }
@@ -165,7 +188,7 @@ fn NotCounted() -> impl IntoView {
                 }
                 .into_any()
             } else {
-                view! { <p>"Allthing hasn't counted active accounts yet. The count starts within minutes of a deploy; try again shortly."</p> }.into_any()
+                view! { <p>"Allthing hasn't counted active accounts yet. Counts appear after canonical events from both shards have been read; try again later."</p> }.into_any()
             }}
         </section>
     }
@@ -187,10 +210,11 @@ fn Dashboard(counted: ActivityPayload) -> impl IntoView {
     let behind = counted.reached.filter(|at| now() - at > BEHIND);
     let apps = counted.apps_24h.clone().map(|apps| (apps, counted.app_accounts.clone()));
     view! {
+        <Coverage counted=counted.clone()/>
         {behind.map(|at| view! {
             <p class="dau-behind" role="status">
-                "Catching up: Allthing has read the network's messages to "{moment(at)}
-                " so far, and reads them faster than they come until it is current. The counts below go to then."
+                "Catching up: complete event coverage reaches "{moment(at)}
+                ". Later time is still unread; partial totals below are lower bounds."
             </p>
         })}
         <Meter counted=counted.clone() today/>
@@ -198,6 +222,59 @@ fn Dashboard(counted: ActivityPayload) -> impl IntoView {
         <Mix counted=counted.clone()/>
         {apps.map(|(apps, accounts)| view! { <Apps apps accounts/> })}
         <Method counted/>
+    }
+}
+
+/// The source and durable checkpoints behind the figures, before the meter.
+#[component]
+fn Coverage(counted: ActivityPayload) -> impl IntoView {
+    let started = counted.verified_since;
+    let reached = counted.reached;
+    let has_coverage = started.zip(reached).is_some_and(|(since, to)| since <= to);
+    let status = if has_coverage { "Coverage checked" } else { "Coverage building" };
+    let gap_note = match counted.gaps.len() {
+        0 => "No recorded gaps in the time read. Time before verification began and time still unread are excluded.",
+        _ => "There are recorded gaps. Days touching a gap are partial; complete rolling counts exclude those windows.",
+    };
+    view! {
+        <section class="dau-card dau-coverage" aria-labelledby="dau-coverage-title">
+            <header class="dau-coverage-head">
+                <h2 id="dau-coverage-title">"Hypersnap event coverage"</h2>
+                <span class="dau-proof-status">{status}</span>
+            </header>
+            <p class="dau-source">
+                <a href=counted.source.clone() target="_blank" rel="noopener noreferrer">"Hypersnap event API"</a>
+                " · Snapshot updated "{checkpoint_time(counted.meta.fetched_at.div_euclid(1_000))}
+            </p>
+            <dl class="dau-proof-times">
+                <div><dt>"Verified since"</dt><dd>{started.map(checkpoint_time).unwrap_or_else(|| "Waiting for both shards".into())}</dd></div>
+                <div><dt>"Complete through"</dt><dd>{reached.map(checkpoint_time).unwrap_or_else(|| "No common completed coverage yet".into())}</dd></div>
+            </dl>
+            <ul class="dau-shards" aria-label="Verification by shard">
+                {counted.shards.into_iter().map(|shard| {
+                    let through = shard.reached.map(|at| format!("Complete through {}", checkpoint_time(at)))
+                        .unwrap_or_else(|| "Waiting for a completed block".into());
+                    let progress = shard.read_events.zip(shard.total_events).map(|(read, total)| {
+                        format!("{} / {} events read · {}", full_number(u64::from(read)), full_number(u64::from(total)), if read == total { "block complete" } else { "partial block" })
+                    }).unwrap_or_else(|| "Waiting for Hypersnap events".into());
+                    view! {
+                        <li>
+                            <h3>{format!("Shard {}", shard.shard)}</h3>
+                            <p class="dau-shard-through">{through}</p>
+                            <p>{progress}</p>
+                            {shard.block.zip(shard.block_at).map(|(block, at)| view! {
+                                <details>
+                                    <summary>"Checkpoint"</summary>
+                                    <p>{format!("Block {} · {}", full_number(block), checkpoint_time(at))}</p>
+                                    <p>"Event cursor "<code>{shard.cursor.unwrap_or_default().to_string()}</code></p>
+                                </details>
+                            })}
+                        </li>
+                    }
+                }).collect_view()}
+            </ul>
+            <p class="dau-coverage-note">{gap_note}" Partial day totals and app totals with unresolved keys are lower bounds for their stated windows. This checks the events read from this provider; it does not independently audit the whole network."</p>
+        </section>
     }
 }
 
@@ -209,6 +286,8 @@ fn Meter(counted: ActivityPayload, today: i64) -> impl IntoView {
     let reached = counted.reached;
     let read = |on: i64| counted.days.iter().find(|d| d.day == on && reached.is_some_and(|at| day(at) >= on)).cloned();
     let (so_far, before) = (read(today), read(today - 1));
+    let today_lower_bound = reached.is_none_or(|at| !counted.covers(today * 86_400, at))
+        || counted.shards.iter().any(|s| s.read_events != s.total_events);
     let begun_today = counted.since.is_some_and(|since| day(since) >= today);
     // How far the counts go: the dot is a status, its words say which.
     let status = reached.map(|at| {
@@ -284,22 +363,22 @@ fn Meter(counted: ActivityPayload, today: i64) -> impl IntoView {
                         </p>
                     })}
                 </div>
-                <Tile label="Today so far" count=so_far.as_ref().map(|d| d.active) kind="dau-today">
+                <Tile label="Today so far" count=so_far.as_ref().map(|d| d.active) kind="dau-today" lower_bound=today_lower_bound>
                     {match (&so_far, reached) {
-                        (Some(_), Some(at)) => format!("00:00 to {}", clock(at)),
+                        (Some(_), Some(at)) => format!("{} to {}", hm(counted.since.unwrap_or(today * 86_400).max(today * 86_400)), clock(at)),
                         _ => "not read yet".to_owned(),
                     }}
                 </Tile>
             </div>
             <div class="dau-readouts">
-                <Tile label="Yesterday" count=before.as_ref().map(|d| d.active)>
+                <Tile label="Yesterday" count=before.as_ref().map(|d| d.active) lower_bound=before.as_ref().is_some_and(|d| !d.complete)>
                     {match &before {
                         Some(d) => day_note(d, reached),
                         None if begun_today => "before counting began".to_owned(),
                         None => "not read yet".to_owned(),
                     }}
                 </Tile>
-                <Tile label="Past 30 days" count=month.map(|w| w.active)>
+                <Tile label="Past 30 days" count=month.map(|w| w.active) lower_bound=month.is_some_and(|w| !w.complete)>
                     {match month {
                         Some(w) => {
                             let to = format!("to the end of {}", date(w.day, false));
@@ -325,12 +404,16 @@ fn Tile(
     label: &'static str,
     count: Option<u64>,
     #[prop(optional)] kind: &'static str,
+    #[prop(optional)] lower_bound: bool,
     #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     view! {
         <div class=format!("dau-tile {kind}")>
             <h3 class="dau-tile-label">{label}</h3>
-            <p class="dau-tile-count">{count.map_or_else(|| "—".to_owned(), full_number)}</p>
+            <p class="dau-tile-count">
+                {(lower_bound && count.is_some()).then(|| view! { <span class="dau-lower-bound">"≥ "</span> })}
+                {count.map_or_else(|| "—".to_owned(), full_number)}
+            </p>
             <p class="dau-tile-note">{children.map(|c| c())}</p>
         </div>
     }
@@ -474,7 +557,7 @@ fn by_day(counted: &ActivityPayload, today: i64, span: i64) -> Option<Plot> {
         legend,
         summary,
         unit: "days",
-        head: vec!["Day (UTC)", "Active accounts", "Messages"],
+        head: vec!["Day (UTC)", "Active accounts", "Merge events"],
         rows,
     })
 }
@@ -752,7 +835,7 @@ fn Mix(counted: ActivityPayload) -> impl IntoView {
     view! {
         <section class="dau-card dau-mix">
             <h2>"What they did"</h2>
-            <p class="dau-sub">{format!("{} merged {when}, by kind.", plural(total, "message", "messages"))}</p>
+            <p class="dau-sub">{format!("{} {when}, by kind.", plural(total, "message merge event", "message merge events"))}</p>
             <ol class="dau-rows dau-mix-list">
                 {families.into_iter().map(|(name, n)| view! {
                     <li>
@@ -826,12 +909,12 @@ fn Apps(apps: AppsWindow, accounts: Vec<UserSummary>) -> impl IntoView {
 #[component]
 fn Method(counted: ActivityPayload) -> impl IntoView {
     let gaps = if counted.gaps.is_empty() {
-        "None: every block since counting began has been read.".to_owned()
+        "No recorded gaps within the completed coverage shown above.".to_owned()
     } else {
         let spans: Vec<String> =
             counted.gaps.iter().map(|(a, b)| format!("{} to {}", moment(*a), moment(*b))).collect();
         format!(
-            "Not read: {}. Windows and days that touch a gap are left out or marked partly counted.",
+            "Not fully covered: {}. Missing source history or expired local data leave windows out or mark days partly counted.",
             spans.join("; ")
         )
     };
@@ -843,7 +926,7 @@ fn Method(counted: ActivityPayload) -> impl IntoView {
     let mut terms: Vec<(&str, String)> = vec![
         (
             "Active",
-            "At least one message merged into Farcaster: a cast, reaction, follow, profile change, verification, username proof, frame action, storage lending, key or channel message, or the removal of one. That is SnapMeter's closed list for Snapchain, message types 1–8 and 11–21. Pruned, revoked and failed messages, and onchain events, don't count. Each account counts once in a window, however many messages it sent, on whichever shard.".to_owned(),
+            "At least one message merged into Farcaster: a cast, reaction, follow, profile change, verification, username proof, frame action, storage lending, key or channel message, or the removal of one. That is SnapMeter's closed list for Snapchain, message types 1–8 and 11–21. Pruned, revoked and failed messages, and onchain events, don't count. Each account counts once in a window, however many messages it sent, on whichever shard. The action chart counts message merge events: a message present on both shards contributes to both there; account totals still count its account once.".to_owned(),
         ),
         (
             "Past 24 hours",
@@ -863,7 +946,7 @@ fn Method(counted: ActivityPayload) -> impl IntoView {
         ("Gaps", gaps),
         (
             "Exact",
-            "Every account is kept, as a compact set per hour and per day, so a window counts each one once. Nothing is sampled or estimated.".to_owned(),
+            "Every account in the verified events is kept as a compact set per hour and per day. A fully covered window counts each account once, without sampling. Partial counts are lower bounds; events outside verified coverage have not been counted.".to_owned(),
         ),
     ];
     if counted.hourly.iter().any(Option::is_some) {

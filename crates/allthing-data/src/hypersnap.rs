@@ -4,7 +4,7 @@
 //! The Farcaster app's public API fills in what only the app knows: votes to
 //! leave it, and channels' hosts, pictures and member counts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use allthing_core::api::{FollowsDir, LIBRARY_PAGE_SIZE, LibraryEntry, ReactionKind, library_cursor};
 use allthing_core::channels::{
@@ -18,7 +18,9 @@ use allthing_core::normalize::{
     self, RawAppChannel, RawAppChannelResponse, RawCast, RawChannel, RawFeed, RawHubReactions, RawNotifications,
     RawReaction, RawReactionList, RawTransfers, RawUser, RawUserData, RawUserList, RawUserSearch,
 };
-use allthing_core::provenance::{base64_decode, base64_encode, normalize_key, request_fid_from_metadata};
+use allthing_core::provenance::{
+    base64_decode, base64_encode, normalize_key, request_fid_from_metadata, verified_request_fid_from_metadata,
+};
 use allthing_core::ranking::TrendingWindow;
 use allthing_core::website::Website;
 use serde::Deserialize;
@@ -871,6 +873,149 @@ pub async fn all_onchain_signers(inv: &Invocation, fid: u64) -> Result<HashMap<S
     Ok(out)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedSignerBody {
+    key: Option<String>,
+    key_type: Option<u32>,
+    event_type: Option<String>,
+    metadata: Option<String>,
+    metadata_type: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedSignerEvent {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    fid: Option<u64>,
+    signer_event_body: Option<VerifiedSignerBody>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedSigner {
+    source: Option<String>,
+    key: Option<String>,
+    key_type: Option<u32>,
+    fid: Option<u64>,
+    request_fid: Option<u64>,
+    on_chain_event: Option<VerifiedSignerEvent>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedSigners {
+    // Required: a successful response without the collection is not evidence.
+    signers: Vec<VerifiedSigner>,
+    next_page_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedSignerEvents {
+    events: Vec<VerifiedSignerEvent>,
+    next_page_token: Option<String>,
+}
+
+fn verified_signer_key(value: &str) -> Option<String> {
+    normalize_key(value).filter(|key| key.len() == 66)
+}
+
+fn verified_onchain_entry(event: &VerifiedSignerEvent, fid: u64) -> Option<(String, u64)> {
+    if event.kind.as_deref() != Some("EVENT_TYPE_SIGNER") || event.fid != Some(fid) {
+        return None;
+    }
+    let body = event.signer_event_body.as_ref()?;
+    if body.event_type.as_deref() != Some("SIGNER_EVENT_TYPE_ADD") || body.key_type != Some(1) {
+        return None;
+    }
+    let key = verified_signer_key(body.key.as_deref()?)?;
+    let app = match (body.metadata_type, body.metadata.as_deref()) {
+        (Some(0), Some("")) => 0,
+        (Some(1), Some(metadata)) => verified_request_fid_from_metadata(metadata)?,
+        _ => return None,
+    };
+    Some((key, app))
+}
+
+fn insert_verified_app(out: &mut HashMap<String, u64>, conflicts: &mut HashSet<String>, key: String, app: u64) {
+    if conflicts.contains(&key) {
+        return;
+    }
+    if out.get(&key).is_some_and(|previous| *previous != app) {
+        out.remove(&key);
+        conflicts.insert(key);
+    } else {
+        out.insert(key, app);
+    }
+}
+
+fn verified_active_apps(page: VerifiedSigners, fid: u64) -> HashMap<String, u64> {
+    let partial = page.next_page_token.is_some_and(|token| !token.is_empty());
+    let (mut out, mut conflicts) = (HashMap::new(), HashSet::new());
+    for signer in page.signers {
+        if signer.fid != Some(fid) || signer.key_type != Some(1) {
+            continue;
+        }
+        let Some(key) = signer.key.as_deref().and_then(verified_signer_key) else { continue };
+        let app = match signer.source.as_deref() {
+            Some("SIGNER_SOURCE_OFFCHAIN") => signer.request_fid.filter(|app| *app > 0),
+            Some("SIGNER_SOURCE_ONCHAIN") => signer
+                .on_chain_event
+                .as_ref()
+                .and_then(|event| verified_onchain_entry(event, fid))
+                .filter(|(event_key, _)| *event_key == key)
+                .map(|(_, app)| app),
+            _ => None,
+        };
+        if let Some(app) = app.filter(|app| !partial || *app > 0) {
+            insert_verified_app(&mut out, &mut conflicts, key, app);
+        }
+    }
+    out
+}
+
+fn verified_history_apps(page: VerifiedSignerEvents, fid: u64) -> HashMap<String, u64> {
+    let partial = page.next_page_token.is_some_and(|token| !token.is_empty());
+    let (mut out, mut conflicts) = (HashMap::new(), HashSet::new());
+    for event in page.events {
+        if let Some((key, app)) = verified_onchain_entry(&event, fid).filter(|(_, app)| !partial || *app > 0) {
+            insert_verified_app(&mut out, &mut conflicts, key, app);
+        }
+    }
+    out
+}
+
+/// Exact 32-byte active signer keys with a positively identified requesting
+/// app. Zero requires an explicit onchain add with empty type-0 metadata;
+/// absent keys and malformed or incomplete evidence remain absent (unknown).
+pub async fn verified_signer_apps(inv: &Invocation, fid: u64) -> Result<HashMap<String, u64>, UpstreamError> {
+    let page: VerifiedSigners = get_json(
+        inv,
+        Upstream::Hypersnap,
+        &v1("signersByFid", &[("fid", &fid.to_string()), ("pageSize", "1000")]),
+        false,
+    )
+    .await?
+    .ok_or_else(|| UpstreamError::Parse("missing signer response".into()))?;
+    Ok(verified_active_apps(page, fid))
+}
+
+/// Positive attribution facts for exact keys in one bounded onchain-history
+/// page. A missing key is unknown, including when another page exists.
+pub async fn verified_onchain_signers(inv: &Invocation, fid: u64) -> Result<HashMap<String, u64>, UpstreamError> {
+    let page: VerifiedSignerEvents = get_json(
+        inv,
+        Upstream::Hypersnap,
+        &v1("onChainEventsByFid", &[("fid", &fid.to_string()), ("event_type", "EVENT_TYPE_SIGNER")]),
+        false,
+    )
+    .await?
+    .ok_or_else(|| UpstreamError::Parse("missing signer history response".into()))?;
+    Ok(verified_history_apps(page, fid))
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -990,5 +1135,151 @@ mod tests {
         assert_eq!(hypersnap_window(TrendingWindow::TwelveHours).as_str(), "24h");
         assert_eq!(hypersnap_window(TrendingWindow::Day).as_str(), "24h");
         assert_eq!(hypersnap_window(TrendingWindow::Week).as_str(), "7d");
+    }
+
+    fn verified_metadata(fid: u64) -> String {
+        let word = |n: u64| {
+            let mut out = vec![0; 24];
+            out.extend(n.to_be_bytes());
+            out
+        };
+        let mut bytes = word(32);
+        bytes.extend(word(fid));
+        bytes.extend([0; 12]);
+        bytes.extend([1; 20]);
+        bytes.extend(word(128));
+        bytes.extend(word(200_000_000));
+        bytes.extend(word(65));
+        bytes.extend([7; 65]);
+        bytes.extend([0; 31]);
+        base64_encode(&bytes)
+    }
+
+    fn verified_add(key: &str, app: Option<u64>) -> serde_json::Value {
+        let (metadata_type, metadata) = match app {
+            Some(app) => (1, verified_metadata(app)),
+            None => (0, String::new()),
+        };
+        serde_json::json!({"type":"EVENT_TYPE_SIGNER","fid":42,"signerEventBody":{
+            "key":key,"keyType":1,"eventType":"SIGNER_EVENT_TYPE_ADD",
+            "metadataType":metadata_type,"metadata":metadata
+        }})
+    }
+
+    fn verified_signer(key: &str, app: u64) -> serde_json::Value {
+        serde_json::json!({"source":"SIGNER_SOURCE_OFFCHAIN","fid":42,"keyType":1,"key":key,"requestFid":app})
+    }
+
+    #[test]
+    fn verified_signer_identity_keeps_keys_with_the_same_prefix_separate() {
+        let key_a = format!("0x{}", "ab".repeat(32));
+        let key_b = format!("0x{}cd", "ab".repeat(31));
+        let page = serde_json::from_value(serde_json::json!({"signers":[
+            verified_signer(&key_a,9152), verified_signer(&key_b,309857),
+            verified_signer("0xabababab",9152)
+        ]}))
+        .unwrap();
+        assert_eq!(verified_active_apps(page, 42), HashMap::from([(key_a, 9152), (key_b, 309857)]));
+    }
+
+    #[test]
+    fn verified_metadata_requires_a_complete_positive_request() {
+        assert_eq!(verified_request_fid_from_metadata(&verified_metadata(9152)), Some(9152));
+        assert_eq!(verified_request_fid_from_metadata(&verified_metadata(0)), None);
+        let mut truncated = base64_decode(&verified_metadata(9152)).unwrap();
+        truncated.truncate(160);
+        assert_eq!(verified_request_fid_from_metadata(&base64_encode(&truncated)), None);
+        assert_eq!(verified_request_fid_from_metadata(&(verified_metadata(9152) + "ignored")), None);
+    }
+
+    #[test]
+    fn verified_onchain_none_requires_explicit_empty_type_zero_metadata() {
+        let key = format!("0x{}", "ab".repeat(32));
+        let good = verified_add(&key, None);
+        let entry = |value| verified_onchain_entry(&serde_json::from_value(value).unwrap(), 42);
+        assert_eq!(entry(good.clone()), Some((key.clone(), 0)));
+        let mut absent = good.clone();
+        absent["signerEventBody"].as_object_mut().unwrap().remove("metadata");
+        assert_eq!(entry(absent), None);
+        let mut nonempty = good.clone();
+        nonempty["signerEventBody"]["metadata"] = serde_json::json!("AA==");
+        assert_eq!(entry(nonempty), None);
+        let mut unknown = good.clone();
+        unknown["signerEventBody"]["metadataType"] = serde_json::json!(99);
+        assert_eq!(entry(unknown), None);
+        let mut wrong_fid = good.clone();
+        wrong_fid["fid"] = serde_json::json!(7);
+        assert_eq!(entry(wrong_fid), None);
+        let mut removed = good;
+        removed["signerEventBody"]["eventType"] = serde_json::json!("SIGNER_EVENT_TYPE_REMOVE");
+        assert_eq!(entry(removed), None);
+    }
+
+    #[test]
+    fn verified_active_onchain_keys_must_match_their_add_event() {
+        let key = format!("0x{}", "ab".repeat(32));
+        let other = format!("0x{}", "cd".repeat(32));
+        let mut record = serde_json::json!({"source":"SIGNER_SOURCE_ONCHAIN","fid":42,
+            "keyType":1,"key":key,"onChainEvent":verified_add(&key,Some(9152))});
+        let read = |record| {
+            let page = serde_json::from_value(serde_json::json!({"signers":[record]})).unwrap();
+            verified_active_apps(page, 42)
+        };
+        assert_eq!(read(record.clone()), HashMap::from([(key, 9152)]));
+        record["key"] = serde_json::json!(other);
+        assert!(read(record).is_empty());
+    }
+
+    #[test]
+    fn verified_pages_leave_missing_and_conflicting_keys_unknown() {
+        let key_a = format!("0x{}", "ab".repeat(32));
+        let key_b = format!("0x{}", "cd".repeat(32));
+        let page = serde_json::from_value(serde_json::json!({"events":[
+            verified_add(&key_a,Some(9152)), verified_add(&key_b,None)
+        ],"nextPageToken":"more"}))
+        .unwrap();
+        assert_eq!(verified_history_apps(page, 42), HashMap::from([(key_a.clone(), 9152)]));
+        let page = serde_json::from_value(serde_json::json!({"signers":[
+            verified_signer(&key_a,9152), verified_signer(&key_a,309857), verified_signer(&key_a,9152)
+        ]}))
+        .unwrap();
+        assert!(verified_active_apps(page, 42).is_empty());
+        assert!(serde_json::from_str::<VerifiedSigners>(r#"{"nextPageToken":""}"#).is_err());
+        assert!(serde_json::from_str::<VerifiedSignerEvents>(r#"{"events":null}"#).is_err());
+    }
+
+    struct VerifiedSignerHub {
+        body: String,
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl Host for VerifiedSignerHub {
+        fn now(&self) -> f64 {
+            0.0
+        }
+
+        fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, Result<HttpResponse, FetchError>> {
+            self.requests.borrow_mut().push(request.url);
+            let response = HttpResponse { status: 200, retry_after: None, body: Some(self.body.clone().into()) };
+            async move { Ok(response) }.boxed_local()
+        }
+
+        fn spawn(&self, _: LocalBoxFuture<'static, ()>) {}
+    }
+
+    #[test]
+    fn verified_signer_reads_are_bounded_hypersnap_calls_and_reject_missing_arrays() {
+        let key = format!("0x{}", "ab".repeat(32));
+        let hub = Rc::new(VerifiedSignerHub {
+            body: serde_json::json!({"signers":[verified_signer(&key,9152)],"nextPageToken":"more"}).to_string(),
+            requests: RefCell::new(vec![]),
+        });
+        let inv = Invocation::new(hub.clone(), 45);
+        assert_eq!(verified_signer_apps(&inv, 42).now_or_never().unwrap().unwrap(), HashMap::from([(key, 9152)]));
+        assert_eq!(hub.requests.take(), [format!("{BASE}/v1/signersByFid?fid=42&pageSize=1000")]);
+        let hub = Rc::new(VerifiedSignerHub { body: "{}".into(), requests: RefCell::new(vec![]) });
+        let inv = Invocation::new(hub.clone(), 45);
+        assert!(matches!(verified_onchain_signers(&inv, 42).now_or_never().unwrap(), Err(UpstreamError::Parse(_))));
+        assert_eq!(hub.requests.take(), [format!("{BASE}/v1/onChainEventsByFid?fid=42&event_type=EVENT_TYPE_SIGNER")]);
     }
 }

@@ -25,7 +25,7 @@ async function phone(browser: Browser, testInfo: TestInfo) {
 }
 
 const FAVORITE = "Considerably boosts their casts in your hot and top feeds. Kept in this browser only.";
-const LESS = "Considerably reduces their casts in your feeds: well down in hot and top, lower in new. Nothing is hidden. Kept in this browser only.";
+const LESS = "Omits about 90% of their posts from Home, Following and channel feeds. The rest rank much lower in hot and top; new stays chronological. Profiles stay available. Toggle again to undo. Kept in this browser only.";
 
 /** The hint is on screen, inside the profile's card, under its button. */
 async function under(page: Page, hint: Locator, button: Locator, width: number) {
