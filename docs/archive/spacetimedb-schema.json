@@ -1,0 +1,2767 @@
+{
+  "sections": [
+    {
+      "Typespace": {
+        "types": [
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "key"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "target_fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "target_username"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "muted"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "blocked"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "mute_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "block_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "updated_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "id"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "room_id"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sender"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sender_fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "text"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sent_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "id"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sender"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "recipient"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sender_key_version"
+                  },
+                  "algebraic_type": {
+                    "U32": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "recipient_key_version"
+                  },
+                  "algebraic_type": {
+                    "U32": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "nonce"
+                  },
+                  "algebraic_type": {
+                    "Array": {
+                      "U8": []
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "ciphertext"
+                  },
+                  "algebraic_type": {
+                    "Array": {
+                      "U8": []
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "sent_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "generation"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_count"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_count"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "cleared_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "last_clear_id"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "key"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "hash"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "generation"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_order"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmarked"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_order"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "hash"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "expected_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "generation"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "hash"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmarked"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "bookmark_revision"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "cursor"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "seen_at"
+                  },
+                  "algebraic_type": {
+                    "I64": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "identity"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "identity"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "last_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "id"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "name"
+                  },
+                  "algebraic_type": {
+                    "String": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "created_by"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "created_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "identity"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "room_id"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "expires_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "identity"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "verified"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "online"
+                  },
+                  "algebraic_type": {
+                    "Bool": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "last_seen"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Product": {
+              "elements": [
+                {
+                  "name": {
+                    "some": "identity"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__identity__"
+                          },
+                          "algebraic_type": {
+                            "U256": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "fid"
+                  },
+                  "algebraic_type": {
+                    "U64": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "x_25519_pub"
+                  },
+                  "algebraic_type": {
+                    "Array": {
+                      "U8": []
+                    }
+                  }
+                },
+                {
+                  "name": {
+                    "some": "key_version"
+                  },
+                  "algebraic_type": {
+                    "U32": []
+                  }
+                },
+                {
+                  "name": {
+                    "some": "updated_at"
+                  },
+                  "algebraic_type": {
+                    "Product": {
+                      "elements": [
+                        {
+                          "name": {
+                            "some": "__timestamp_micros_since_unix_epoch__"
+                          },
+                          "algebraic_type": {
+                            "I64": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "Types": [
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "Room"
+          },
+          "ty": 10,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "NotificationReader"
+          },
+          "ty": 8,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "SeenInput"
+          },
+          "ty": 5,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "LibraryPost"
+          },
+          "ty": 4,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "UserKey"
+          },
+          "ty": 13,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "User"
+          },
+          "ty": 12,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "LibraryAccount"
+          },
+          "ty": 3,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "NotificationState"
+          },
+          "ty": 7,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "ChatMessage"
+          },
+          "ty": 1,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "RateLimit"
+          },
+          "ty": 9,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "DmMessage"
+          },
+          "ty": 2,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "LibraryItem"
+          },
+          "ty": 6,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "Typing"
+          },
+          "ty": 11,
+          "custom_ordering": true
+        },
+        {
+          "source_name": {
+            "scope": [],
+            "source_name": "AccountFilter"
+          },
+          "ty": 0,
+          "custom_ordering": true
+        }
+      ]
+    },
+    {
+      "Tables": [
+        {
+          "source_name": "typing",
+          "product_type_ref": 11,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "typing_identity_idx_btree"
+              },
+              "accessor_name": {
+                "some": "identity"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "typing_identity_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Public": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "user",
+          "product_type_ref": 12,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "user_identity_idx_btree"
+              },
+              "accessor_name": {
+                "some": "identity"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "user_fid_idx_btree"
+              },
+              "accessor_name": {
+                "some": "fid"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "user_identity_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Public": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "library_post",
+          "product_type_ref": 4,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "library_post_fid_bookmarked_bookmark_order_idx_btree"
+              },
+              "accessor_name": {
+                "some": "by_bookmark"
+              },
+              "algorithm": {
+                "BTree": [
+                  1,
+                  8,
+                  11
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "library_post_fid_generation_seen_seen_order_idx_btree"
+              },
+              "accessor_name": {
+                "some": "by_seen"
+              },
+              "algorithm": {
+                "BTree": [
+                  1,
+                  3,
+                  4,
+                  7
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "library_post_key_idx_btree"
+              },
+              "accessor_name": {
+                "some": "key"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "library_post_key_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "dm_message",
+          "product_type_ref": 2,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "dm_message_sender_idx_btree"
+              },
+              "accessor_name": {
+                "some": "sender"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "dm_message_id_idx_btree"
+              },
+              "accessor_name": {
+                "some": "id"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "dm_message_recipient_idx_btree"
+              },
+              "accessor_name": {
+                "some": "recipient"
+              },
+              "algorithm": {
+                "BTree": [
+                  2
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "dm_message_id_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [
+            {
+              "source_name": {
+                "some": "dm_message_id_seq"
+              },
+              "column": 0,
+              "start": {
+                "none": []
+              },
+              "min_value": {
+                "none": []
+              },
+              "max_value": {
+                "none": []
+              },
+              "increment": 1
+            }
+          ],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "account_filter",
+          "product_type_ref": 0,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "account_filter_key_idx_btree"
+              },
+              "accessor_name": {
+                "some": "key"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "account_filter_fid_idx_btree"
+              },
+              "accessor_name": {
+                "some": "fid"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "account_filter_key_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "rate_limit",
+          "product_type_ref": 9,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "rate_limit_identity_idx_btree"
+              },
+              "accessor_name": {
+                "some": "identity"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "rate_limit_identity_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "room",
+          "product_type_ref": 10,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "room_name_idx_btree"
+              },
+              "accessor_name": {
+                "some": "name"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "room_id_idx_btree"
+              },
+              "accessor_name": {
+                "some": "id"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "room_id_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            },
+            {
+              "source_name": {
+                "some": "room_name_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    1
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [
+            {
+              "source_name": {
+                "some": "room_id_seq"
+              },
+              "column": 0,
+              "start": {
+                "none": []
+              },
+              "min_value": {
+                "none": []
+              },
+              "max_value": {
+                "none": []
+              },
+              "increment": 1
+            }
+          ],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Public": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "user_key",
+          "product_type_ref": 13,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "user_key_fid_idx_btree"
+              },
+              "accessor_name": {
+                "some": "fid"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "user_key_identity_idx_btree"
+              },
+              "accessor_name": {
+                "some": "identity"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "user_key_identity_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Public": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "notification_state",
+          "product_type_ref": 7,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "notification_state_fid_idx_btree"
+              },
+              "accessor_name": {
+                "some": "fid"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "notification_state_fid_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "library_account",
+          "product_type_ref": 3,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "library_account_fid_idx_btree"
+              },
+              "accessor_name": {
+                "some": "fid"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "library_account_fid_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "chat_message",
+          "product_type_ref": 1,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "chat_message_id_idx_btree"
+              },
+              "accessor_name": {
+                "some": "id"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            },
+            {
+              "source_name": {
+                "some": "chat_message_room_id_idx_btree"
+              },
+              "accessor_name": {
+                "some": "room_id"
+              },
+              "algorithm": {
+                "BTree": [
+                  1
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "chat_message_id_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [
+            {
+              "source_name": {
+                "some": "chat_message_id_seq"
+              },
+              "column": 0,
+              "start": {
+                "none": []
+              },
+              "min_value": {
+                "none": []
+              },
+              "max_value": {
+                "none": []
+              },
+              "increment": 1
+            }
+          ],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Public": []
+          },
+          "default_values": [],
+          "is_event": false
+        },
+        {
+          "source_name": "notification_reader",
+          "product_type_ref": 8,
+          "primary_key": [
+            0
+          ],
+          "indexes": [
+            {
+              "source_name": {
+                "some": "notification_reader_identity_idx_btree"
+              },
+              "accessor_name": {
+                "some": "identity"
+              },
+              "algorithm": {
+                "BTree": [
+                  0
+                ]
+              }
+            }
+          ],
+          "constraints": [
+            {
+              "source_name": {
+                "some": "notification_reader_identity_key"
+              },
+              "data": {
+                "Unique": {
+                  "columns": [
+                    0
+                  ]
+                }
+              }
+            }
+          ],
+          "sequences": [],
+          "table_type": {
+            "User": []
+          },
+          "table_access": {
+            "Private": []
+          },
+          "default_values": [],
+          "is_event": false
+        }
+      ]
+    },
+    {
+      "Reducers": [
+        {
+          "source_name": "clear_seen",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "expected_generation"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "operation_id"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "create_room",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "name"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "delete_dm",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "id"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "forget_seen",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "generation"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "hash"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              },
+              {
+                "name": {
+                  "some": "expected_revision"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "init",
+          "params": {
+            "elements": []
+          },
+          "visibility": {
+            "Private": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "mark_notifications_seen",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "seen_at"
+                },
+                "algebraic_type": {
+                  "I64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "mark_seen_batch",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "generation"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "entries"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "Ref": 5
+                  }
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "on_connect",
+          "params": {
+            "elements": []
+          },
+          "visibility": {
+            "Private": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "on_disconnect",
+          "params": {
+            "elements": []
+          },
+          "visibility": {
+            "Private": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "register",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "fid"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "send_dm",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "recipient"
+                },
+                "algebraic_type": {
+                  "Product": {
+                    "elements": [
+                      {
+                        "name": {
+                          "some": "__identity__"
+                        },
+                        "algebraic_type": {
+                          "U256": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "name": {
+                  "some": "sender_key_version"
+                },
+                "algebraic_type": {
+                  "U32": []
+                }
+              },
+              {
+                "name": {
+                  "some": "recipient_key_version"
+                },
+                "algebraic_type": {
+                  "U32": []
+                }
+              },
+              {
+                "name": {
+                  "some": "nonce"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "U8": []
+                  }
+                }
+              },
+              {
+                "name": {
+                  "some": "ciphertext"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "U8": []
+                  }
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "send_message",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "room_id"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "text"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "set_account_filter",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "target_fid"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "target_username"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              },
+              {
+                "name": {
+                  "some": "kind"
+                },
+                "algebraic_type": {
+                  "U8": []
+                }
+              },
+              {
+                "name": {
+                  "some": "desired"
+                },
+                "algebraic_type": {
+                  "Bool": []
+                }
+              },
+              {
+                "name": {
+                  "some": "expected_revision"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "set_bookmark",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "hash"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              },
+              {
+                "name": {
+                  "some": "desired"
+                },
+                "algebraic_type": {
+                  "Bool": []
+                }
+              },
+              {
+                "name": {
+                  "some": "expected_revision"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "set_public_key",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "x25519_pub"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "U8": []
+                  }
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "set_typing",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "room_id"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "typing"
+                },
+                "algebraic_type": {
+                  "Bool": []
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "verify_fid",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "fid"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "expiry"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "signature"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "U8": []
+                  }
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        },
+        {
+          "source_name": "verify_notification_fid",
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "fid"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "expiry"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "signature"
+                },
+                "algebraic_type": {
+                  "Array": {
+                    "U8": []
+                  }
+                }
+              }
+            ]
+          },
+          "visibility": {
+            "ClientCallable": []
+          },
+          "ok_return_type": {
+            "Product": {
+              "elements": []
+            }
+          },
+          "err_return_type": {
+            "String": []
+          }
+        }
+      ]
+    },
+    {
+      "Views": [
+        {
+          "source_name": "my_account_filters",
+          "index": 0,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": []
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 0
+            }
+          }
+        },
+        {
+          "source_name": "my_dm_inbox",
+          "index": 1,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": []
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 2
+            }
+          }
+        },
+        {
+          "source_name": "my_dm_outbox",
+          "index": 2,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": []
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 2
+            }
+          }
+        },
+        {
+          "source_name": "my_library_membership",
+          "index": 3,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "hashes_csv"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              }
+            ]
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 6
+            }
+          }
+        },
+        {
+          "source_name": "my_library_page",
+          "index": 4,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": [
+              {
+                "name": {
+                  "some": "kind"
+                },
+                "algebraic_type": {
+                  "U8": []
+                }
+              },
+              {
+                "name": {
+                  "some": "generation"
+                },
+                "algebraic_type": {
+                  "U64": []
+                }
+              },
+              {
+                "name": {
+                  "some": "after"
+                },
+                "algebraic_type": {
+                  "String": []
+                }
+              },
+              {
+                "name": {
+                  "some": "limit"
+                },
+                "algebraic_type": {
+                  "U32": []
+                }
+              }
+            ]
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 6
+            }
+          }
+        },
+        {
+          "source_name": "my_library_state",
+          "index": 5,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": []
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 3
+            }
+          }
+        },
+        {
+          "source_name": "my_notification_state",
+          "index": 6,
+          "is_public": true,
+          "is_anonymous": false,
+          "params": {
+            "elements": []
+          },
+          "return_type": {
+            "Array": {
+              "Ref": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "LifeCycleReducers": [
+        {
+          "lifecycle_spec": {
+            "Init": []
+          },
+          "function_name": "init"
+        },
+        {
+          "lifecycle_spec": {
+            "OnConnect": []
+          },
+          "function_name": "on_connect"
+        },
+        {
+          "lifecycle_spec": {
+            "OnDisconnect": []
+          },
+          "function_name": "on_disconnect"
+        }
+      ]
+    },
+    {
+      "ExplicitNames": {
+        "entries": [
+          {
+            "Table": {
+              "source_name": "typing",
+              "canonical_name": "typing"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "user",
+              "canonical_name": "user"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "library_post",
+              "canonical_name": "library_post"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "dm_message",
+              "canonical_name": "dm_message"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "account_filter",
+              "canonical_name": "account_filter"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "rate_limit",
+              "canonical_name": "rate_limit"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "room",
+              "canonical_name": "room"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "user_key",
+              "canonical_name": "user_key"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "notification_state",
+              "canonical_name": "notification_state"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "library_account",
+              "canonical_name": "library_account"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "chat_message",
+              "canonical_name": "chat_message"
+            }
+          },
+          {
+            "Table": {
+              "source_name": "notification_reader",
+              "canonical_name": "notification_reader"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "clear_seen",
+              "canonical_name": "clear_seen"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "create_room",
+              "canonical_name": "create_room"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "delete_dm",
+              "canonical_name": "delete_dm"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "forget_seen",
+              "canonical_name": "forget_seen"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "init",
+              "canonical_name": "init"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "mark_notifications_seen",
+              "canonical_name": "mark_notifications_seen"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "mark_seen_batch",
+              "canonical_name": "mark_seen_batch"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "on_connect",
+              "canonical_name": "on_connect"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "on_disconnect",
+              "canonical_name": "on_disconnect"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "register",
+              "canonical_name": "register"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "send_dm",
+              "canonical_name": "send_dm"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "send_message",
+              "canonical_name": "send_message"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "set_account_filter",
+              "canonical_name": "set_account_filter"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "set_bookmark",
+              "canonical_name": "set_bookmark"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "set_public_key",
+              "canonical_name": "set_public_key"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "set_typing",
+              "canonical_name": "set_typing"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "verify_fid",
+              "canonical_name": "verify_fid"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "verify_notification_fid",
+              "canonical_name": "verify_notification_fid"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_account_filters",
+              "canonical_name": "my_account_filters"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_dm_inbox",
+              "canonical_name": "my_dm_inbox"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_dm_outbox",
+              "canonical_name": "my_dm_outbox"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_library_membership",
+              "canonical_name": "my_library_membership"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_library_page",
+              "canonical_name": "my_library_page"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_library_state",
+              "canonical_name": "my_library_state"
+            }
+          },
+          {
+            "Function": {
+              "source_name": "my_notification_state",
+              "canonical_name": "my_notification_state"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

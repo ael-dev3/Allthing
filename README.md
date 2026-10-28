@@ -1,4 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+> [!WARNING]
+> **Development halted (Oct 2026). This project is no longer maintained.** This repository is archived; the hosted service at allthing.social and its infrastructure have been shut down. See [docs/WIND-DOWN.md](docs/WIND-DOWN.md).
+
 <p align="center">
   <a href="https://allthing.social">
     <picture>
